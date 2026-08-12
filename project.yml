@@ -1,0 +1,143 @@
+name: MusicFree
+
+options:
+  createIntermediateGroups: true
+  deploymentTarget:
+    iOS: "26.0"
+
+configs:
+  Debug: debug
+  Release: release
+
+configFiles:
+  Debug: basic_config.xcconfig
+  Release: basic_config.xcconfig
+
+packages:
+  MusicFreeCore:
+    path: Packages/MusicFreeCore
+  MusicFreeInfrastructure:
+    path: Packages/MusicFreeInfrastructure
+  MusicFreeVLCKit:
+    path: Packages/MusicFreeVLCKit
+  MusicFreeUI:
+    path: Packages/MusicFreeUI
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    CODE_SIGN_IDENTITY: "iPhone Developer"
+    CODE_SIGN_STYLE: Automatic
+
+targets:
+  MusicFree:
+    type: application
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: App
+        excludes:
+          - Info.plist
+          - MusicFree.entitlements
+    postBuildScripts:
+      - name: Bundle Third-Party Notices
+        basedOnDependencyAnalysis: false
+        script: |
+          set -euo pipefail
+          source_dir="${SRCROOT}/ThirdPartyNotices"
+          destination_dir="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/ThirdPartyNotices"
+          /bin/mkdir -p "${destination_dir}"
+          /usr/bin/ditto "${source_dir}" "${destination_dir}"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: win.tools4me.musicplayer
+        PRODUCT_NAME: MusicFree
+        INFOPLIST_FILE: App/Info.plist
+        CODE_SIGN_ENTITLEMENTS: App/MusicFree.entitlements
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SUPPORTS_MACCATALYST: false
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: false
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    dependencies:
+      - package: MusicFreeCore
+        product: AppServices
+      - package: MusicFreeCore
+        product: LibraryAPI
+      - package: MusicFreeCore
+        product: MusicDomain
+      - package: MusicFreeCore
+        product: MediaSourceAPI
+      - package: MusicFreeInfrastructure
+        product: LocalMediaAdapter
+      - package: MusicFreeInfrastructure
+        product: LibraryPersistenceAdapter
+      - package: MusicFreeInfrastructure
+        product: AppleSystemAdapter
+      - package: MusicFreeInfrastructure
+        product: PreferencesPersistenceAdapter
+      - package: MusicFreeVLCKit
+        product: VLCKitPlaybackAdapter
+      - package: MusicFreeUI
+        product: LibraryFeature
+      - package: MusicFreeUI
+        product: PlayerFeature
+      - package: MusicFreeUI
+        product: PlaylistFeature
+      - package: MusicFreeUI
+        product: SettingsFeature
+      - package: MusicFreeUI
+        product: DesignSystem
+
+  MusicFreeTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: AppTests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: win.tools4me.musicplayer.tests
+        GENERATE_INFOPLIST_FILE: true
+    dependencies:
+      - target: MusicFree
+
+  MusicFreeUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: AppUITests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: win.tools4me.musicplayer.uitests
+        GENERATE_INFOPLIST_FILE: true
+    dependencies:
+      - target: MusicFree
+
+schemes:
+  MusicFree:
+    build:
+      targets:
+        MusicFree: all
+        MusicFreeTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      gatherCoverageData: false
+      targets:
+        - MusicFreeTests
+        - MusicFreeUITests
+    archive:
+      config: Release
+      preActions:
+        - name: Update Archive Build Number
+          settingsTarget: MusicFree
+          script: |
+            "$SRCROOT/Scripts/archive_update_build_number.sh"
+      postActions:
+        - name: Update Next App Version
+          settingsTarget: MusicFree
+          script: |
+            "$SRCROOT/Scripts/archive_update_app_version.sh"

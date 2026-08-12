@@ -1,0 +1,44 @@
+.DS_Store
+DerivedData/
+Packages/*/.build/
+Packages/*/.swiftpm/
+*.xcuserstate
+xcuserdata/
+
+# Keep local plans and generated validation notes out of the public checkout.
+*.md
+!README.md
+!Docs/
+!Docs/Architecture/
+!Docs/Architecture/MODULE_INTERFACES.md
+!Docs/MANUAL_TEST_CASES.md
+!Docs/VLCKIT_CAPABILITY_MATRIX.md
+!Docs/VLCKIT_FORMAT_MATRIX.md
+!ThirdPartyNotices/
+!ThirdPartyNotices/*.md
+
+# Xcode test results and local temporary output can contain machine metadata.
+*.xcresult
+*.xcresult/
+*.resultbundle
+.resultbundle/
+.tmp-*
+
+# Intermediate screenshots from UI automation runs.
+Docs/UIReview-*/flow-*.png
+
+# Keep shared project metadata even if a developer's global ignore excludes it.
+!MusicFree.xcodeproj/xcshareddata/
+!MusicFree.xcodeproj/xcshareddata/**
+
+# The app pins the exact VLCKit binary release even if a global ignore excludes lockfiles.
+!Packages/MusicFreeVLCKit/Package.resolved
+
+# Local UI reference assets are kept outside version control.
+参考UI/
+
+**/*.zip
+**/*.mp3
+**/*.wav
+**/*.flac
+.build

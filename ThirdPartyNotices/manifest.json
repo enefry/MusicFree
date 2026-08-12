@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "dependencies": [
+    {
+      "id": "vlckit-spm",
+      "name": "VLCKit-SPM",
+      "version": "4.0.0-alpha.20260805.1123",
+      "license": "MIT",
+      "kind": "source",
+      "sourceURL": "https://github.com/MobileVLCKit-SPM/VLCKit-SPM",
+      "buildMaterialsURL": "https://github.com/MobileVLCKit-SPM/VLCKit-SPM/releases/tag/4.0.0-alpha.20260805.1123",
+      "licenseURL": "https://github.com/MobileVLCKit-SPM/VLCKit-SPM/blob/4.0.0-alpha.20260805.1123/LICENSE",
+      "licenseFile": "VLCKit-SPM-MIT.txt",
+      "revision": "818aca0e9cd605c69a3a5670c2ae662b1ca0783e"
+    },
+    {
+      "id": "vlckit-binary",
+      "name": "VLCKit / libVLC binary",
+      "version": "4.0.0-alpha.20260805.1123",
+      "license": "LGPL-2.1-or-later",
+      "kind": "binary",
+      "sourceURL": "https://code.videolan.org/videolan/VLCKit",
+      "buildMaterialsURL": "https://github.com/MobileVLCKit-SPM/VLCKit-SPM/releases/tag/4.0.0-alpha.20260805.1123",
+      "licenseURL": "https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html",
+      "licenseFile": "VLCKit-LGPL-2.1.txt",
+      "checksum": "a8bd5703c324ed8e7c39241c6d091c56e99f13cf585b42fbeb0d4c6523f9386f"
+    }
+  ]
+}

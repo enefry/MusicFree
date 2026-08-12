@@ -1,0 +1,852 @@
+{
+  "images": [
+    {
+      "idiom": "mac",
+      "size": "16x16",
+      "filename": "icon_mac_16x16_1x.png",
+      "scale": "1x"
+    },
+    {
+      "idiom": "mac",
+      "size": "16x16",
+      "filename": "icon_mac_16x16_1x_dark.png",
+      "scale": "1x",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "dark"
+        }
+      ]
+    },
+    {
+      "idiom": "mac",
+      "size": "16x16",
+      "filename": "icon_mac_16x16_2x.png",
+      "scale": "2x"
+    },
+    {
+      "idiom": "mac",
+      "size": "16x16",
+      "filename": "icon_mac_16x16_2x_dark.png",
+      "scale": "2x",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "dark"
+        }
+      ]
+    },
+    {
+      "idiom": "mac",
+      "size": "32x32",
+      "filename": "icon_mac_32x32_1x.png",
+      "scale": "1x"
+    },
+    {
+      "idiom": "mac",
+      "size": "32x32",
+      "filename": "icon_mac_32x32_1x_dark.png",
+      "scale": "1x",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "dark"
+        }
+      ]
+    },
+    {
+      "idiom": "mac",
+      "size": "32x32",
+      "filename": "icon_mac_32x32_2x.png",
+      "scale": "2x"
+    },
+    {
+      "idiom": "mac",
+      "size": "32x32",
+      "filename": "icon_mac_32x32_2x_dark.png",
+      "scale": "2x",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "dark"
+        }
+      ]
+    },
+    {
+      "idiom": "mac",
+      "size": "128x128",
+      "filename": "icon_mac_128x128_1x.png",
+      "scale": "1x"
+    },
+    {
+      "idiom": "mac",
+      "size": "128x128",
+      "filename": "icon_mac_128x128_1x_dark.png",
+      "scale": "1x",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "dark"
+        }
+      ]
+    },
+    {
+      "idiom": "mac",
+      "size": "128x128",
+      "filename": "icon_mac_128x128_2x.png",
+      "scale": "2x"
+    },
+    {
+      "idiom": "mac",
+      "size": "128x128",
+      "filename": "icon_mac_128x128_2x_dark.png",
+      "scale": "2x",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "dark"
+        }
+      ]
+    },
+    {
+      "idiom": "mac",
+      "size": "256x256",
+      "filename": "icon_mac_256x256_1x.png",
+      "scale": "1x"
+    },
+    {
+      "idiom": "mac",
+      "size": "256x256",
+      "filename": "icon_mac_256x256_1x_dark.png",
+      "scale": "1x",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "dark"
+        }
+      ]
+    },
+    {
+      "idiom": "mac",
+      "size": "256x256",
+      "filename": "icon_mac_256x256_2x.png",
+      "scale": "2x"
+    },
+    {
+      "idiom": "mac",
+      "size": "256x256",
+      "filename": "icon_mac_256x256_2x_dark.png",
+      "scale": "2x",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "dark"
+        }
+      ]
+    },
+    {
+      "idiom": "mac",
+      "size": "512x512",
+      "filename": "icon_mac_512x512_1x.png",
+      "scale": "1x"
+    },
+    {
+      "idiom": "mac",
+      "size": "512x512",
+      "filename": "icon_mac_512x512_1x_dark.png",
+      "scale": "1x",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "dark"
+        }
+      ]
+    },
+    {
+      "idiom": "mac",
+      "size": "512x512",
+      "filename": "icon_mac_512x512_2x.png",
+      "scale": "2x"
+    },
+    {
+      "idiom": "mac",
+      "size": "512x512",
+      "filename": "icon_mac_512x512_2x_dark.png",
+      "scale": "2x",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "dark"
+        }
+      ]
+    },
+    {
+      "idiom": "universal",
+      "size": "20x20",
+      "filename": "icon_universal_ios_20x20_2x.png",
+      "scale": "2x",
+      "platform": "ios"
+    },
+    {
+      "idiom": "universal",
+      "size": "20x20",
+      "filename": "icon_universal_ios_20x20_2x_dark.png",
+      "scale": "2x",
+      "platform": "ios",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "dark"
+        }
+      ]
+    },
+    {
+      "idiom": "universal",
+      "size": "20x20",
+      "filename": "icon_universal_ios_20x20_2x_tinted.png",
+      "scale": "2x",
+      "platform": "ios",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "tinted"
+        }
+      ]
+    },
+    {
+      "idiom": "universal",
+      "size": "20x20",
+      "filename": "icon_universal_ios_20x20_3x.png",
+      "scale": "3x",
+      "platform": "ios"
+    },
+    {
+      "idiom": "universal",
+      "size": "20x20",
+      "filename": "icon_universal_ios_20x20_3x_dark.png",
+      "scale": "3x",
+      "platform": "ios",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "dark"
+        }
+      ]
+    },
+    {
+      "idiom": "universal",
+      "size": "20x20",
+      "filename": "icon_universal_ios_20x20_3x_tinted.png",
+      "scale": "3x",
+      "platform": "ios",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "tinted"
+        }
+      ]
+    },
+    {
+      "idiom": "universal",
+      "size": "29x29",
+      "filename": "icon_universal_ios_29x29_2x.png",
+      "scale": "2x",
+      "platform": "ios"
+    },
+    {
+      "idiom": "universal",
+      "size": "29x29",
+      "filename": "icon_universal_ios_29x29_2x_dark.png",
+      "scale": "2x",
+      "platform": "ios",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "dark"
+        }
+      ]
+    },
+    {
+      "idiom": "universal",
+      "size": "29x29",
+      "filename": "icon_universal_ios_29x29_2x_tinted.png",
+      "scale": "2x",
+      "platform": "ios",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "tinted"
+        }
+      ]
+    },
+    {
+      "idiom": "universal",
+      "size": "29x29",
+      "filename": "icon_universal_ios_29x29_3x.png",
+      "scale": "3x",
+      "platform": "ios"
+    },
+    {
+      "idiom": "universal",
+      "size": "29x29",
+      "filename": "icon_universal_ios_29x29_3x_dark.png",
+      "scale": "3x",
+      "platform": "ios",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "dark"
+        }
+      ]
+    },
+    {
+      "idiom": "universal",
+      "size": "29x29",
+      "filename": "icon_universal_ios_29x29_3x_tinted.png",
+      "scale": "3x",
+      "platform": "ios",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "tinted"
+        }
+      ]
+    },
+    {
+      "idiom": "universal",
+      "size": "38x38",
+      "filename": "icon_universal_ios_38x38_2x.png",
+      "scale": "2x",
+      "platform": "ios"
+    },
+    {
+      "idiom": "universal",
+      "size": "38x38",
+      "filename": "icon_universal_ios_38x38_2x_dark.png",
+      "scale": "2x",
+      "platform": "ios",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "dark"
+        }
+      ]
+    },
+    {
+      "idiom": "universal",
+      "size": "38x38",
+      "filename": "icon_universal_ios_38x38_2x_tinted.png",
+      "scale": "2x",
+      "platform": "ios",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "tinted"
+        }
+      ]
+    },
+    {
+      "idiom": "universal",
+      "size": "38x38",
+      "filename": "icon_universal_ios_38x38_3x.png",
+      "scale": "3x",
+      "platform": "ios"
+    },
+    {
+      "idiom": "universal",
+      "size": "38x38",
+      "filename": "icon_universal_ios_38x38_3x_dark.png",
+      "scale": "3x",
+      "platform": "ios",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "dark"
+        }
+      ]
+    },
+    {
+      "idiom": "universal",
+      "size": "38x38",
+      "filename": "icon_universal_ios_38x38_3x_tinted.png",
+      "scale": "3x",
+      "platform": "ios",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "tinted"
+        }
+      ]
+    },
+    {
+      "idiom": "universal",
+      "size": "40x40",
+      "filename": "icon_universal_ios_40x40_2x.png",
+      "scale": "2x",
+      "platform": "ios"
+    },
+    {
+      "idiom": "universal",
+      "size": "40x40",
+      "filename": "icon_universal_ios_40x40_2x_dark.png",
+      "scale": "2x",
+      "platform": "ios",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "dark"
+        }
+      ]
+    },
+    {
+      "idiom": "universal",
+      "size": "40x40",
+      "filename": "icon_universal_ios_40x40_2x_tinted.png",
+      "scale": "2x",
+      "platform": "ios",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "tinted"
+        }
+      ]
+    },
+    {
+      "idiom": "universal",
+      "size": "40x40",
+      "filename": "icon_universal_ios_40x40_3x.png",
+      "scale": "3x",
+      "platform": "ios"
+    },
+    {
+      "idiom": "universal",
+      "size": "40x40",
+      "filename": "icon_universal_ios_40x40_3x_dark.png",
+      "scale": "3x",
+      "platform": "ios",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "dark"
+        }
+      ]
+    },
+    {
+      "idiom": "universal",
+      "size": "40x40",
+      "filename": "icon_universal_ios_40x40_3x_tinted.png",
+      "scale": "3x",
+      "platform": "ios",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "tinted"
+        }
+      ]
+    },
+    {
+      "idiom": "universal",
+      "size": "60x60",
+      "filename": "icon_universal_ios_60x60_2x.png",
+      "scale": "2x",
+      "platform": "ios"
+    },
+    {
+      "idiom": "universal",
+      "size": "60x60",
+      "filename": "icon_universal_ios_60x60_2x_dark.png",
+      "scale": "2x",
+      "platform": "ios",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "dark"
+        }
+      ]
+    },
+    {
+      "idiom": "universal",
+      "size": "60x60",
+      "filename": "icon_universal_ios_60x60_2x_tinted.png",
+      "scale": "2x",
+      "platform": "ios",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "tinted"
+        }
+      ]
+    },
+    {
+      "idiom": "universal",
+      "size": "60x60",
+      "filename": "icon_universal_ios_60x60_3x.png",
+      "scale": "3x",
+      "platform": "ios"
+    },
+    {
+      "idiom": "universal",
+      "size": "60x60",
+      "filename": "icon_universal_ios_60x60_3x_dark.png",
+      "scale": "3x",
+      "platform": "ios",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "dark"
+        }
+      ]
+    },
+    {
+      "idiom": "universal",
+      "size": "60x60",
+      "filename": "icon_universal_ios_60x60_3x_tinted.png",
+      "scale": "3x",
+      "platform": "ios",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "tinted"
+        }
+      ]
+    },
+    {
+      "idiom": "universal",
+      "size": "64x64",
+      "filename": "icon_universal_ios_64x64_2x.png",
+      "scale": "2x",
+      "platform": "ios"
+    },
+    {
+      "idiom": "universal",
+      "size": "64x64",
+      "filename": "icon_universal_ios_64x64_2x_dark.png",
+      "scale": "2x",
+      "platform": "ios",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "dark"
+        }
+      ]
+    },
+    {
+      "idiom": "universal",
+      "size": "64x64",
+      "filename": "icon_universal_ios_64x64_2x_tinted.png",
+      "scale": "2x",
+      "platform": "ios",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "tinted"
+        }
+      ]
+    },
+    {
+      "idiom": "universal",
+      "size": "64x64",
+      "filename": "icon_universal_ios_64x64_3x.png",
+      "scale": "3x",
+      "platform": "ios"
+    },
+    {
+      "idiom": "universal",
+      "size": "64x64",
+      "filename": "icon_universal_ios_64x64_3x_dark.png",
+      "scale": "3x",
+      "platform": "ios",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "dark"
+        }
+      ]
+    },
+    {
+      "idiom": "universal",
+      "size": "64x64",
+      "filename": "icon_universal_ios_64x64_3x_tinted.png",
+      "scale": "3x",
+      "platform": "ios",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "tinted"
+        }
+      ]
+    },
+    {
+      "idiom": "universal",
+      "size": "68x68",
+      "filename": "icon_universal_ios_68x68_2x.png",
+      "scale": "2x",
+      "platform": "ios"
+    },
+    {
+      "idiom": "universal",
+      "size": "68x68",
+      "filename": "icon_universal_ios_68x68_2x_dark.png",
+      "scale": "2x",
+      "platform": "ios",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "dark"
+        }
+      ]
+    },
+    {
+      "idiom": "universal",
+      "size": "68x68",
+      "filename": "icon_universal_ios_68x68_2x_tinted.png",
+      "scale": "2x",
+      "platform": "ios",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "tinted"
+        }
+      ]
+    },
+    {
+      "idiom": "universal",
+      "size": "76x76",
+      "filename": "icon_universal_ios_76x76_2x.png",
+      "scale": "2x",
+      "platform": "ios"
+    },
+    {
+      "idiom": "universal",
+      "size": "76x76",
+      "filename": "icon_universal_ios_76x76_2x_dark.png",
+      "scale": "2x",
+      "platform": "ios",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "dark"
+        }
+      ]
+    },
+    {
+      "idiom": "universal",
+      "size": "76x76",
+      "filename": "icon_universal_ios_76x76_2x_tinted.png",
+      "scale": "2x",
+      "platform": "ios",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "tinted"
+        }
+      ]
+    },
+    {
+      "idiom": "universal",
+      "size": "83.5x83.5",
+      "filename": "icon_universal_ios_83.5x83.5_2x.png",
+      "scale": "2x",
+      "platform": "ios"
+    },
+    {
+      "idiom": "universal",
+      "size": "83.5x83.5",
+      "filename": "icon_universal_ios_83.5x83.5_2x_dark.png",
+      "scale": "2x",
+      "platform": "ios",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "dark"
+        }
+      ]
+    },
+    {
+      "idiom": "universal",
+      "size": "83.5x83.5",
+      "filename": "icon_universal_ios_83.5x83.5_2x_tinted.png",
+      "scale": "2x",
+      "platform": "ios",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "tinted"
+        }
+      ]
+    },
+    {
+      "idiom": "universal",
+      "size": "1024x1024",
+      "filename": "icon_universal_ios_1024x1024_None.png",
+      "platform": "ios"
+    },
+    {
+      "idiom": "universal",
+      "size": "1024x1024",
+      "filename": "icon_universal_ios_1024x1024_None_dark.png",
+      "platform": "ios",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "dark"
+        }
+      ]
+    },
+    {
+      "idiom": "universal",
+      "size": "1024x1024",
+      "filename": "icon_universal_ios_1024x1024_None_tinted.png",
+      "platform": "ios",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "tinted"
+        }
+      ]
+    },
+    {
+      "idiom": "universal",
+      "size": "22x22",
+      "filename": "icon_universal_watchos_22x22_2x.png",
+      "scale": "2x",
+      "platform": "watchos"
+    },
+    {
+      "idiom": "universal",
+      "size": "24x24",
+      "filename": "icon_universal_watchos_24x24_2x.png",
+      "scale": "2x",
+      "platform": "watchos"
+    },
+    {
+      "idiom": "universal",
+      "size": "27.5x27.5",
+      "filename": "icon_universal_watchos_27.5x27.5_2x.png",
+      "scale": "2x",
+      "platform": "watchos"
+    },
+    {
+      "idiom": "universal",
+      "size": "29x29",
+      "filename": "icon_universal_watchos_29x29_2x.png",
+      "scale": "2x",
+      "platform": "watchos"
+    },
+    {
+      "idiom": "universal",
+      "size": "30x30",
+      "filename": "icon_universal_watchos_30x30_2x.png",
+      "scale": "2x",
+      "platform": "watchos"
+    },
+    {
+      "idiom": "universal",
+      "size": "32x32",
+      "filename": "icon_universal_watchos_32x32_2x.png",
+      "scale": "2x",
+      "platform": "watchos"
+    },
+    {
+      "idiom": "universal",
+      "size": "33x33",
+      "filename": "icon_universal_watchos_33x33_2x.png",
+      "scale": "2x",
+      "platform": "watchos"
+    },
+    {
+      "idiom": "universal",
+      "size": "40x40",
+      "filename": "icon_universal_watchos_40x40_2x.png",
+      "scale": "2x",
+      "platform": "watchos"
+    },
+    {
+      "idiom": "universal",
+      "size": "43.5x43.5",
+      "filename": "icon_universal_watchos_43.5x43.5_2x.png",
+      "scale": "2x",
+      "platform": "watchos"
+    },
+    {
+      "idiom": "universal",
+      "size": "44x44",
+      "filename": "icon_universal_watchos_44x44_2x.png",
+      "scale": "2x",
+      "platform": "watchos"
+    },
+    {
+      "idiom": "universal",
+      "size": "46x46",
+      "filename": "icon_universal_watchos_46x46_2x.png",
+      "scale": "2x",
+      "platform": "watchos"
+    },
+    {
+      "idiom": "universal",
+      "size": "50x50",
+      "filename": "icon_universal_watchos_50x50_2x.png",
+      "scale": "2x",
+      "platform": "watchos"
+    },
+    {
+      "idiom": "universal",
+      "size": "51x51",
+      "filename": "icon_universal_watchos_51x51_2x.png",
+      "scale": "2x",
+      "platform": "watchos"
+    },
+    {
+      "idiom": "universal",
+      "size": "54x54",
+      "filename": "icon_universal_watchos_54x54_2x.png",
+      "scale": "2x",
+      "platform": "watchos"
+    },
+    {
+      "idiom": "universal",
+      "size": "86x86",
+      "filename": "icon_universal_watchos_86x86_2x.png",
+      "scale": "2x",
+      "platform": "watchos"
+    },
+    {
+      "idiom": "universal",
+      "size": "98x98",
+      "filename": "icon_universal_watchos_98x98_2x.png",
+      "scale": "2x",
+      "platform": "watchos"
+    },
+    {
+      "idiom": "universal",
+      "size": "108x108",
+      "filename": "icon_universal_watchos_108x108_2x.png",
+      "scale": "2x",
+      "platform": "watchos"
+    },
+    {
+      "idiom": "universal",
+      "size": "117x117",
+      "filename": "icon_universal_watchos_117x117_2x.png",
+      "scale": "2x",
+      "platform": "watchos"
+    },
+    {
+      "idiom": "universal",
+      "size": "129x129",
+      "filename": "icon_universal_watchos_129x129_2x.png",
+      "scale": "2x",
+      "platform": "watchos"
+    },
+    {
+      "idiom": "universal",
+      "size": "1024x1024",
+      "filename": "icon_universal_watchos_1024x1024_None.png",
+      "platform": "watchos"
+    }
+  ],
+  "info": {
+    "author": "xcode",
+    "version": 1
+  }
+}
