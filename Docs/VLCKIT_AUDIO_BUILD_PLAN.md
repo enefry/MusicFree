@@ -6,6 +6,8 @@
 
 实施状态：已创建并修改 `MusicFreeVLCKit` 构建仓库，已生成并保留 iOS Device/Simulator XCFramework；尚未替换 MusicFree 生产依赖，也未宣称可发布
 
+后续维护：VLCKit/libVLC 上游升级、补丁重放、主线冲突处理和升级交接模板统一维护在 `../MusicFreeVLCKit/Documentation/MUSICFREE_UPSTREAM_UPGRADE_GUIDE.md`。后续 agent 应先读取该指南，再创建独立 upgrade worktree；不要直接在已知良好分支上 merge/rebase。
+
 当前候选：
 
 - XCFramework：`MusicFreeVLCKit/build-audio-ios-20260814-r5/iOS/VLCKit.xcframework`，117,546,306 bytes（约 112.1 MiB）
