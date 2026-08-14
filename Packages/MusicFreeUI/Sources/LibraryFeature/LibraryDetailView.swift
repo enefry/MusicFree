@@ -302,6 +302,7 @@ struct LibraryCollectionDetailView: View {
     let isCollectionPlaylistActionPending: (LibraryCollectionQueueTarget) -> Bool
     let artworkServing: (any ArtworkServing)?
     let navigate: (LibraryDestination) -> Void
+    let removeDeletedTracks: (Set<MediaItemID>) -> Void
 
     @State private var tracks: [Track] = []
     @State private var isLoading = true
@@ -309,8 +310,11 @@ struct LibraryCollectionDetailView: View {
     @State private var favoriteMutationIDs: Set<MediaItemID> = []
     @State private var artistNames: [ArtistID: String] = [:]
     @State private var pendingDeletionTrack: Track?
+    @State private var pendingDeletionTrackIDs: Set<MediaItemID> = []
     @State private var deletionErrorMessage: String?
-    @State private var deletingTrackID: MediaItemID?
+    @State private var deletingTrackIDs: Set<MediaItemID> = []
+    @State private var editMode: EditMode = .inactive
+    @State private var selectedTrackIDs: Set<MediaItemID> = []
     @StateObject private var artworkLoader = ArtworkImageLoader()
 
     var body: some View {
@@ -389,7 +393,30 @@ struct LibraryCollectionDetailView: View {
         .accessibilityIdentifier("library.collectionDetail")
         .navigationTitle(isAlbum ? "" : (title ?? kind.title))
         .navigationBarTitleDisplayMode(.inline)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if isEditing, !selectedTrackIDs.isEmpty {
+                LibraryBatchDeletionBar(
+                    count: selectedTrackIDs.count,
+                    scope: .tracks,
+                    accessibilityIdentifier: "library.collection.deleteSelected",
+                    isDisabled: isDeleting,
+                    action: requestDeleteSelected
+                )
+            }
+        }
+        .environment(\.editMode, $editMode)
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    toggleEditing()
+                } label: {
+                    Image(systemName: isEditing ? "checkmark" : "pencil")
+                }
+                .accessibilityLabel(Text(isEditing ? L("完成编辑") : L("编辑歌曲集合")))
+                .help(isEditing ? L("完成编辑") : L("编辑歌曲集合"))
+                .accessibilityIdentifier("library.collection.edit")
+                .disabled(isLoading || isDeleting)
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     LibraryCollectionQueueMenuActions(
@@ -406,14 +433,20 @@ struct LibraryCollectionDetailView: View {
                 }
                 .accessibilityLabel(L("集合选项"))
                 .accessibilityIdentifier("library.collection.menu")
+                .disabled(isEditing || isDeleting)
             }
         }
         .task(id: kind) { await load() }
         .trackDeletionPresentation(
             pendingTrack: $pendingDeletionTrack,
             errorMessage: $deletionErrorMessage,
-            isDeleting: deletingTrackID != nil,
+            isDeleting: isDeleting,
             delete: deleteTrack
+        )
+        .batchTrackDeletionPresentation(
+            pendingTrackIDs: $pendingDeletionTrackIDs,
+            isDeleting: isDeleting,
+            delete: deleteSelectedTracks
         )
     }
 
@@ -429,7 +462,10 @@ struct LibraryCollectionDetailView: View {
                 detailAction: { navigate(.track(track.id)) },
                 favoriteAction: { toggleFavorite(track) },
                 requestDelete: { pendingDeletionTrack = track },
-                isDeleting: deletingTrackID == track.id,
+                selectionAction: { toggleSelection(for: track.id) },
+                isSelected: selectedTrackIDs.contains(track.id),
+                isEditing: isEditing,
+                isDeleting: deletingTrackIDs.contains(track.id),
                 enqueueNextTracks: enqueueNextTracks,
                 enqueueTracks: enqueueTracks,
                 addToPlaylist: addTracksToPlaylist,
@@ -477,6 +513,14 @@ struct LibraryCollectionDetailView: View {
 
     private var orderedTracks: [Track] {
         isAlbum ? LibraryAlbumTrackOrdering.ordered(tracks) : tracks
+    }
+
+    private var isEditing: Bool {
+        editMode.isEditing
+    }
+
+    private var isDeleting: Bool {
+        !deletingTrackIDs.isEmpty
     }
 
     private var collectionTitle: String {
@@ -587,16 +631,63 @@ struct LibraryCollectionDetailView: View {
         }
     }
 
+    private func toggleEditing() {
+        guard !isLoading, !isDeleting else { return }
+        if isEditing {
+            editMode = .inactive
+            selectedTrackIDs.removeAll()
+        } else {
+            editMode = .active
+        }
+    }
+
+    private func toggleSelection(for trackID: MediaItemID) {
+        guard isEditing, !isDeleting else { return }
+        if !selectedTrackIDs.insert(trackID).inserted {
+            selectedTrackIDs.remove(trackID)
+        }
+    }
+
+    private func requestDeleteSelected() {
+        guard isEditing, !isDeleting, !selectedTrackIDs.isEmpty else { return }
+        pendingDeletionTrackIDs = selectedTrackIDs
+    }
+
     private func deleteTrack(_ track: Track) {
-        guard deletingTrackID == nil else { return }
+        guard !isDeleting else { return }
         let itemID = track.id
-        deletingTrackID = itemID
+        deletingTrackIDs = [itemID]
         Task { @MainActor in
-            defer { deletingTrackID = nil }
+            defer { deletingTrackIDs.remove(itemID) }
             do {
                 _ = try await library.delete([itemID])
                 tracks.removeAll { $0.id == itemID }
                 favoriteMutationIDs.remove(itemID)
+                selectedTrackIDs.remove(itemID)
+                removeDeletedTracks([itemID])
+            } catch is CancellationError {
+                return
+            } catch {
+                deletionErrorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func deleteSelectedTracks(_ itemIDs: Set<MediaItemID>) {
+        guard isEditing, !isDeleting, !itemIDs.isEmpty else { return }
+        deletingTrackIDs = itemIDs
+        Task { @MainActor in
+            defer { deletingTrackIDs.subtract(itemIDs) }
+            do {
+                _ = try await library.delete(itemIDs)
+                tracks.removeAll { itemIDs.contains($0.id) }
+                favoriteMutationIDs.subtract(itemIDs)
+                selectedTrackIDs.subtract(itemIDs)
+                removeDeletedTracks(itemIDs)
+                if tracks.isEmpty {
+                    editMode = .inactive
+                    selectedTrackIDs.removeAll()
+                }
             } catch is CancellationError {
                 return
             } catch {
@@ -669,6 +760,7 @@ struct LibraryFolderDetailView: View {
     let isCollectionQueueActionPending: (LibraryCollectionQueueTarget) -> Bool
     let artworkServing: (any ArtworkServing)?
     let navigate: (LibraryDestination) -> Void
+    let removeDeletedTracks: (Set<MediaItemID>) -> Void
 
     @State private var tracks: [Track] = []
     @State private var isLoading = true
@@ -676,8 +768,11 @@ struct LibraryFolderDetailView: View {
     @State private var favoriteMutationIDs: Set<MediaItemID> = []
     @State private var artistNames: [ArtistID: String] = [:]
     @State private var pendingDeletionTrack: Track?
+    @State private var pendingDeletionTrackIDs: Set<MediaItemID> = []
     @State private var deletionErrorMessage: String?
-    @State private var deletingTrackID: MediaItemID?
+    @State private var deletingTrackIDs: Set<MediaItemID> = []
+    @State private var editMode: EditMode = .inactive
+    @State private var selectedTrackIDs: Set<MediaItemID> = []
 
     var body: some View {
         Group {
@@ -727,7 +822,10 @@ struct LibraryFolderDetailView: View {
                                 detailAction: { navigate(.track(track.id)) },
                                 favoriteAction: { toggleFavorite(track) },
                                 requestDelete: { pendingDeletionTrack = track },
-                                isDeleting: deletingTrackID == track.id,
+                                selectionAction: { toggleSelection(for: track.id) },
+                                isSelected: selectedTrackIDs.contains(track.id),
+                                isEditing: isEditing,
+                                isDeleting: deletingTrackIDs.contains(track.id),
                                 enqueueNextTracks: enqueueNextTracks,
                                 enqueueTracks: enqueueTracks,
                                 addToPlaylist: nil,
@@ -746,7 +844,30 @@ struct LibraryFolderDetailView: View {
         .accessibilityIdentifier("library.folderDetail")
         .navigationTitle(path)
         .navigationBarTitleDisplayMode(.inline)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if isEditing, !selectedTrackIDs.isEmpty {
+                LibraryBatchDeletionBar(
+                    count: selectedTrackIDs.count,
+                    scope: .tracks,
+                    accessibilityIdentifier: "library.folderDetail.deleteSelected",
+                    isDisabled: isDeleting,
+                    action: requestDeleteSelected
+                )
+            }
+        }
+        .environment(\.editMode, $editMode)
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    toggleEditing()
+                } label: {
+                    Image(systemName: isEditing ? "checkmark" : "pencil")
+                }
+                .accessibilityLabel(Text(isEditing ? L("完成编辑") : L("编辑歌曲集合")))
+                .help(isEditing ? L("完成编辑") : L("编辑歌曲集合"))
+                .accessibilityIdentifier("library.folderDetail.edit")
+                .disabled(isLoading || isDeleting)
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     LibraryCollectionQueueMenuActions(
@@ -761,19 +882,33 @@ struct LibraryFolderDetailView: View {
                 }
                 .accessibilityLabel(L("文件夹选项"))
                 .accessibilityIdentifier("library.folderDetail.menu")
+                .disabled(isEditing || isDeleting)
             }
         }
         .task(id: path) { await load() }
         .trackDeletionPresentation(
             pendingTrack: $pendingDeletionTrack,
             errorMessage: $deletionErrorMessage,
-            isDeleting: deletingTrackID != nil,
+            isDeleting: isDeleting,
             delete: deleteTrack
+        )
+        .batchTrackDeletionPresentation(
+            pendingTrackIDs: $pendingDeletionTrackIDs,
+            isDeleting: isDeleting,
+            delete: deleteSelectedTracks
         )
     }
 
     private var collectionQueueTarget: LibraryCollectionQueueTarget {
         .folder(path)
+    }
+
+    private var isEditing: Bool {
+        editMode.isEditing
+    }
+
+    private var isDeleting: Bool {
+        !deletingTrackIDs.isEmpty
     }
 
     private func load() async {
@@ -831,21 +966,103 @@ struct LibraryFolderDetailView: View {
         }
     }
 
+    private func toggleEditing() {
+        guard !isLoading, !isDeleting else { return }
+        if isEditing {
+            editMode = .inactive
+            selectedTrackIDs.removeAll()
+        } else {
+            editMode = .active
+        }
+    }
+
+    private func toggleSelection(for trackID: MediaItemID) {
+        guard isEditing, !isDeleting else { return }
+        if !selectedTrackIDs.insert(trackID).inserted {
+            selectedTrackIDs.remove(trackID)
+        }
+    }
+
+    private func requestDeleteSelected() {
+        guard isEditing, !isDeleting, !selectedTrackIDs.isEmpty else { return }
+        pendingDeletionTrackIDs = selectedTrackIDs
+    }
+
     private func deleteTrack(_ track: Track) {
-        guard deletingTrackID == nil else { return }
+        guard !isDeleting else { return }
         let itemID = track.id
-        deletingTrackID = itemID
+        deletingTrackIDs = [itemID]
         Task { @MainActor in
-            defer { deletingTrackID = nil }
+            defer { deletingTrackIDs.remove(itemID) }
             do {
                 _ = try await library.delete([itemID])
                 tracks.removeAll { $0.id == itemID }
                 favoriteMutationIDs.remove(itemID)
+                selectedTrackIDs.remove(itemID)
+                removeDeletedTracks([itemID])
             } catch is CancellationError {
                 return
             } catch {
                 deletionErrorMessage = error.localizedDescription
             }
+        }
+    }
+
+    private func deleteSelectedTracks(_ itemIDs: Set<MediaItemID>) {
+        guard isEditing, !isDeleting, !itemIDs.isEmpty else { return }
+        deletingTrackIDs = itemIDs
+        Task { @MainActor in
+            defer { deletingTrackIDs.subtract(itemIDs) }
+            do {
+                _ = try await library.delete(itemIDs)
+                tracks.removeAll { itemIDs.contains($0.id) }
+                favoriteMutationIDs.subtract(itemIDs)
+                selectedTrackIDs.subtract(itemIDs)
+                removeDeletedTracks(itemIDs)
+                if tracks.isEmpty {
+                    editMode = .inactive
+                    selectedTrackIDs.removeAll()
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                deletionErrorMessage = error.localizedDescription
+            }
+        }
+    }
+}
+
+struct LibraryBatchDeletionBar: View {
+    let count: Int
+    let scope: LibraryBatchDeletionScope
+    let accessibilityIdentifier: String
+    let isDisabled: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(role: .destructive, action: action) {
+            HStack(spacing: MusicFreeSpacingTokens.small) {
+                Label(scope.actionTitle, systemImage: "trash")
+                Spacer(minLength: MusicFreeSpacingTokens.small)
+                Text(scope.countLabel(count))
+                    .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
+            }
+            .font(.headline)
+            .frame(
+                maxWidth: .infinity,
+                minHeight: MusicFreeLayoutMetrics.minimumHitTarget
+            )
+        }
+        .buttonStyle(.bordered)
+        .tint(MusicFreeColorTokens.destructive)
+        .disabled(isDisabled)
+        .accessibilityIdentifier(accessibilityIdentifier)
+        .accessibilityValue(Text(scope.countLabel(count)))
+        .padding(.horizontal, MusicFreeSpacingTokens.contentInset)
+        .padding(.vertical, MusicFreeSpacingTokens.small)
+        .background(.bar)
+        .overlay(alignment: .top) {
+            Divider()
         }
     }
 }
@@ -859,6 +1076,9 @@ private struct LibraryDetailTrackRow: View {
     let detailAction: () -> Void
     let favoriteAction: () -> Void
     let requestDelete: () -> Void
+    let selectionAction: () -> Void
+    let isSelected: Bool
+    let isEditing: Bool
     let isDeleting: Bool
     let enqueueNextTracks: (([MediaItemID]) -> Void)?
     let enqueueTracks: (([MediaItemID]) -> Void)?
@@ -868,6 +1088,26 @@ private struct LibraryDetailTrackRow: View {
 
     var body: some View {
         HStack(spacing: 0) {
+            if isEditing {
+                Button(action: selectionAction) {
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.title3)
+                        .foregroundStyle(
+                            isSelected
+                                ? MusicFreeColorTokens.accent
+                                : MusicFreeColorTokens.foregroundTertiary
+                        )
+                        .frame(
+                            width: MusicFreeLayoutMetrics.minimumHitTarget,
+                            height: MusicFreeLayoutMetrics.minimumHitTarget
+                        )
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text(isSelected ? L("取消选择") : L("选择歌曲")))
+                .accessibilityIdentifier(
+                    "\(accessibilityPrefix).select.\(track.id.externalID)"
+                )
+            }
             if let trackNumberText {
                 Text(trackNumberText)
                     .font(MusicFreeTypographyTokens.body.monospacedDigit())
@@ -875,7 +1115,7 @@ private struct LibraryDetailTrackRow: View {
                     .frame(width: 30, alignment: .leading)
                     .accessibilityIdentifier("\(accessibilityPrefix).number.\(track.id.externalID)")
             }
-            Button(action: playAction) {
+            Button(action: isEditing ? selectionAction : playAction) {
                 MediaRow(
                     title: track.title,
                     subtitle: subtitle,
@@ -884,49 +1124,53 @@ private struct LibraryDetailTrackRow: View {
             }
             .buttonStyle(.plain)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .disabled(!isPlayEnabled)
-            .accessibilityIdentifier("\(accessibilityPrefix).play.\(track.id.externalID)")
-            .accessibilityHint(L("播放歌曲"))
+            .disabled(!isEditing && !isPlayEnabled)
+            .accessibilityIdentifier(
+                "\(accessibilityPrefix).\(isEditing ? "select" : "play").\(track.id.externalID)"
+            )
+            .accessibilityHint(L(isEditing ? "选择歌曲" : "播放歌曲"))
 
-            Menu {
-                Button(L("播放"), systemImage: "play.fill", action: playAction)
-                    .disabled(!isPlayEnabled)
-                    .accessibilityIdentifier("\(accessibilityPrefix).menu.play.\(track.id.externalID)")
-                Button(L("查看歌曲详情"), systemImage: "info.circle", action: detailAction)
-                    .accessibilityIdentifier("\(accessibilityPrefix).menu.detail.\(track.id.externalID)")
-                TrackQueueMenuActions(
-                    trackID: track.id,
-                    accessibilityPrefix: "\(accessibilityPrefix).menu",
-                    enqueueNextTracks: enqueueNextTracks,
-                    enqueueTracks: enqueueTracks,
-                    addToPlaylist: addToPlaylist
-                )
-                Button(
-                    track.isFavorite ? L("取消收藏") : L("收藏"),
-                    systemImage: track.isFavorite ? "star.slash" : "star",
-                    action: favoriteAction
-                )
-                .disabled(!isFavoriteEnabled)
-                .accessibilityIdentifier("\(accessibilityPrefix).menu.favorite.\(track.id.externalID)")
-                Divider()
-                Button(role: .destructive, action: requestDelete) {
-                    Label(L("删除歌曲"), systemImage: "trash")
-                }
-                .disabled(isDeleting)
-                .accessibilityIdentifier("\(accessibilityPrefix).menu.delete.\(track.id.externalID)")
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.headline.weight(.semibold))
-                    .frame(
-                        width: MusicFreeLayoutMetrics.minimumHitTarget,
-                        height: MusicFreeLayoutMetrics.minimumHitTarget
+            if !isEditing {
+                Menu {
+                    Button(L("播放"), systemImage: "play.fill", action: playAction)
+                        .disabled(!isPlayEnabled)
+                        .accessibilityIdentifier("\(accessibilityPrefix).menu.play.\(track.id.externalID)")
+                    Button(L("查看歌曲详情"), systemImage: "info.circle", action: detailAction)
+                        .accessibilityIdentifier("\(accessibilityPrefix).menu.detail.\(track.id.externalID)")
+                    TrackQueueMenuActions(
+                        trackID: track.id,
+                        accessibilityPrefix: "\(accessibilityPrefix).menu",
+                        enqueueNextTracks: enqueueNextTracks,
+                        enqueueTracks: enqueueTracks,
+                        addToPlaylist: addToPlaylist
                     )
-                    .contentShape(Rectangle())
+                    Button(
+                        track.isFavorite ? L("取消收藏") : L("收藏"),
+                        systemImage: track.isFavorite ? "star.slash" : "star",
+                        action: favoriteAction
+                    )
+                    .disabled(!isFavoriteEnabled)
+                    .accessibilityIdentifier("\(accessibilityPrefix).menu.favorite.\(track.id.externalID)")
+                    Divider()
+                    Button(role: .destructive, action: requestDelete) {
+                        Label(L("删除歌曲"), systemImage: "trash")
+                    }
+                    .disabled(isDeleting)
+                    .accessibilityIdentifier("\(accessibilityPrefix).menu.delete.\(track.id.externalID)")
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.headline.weight(.semibold))
+                        .frame(
+                            width: MusicFreeLayoutMetrics.minimumHitTarget,
+                            height: MusicFreeLayoutMetrics.minimumHitTarget
+                        )
+                        .contentShape(Rectangle())
+                }
+                .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
+                .accessibilityLabel(L("歌曲选项"))
+                .accessibilityIdentifier("\(accessibilityPrefix).menu.\(track.id.externalID)")
+                .padding(.trailing, MusicFreeSpacingTokens.contentInset)
             }
-            .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
-            .accessibilityLabel(L("歌曲选项"))
-            .accessibilityIdentifier("\(accessibilityPrefix).menu.\(track.id.externalID)")
-            .padding(.trailing, MusicFreeSpacingTokens.contentInset)
         }
     }
 

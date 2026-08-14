@@ -19,6 +19,7 @@
     {
       "layers" : [
         {
+          "blend-mode" : "normal",
           "fill" : {
             "automatic-gradient" : "extended-gray:1.00000,1.00000",
             "orientation" : {
@@ -39,12 +40,13 @@
           "position" : {
             "scale" : 1,
             "translation-in-points" : [
-              129.1328125,
-              -75.5560327203109
+              88.95310563999988,
+              -89.2669702203109
             ]
           }
         },
         {
+          "blend-mode" : "overlay",
           "fill" : {
             "automatic-gradient" : "extended-gray:1.00000,1.00000"
           },
@@ -55,16 +57,10 @@
           "fill" : {
             "automatic-gradient" : "extended-gray:1.00000,1.00000"
           },
+          "glass" : true,
+          "hidden" : false,
           "image-name" : "cicle-fg1.svg",
           "name" : "cicle-fg1"
-        },
-        {
-          "fill" : {
-            "automatic-gradient" : "extended-gray:1.00000,1.00000"
-          },
-          "hidden" : true,
-          "image-name" : "cicle-2.svg",
-          "name" : "cicle-2"
         }
       ],
       "shadow" : {

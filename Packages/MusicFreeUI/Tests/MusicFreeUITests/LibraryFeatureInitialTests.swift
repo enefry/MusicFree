@@ -153,6 +153,96 @@ func removingTrackPreservesUnqueriedSectionState() async {
 }
 
 @MainActor
+@Test("Removing multiple tracks clears every loaded library cache")
+func removingMultipleTracksClearsLoadedCaches() async {
+    let first = makeTrack("batch removed one")
+    let second = makeTrack("batch removed two")
+    let retained = makeTrack("batch retained")
+    let retainedFavorite = Track(
+        id: retained.id,
+        title: retained.title,
+        isFavorite: true
+    )
+    let service = FakeLibraryService()
+    service.trackResponses = [
+        .success(LibraryPage(elements: [first, second, retained])),
+        .success(LibraryPage(elements: [first, second, retainedFavorite]))
+    ]
+    service.historyResponses = [
+        .success(
+            LibraryPage(
+                elements: [
+                    makeHistoryItem(sessionID: UUID(), track: first, eventTime: 100),
+                    makeHistoryItem(sessionID: UUID(), track: second, eventTime: 200),
+                    makeHistoryItem(sessionID: UUID(), track: retained, eventTime: 300)
+                ]
+            )
+        )
+    ]
+    let viewModel = LibraryViewModel(library: service)
+
+    viewModel.load(section: .tracks, reset: true)
+    await settle()
+    viewModel.load(section: .favorites, reset: true)
+    await settle()
+    viewModel.load(section: .recent, reset: true)
+    await settle()
+
+    viewModel.removeDeletedTracks([first.id, second.id])
+
+    #expect(viewModel.tracks.map(\.id) == [retained.id])
+    #expect(viewModel.favoriteTracks.map(\.id) == [retained.id])
+    #expect(viewModel.recentTracks.map(\.id) == [retained.id])
+    #expect(viewModel.playbackHistory.map(\.track.id) == [retained.id])
+    #expect(viewModel.state(for: .tracks) == .loaded)
+    #expect(viewModel.state(for: .favorites) == .loaded)
+    #expect(viewModel.state(for: .recent) == .loaded)
+}
+
+@MainActor
+@Test("Collection batch loader merges album and artist tracks without duplicates")
+func collectionBatchLoaderMergesTrackIDs() async throws {
+    let albumID = AlbumID(rawValue: "batch-album")
+    let artistID = ArtistID(rawValue: "batch-artist")
+    let albumTrack = Track(
+        id: MediaItemID(sourceID: .local, externalID: "album-track"),
+        title: "Album track",
+        albumID: albumID,
+        artistIDs: [artistID]
+    )
+    let sharedTrack = Track(
+        id: MediaItemID(sourceID: .local, externalID: "shared-track"),
+        title: "Shared track",
+        albumID: albumID,
+        artistIDs: [artistID]
+    )
+    let artistTrack = Track(
+        id: MediaItemID(sourceID: .local, externalID: "artist-track"),
+        title: "Artist track",
+        artistIDs: [artistID]
+    )
+    let service = FakeLibraryService()
+    service.trackResponsesByQuery[TrackQuery(sourceID: .local, albumID: albumID)] = [
+        .success(LibraryPage(elements: [albumTrack, sharedTrack]))
+    ]
+    service.trackResponsesByQuery[TrackQuery(sourceID: .local, artistID: artistID)] = [
+        .success(LibraryPage(elements: [sharedTrack, artistTrack]))
+    ]
+    let targets: Set<LibraryCollectionQueueTarget> = [
+        .album(albumID),
+        .artist(artistID)
+    ]
+
+    let itemIDs = try await LibraryCollectionTrackLoader.itemIDs(
+        for: targets,
+        from: service
+    )
+
+    #expect(itemIDs == Set([albumTrack.id, sharedTrack.id, artistTrack.id]))
+    #expect(service.trackRequests.count == 2)
+}
+
+@MainActor
 @Test("Library overview loads recently added albums in descending date order")
 func libraryOverviewLoadsRecentAlbums() async throws {
     let service = FakeLibraryService()
@@ -737,6 +827,7 @@ func importEventMapping() {
 @MainActor
 private final class FakeLibraryService: LibraryServing {
     var trackResponses: [Result<LibraryPage<Track>, Error>] = []
+    var trackResponsesByQuery: [TrackQuery: [Result<LibraryPage<Track>, Error>]] = [:]
     var trackRequests: [TrackQuery] = []
     var trackPageRequests: [LibraryPageRequest] = []
     var albumResponses: [Result<LibraryPage<Album>, Error>] = []
@@ -772,6 +863,12 @@ private final class FakeLibraryService: LibraryServing {
                 cancelledQueries.append("old")
                 throw error
             }
+        }
+
+        if var responses = trackResponsesByQuery[query], !responses.isEmpty {
+            let response = responses.removeFirst()
+            trackResponsesByQuery[query] = responses
+            return try response.get()
         }
 
         guard !trackResponses.isEmpty else { return LibraryPage(elements: []) }

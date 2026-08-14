@@ -28,6 +28,11 @@ struct AlbumsView: View {
 
     @State private var artistNames: [ArtistID: String] = [:]
     @State private var sortMode: AlbumSortMode = .title
+    @State private var editMode: EditMode = .inactive
+    @State private var selectedAlbumIDs: Set<AlbumID> = []
+    @State private var pendingAlbumDeletionIDs: Set<AlbumID> = []
+    @State private var isDeleting = false
+    @State private var deletionErrorMessage: String?
 
     init(
         viewModel: LibraryViewModel,
@@ -66,28 +71,70 @@ struct AlbumsView: View {
                 ) {
                     ForEach(viewModel.albums) { album in
                         Button {
-                            navigate(.album(album.id))
+                            if isEditing {
+                                toggleSelection(for: album.id)
+                            } else {
+                                navigate(.album(album.id))
+                            }
                         } label: {
-                            LibraryAlbumGridTile(
-                                album: album,
-                                subtitle: albumSubtitle(album),
-                                artworkServing: artworkServing
-                            )
+                            ZStack(alignment: .topLeading) {
+                                LibraryAlbumGridTile(
+                                    album: album,
+                                    subtitle: albumSubtitle(album),
+                                    artworkServing: artworkServing
+                                )
+                                if isEditing {
+                                    Image(
+                                        systemName: selectedAlbumIDs.contains(album.id)
+                                            ? "checkmark.circle.fill"
+                                            : "circle"
+                                    )
+                                    .font(.title2)
+                                    .foregroundStyle(
+                                        selectedAlbumIDs.contains(album.id)
+                                            ? MusicFreeColorTokens.accent
+                                            : MusicFreeColorTokens.foregroundTertiary
+                                    )
+                                    .background(
+                                        Circle()
+                                            .fill(MusicFreeColorTokens.backgroundPrimary)
+                                    )
+                                    .padding(MusicFreeSpacingTokens.small)
+                                    .accessibilityHidden(true)
+                                }
+                            }
                         }
                         .buttonStyle(.plain)
                         .contextMenu {
-                            let target = LibraryCollectionQueueTarget.album(album.id)
-                            LibraryCollectionQueueMenuActions(
-                                target: target,
-                                accessibilityPrefix: "library.album.menu",
-                                enqueueNext: enqueueNextCollection,
-                                enqueue: enqueueCollection,
-                                addToPlaylist: addCollectionToPlaylist,
-                                isPending: isCollectionQueueActionPending(target)
-                                    || isCollectionPlaylistActionPending(target)
-                            )
+                            if !isEditing {
+                                let target = LibraryCollectionQueueTarget.album(album.id)
+                                LibraryCollectionQueueMenuActions(
+                                    target: target,
+                                    accessibilityPrefix: "library.album.menu",
+                                    enqueueNext: enqueueNextCollection,
+                                    enqueue: enqueueCollection,
+                                    addToPlaylist: addCollectionToPlaylist,
+                                    isPending: isCollectionQueueActionPending(target)
+                                        || isCollectionPlaylistActionPending(target)
+                                )
+                            }
                         }
-                        .accessibilityHint(L("打开专辑，按住显示播放队列操作"))
+                        .accessibilityLabel(Text(album.title))
+                        .accessibilityValue(
+                            Text(
+                                isEditing
+                                    ? (selectedAlbumIDs.contains(album.id)
+                                        ? L("已选择")
+                                        : L("未选择"))
+                                    : L("专辑")
+                            )
+                        )
+                        .accessibilityIdentifier(
+                            "library.album.\(isEditing ? "select" : "open").\(album.id.rawValue)"
+                        )
+                        .accessibilityHint(
+                            L(isEditing ? "选择专辑" : "打开专辑，按住显示播放队列操作")
+                        )
                         .onAppear {
                             if album.id == viewModel.albums.last?.id {
                                 viewModel.loadNextPage(for: .albums)
@@ -103,6 +150,15 @@ struct AlbumsView: View {
             }
             .scrollIndicators(.hidden)
             .safeAreaInset(edge: .bottom, spacing: 0) {
+                if isEditing, !selectedAlbumIDs.isEmpty {
+                    LibraryBatchDeletionBar(
+                        count: selectedAlbumIDs.count,
+                        scope: .albums,
+                        accessibilityIdentifier: "library.albums.deleteSelected",
+                        isDisabled: isDeleting,
+                        action: requestDeleteSelected
+                    )
+                }
                 if horizontalSizeClass == .compact {
                     Color.clear
                         .frame(height: MusicFreeLayoutMetrics.compactTabAccessoryClearance)
@@ -112,6 +168,7 @@ struct AlbumsView: View {
             .background(MusicFreeColorTokens.backgroundPrimary)
             .accessibilityIdentifier("library.albums")
         }
+        .environment(\.editMode, $editMode)
         .task(id: artistMetadataKey) {
             await loadArtistNames()
         }
@@ -119,6 +176,17 @@ struct AlbumsView: View {
             viewModel.setAlbumSort(mode.descriptor)
         }
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    toggleEditing()
+                } label: {
+                    Image(systemName: isEditing ? "checkmark" : "pencil")
+                }
+                .accessibilityLabel(Text(isEditing ? L("完成编辑") : L("编辑专辑")))
+                .help(isEditing ? L("完成编辑") : L("编辑专辑"))
+                .accessibilityIdentifier("library.albums.edit")
+                .disabled(viewModel.isLoading(.albums) || isDeleting)
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     Picker(L("排序"), selection: $sortMode) {
@@ -132,6 +200,80 @@ struct AlbumsView: View {
                 }
                 .accessibilityLabel(L("排序专辑"))
                 .accessibilityIdentifier("library.albums.sort")
+                .disabled(isEditing || isDeleting)
+            }
+        }
+        .batchDeletionPresentation(
+            isPresented: pendingAlbumDeletionPresentation,
+            count: pendingAlbumDeletionIDs.count,
+            scope: .albums,
+            isDeleting: isDeleting,
+            action: {
+                let albumIDs = pendingAlbumDeletionIDs
+                pendingAlbumDeletionIDs.removeAll()
+                deleteSelectedAlbums(albumIDs)
+            }
+        )
+        .libraryDeletionErrorPresentation(errorMessage: $deletionErrorMessage)
+    }
+
+    private var isEditing: Bool {
+        editMode.isEditing
+    }
+
+    private var pendingAlbumDeletionPresentation: Binding<Bool> {
+        Binding(
+            get: { !pendingAlbumDeletionIDs.isEmpty },
+            set: { isPresented in
+                if !isPresented { pendingAlbumDeletionIDs.removeAll() }
+            }
+        )
+    }
+
+    private func toggleEditing() {
+        guard !viewModel.isLoading(.albums), !isDeleting else { return }
+        if isEditing {
+            editMode = .inactive
+            selectedAlbumIDs.removeAll()
+        } else {
+            editMode = .active
+        }
+    }
+
+    private func toggleSelection(for albumID: AlbumID) {
+        guard isEditing, !isDeleting else { return }
+        if !selectedAlbumIDs.insert(albumID).inserted {
+            selectedAlbumIDs.remove(albumID)
+        }
+    }
+
+    private func requestDeleteSelected() {
+        guard isEditing, !isDeleting, !selectedAlbumIDs.isEmpty else { return }
+        pendingAlbumDeletionIDs = selectedAlbumIDs
+    }
+
+    private func deleteSelectedAlbums(_ albumIDs: Set<AlbumID>) {
+        guard !albumIDs.isEmpty, !isDeleting else { return }
+        isDeleting = true
+        Task { @MainActor in
+            defer { isDeleting = false }
+            do {
+                let targets = Set(albumIDs.map { LibraryCollectionQueueTarget.album($0) })
+                let itemIDs = try await LibraryCollectionTrackLoader.itemIDs(
+                    for: targets,
+                    from: viewModel.library
+                )
+                if !itemIDs.isEmpty {
+                    _ = try await viewModel.library.delete(itemIDs)
+                    viewModel.removeDeletedTracks(itemIDs)
+                }
+                editMode = .inactive
+                selectedAlbumIDs.removeAll()
+                viewModel.load(section: .albums, reset: true)
+            } catch is CancellationError {
+                return
+            } catch {
+                deletionErrorMessage = error.localizedDescription
             }
         }
     }

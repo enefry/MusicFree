@@ -243,10 +243,23 @@ public final class LibraryViewModel: ObservableObject {
     }
 
     public func removeDeletedTrack(_ itemID: MediaItemID) {
-        tracks.removeAll { $0.id == itemID }
-        favoriteTracks.removeAll { $0.id == itemID }
-        recentTracks.removeAll { $0.id == itemID }
-        playbackHistory.removeAll { $0.track.id == itemID }
+        removeDeletedTracks([itemID])
+    }
+
+    public func removeDeletedTracks(_ itemIDs: Set<MediaItemID>) {
+        guard !itemIDs.isEmpty else { return }
+
+        tracks.removeAll { itemIDs.contains($0.id) }
+        favoriteTracks.removeAll { itemIDs.contains($0.id) }
+        recentTracks.removeAll { itemIDs.contains($0.id) }
+        playbackHistory.removeAll { itemIDs.contains($0.track.id) }
+
+        for itemID in itemIDs {
+            favoriteRequests[itemID] = nil
+            favoriteVersions[itemID] = nil
+            favoriteTasks[itemID]?.cancel()
+            favoriteTasks[itemID] = nil
+        }
 
         for section in [LibrarySection.tracks, .favorites, .recent]
             where itemsCount(for: section) == 0

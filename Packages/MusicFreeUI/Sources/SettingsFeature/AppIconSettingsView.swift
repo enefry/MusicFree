@@ -126,15 +126,15 @@ struct AppIconSettingsView: View {
         VStack(alignment: .leading) {
             Text(L("应用图标"))
             LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 88), spacing: 16)],
-                spacing: 16
+                columns: [GridItem(.adaptive(minimum: 64), spacing: 16)],
+                spacing: 10
             ) {
                 ForEach(options) { option in
                     iconButton(option)
                 }
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 8)
+            .padding(.vertical, 4)
 
             if let failureMessage = viewModel.failureMessage {
                 Label(failureMessage, systemImage: "exclamationmark.triangle")
@@ -161,14 +161,14 @@ struct AppIconSettingsView: View {
                     Image(option.previewAssetName)
                         .resizable()
                         .scaledToFit()
-                        .frame(width: 72, height: 72)
+                        .frame(width: 56, height: 56)
                         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                         .shadow(color: .black.opacity(0.14), radius: 4, y: 2)
 
                     selectionIndicator(option)
                         .offset(x: 6, y: -6)
                 }
-                .frame(width: 84, height: 76)
+                .frame(width: 56, height: 56)
 
                 Text(option.title)
                     .font(MusicFreeTypographyTokens.caption)
@@ -176,7 +176,7 @@ struct AppIconSettingsView: View {
                     .lineLimit(1)
                     .frame(maxWidth: .infinity)
             }
-            .frame(minWidth: 88, minHeight: 112)
+            .frame(minWidth: 56, minHeight: 80)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

@@ -5,12 +5,19 @@ import MusicDomain
 import SwiftUI
 
 struct ArtistsView: View {
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @ObservedObject var viewModel: LibraryViewModel
     let navigate: (LibraryDestination) -> Void
     let artworkServing: (any ArtworkServing)?
     let enqueueNextCollection: ((LibraryCollectionQueueTarget) -> Void)?
     let enqueueCollection: ((LibraryCollectionQueueTarget) -> Void)?
     let isCollectionQueueActionPending: (LibraryCollectionQueueTarget) -> Bool
+
+    @State private var editMode: EditMode = .inactive
+    @State private var selectedArtistIDs: Set<ArtistID> = []
+    @State private var pendingArtistDeletionIDs: Set<ArtistID> = []
+    @State private var isDeleting = false
+    @State private var deletionErrorMessage: String?
 
     init(
         viewModel: LibraryViewModel,
@@ -64,7 +71,10 @@ struct ArtistsView: View {
                             ArtistRow(
                                 artist: artist,
                                 artworkServing: artworkServing,
-                                action: { navigate(.artist(artist.id)) }
+                                action: { navigate(.artist(artist.id)) },
+                                selectionAction: { toggleSelection(for: artist.id) },
+                                isSelected: selectedArtistIDs.contains(artist.id),
+                                isEditing: isEditing
                             )
                             .listRowInsets(EdgeInsets())
                             .onAppear {
@@ -73,16 +83,17 @@ struct ArtistsView: View {
                                 }
                             }
                             .contextMenu {
-                                let target = LibraryCollectionQueueTarget.artist(artist.id)
-                                LibraryCollectionQueueMenuActions(
-                                    target: target,
-                                    accessibilityPrefix: "library.artist.menu",
-                                    enqueueNext: enqueueNextCollection,
-                                    enqueue: enqueueCollection,
-                                    isPending: isCollectionQueueActionPending(target)
-                                )
+                                if !isEditing {
+                                    let target = LibraryCollectionQueueTarget.artist(artist.id)
+                                    LibraryCollectionQueueMenuActions(
+                                        target: target,
+                                        accessibilityPrefix: "library.artist.menu",
+                                        enqueueNext: enqueueNextCollection,
+                                        enqueue: enqueueCollection,
+                                        isPending: isCollectionQueueActionPending(target)
+                                    )
+                                }
                             }
-                            .accessibilityHint(L("打开艺人，按住显示播放队列操作"))
                         }
                     } header: {
                         Text(key)
@@ -100,6 +111,109 @@ struct ArtistsView: View {
             .background(MusicFreeColorTokens.backgroundPrimary)
             .accessibilityIdentifier("library.artists")
         }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if isEditing, !selectedArtistIDs.isEmpty {
+                LibraryBatchDeletionBar(
+                    count: selectedArtistIDs.count,
+                    scope: .artists,
+                    accessibilityIdentifier: "library.artists.deleteSelected",
+                    isDisabled: isDeleting,
+                    action: requestDeleteSelected
+                )
+            }
+            if horizontalSizeClass == .compact {
+                Color.clear
+                    .frame(height: MusicFreeLayoutMetrics.compactTabAccessoryClearance)
+                    .accessibilityHidden(true)
+            }
+        }
+        .environment(\.editMode, $editMode)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    toggleEditing()
+                } label: {
+                    Image(systemName: isEditing ? "checkmark" : "pencil")
+                }
+                .accessibilityLabel(Text(isEditing ? L("完成编辑") : L("编辑艺人")))
+                .help(isEditing ? L("完成编辑") : L("编辑艺人"))
+                .accessibilityIdentifier("library.artists.edit")
+                .disabled(viewModel.isLoading(.artists) || isDeleting)
+            }
+        }
+        .batchDeletionPresentation(
+            isPresented: pendingArtistDeletionPresentation,
+            count: pendingArtistDeletionIDs.count,
+            scope: .artists,
+            isDeleting: isDeleting,
+            action: {
+                let artistIDs = pendingArtistDeletionIDs
+                pendingArtistDeletionIDs.removeAll()
+                deleteSelectedArtists(artistIDs)
+            }
+        )
+        .libraryDeletionErrorPresentation(errorMessage: $deletionErrorMessage)
+    }
+
+    private var isEditing: Bool {
+        editMode.isEditing
+    }
+
+    private var pendingArtistDeletionPresentation: Binding<Bool> {
+        Binding(
+            get: { !pendingArtistDeletionIDs.isEmpty },
+            set: { isPresented in
+                if !isPresented { pendingArtistDeletionIDs.removeAll() }
+            }
+        )
+    }
+
+    private func toggleEditing() {
+        guard !viewModel.isLoading(.artists), !isDeleting else { return }
+        if isEditing {
+            editMode = .inactive
+            selectedArtistIDs.removeAll()
+        } else {
+            editMode = .active
+        }
+    }
+
+    private func toggleSelection(for artistID: ArtistID) {
+        guard isEditing, !isDeleting else { return }
+        if !selectedArtistIDs.insert(artistID).inserted {
+            selectedArtistIDs.remove(artistID)
+        }
+    }
+
+    private func requestDeleteSelected() {
+        guard isEditing, !isDeleting, !selectedArtistIDs.isEmpty else { return }
+        pendingArtistDeletionIDs = selectedArtistIDs
+    }
+
+    private func deleteSelectedArtists(_ artistIDs: Set<ArtistID>) {
+        guard !artistIDs.isEmpty, !isDeleting else { return }
+        isDeleting = true
+        Task { @MainActor in
+            defer { isDeleting = false }
+            do {
+                let targets = Set(artistIDs.map { LibraryCollectionQueueTarget.artist($0) })
+                let itemIDs = try await LibraryCollectionTrackLoader.itemIDs(
+                    for: targets,
+                    from: viewModel.library
+                )
+                if !itemIDs.isEmpty {
+                    _ = try await viewModel.library.delete(itemIDs)
+                    viewModel.removeDeletedTracks(itemIDs)
+                }
+                editMode = .inactive
+                selectedArtistIDs.removeAll()
+                viewModel.load(section: .artists, reset: true)
+            } catch is CancellationError {
+                return
+            } catch {
+                deletionErrorMessage = error.localizedDescription
+            }
+        }
     }
 }
 
@@ -107,23 +221,49 @@ private struct ArtistRow: View {
     let artist: Artist
     let artworkServing: (any ArtworkServing)?
     let action: () -> Void
+    let selectionAction: () -> Void
+    let isSelected: Bool
+    let isEditing: Bool
 
     @StateObject private var artworkLoader = ArtworkImageLoader()
 
     var body: some View {
-        Button(action: action) {
-            MediaRow(
-                title: artist.name,
-                artwork: artworkLoader.image,
-                artworkAccessibilityLabel: L("%@ artist artwork", artist.name),
-                placeholderSystemImage: "person.fill"
-            )
-            .contentShape(Rectangle())
+        Button(action: isEditing ? selectionAction : action) {
+            ZStack(alignment: .leading) {
+                MediaRow(
+                    title: artist.name,
+                    artwork: artworkLoader.image,
+                    artworkAccessibilityLabel: L("%@ artist artwork", artist.name),
+                    placeholderSystemImage: "person.fill"
+                )
+                if isEditing {
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.title2)
+                        .foregroundStyle(
+                            isSelected
+                                ? MusicFreeColorTokens.accent
+                                : MusicFreeColorTokens.foregroundTertiary
+                        )
+                        .background(
+                            Circle()
+                                .fill(MusicFreeColorTokens.backgroundPrimary)
+                        )
+                        .padding(.leading, MusicFreeSpacingTokens.small)
+                        .accessibilityHidden(true)
+                }
+            }
         }
         .buttonStyle(.plain)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
-        .accessibilityIdentifier("library.artist.open.\(artist.id.rawValue)")
+        .accessibilityLabel(Text(artist.name))
+        .accessibilityValue(Text(isEditing ? (isSelected ? L("已选择") : L("未选择")) : L("艺人")))
+        .accessibilityIdentifier(
+            "library.artist.\(isEditing ? "select" : "open").\(artist.id.rawValue)"
+        )
+        .accessibilityHint(
+            L(isEditing ? "选择艺人" : "打开艺人，按住显示播放队列操作")
+        )
         .task(id: artworkKey) {
             await artworkLoader.load(
                 artworkID: artist.artworkID,

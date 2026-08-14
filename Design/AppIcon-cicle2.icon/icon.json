@@ -1,0 +1,55 @@
+{
+  "fill" : {
+    "automatic-gradient" : "extended-gray:1.00000,1.00000"
+  },
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "fill" : {
+            "automatic-gradient" : "extended-srgb:1.00000,0.80000,0.00000,1.00000"
+          },
+          "image-name" : "music-1 2.svg",
+          "name" : "music-1 2",
+          "position" : {
+            "scale" : 0.6,
+            "translation-in-points" : [
+              99.84844374322938,
+              43.20467621868136
+            ]
+          }
+        },
+        {
+          "hidden" : true,
+          "image-name" : "cicle_3.svg",
+          "name" : "cicle_3"
+        },
+        {
+          "image-name" : "cicle_1.svg",
+          "name" : "cicle_1"
+        },
+        {
+          "fill" : {
+            "automatic-gradient" : "srgb:0.31765,0.89412,0.76078,1.00000"
+          },
+          "image-name" : "cicle_2.svg",
+          "name" : "cicle_2"
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}

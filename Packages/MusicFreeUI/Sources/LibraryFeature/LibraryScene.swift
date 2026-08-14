@@ -327,7 +327,10 @@ public struct LibraryScene: View {
                 addCollectionToPlaylist: addCollectionToPlaylist,
                 isCollectionPlaylistActionPending: isCollectionPlaylistActionPending,
                 artworkServing: artworkServing,
-                navigate: navigate
+                navigate: navigate,
+                removeDeletedTracks: { itemIDs in
+                    viewModel.removeDeletedTracks(itemIDs)
+                }
             )
         case .artist(let artistID):
             LibraryArtistDetailView(
@@ -362,7 +365,10 @@ public struct LibraryScene: View {
                 addCollectionToPlaylist: addCollectionToPlaylist,
                 isCollectionPlaylistActionPending: isCollectionPlaylistActionPending,
                 artworkServing: artworkServing,
-                navigate: navigate
+                navigate: navigate,
+                removeDeletedTracks: { itemIDs in
+                    viewModel.removeDeletedTracks(itemIDs)
+                }
             )
         case .folder(let path):
             LibraryFolderDetailView(
@@ -376,7 +382,10 @@ public struct LibraryScene: View {
                 enqueueCollection: enqueueCollection,
                 isCollectionQueueActionPending: isCollectionQueueActionPending,
                 artworkServing: artworkServing,
-                navigate: navigate
+                navigate: navigate,
+                removeDeletedTracks: { itemIDs in
+                    viewModel.removeDeletedTracks(itemIDs)
+                }
             )
         }
     }

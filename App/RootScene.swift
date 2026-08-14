@@ -372,17 +372,23 @@ struct RootScene: View {
                 previewAssetName: "AppIcon-preview"
             ),
             SettingsAppIconOption(
+                id: "music",
+                title: L("手写"),
+                alternateIconName: "AppIcon-music",
+                previewAssetName: "AppIcon-music-preview"
+            ),
+            SettingsAppIconOption(
                 id: "circle",
                 title: L("唱片"),
                 alternateIconName: "AppIcon-cicle",
                 previewAssetName: "AppIcon-cicle-preview"
             ),
             SettingsAppIconOption(
-                id: "music",
-                title: L("手写"),
-                alternateIconName: "AppIcon-music",
-                previewAssetName: "AppIcon-music-preview"
-            )
+                id: "circle2",
+                title: L("唱片2"),
+                alternateIconName: "AppIcon-cicle2",
+                previewAssetName: "AppIcon-cicle2-preview"
+            ),
         ]
     }
 

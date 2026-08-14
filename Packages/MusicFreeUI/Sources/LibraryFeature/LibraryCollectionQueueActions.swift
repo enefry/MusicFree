@@ -150,6 +150,17 @@ enum LibraryCollectionTrackLoader {
             seenIDs.insert(track.id).inserted ? track.id : nil
         }
     }
+
+    static func itemIDs(
+        for targets: Set<LibraryCollectionQueueTarget>,
+        from library: any LibraryServing
+    ) async throws -> Set<MediaItemID> {
+        var collectedIDs = Set<MediaItemID>()
+        for target in targets {
+            collectedIDs.formUnion(try await Self.itemIDs(for: target, from: library))
+        }
+        return collectedIDs
+    }
 }
 
 private enum LibraryCollectionQueueLoadError: LocalizedError {
