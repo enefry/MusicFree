@@ -52,8 +52,8 @@ struct ArtistsView: View {
         LibraryContentState(
             state: viewModel.state(for: .artists),
             hasContent: !viewModel.artists.isEmpty,
-            emptyTitle: "暂无艺人",
-            emptyMessage: "导入带有艺人信息的本地音频后会显示在这里。",
+            emptyTitle: L("暂无艺人"),
+            emptyMessage: L("导入带有艺人信息的本地音频后会显示在这里。"),
             emptySystemImage: "person.2",
             retry: { viewModel.retry(section: .artists) }
         ) {
@@ -82,7 +82,7 @@ struct ArtistsView: View {
                                     isPending: isCollectionQueueActionPending(target)
                                 )
                             }
-                            .accessibilityHint("打开艺人，按住显示播放队列操作")
+                            .accessibilityHint(L("打开艺人，按住显示播放队列操作"))
                         }
                     } header: {
                         Text(key)
@@ -115,7 +115,7 @@ private struct ArtistRow: View {
             MediaRow(
                 title: artist.name,
                 artwork: artworkLoader.image,
-                artworkAccessibilityLabel: "\(artist.name)的艺人封面",
+                artworkAccessibilityLabel: L("%@ artist artwork", artist.name),
                 placeholderSystemImage: "person.fill"
             )
             .contentShape(Rectangle())

@@ -1,5 +1,6 @@
 import Foundation
 import AppServices
+import DesignSystem
 import LibraryAPI
 import MusicDomain
 import Observation
@@ -77,15 +78,15 @@ public enum PlaylistFeatureError: Error, LocalizedError, Equatable, Sendable {
     public var errorDescription: String? {
         switch self {
         case .emptyName:
-            return "请输入歌单名称。"
+            return L("请输入歌单名称。")
         case .nameTooLong(let maximum):
-            return "歌单名称不能超过 \(maximum) 个字符。"
+            return L("歌单名称不能超过 %d 个字符。", maximum)
         case .duplicateName:
-            return "歌单名称已存在。"
+            return L("歌单名称已存在。")
         case .emptyPlaylist:
-            return "歌单中没有可用歌曲。"
+            return L("歌单中没有可用歌曲。")
         case .serviceUnavailable:
-            return "歌单服务暂不可用。"
+            return L("歌单服务暂不可用。")
         }
     }
 }
@@ -337,7 +338,7 @@ func playlistFeatureMessage(for error: Error) -> String {
     if let error = error as? LibraryError {
         return error.userMessage
     }
-    return "操作未完成，请重试。"
+    return L("操作未完成，请重试。")
 }
 
 func playlistFeatureIsCancellation(_ error: Error) -> Bool {

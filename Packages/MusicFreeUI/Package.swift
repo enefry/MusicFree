@@ -4,6 +4,7 @@ import PackageDescription
 
 let package = Package(
     name: "MusicFreeUI",
+    defaultLocalization: "en",
     platforms: [
         .iOS(.v26)
     ],
@@ -20,6 +21,9 @@ let package = Package(
     targets: [
         .target(
             name: "DesignSystem",
+            resources: [
+                .process("Resources")
+            ]
         ),
         .target(
             name: "LibraryFeature",

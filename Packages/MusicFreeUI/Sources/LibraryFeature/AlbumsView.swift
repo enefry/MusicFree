@@ -53,8 +53,8 @@ struct AlbumsView: View {
         LibraryContentState(
             state: viewModel.state(for: .albums),
             hasContent: !viewModel.albums.isEmpty,
-            emptyTitle: "暂无专辑",
-            emptyMessage: "导入带有专辑信息的本地音频后会显示在这里。",
+            emptyTitle: L("暂无专辑"),
+            emptyMessage: L("导入带有专辑信息的本地音频后会显示在这里。"),
             emptySystemImage: "square.stack",
             retry: { viewModel.retry(section: .albums) }
         ) {
@@ -87,7 +87,7 @@ struct AlbumsView: View {
                                     || isCollectionPlaylistActionPending(target)
                             )
                         }
-                        .accessibilityHint("打开专辑，按住显示播放队列操作")
+                        .accessibilityHint(L("打开专辑，按住显示播放队列操作"))
                         .onAppear {
                             if album.id == viewModel.albums.last?.id {
                                 viewModel.loadNextPage(for: .albums)
@@ -121,7 +121,7 @@ struct AlbumsView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
-                    Picker("排序", selection: $sortMode) {
+                    Picker(L("排序"), selection: $sortMode) {
                         ForEach(AlbumSortMode.allCases) { mode in
                             Label(mode.title, systemImage: mode.systemImage)
                                 .tag(mode)
@@ -130,7 +130,7 @@ struct AlbumsView: View {
                 } label: {
                     Image(systemName: "line.3.horizontal.decrease.circle")
                 }
-                .accessibilityLabel("排序专辑")
+                .accessibilityLabel(L("排序专辑"))
                 .accessibilityIdentifier("library.albums.sort")
             }
         }
@@ -171,11 +171,11 @@ private enum AlbumSortMode: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .title: return "专辑名称"
-        case .artist: return "艺人"
-        case .dateAdded: return "最近添加"
-        case .year: return "发行年份"
-        case .trackCount: return "歌曲数量"
+        case .title: return L("专辑名称")
+        case .artist: return L("艺人")
+        case .dateAdded: return L("最近添加")
+        case .year: return L("发行年份")
+        case .trackCount: return L("歌曲数量")
         }
     }
 
@@ -251,7 +251,7 @@ struct LibraryAlbumGridTile: View {
             .overlay {
                 ArtworkView(
                     image: artworkLoader.image,
-                    accessibilityLabel: "\(album.title)的专辑封面",
+                    accessibilityLabel: L("%@ album artwork", album.title),
                     placeholderTitle: album.title,
                     fillsAvailableWidth: true
                 )

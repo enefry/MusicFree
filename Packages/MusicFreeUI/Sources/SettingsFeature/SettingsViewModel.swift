@@ -1,4 +1,5 @@
 import AppServices
+import DesignSystem
 import Foundation
 import Observation
 import PlaybackAPI
@@ -868,19 +869,19 @@ final class SettingsViewModel {
             let message: String
             switch error {
             case .decoding:
-                message = "设置数据无法读取。"
+                message = L("设置数据无法读取。")
             case .unsupportedSchemaVersion:
-                message = "设置数据版本与当前应用不兼容。"
+                message = L("设置数据版本与当前应用不兼容。")
             case .invalidValue:
-                message = "设置值不符合允许范围。"
+                message = L("设置值不符合允许范围。")
             case .migrationFailed:
-                message = "设置数据无法升级。"
+                message = L("设置数据无法升级。")
             case .readFailed:
-                message = "设置读取失败。"
+                message = L("设置读取失败。")
             case .writeFailed:
-                message = "设置保存失败。"
+                message = L("设置保存失败。")
             case .resetFailed:
-                message = "设置重置失败。"
+                message = L("设置重置失败。")
             }
             return SettingsFeatureFailure(
                 diagnosticCode: error.description,
@@ -891,13 +892,13 @@ final class SettingsViewModel {
         if error is CancellationError {
             return SettingsFeatureFailure(
                 diagnosticCode: "settings.cancelled",
-                message: "设置操作已取消。",
+                message: L("设置操作已取消。"),
                 isRetryable: false
             )
         }
         return SettingsFeatureFailure(
             diagnosticCode: "settings.unknown",
-            message: "设置操作无法完成。",
+            message: L("设置操作无法完成。"),
             isRetryable: true
         )
     }

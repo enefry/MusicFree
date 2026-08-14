@@ -69,8 +69,8 @@ public enum StorageMaintenanceError: Error, Equatable, Hashable, Sendable, Local
 
     public var errorDescription: String? {
         switch self {
-        case .unavailable: return "存储维护服务不可用。"
-        case .failed: return "存储维护未完成。"
+        case .unavailable: return "Storage maintenance is unavailable."
+        case .failed: return "Storage maintenance did not complete."
         }
     }
 }

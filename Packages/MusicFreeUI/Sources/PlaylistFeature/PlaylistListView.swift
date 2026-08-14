@@ -11,21 +11,21 @@ struct PlaylistListView: View {
         Group {
             switch viewModel.loadState {
             case .loading where viewModel.playlists.isEmpty:
-                ProgressView("加载歌单")
+                ProgressView(L("加载歌单"))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             case .failed(let message) where viewModel.playlists.isEmpty:
                 ErrorStateView(
-                    title: "歌单加载失败",
+                    title: L("歌单加载失败"),
                     message: message,
-                    retryTitle: "重试",
+                    retryTitle: L("重试"),
                     retry: reload
                 )
             case .empty:
                 EmptyStateView(
-                    title: "还没有歌单",
-                    message: "创建一个歌单，整理喜欢的歌曲。",
+                    title: L("还没有歌单"),
+                    message: L("创建一个歌单，整理喜欢的歌曲。"),
                     systemImage: "music.note.list",
-                    actionTitle: "新建歌单",
+                    actionTitle: L("新建歌单"),
                     action: presentCreateEditor
                 )
             default:
@@ -38,7 +38,7 @@ struct PlaylistListView: View {
                     .controlSize(.small)
                     .padding(MusicFreeSpacingTokens.small)
                     .background(.regularMaterial, in: Capsule())
-                    .accessibilityLabel(Text("正在刷新歌单"))
+                    .accessibilityLabel(Text(L("正在刷新歌单")))
             }
         }
         .toolbar {
@@ -46,8 +46,8 @@ struct PlaylistListView: View {
                 Button(action: presentCreateEditor) {
                     Image(systemName: "plus")
                 }
-                .accessibilityLabel(Text("新建歌单"))
-                .help("新建歌单")
+                .accessibilityLabel(Text(L("新建歌单")))
+                .help(L("新建歌单"))
             }
         }
         .sheet(item: $editorMode) { mode in
@@ -66,32 +66,32 @@ struct PlaylistListView: View {
             )
         }
         .confirmationDialog(
-            "删除歌单？",
+            L("删除歌单？"),
             isPresented: deleteConfirmationBinding,
             titleVisibility: .visible
         ) {
-            Button("删除", role: .destructive) {
+            Button(L("删除"), role: .destructive) {
                 guard case .deletePlaylist(let playlistID) = viewModel.confirmation else {
                     return
                 }
                 viewModel.cancelConfirmation()
                 Task { await viewModel.deletePlaylist(playlistID) }
             }
-            Button("取消", role: .cancel) {
+            Button(L("取消"), role: .cancel) {
                 viewModel.cancelConfirmation()
             }
         } message: {
-            Text("歌单和其中的排序关系会被删除。")
+            Text(L("歌单和其中的排序关系会被删除。"))
         }
         .alert(
-            "操作失败",
+            L("操作失败"),
             isPresented: mutationFailureBinding
         ) {
-            Button("好", role: .cancel) {
+            Button(L("好"), role: .cancel) {
                 viewModel.clearMutationState()
             }
         } message: {
-            Text(viewModel.mutationState.failureMessage ?? "请重试。")
+            Text(viewModel.mutationState.failureMessage ?? L("请重试。"))
         }
     }
 
@@ -109,12 +109,12 @@ struct PlaylistListView: View {
                     Button {
                         editorMode = .rename(playlist.id, initialName: playlist.name)
                     } label: {
-                        Label("重命名", systemImage: "pencil")
+                        Label(L("重命名"), systemImage: "pencil")
                     }
                     Button(role: .destructive) {
                         viewModel.requestDelete(playlist.id)
                     } label: {
-                        Label("删除", systemImage: "trash")
+                        Label(L("删除"), systemImage: "trash")
                     }
                 }
             }
@@ -165,7 +165,7 @@ private struct PlaylistListRow: View {
     var body: some View {
         MediaRow(
             title: playlist.name,
-            subtitle: "歌单",
+            subtitle: L("歌单"),
             placeholderSystemImage: "music.note.list",
             accessory: {
                 Image(systemName: "chevron.forward")

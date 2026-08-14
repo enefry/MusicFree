@@ -110,7 +110,7 @@ public struct LibraryScene: View {
             }
         }
         .alert(
-            "无法更新播放队列",
+            L("无法更新播放队列"),
             isPresented: Binding(
                 get: { collectionQueueErrorMessage != nil },
                 set: { isPresented in
@@ -118,14 +118,14 @@ public struct LibraryScene: View {
                 }
             )
         ) {
-            Button("好", role: .cancel) {
+            Button(L("好"), role: .cancel) {
                 collectionQueueErrorMessage = nil
             }
         } message: {
-            Text(collectionQueueErrorMessage ?? "请稍后重试。")
+            Text(collectionQueueErrorMessage ?? L("请稍后重试。"))
         }
         .alert(
-            "无法添加到播放列表",
+            L("无法添加到播放列表"),
             isPresented: Binding(
                 get: { collectionPlaylistErrorMessage != nil },
                 set: { isPresented in
@@ -133,11 +133,11 @@ public struct LibraryScene: View {
                 }
             )
         ) {
-            Button("好", role: .cancel) {
+            Button(L("好"), role: .cancel) {
                 collectionPlaylistErrorMessage = nil
             }
         } message: {
-            Text(collectionPlaylistErrorMessage ?? "请稍后重试。")
+            Text(collectionPlaylistErrorMessage ?? L("请稍后重试。"))
         }
     }
 
@@ -173,8 +173,8 @@ public struct LibraryScene: View {
                 }
             }
         }
-        .navigationTitle("资料库")
-        .searchable(text: searchBinding, prompt: "搜索歌曲、专辑或艺人")
+        .navigationTitle(L("资料库"))
+        .searchable(text: searchBinding, prompt: L("搜索歌曲、专辑或艺人"))
         .toolbar { importToolbarItem }
     }
 
@@ -194,9 +194,9 @@ public struct LibraryScene: View {
             Button {
                 isImportPickerPresented = true
             } label: {
-                Label("导入", systemImage: "square.and.arrow.down")
+                Label(L("导入"), systemImage: "square.and.arrow.down")
             }
-            .help("导入本地媒体")
+            .help(L("导入本地媒体"))
         }
     }
 
@@ -287,7 +287,7 @@ public struct LibraryScene: View {
                 compactRoute: { .destination($0) }
             )
             .navigationTitle(section.title)
-            .searchable(text: searchBinding, prompt: "搜索\(section.title)")
+            .searchable(text: searchBinding, prompt: L("搜索%@", section.title))
         case .destination(let destination):
             destinationView(destination, navigate: openCompact)
         }
@@ -436,7 +436,7 @@ public struct LibraryScene: View {
                     from: viewModel.library
                 )
                 guard !itemIDs.isEmpty else {
-                    collectionQueueErrorMessage = "这个集合没有可加入播放队列的歌曲。"
+                    collectionQueueErrorMessage = L("这个集合没有可加入播放队列的歌曲。")
                     return
                 }
                 action(itemIDs)
@@ -461,7 +461,7 @@ public struct LibraryScene: View {
                     from: viewModel.library
                 )
                 guard !itemIDs.isEmpty else {
-                    collectionPlaylistErrorMessage = "这个集合没有可添加到播放列表的歌曲。"
+                    collectionPlaylistErrorMessage = L("这个集合没有可添加到播放列表的歌曲。")
                     return
                 }
                 addToPlaylistRequest = LibraryAddToPlaylistRequest(itemIDs: itemIDs)

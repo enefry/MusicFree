@@ -1,3 +1,5 @@
+import DesignSystem
+
 enum AppStartupIssue: String, CaseIterable, Codable, Hashable, Identifiable, Sendable {
     case cacheUnavailable
     case settingsCorrupted
@@ -12,30 +14,30 @@ enum AppStartupIssue: String, CaseIterable, Codable, Hashable, Identifiable, Sen
     var title: String {
         switch self {
         case .cacheUnavailable:
-            "缓存不可用"
+            L("startup.cacheUnavailable.title")
         case .settingsCorrupted:
-            "设置需要恢复"
+            L("startup.settingsCorrupted.title")
         case .libraryStoreUnavailable:
-            "资料库不可用"
+            L("startup.libraryStoreUnavailable.title")
         case .playbackUnavailable:
-            "播放暂不可用"
+            L("startup.playbackUnavailable.title")
         case .dependencyUnavailable:
-            "应用服务不可用"
+            L("startup.dependencyUnavailable.title")
         }
     }
 
     var message: String {
         switch self {
         case .cacheUnavailable:
-            "缓存无法重建，应用将继续使用现有数据。"
+            L("startup.cacheUnavailable.message")
         case .settingsCorrupted:
-            "设置数据无法读取，原数据会被保留。"
+            L("startup.settingsCorrupted.message")
         case .libraryStoreUnavailable:
-            "资料库无法打开，不会自动删除资料。"
+            L("startup.libraryStoreUnavailable.message")
         case .playbackUnavailable:
-            "资料库仍可浏览，但当前播放能力不可用。"
+            L("startup.playbackUnavailable.message")
         case .dependencyUnavailable:
-            "部分应用服务尚未准备完成。"
+            L("startup.dependencyUnavailable.message")
         }
     }
 
@@ -88,26 +90,26 @@ enum AppStartupState: Equatable, Sendable {
     var title: String {
         switch self {
         case .loading:
-            "正在启动"
+            L("正在启动")
         case .ready:
             "MusicFree"
         case .degraded:
-            "部分功能不可用"
+            L("部分功能不可用")
         case .recoveryRequired:
-            "需要恢复"
+            L("需要恢复")
         }
     }
 
     var message: String {
         switch self {
         case .loading:
-            "正在准备应用。"
+            L("正在准备应用。")
         case .ready:
             ""
         case .degraded:
-            "资料库仍可使用，部分能力暂时不可用。"
+            L("资料库仍可使用，部分能力暂时不可用。")
         case .recoveryRequired:
-            "应用未能安全完成启动，请先处理显示的问题。"
+            L("应用未能安全完成启动，请先处理显示的问题。")
         }
     }
 

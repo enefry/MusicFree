@@ -1,3 +1,5 @@
+import DesignSystem
+
 struct AppRouter: Equatable, Sendable {
     enum Route: String, CaseIterable, Hashable, Identifiable, Sendable {
         case library
@@ -9,11 +11,11 @@ struct AppRouter: Equatable, Sendable {
         var title: String {
             switch self {
             case .library:
-                "资料库"
+                L("library.title")
             case .playlists:
-                "播放列表"
+                L("playlists.title")
             case .settings:
-                "设置"
+                L("settings.title")
             }
         }
 

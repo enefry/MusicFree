@@ -1,5 +1,6 @@
 import AppServices
 import Combine
+import DesignSystem
 import Foundation
 import PlaybackAPI
 
@@ -97,7 +98,7 @@ final class QueueEditor: ObservableObject {
     guard phase == .editing, let baseline else { return }
     guard Self.hasStructuralChanges(from: baseline, to: queue) else { return }
     configure(with: queue, phase: .editing)
-    failureMessage = "播放队列已更新，请重新调整顺序。"
+    failureMessage = L("播放队列已更新，请重新调整顺序。")
   }
 
   func dismissFailure() {
@@ -229,11 +230,11 @@ final class QueueEditor: ObservableObject {
   private static func failureMessage(for error: PlaybackError) -> String {
     switch error {
     case .cancelled:
-      return "队列编辑已取消，未完成的更改没有保存。"
+      return L("队列编辑已取消，未完成的更改没有保存。")
     case .resourceUnavailable:
-      return "播放服务暂时不可用，请稍后重试。"
+      return L("播放服务暂时不可用，请稍后重试。")
     default:
-      return "无法保存播放顺序，已恢复为播放器中的实际队列。"
+      return L("无法保存播放顺序，已恢复为播放器中的实际队列。")
     }
   }
 }

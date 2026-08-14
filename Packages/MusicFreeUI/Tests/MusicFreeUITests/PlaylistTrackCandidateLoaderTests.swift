@@ -1,3 +1,4 @@
+import DesignSystem
 import AppServices
 import Foundation
 import LibraryAPI
@@ -169,7 +170,7 @@ func playlistCandidateLoadingRejectsRepeatedCursor() async {
 
     await loader.load()
 
-    #expect(loader.loadState.failureMessage == "资料库分页游标重复，无法继续加载歌曲。")
+    #expect(loader.loadState.failureMessage == L("资料库分页游标重复，无法继续加载歌曲。"))
     #expect(library.requests.map(\.cursor?.rawValue) == [nil, "repeat"])
     #expect(library.pages.count == 1)
     #expect(!loader.isLoading)
@@ -192,7 +193,7 @@ func playlistCandidateLoadingRejectsCursorCycle() async {
 
     await loader.load()
 
-    #expect(loader.loadState.failureMessage == "资料库分页游标重复，无法继续加载歌曲。")
+    #expect(loader.loadState.failureMessage == L("资料库分页游标重复，无法继续加载歌曲。"))
     #expect(library.requests.map(\.cursor?.rawValue) == [nil, "A", "B"])
     #expect(library.pages.count == 1)
     #expect(!loader.isLoading)

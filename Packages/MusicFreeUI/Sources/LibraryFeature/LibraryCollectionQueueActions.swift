@@ -1,4 +1,5 @@
 import AppServices
+import DesignSystem
 import Foundation
 import LibraryAPI
 import MusicDomain
@@ -84,7 +85,7 @@ struct LibraryCollectionQueueMenuActions: View {
         Button {
             enqueueNext?(target)
         } label: {
-            Label("下一首播放", systemImage: "text.line.first.and.arrowtriangle.forward")
+            Label(L("下一首播放"), systemImage: "text.line.first.and.arrowtriangle.forward")
         }
         .disabled(enqueueNext == nil || isPending)
         .accessibilityIdentifier(
@@ -94,7 +95,7 @@ struct LibraryCollectionQueueMenuActions: View {
         Button {
             enqueue?(target)
         } label: {
-            Label("加入队列", systemImage: "text.append")
+            Label(L("加入队列"), systemImage: "text.append")
         }
         .disabled(enqueue == nil || isPending)
         .accessibilityIdentifier(
@@ -105,7 +106,7 @@ struct LibraryCollectionQueueMenuActions: View {
             Button {
                 addToPlaylist(target)
             } label: {
-                Label("添加到播放列表", systemImage: "text.badge.plus")
+                Label(L("添加到播放列表"), systemImage: "text.badge.plus")
             }
             .disabled(isPending)
             .accessibilityIdentifier(
@@ -155,6 +156,6 @@ private enum LibraryCollectionQueueLoadError: LocalizedError {
     case repeatedCursor
 
     var errorDescription: String? {
-        "集合歌曲分页状态无效，请刷新资料库后重试。"
+        L("集合歌曲分页状态无效，请刷新资料库后重试。")
     }
 }

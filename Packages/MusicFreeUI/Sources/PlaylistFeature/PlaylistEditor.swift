@@ -18,9 +18,9 @@ enum PlaylistEditorMode: Identifiable {
     var title: String {
         switch self {
         case .create:
-            return "新建歌单"
+            return L("新建歌单")
         case .rename:
-            return "重命名歌单"
+            return L("重命名歌单")
         }
     }
 
@@ -63,13 +63,13 @@ struct PlaylistEditor: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("名称", text: $name)
+                    TextField(L("名称"), text: $name)
                         .textInputAutocapitalization(.sentences)
                         .submitLabel(.done)
                         .onSubmit(submit)
                 } footer: {
                     HStack {
-                        Text("最多 \(PlaylistNameValidator.maximumLength) 个字符")
+                        Text(L("最多 %d 个字符", PlaylistNameValidator.maximumLength))
                         Spacer(minLength: 0)
                         Text("\(name.count)/\(PlaylistNameValidator.maximumLength)")
                     }
@@ -87,13 +87,13 @@ struct PlaylistEditor: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") {
+                    Button(L("取消")) {
                         dismiss()
                     }
                     .disabled(isSaving)
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("保存", action: submit)
+                    Button(L("保存"), action: submit)
                         .disabled(isSaving)
                 }
             }
@@ -119,7 +119,7 @@ struct PlaylistEditor: View {
                 if saved {
                     dismiss()
                 } else {
-                    validationMessage = "保存失败，请重试。"
+                    validationMessage = L("保存失败，请重试。")
                 }
             }
         } catch {

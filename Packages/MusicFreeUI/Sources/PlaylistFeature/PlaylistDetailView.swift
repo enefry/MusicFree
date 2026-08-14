@@ -59,7 +59,7 @@ struct PlaylistDetailView: View {
                     .controlSize(.small)
                     .padding(MusicFreeSpacingTokens.small)
                     .background(.regularMaterial, in: Capsule())
-                    .accessibilityLabel(Text("正在刷新歌曲"))
+                    .accessibilityLabel(Text(L("正在刷新歌曲")))
             }
         }
         .onAppear {
@@ -81,42 +81,42 @@ struct PlaylistDetailView: View {
             )
         }
         .confirmationDialog(
-            "移除所选歌曲？",
+            L("移除所选歌曲？"),
             isPresented: removeConfirmationBinding,
             titleVisibility: .visible
         ) {
-            Button("移除", role: .destructive) {
+            Button(L("移除"), role: .destructive) {
                 guard case .removeTracks(let trackIDs) = viewModel.confirmation else {
                     return
                 }
                 viewModel.cancelConfirmation()
                 Task { await viewModel.remove(trackIDs: trackIDs) }
             }
-            Button("取消", role: .cancel) {
+            Button(L("取消"), role: .cancel) {
                 viewModel.cancelConfirmation()
             }
         } message: {
-            Text("歌曲会从当前歌单移除，资料库中的原曲不会被删除。")
+            Text(L("歌曲会从当前歌单移除，资料库中的原曲不会被删除。"))
         }
         .alert(
-            "操作失败",
+            L("操作失败"),
             isPresented: mutationFailureBinding
         ) {
-            Button("好", role: .cancel) {
+            Button(L("好"), role: .cancel) {
                 viewModel.clearMutationState()
             }
         } message: {
-            Text(viewModel.mutationState.failureMessage ?? "请重试。")
+            Text(viewModel.mutationState.failureMessage ?? L("请重试。"))
         }
         .alert(
-            "播放失败",
+            L("播放失败"),
             isPresented: commandFailureBinding
         ) {
-            Button("好", role: .cancel) {
+            Button(L("好"), role: .cancel) {
                 viewModel.clearCommandState()
             }
         } message: {
-            Text(viewModel.commandState.failureMessage ?? "请重试。")
+            Text(viewModel.commandState.failureMessage ?? L("请重试。"))
         }
     }
 
@@ -127,16 +127,16 @@ struct PlaylistDetailView: View {
 
         if viewModel.loadState == .loading {
             return AnyView(
-                ProgressView("加载歌曲")
+                ProgressView(L("加载歌曲"))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             )
         }
         if let message = viewModel.loadState.failureMessage {
             return AnyView(
                 ErrorStateView(
-                    title: "歌单加载失败",
+                    title: L("歌单加载失败"),
                     message: message,
-                    retryTitle: "重试",
+                    retryTitle: L("重试"),
                     retry: reload
                 )
             )
@@ -145,7 +145,7 @@ struct PlaylistDetailView: View {
             return AnyView(emptyPlaylistContent)
         }
         return AnyView(
-            ProgressView("加载歌曲")
+            ProgressView(L("加载歌曲"))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         )
     }
@@ -158,8 +158,8 @@ struct PlaylistDetailView: View {
             } label: {
                 Image(systemName: "plus")
             }
-            .accessibilityLabel(Text("添加歌曲"))
-            .help("添加歌曲")
+            .accessibilityLabel(Text(L("添加歌曲")))
+            .help(L("添加歌曲"))
             .disabled(!canPresentAddFlow)
         }
         ToolbarItem(placement: .primaryAction) {
@@ -167,27 +167,27 @@ struct PlaylistDetailView: View {
                 Button {
                     sendPlayback(.playAll)
                 } label: {
-                    Label("播放全部", systemImage: "play.fill")
+                    Label(L("播放全部"), systemImage: "play.fill")
                 }
                 Button {
                     sendPlayback(.shuffle)
                 } label: {
-                    Label("随机播放", systemImage: "shuffle")
+                    Label(L("随机播放"), systemImage: "shuffle")
                 }
                 Button {
                     sendPlayback(.playNext)
                 } label: {
-                    Label("下一首播放", systemImage: "text.line.first.and.arrowtriangle.forward")
+                    Label(L("下一首播放"), systemImage: "text.line.first.and.arrowtriangle.forward")
                 }
                 Button {
                     sendPlayback(.enqueue)
                 } label: {
-                    Label("加入队列", systemImage: "text.append")
+                    Label(L("加入队列"), systemImage: "text.append")
                 }
             } label: {
                 Image(systemName: "play.circle")
             }
-            .accessibilityLabel(Text("播放选项"))
+            .accessibilityLabel(Text(L("播放选项")))
             .disabled(viewModel.entries.isEmpty || viewModel.isSendingCommand)
         }
         ToolbarItem(placement: .primaryAction) {
@@ -196,8 +196,8 @@ struct PlaylistDetailView: View {
             } label: {
                 Image(systemName: viewModel.isEditing ? "checkmark" : "pencil")
             }
-            .accessibilityLabel(Text(viewModel.isEditing ? "完成编辑" : "编辑歌单"))
-            .help(viewModel.isEditing ? "完成编辑" : "编辑歌单")
+            .accessibilityLabel(Text(viewModel.isEditing ? L("完成编辑") : L("编辑歌单")))
+            .help(viewModel.isEditing ? L("完成编辑") : L("编辑歌单"))
             .disabled(viewModel.isLoading || viewModel.isMutating)
         }
     }
@@ -206,7 +206,7 @@ struct PlaylistDetailView: View {
         Button(role: .destructive) {
             viewModel.requestRemoveSelected()
         } label: {
-            Label("移除所选", systemImage: "trash")
+            Label(L("移除所选"), systemImage: "trash")
                 .font(.headline)
                 .frame(
                     maxWidth: .infinity,
@@ -234,7 +234,7 @@ struct PlaylistDetailView: View {
                     HStack(spacing: MusicFreeSpacingTokens.small) {
                         ProgressView()
                             .controlSize(.small)
-                        Text("正在加载歌曲信息")
+                        Text(L("正在加载歌曲信息"))
                             .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
                     }
                 }
@@ -243,12 +243,12 @@ struct PlaylistDetailView: View {
                       let retryTrackCandidates {
                 Section {
                     VStack(alignment: .leading, spacing: MusicFreeSpacingTokens.small) {
-                        Label("歌曲信息加载失败", systemImage: "exclamationmark.triangle")
+                        Label(L("歌曲信息加载失败"), systemImage: "exclamationmark.triangle")
                             .foregroundStyle(MusicFreeColorTokens.destructive)
                         Text(message)
                             .font(MusicFreeTypographyTokens.secondary)
                             .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
-                        Button("重试", action: retryTrackCandidates)
+                        Button(L("重试"), action: retryTrackCandidates)
                     }
                 }
             }
@@ -277,7 +277,7 @@ struct PlaylistDetailView: View {
                 }
             } header: {
                 HStack {
-                    Text("歌曲")
+                    Text(L("歌曲"))
                     Spacer(minLength: MusicFreeSpacingTokens.small)
                     Text("\(viewModel.entries.count)")
                         .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
@@ -296,7 +296,7 @@ struct PlaylistDetailView: View {
         Section {
             VStack(spacing: MusicFreeSpacingTokens.medium) {
                 ArtworkView(
-                    accessibilityLabel: "\(viewModel.playlist.name)的歌单封面",
+                    accessibilityLabel: L("%@ playlist artwork", viewModel.playlist.name),
                     placeholderSystemImage: "music.note.list",
                     placeholderTitle: viewModel.playlist.name,
                     fillsAvailableWidth: true
@@ -307,7 +307,7 @@ struct PlaylistDetailView: View {
                     Text(viewModel.playlist.name)
                         .font(.title2.weight(.bold))
                         .multilineTextAlignment(.center)
-                    Text("\(viewModel.entries.count) 首歌曲")
+                    Text(L("%d tracks", viewModel.entries.count))
                         .font(MusicFreeTypographyTokens.secondary)
                         .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
                 }
@@ -333,7 +333,7 @@ struct PlaylistDetailView: View {
         ScrollView {
             VStack(spacing: MusicFreeSpacingTokens.large) {
                 ArtworkView(
-                    accessibilityLabel: "\(viewModel.playlist.name)的歌单封面",
+                    accessibilityLabel: L("%@ playlist artwork", viewModel.playlist.name),
                     placeholderSystemImage: "music.note.list",
                     placeholderTitle: viewModel.playlist.name,
                     fillsAvailableWidth: true
@@ -344,7 +344,7 @@ struct PlaylistDetailView: View {
                     Text(viewModel.playlist.name)
                         .font(.title2.weight(.bold))
                         .multilineTextAlignment(.center)
-                    Text("0 首歌曲")
+                    Text(L("%d tracks", 0))
                         .font(MusicFreeTypographyTokens.secondary)
                         .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
                 }
@@ -358,26 +358,26 @@ struct PlaylistDetailView: View {
                     HStack(spacing: MusicFreeSpacingTokens.small) {
                         ProgressView()
                             .controlSize(.small)
-                        Text("正在加载可添加的歌曲")
+                        Text(L("正在加载可添加的歌曲"))
                             .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
                     }
                 } else if onRoute == nil,
                           let message = trackCandidateLoadState.failureMessage {
                     VStack(spacing: MusicFreeSpacingTokens.small) {
-                        Label("歌曲信息加载失败", systemImage: "exclamationmark.triangle")
+                        Label(L("歌曲信息加载失败"), systemImage: "exclamationmark.triangle")
                             .foregroundStyle(MusicFreeColorTokens.destructive)
                         Text(message)
                             .font(MusicFreeTypographyTokens.secondary)
                             .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
                             .multilineTextAlignment(.center)
                         if let retryTrackCandidates {
-                            Button("重试", action: retryTrackCandidates)
+                            Button(L("重试"), action: retryTrackCandidates)
                         }
                     }
                 }
 
                 MusicFreePillActionButton(
-                    title: "添加歌曲",
+                    title: L("添加歌曲"),
                     systemImage: "plus",
                     action: presentAddFlow
                 )
@@ -402,9 +402,9 @@ struct PlaylistDetailView: View {
 
     private var emptyPlaylistMessage: String {
         if trackCandidateLoadState == .empty {
-            return "资料库中暂无可添加的歌曲。"
+            return L("资料库中暂无可添加的歌曲。")
         }
-        return "添加歌曲后，就能从这里开始播放。"
+        return L("添加歌曲后，就能从这里开始播放。")
     }
 
     private var removeConfirmationBinding: Binding<Bool> {
@@ -530,6 +530,6 @@ private struct PlaylistEntryRow: View {
         }
         .contentShape(Rectangle())
         .padding(.trailing, MusicFreeSpacingTokens.contentInset)
-        .accessibilityValue(Text(isEditing ? (isSelected ? "已选择" : "未选择") : "第 \(position + 1) 首"))
+        .accessibilityValue(Text(isEditing ? (isSelected ? L("已选择") : L("未选择")) : L("Track %d", position + 1)))
     }
 }

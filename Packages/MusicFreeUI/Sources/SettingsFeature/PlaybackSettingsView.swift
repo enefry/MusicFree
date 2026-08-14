@@ -8,13 +8,13 @@ struct PlaybackSettingsView: View {
     @Bindable var viewModel: SettingsViewModel
 
     var body: some View {
-        Section("播放偏好") {
+        Section(L("播放偏好")) {
             rateControl
             equalizerLink
 
             capabilityNote(
                 isSupported: viewModel.supportsEqualizer,
-                message: "当前播放引擎未启用均衡器，保存的均衡器设置会在支持后生效。"
+                message: L("当前播放引擎未启用均衡器，保存的均衡器设置会在支持后生效。")
             )
         }
     }
@@ -22,7 +22,7 @@ struct PlaybackSettingsView: View {
     private var rateControl: some View {
         VStack(alignment: .leading, spacing: MusicFreeSpacingTokens.small) {
             HStack {
-                Text("默认播放速度")
+                Text(L("默认播放速度"))
                 Spacer(minLength: MusicFreeSpacingTokens.medium)
                 Text(rateText)
                     .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
@@ -36,13 +36,13 @@ struct PlaybackSettingsView: View {
                 onEditingChanged: handleRateEditingChanged
             )
             .disabled(viewModel.isSaving)
-            .accessibilityLabel(Text("默认播放速度"))
+            .accessibilityLabel(Text(L("默认播放速度")))
             .accessibilityValue(Text(rateText))
             .accessibilityIdentifier("settings.playback.rate")
 
             capabilityNote(
                 isSupported: viewModel.supportsVariableRate,
-                message: "当前播放引擎未启用变速播放，保存的速度会在支持后生效。"
+                message: L("当前播放引擎未启用变速播放，保存的速度会在支持后生效。")
             )
         }
     }
@@ -52,9 +52,9 @@ struct PlaybackSettingsView: View {
             EqualizerSettingsView(viewModel: viewModel)
         } label: {
             HStack(spacing: MusicFreeSpacingTokens.small) {
-                Label("均衡器", systemImage: "slider.vertical.3")
+                Label(L("均衡器"), systemImage: "slider.vertical.3")
                 Spacer(minLength: MusicFreeSpacingTokens.small)
-                Text(viewModel.settings.playbackPreferences.equalizer.isEnabled ? "已开启" : "已关闭")
+                Text(viewModel.settings.playbackPreferences.equalizer.isEnabled ? L("已开启") : L("已关闭"))
                     .font(MusicFreeTypographyTokens.caption)
                     .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
             }

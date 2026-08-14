@@ -25,12 +25,12 @@ struct PlaybackProgressControl: View {
         }
       )
       .disabled(!viewModel.canSeek)
-      .accessibilityLabel(Text("播放进度"))
+      .accessibilityLabel(Text(L("播放进度")))
       .accessibilityValue(
         Text("\(PlayerFormatting.duration(viewModel.displayedPosition)) / \(PlayerFormatting.duration(viewModel.duration))")
       )
       .accessibilityHint(
-        Text(viewModel.canSeek ? "拖动调整播放位置" : "当前播放不支持调整位置")
+        Text(viewModel.canSeek ? L("拖动调整播放位置") : L("当前播放不支持调整位置"))
       )
 
       HStack {

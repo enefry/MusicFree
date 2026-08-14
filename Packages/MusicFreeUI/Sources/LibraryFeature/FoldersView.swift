@@ -54,8 +54,8 @@ struct FoldersView: View {
         LibraryContentState(
             state: viewModel.state(for: .folders),
             hasContent: !viewModel.folders.isEmpty,
-            emptyTitle: "暂无文件夹",
-            emptyMessage: "按文件夹导入本地音频后会显示在这里。",
+            emptyTitle: L("暂无文件夹"),
+            emptyMessage: L("按文件夹导入本地音频后会显示在这里。"),
             emptySystemImage: "folder",
             retry: { viewModel.retry(section: .folders) }
         ) {
@@ -89,7 +89,7 @@ struct FoldersView: View {
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .layoutPriority(1)
 
-                                    Text("\(folder.trackCount) 首")
+                                    Text(L("%d tracks", folder.trackCount))
                                         .font(MusicFreeTypographyTokens.rowSubtitle)
                                         .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
                                         .lineLimit(1)
@@ -114,7 +114,7 @@ struct FoldersView: View {
                                     isPending: isCollectionQueueActionPending(target)
                                 )
                             }
-                            .accessibilityHint("打开文件夹，按住显示播放队列操作")
+                            .accessibilityHint(L("打开文件夹，按住显示播放队列操作"))
                             .accessibilityIdentifier("library.folder.open.\(folder.id)")
                             .onAppear {
                                 if folder.id == orderedFolders.last?.id {

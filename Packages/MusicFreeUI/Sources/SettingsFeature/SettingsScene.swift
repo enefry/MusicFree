@@ -7,20 +7,29 @@ import SwiftUI
 public struct SettingsScene: View {
     private let releaseInfoProvider: any SettingsReleaseInfoProviding
     private let diagnosticsProvider: any SettingsDiagnosticsProviding
+    private let appIconOptions: [SettingsAppIconOption]
+    private let appIconProvider: any SettingsAppIconProviding
     @Binding private var appearance: MusicFreeAppearance
+    @Binding private var language: MusicFreeLanguage
     @State private var viewModel: SettingsViewModel
 
     @MainActor
     init(
         store: any SettingsFeatureStore,
         appearance: Binding<MusicFreeAppearance> = .constant(.system),
+        language: Binding<MusicFreeLanguage> = .constant(.english),
         releaseInfoProvider: any SettingsReleaseInfoProviding,
-        diagnosticsProvider: any SettingsDiagnosticsProviding
+        diagnosticsProvider: any SettingsDiagnosticsProviding,
+        appIconOptions: [SettingsAppIconOption] = [],
+        appIconProvider: any SettingsAppIconProviding = EmptySettingsAppIconProvider()
 
     ) {
         self.releaseInfoProvider = releaseInfoProvider
         self.diagnosticsProvider = diagnosticsProvider
+        self.appIconOptions = appIconOptions
+        self.appIconProvider = appIconProvider
         _appearance = appearance
+        _language = language
         _viewModel = State(initialValue: SettingsViewModel(store: store))
     }
 
@@ -30,12 +39,18 @@ public struct SettingsScene: View {
         settingsServing: any SettingsServing,
         storageMaintenance: (any StorageMaintenanceServing)? = nil,
         appearance: Binding<MusicFreeAppearance> = .constant(.system),
+        language: Binding<MusicFreeLanguage> = .constant(.english),
         releaseInfoProvider: any SettingsReleaseInfoProviding = EmptySettingsReleaseInfoProvider(),
-        diagnosticsProvider: any SettingsDiagnosticsProviding = EmptySettingsDiagnosticsProvider()
+        diagnosticsProvider: any SettingsDiagnosticsProviding = EmptySettingsDiagnosticsProvider(),
+        appIconOptions: [SettingsAppIconOption] = [],
+        appIconProvider: any SettingsAppIconProviding = EmptySettingsAppIconProvider()
     ) {
         self.releaseInfoProvider = releaseInfoProvider
         self.diagnosticsProvider = diagnosticsProvider
+        self.appIconOptions = appIconOptions
+        self.appIconProvider = appIconProvider
         _appearance = appearance
+        _language = language
         _viewModel = State(initialValue: SettingsViewModel(
             store: AppServicesSettingsStore(
                 serving: settingsServing,
@@ -50,8 +65,11 @@ public struct SettingsScene: View {
         self.init(
             store: UnconfiguredSettingsStore(),
             appearance: .constant(.system),
+            language: .constant(.english),
             releaseInfoProvider: EmptySettingsReleaseInfoProvider(),
-            diagnosticsProvider: EmptySettingsDiagnosticsProvider()
+            diagnosticsProvider: EmptySettingsDiagnosticsProvider(),
+            appIconOptions: [],
+            appIconProvider: EmptySettingsAppIconProvider()
         )
     }
 
@@ -62,21 +80,21 @@ public struct SettingsScene: View {
         Group {
             switch viewModel.loadState {
             case .idle, .loading:
-                ProgressView("加载设置")
+                ProgressView(L("加载设置"))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             case let .failed(failure):
                 VStack(spacing: MusicFreeSpacingTokens.small) {
                     ErrorStateView(
-                        title: "设置加载失败",
+                        title: L("设置加载失败"),
                         message: failure.message,
-                        retryTitle: "重试",
+                        retryTitle: L("重试"),
                         retry: { Task { await viewModel.retry() } }
                     )
 
                     Button(role: .destructive) {
                         viewModel.requestReset()
                     } label: {
-                        Label("恢复默认设置", systemImage: "arrow.counterclockwise")
+                        Label(L("恢复默认设置"), systemImage: "arrow.counterclockwise")
                     }
                     .buttonStyle(.bordered)
                     .accessibilityIdentifier("settings.recovery.reset")
@@ -86,7 +104,7 @@ public struct SettingsScene: View {
                 settingsForm(viewModel: viewModel)
             }
         }
-        .navigationTitle("设置")
+        .navigationTitle(L("设置"))
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -95,37 +113,37 @@ public struct SettingsScene: View {
                     Image(systemName: "arrow.clockwise")
                 }
                 .disabled(viewModel.isLoading)
-                .accessibilityLabel(Text("重新加载设置"))
-                .help("重新加载设置")
+                .accessibilityLabel(Text(L("重新加载设置")))
+                .help(L("重新加载设置"))
             }
         }
         .confirmationDialog(
-            "恢复默认设置？",
+            L("恢复默认设置？"),
             isPresented: $viewModel.isResetConfirmationPresented,
             titleVisibility: .visible
         ) {
-            Button("恢复默认设置", role: .destructive) {
+            Button(L("恢复默认设置"), role: .destructive) {
                 Task { await viewModel.confirmReset() }
             }
-            Button("取消", role: .cancel) {
+            Button(L("取消"), role: .cancel) {
                 viewModel.cancelReset()
             }
         } message: {
-            Text("播放、导入和存储偏好将恢复为默认值。")
+            Text(L("播放、导入和存储偏好将恢复为默认值。"))
         }
         .confirmationDialog(
             maintenanceConfirmationTitle,
             isPresented: $viewModel.isMaintenanceConfirmationPresented,
             titleVisibility: .visible
         ) {
-            Button("继续", role: .destructive) {
+            Button(L("继续"), role: .destructive) {
                 Task { await viewModel.confirmStorageMaintenance() }
             }
-            Button("取消", role: .cancel) {
+            Button(L("取消"), role: .cancel) {
                 viewModel.cancelStorageMaintenance()
             }
         } message: {
-            Text("操作只处理应用生成的缓存或已记录的维护事务，不会删除资料库媒体文件。")
+            Text(L("操作只处理应用生成的缓存或已记录的维护事务，不会删除资料库媒体文件。"))
         }
         .task {
             await viewModel.load()
@@ -138,40 +156,55 @@ public struct SettingsScene: View {
     private func settingsForm(viewModel: SettingsViewModel) -> some View {
         Form {
             if let failure = viewModel.lastFailure {
-                Section("状态") {
+                Section(L("状态")) {
                     Label(failure.message, systemImage: "exclamationmark.triangle")
                         .foregroundStyle(MusicFreeColorTokens.warning)
                     Text(failure.diagnosticCode)
                         .font(MusicFreeTypographyTokens.caption.monospaced())
                         .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
                     if viewModel.canRetryFailedSave {
-                        Button("重试保存") {
+                        Button(L("重试保存")) {
                             viewModel.retryFailedSave()
                         }
                     }
                 }
             }
 
-            Section("外观") {
-                Picker("配色", selection: $appearance) {
+            Section(L("外观")) {
+                Picker(L("应用语言"), selection: $language) {
+                    ForEach(MusicFreeLanguage.allCases) { option in
+                        Text(option.title).tag(option)
+                    }
+                }
+                .pickerStyle(.menu)
+                .accessibilityIdentifier("settings.language")
+                
+                Picker(L("配色"), selection: $appearance) {
                     ForEach(MusicFreeAppearance.allCases) { option in
                         Label(option.title, systemImage: option.systemImage)
                             .tag(option)
                     }
                 }
-                .pickerStyle(.segmented)
+                .pickerStyle(.menu)
                 .accessibilityIdentifier("settings.appearance")
+                
+                if !appIconOptions.isEmpty {
+                    AppIconSettingsView(
+                        options: appIconOptions,
+                        provider: appIconProvider
+                    )
+                }
             }
 
             PlaybackSettingsView(viewModel: viewModel)
             ImportSettingsView(viewModel: viewModel)
             StorageSettingsView(viewModel: viewModel)
 
-            Section("关于") {
+            Section(L("关于")) {
                 NavigationLink {
                     AboutDependenciesView(provider: releaseInfoProvider, settingsViewModel: self.viewModel)
                 } label: {
-                    Label("版本与第三方许可", systemImage: "info.circle")
+                    Label(L("版本与第三方许可"), systemImage: "info.circle")
                 }
                 .accessibilityIdentifier("settings.about")
 
@@ -181,7 +214,7 @@ public struct SettingsScene: View {
                         lastFailure: viewModel.lastFailure
                     )
                 } label: {
-                    Label("诊断信息", systemImage: "stethoscope")
+                    Label(L("诊断信息"), systemImage: "stethoscope")
                 }
                 .accessibilityIdentifier("settings.diagnostics")
             }
@@ -190,7 +223,7 @@ public struct SettingsScene: View {
                 Button(role: .destructive) {
                     viewModel.requestReset()
                 } label: {
-                    Label("恢复默认设置", systemImage: "arrow.counterclockwise")
+                    Label(L("恢复默认设置"), systemImage: "arrow.counterclockwise")
                 }
                 .disabled(viewModel.isSaving)
                 .accessibilityIdentifier("settings.reset")
@@ -203,10 +236,10 @@ public struct SettingsScene: View {
 
     private var maintenanceConfirmationTitle: String {
         switch viewModel.requestedMaintenanceAction {
-        case .clearImportStaging: return "清理导入暂存？"
-        case .repairPendingRemovals: return "修复待删除项目？"
-        case .clearFinalizedQuarantine: return "清理已完成隔离？"
-        case nil: return "执行存储维护？"
+        case .clearImportStaging: return L("清理导入暂存？")
+        case .repairPendingRemovals: return L("修复待删除项目？")
+        case .clearFinalizedQuarantine: return L("清理已完成隔离？")
+        case nil: return L("执行存储维护？")
         }
     }
 }

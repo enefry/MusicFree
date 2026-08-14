@@ -21,11 +21,11 @@ public enum LibraryImportProgressPhase: String, Equatable, Sendable {
 
     public var title: String {
         switch self {
-        case .discovered: return "已发现"
-        case .hashing: return "正在检查"
-        case .probing: return "正在解析"
-        case .copying: return "正在复制"
-        case .persisting: return "正在保存"
+        case .discovered: return L("已发现")
+        case .hashing: return L("正在检查")
+        case .probing: return L("正在解析")
+        case .copying: return L("正在复制")
+        case .persisting: return L("正在保存")
         }
     }
 }
@@ -137,7 +137,7 @@ public enum ImportEventMapper {
 
     private static func displayName(for url: URL) -> String {
         let name = url.lastPathComponent.trimmingCharacters(in: .whitespacesAndNewlines)
-        return name.isEmpty ? "未命名媒体" : name
+        return name.isEmpty ? L("未命名媒体") : name
     }
 }
 
@@ -176,7 +176,7 @@ struct ImportProgressView: View {
         case .completed(let result):
             resultContent(result)
         case .failed(let message):
-            ErrorStateView(title: "导入失败", message: message, retryTitle: "关闭", retry: dismiss)
+            ErrorStateView(title: L("import.failed.title"), message: message, retryTitle: L("关闭"), retry: dismiss)
         }
     }
 
@@ -189,7 +189,7 @@ struct ImportProgressView: View {
             ProgressView()
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: MusicFreeSpacingTokens.xSmall) {
-                Text(isCancelling ? "正在取消导入" : "正在导入媒体")
+                Text(isCancelling ? L("正在取消导入") : L("正在导入媒体"))
                     .font(MusicFreeTypographyTokens.sectionTitle)
                     .foregroundStyle(MusicFreeColorTokens.foregroundPrimary)
                 if let phase = progress.phase {
@@ -201,10 +201,10 @@ struct ImportProgressView: View {
             Spacer(minLength: 0)
             if !isCancelling {
                 Button(action: cancel) {
-                    Label("取消", systemImage: "xmark")
+                    Label(L("取消"), systemImage: "xmark")
                 }
                 .buttonStyle(.bordered)
-                .help("取消导入")
+                .help(L("取消导入"))
             }
         }
 
@@ -215,7 +215,7 @@ struct ImportProgressView: View {
             )
             .tint(MusicFreeColorTokens.accent)
             .accessibilityValue(
-                Text("已处理 \(progress.processedItems)，共 \(progress.totalItems)")
+                Text(L("已处理 %d，共 %d", progress.processedItems, progress.totalItems))
             )
         }
 
@@ -235,15 +235,15 @@ struct ImportProgressView: View {
             Image(systemName: result.isCancelled ? "pause.circle" : "checkmark.circle")
                 .foregroundStyle(result.isCancelled ? MusicFreeColorTokens.warning : MusicFreeColorTokens.positive)
                 .accessibilityHidden(true)
-            Text(result.isCancelled ? "导入已取消" : "导入完成")
+            Text(result.isCancelled ? L("导入已取消") : L("导入完成"))
                 .font(MusicFreeTypographyTokens.sectionTitle)
                 .foregroundStyle(MusicFreeColorTokens.foregroundPrimary)
             Spacer(minLength: 0)
             Button(action: dismiss) {
-                Label("关闭", systemImage: "xmark")
+                Label(L("关闭"), systemImage: "xmark")
             }
             .buttonStyle(.bordered)
-            .help("关闭导入结果")
+            .help(L("关闭导入结果"))
         }
 
         summary(result)
@@ -252,11 +252,11 @@ struct ImportProgressView: View {
     @ViewBuilder
     private func summary(_ result: MediaImportResult) -> some View {
         VStack(alignment: .leading, spacing: MusicFreeSpacingTokens.xSmall) {
-            if result.imported > 0 { Text("已导入 \(result.imported) 首") }
-            if result.duplicate > 0 { Text("重复 \(result.duplicate) 首") }
-            if result.skipped > 0 { Text("已跳过 \(result.skipped) 首") }
-            if result.failed > 0 { Text("失败 \(result.failed) 首") }
-            if result.cancelled > 0 { Text("取消 \(result.cancelled) 首") }
+            if result.imported > 0 { Text(L("已导入 %d 首", result.imported)) }
+            if result.duplicate > 0 { Text(L("重复 %d 首", result.duplicate)) }
+            if result.skipped > 0 { Text(L("已跳过 %d 首", result.skipped)) }
+            if result.failed > 0 { Text(L("失败 %d 首", result.failed)) }
+            if result.cancelled > 0 { Text(L("取消 %d 首", result.cancelled)) }
         }
         .font(MusicFreeTypographyTokens.secondary)
         .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
@@ -266,16 +266,16 @@ struct ImportProgressView: View {
     private func failureList(_ failures: [LibraryImportFailure]) -> some View {
         if !failures.isEmpty {
             VStack(alignment: .leading, spacing: MusicFreeSpacingTokens.xSmall) {
-                Text("部分项目未导入")
+                Text(L("部分项目未导入"))
                     .font(MusicFreeTypographyTokens.secondary.weight(.semibold))
                 ForEach(Array(failures.prefix(3).enumerated()), id: \.offset) { _, failure in
-                    Text("\(failure.itemName)：\(failure.message)")
+                    Text(L("format.colonPair", failure.itemName, failure.message))
                         .font(MusicFreeTypographyTokens.caption)
                         .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
                         .lineLimit(2)
                 }
                 if failures.count > 3 {
-                    Text("还有 \(failures.count - 3) 项失败")
+                    Text(L("还有 %d 项失败", failures.count - 3))
                         .font(MusicFreeTypographyTokens.caption)
                         .foregroundStyle(MusicFreeColorTokens.foregroundTertiary)
                 }

@@ -1,4 +1,5 @@
 import Foundation
+import DesignSystem
 import LibraryAPI
 import MusicDomain
 import Observation
@@ -177,7 +178,7 @@ final class PlaylistDetailViewModel {
             try Task.checkCancellation()
             isEditing = false
             selectedTrackIDs.removeAll()
-            mutationState = .succeeded("已保存排序")
+            mutationState = .succeeded(L("已保存排序"))
             return true
         } catch let error where playlistFeatureIsCancellation(error) {
             entries = originalEntries
@@ -243,7 +244,7 @@ final class PlaylistDetailViewModel {
             )
             try Task.checkCancellation()
             loadState = entries.isEmpty ? .empty : .loaded
-            mutationState = .succeeded("已移除歌曲")
+            mutationState = .succeeded(L("已移除歌曲"))
             return true
         } catch let error where playlistFeatureIsCancellation(error) {
             entries = originalEntries
@@ -305,7 +306,7 @@ final class PlaylistDetailViewModel {
             )
             try Task.checkCancellation()
             loadState = .loaded
-            mutationState = .succeeded("已添加 \(additions.count) 首歌曲")
+            mutationState = .succeeded(L("已添加 %d 首歌曲", additions.count))
             return true
         } catch let error where playlistFeatureIsCancellation(error) {
             entries = originalEntries

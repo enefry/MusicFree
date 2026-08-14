@@ -75,7 +75,7 @@ struct LibraryHomeView: View {
             Section {
                 overviewContent
             } header: {
-                Text("最近添加")
+                Text(L("最近添加"))
                     .font(.title2.weight(.bold))
                     .foregroundStyle(MusicFreeColorTokens.foregroundPrimary)
                     .textCase(nil)
@@ -85,7 +85,7 @@ struct LibraryHomeView: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background(MusicFreeColorTokens.backgroundPrimary)
-        .navigationTitle("资料库")
+        .navigationTitle(L("资料库"))
         .toolbarTitleDisplayMode(.inlineLarge)
         .accessibilityIdentifier("library.home")
         .toolbar { libraryToolbar }
@@ -102,7 +102,7 @@ struct LibraryHomeView: View {
         NavigationLink(value: LibraryCompactRoute.section(item.section)) {
             rowLabel(item)
         }
-        .accessibilityHint("打开\(item.title)")
+        .accessibilityHint(L("打开%@", item.title))
         .listRowInsets(
             EdgeInsets(
                 top: MusicFreeSpacingTokens.xSmall,
@@ -149,7 +149,7 @@ struct LibraryHomeView: View {
                         )
                     }
                     .buttonStyle(.plain)
-                    .accessibilityHint("打开专辑")
+                    .accessibilityHint(L("打开专辑"))
                 }
             }
             .padding(.vertical, MusicFreeSpacingTokens.small)
@@ -166,7 +166,7 @@ struct LibraryHomeView: View {
         case .idle, .loading:
             HStack(spacing: MusicFreeSpacingTokens.small) {
                 ProgressView()
-                Text("正在载入最近添加")
+                Text(L("正在载入最近添加"))
                     .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
             }
             .frame(maxWidth: .infinity, minHeight: 88)
@@ -177,10 +177,10 @@ struct LibraryHomeView: View {
                     .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
 
                 VStack(alignment: .leading, spacing: MusicFreeSpacingTokens.xSmall) {
-                    Text("暂无最近添加")
+                    Text(L("暂无最近添加"))
                         .font(MusicFreeTypographyTokens.sectionTitle)
                         .foregroundStyle(MusicFreeColorTokens.foregroundPrimary)
-                    Text("导入本地音乐后，最近加入的专辑会显示在这里。")
+                    Text(L("导入本地音乐后，最近加入的专辑会显示在这里。"))
                         .font(MusicFreeTypographyTokens.secondary)
                         .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -191,7 +191,7 @@ struct LibraryHomeView: View {
             Button {
                 viewModel.refreshOverview()
             } label: {
-                Label("无法载入最近添加，点击重试", systemImage: "arrow.clockwise")
+                Label(L("无法载入最近添加，点击重试"), systemImage: "arrow.clockwise")
                     .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
                     .frame(maxWidth: .infinity, minHeight: 88)
             }
@@ -230,7 +230,7 @@ struct LibraryHomeView: View {
                     Button(action: importAction) {
                         Image(systemName: "plus")
                     }
-                    .accessibilityLabel("导入本地媒体")
+                    .accessibilityLabel(L("导入本地媒体"))
 
                     libraryMenu
                 }
@@ -247,18 +247,18 @@ struct LibraryHomeView: View {
                     await viewModel.refreshOverviewCheckingForImports()
                 }
             } label: {
-                Label("刷新资料库", systemImage: "arrow.clockwise")
+                Label(L("刷新资料库"), systemImage: "arrow.clockwise")
             }
 
             if viewModel.canImport {
                 Button(action: importAction) {
-                    Label("导入本地媒体", systemImage: "square.and.arrow.down")
+                    Label(L("导入本地媒体"), systemImage: "square.and.arrow.down")
                 }
             }
         } label: {
             Image(systemName: "ellipsis")
         }
-        .accessibilityLabel("资料库选项")
+        .accessibilityLabel(L("资料库选项"))
     }
 }
 
@@ -273,7 +273,7 @@ private struct RecentAlbumTile: View {
         VStack(alignment: .leading, spacing: MusicFreeSpacingTokens.small) {
             ArtworkView(
                 image: artworkLoader.image,
-                accessibilityLabel: "\(album.title)的专辑封面",
+                accessibilityLabel: L("%@ album artwork", album.title),
                 placeholderSystemImage: "music.note",
                 placeholderTitle: album.title,
                 fillsAvailableWidth: true

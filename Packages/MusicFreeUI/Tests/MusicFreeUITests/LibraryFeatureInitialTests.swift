@@ -92,6 +92,67 @@ func libraryFavoritePreservesRapidIntent() async {
 }
 
 @MainActor
+@Test("Removing a track clears loaded library caches and preserves unqueried sections")
+func removingTrackClearsLoadedCaches() async {
+    let track = makeTrack("removed")
+    let favoriteTrack = Track(
+        id: track.id,
+        title: track.title,
+        isFavorite: true
+    )
+    let history = makeHistoryItem(
+        sessionID: UUID(),
+        track: track,
+        eventTime: 1_700_000_000
+    )
+    let service = FakeLibraryService()
+    service.trackResponses = [
+        .success(LibraryPage(elements: [track])),
+        .success(LibraryPage(elements: [favoriteTrack]))
+    ]
+    service.historyResponses = [.success(LibraryPage(elements: [history]))]
+    let viewModel = LibraryViewModel(library: service)
+
+    viewModel.load(section: .tracks, reset: true)
+    await settle()
+    viewModel.load(section: .favorites, reset: true)
+    await settle()
+    viewModel.load(section: .recent, reset: true)
+    await settle()
+
+    #expect(viewModel.state(for: .tracks) == .loaded)
+    #expect(viewModel.state(for: .favorites) == .loaded)
+    #expect(viewModel.state(for: .recent) == .loaded)
+
+    viewModel.removeDeletedTrack(track.id)
+
+    #expect(viewModel.tracks.isEmpty)
+    #expect(viewModel.favoriteTracks.isEmpty)
+    #expect(viewModel.recentTracks.isEmpty)
+    #expect(viewModel.playbackHistory.isEmpty)
+    #expect(viewModel.state(for: .tracks) == .empty)
+    #expect(viewModel.state(for: .favorites) == .empty)
+    #expect(viewModel.state(for: .recent) == .empty)
+}
+
+@MainActor
+@Test("Removing a track does not mark an unqueried section empty")
+func removingTrackPreservesUnqueriedSectionState() async {
+    let track = makeTrack("removed before favorites load")
+    let service = FakeLibraryService()
+    service.trackResponses = [.success(LibraryPage(elements: [track]))]
+    let viewModel = LibraryViewModel(library: service)
+
+    viewModel.load(section: .tracks, reset: true)
+    await settle()
+    viewModel.removeDeletedTrack(track.id)
+
+    #expect(viewModel.state(for: .tracks) == .empty)
+    #expect(viewModel.state(for: .favorites) == .idle)
+    #expect(viewModel.state(for: .recent) == .idle)
+}
+
+@MainActor
 @Test("Library overview loads recently added albums in descending date order")
 func libraryOverviewLoadsRecentAlbums() async throws {
     let service = FakeLibraryService()
@@ -495,7 +556,7 @@ func playbackHistoryPresentationGroupsDates() throws {
         calendar: calendar
     )
 
-    #expect(sections.map(\.title) == ["今天", "昨天"])
+    #expect(sections.map(\.title) == ["Today", "Yesterday"])
     #expect(sections[0].items.map(\.lastEventAt) == [
         todayStart.addingTimeInterval(30),
         todayStart.addingTimeInterval(10),

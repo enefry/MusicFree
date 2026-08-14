@@ -18,8 +18,8 @@ struct AddToPlaylistSheet: View {
             Group {
                 if filteredCandidates.isEmpty {
                     EmptyStateView(
-                        title: "没有可添加的歌曲",
-                        message: searchText.isEmpty ? "资料库中暂无可用歌曲。" : "没有匹配的歌曲。",
+                        title: L("没有可添加的歌曲"),
+                        message: searchText.isEmpty ? L("资料库中暂无可用歌曲。") : L("没有匹配的歌曲。"),
                         systemImage: "music.note"
                     )
                 } else {
@@ -48,24 +48,24 @@ struct AddToPlaylistSheet: View {
                         .opacity(existingIDs.contains(candidate.id) ? 0.45 : 1)
                         .accessibilityIdentifier("playlists.addTrack.\(candidate.id.externalID)")
                         .accessibilityValue(
-                            Text(existingIDs.contains(candidate.id) ? "已在歌单中" : (selectedIDs.contains(candidate.id) ? "已选择" : "未选择"))
+                            Text(existingIDs.contains(candidate.id) ? L("已在歌单中") : (selectedIDs.contains(candidate.id) ? L("已选择") : L("未选择")))
                         )
                     }
                     .listStyle(.insetGrouped)
                 }
             }
-            .navigationTitle("添加歌曲")
+            .navigationTitle(L("添加歌曲"))
             .navigationBarTitleDisplayMode(.inline)
-            .searchable(text: $searchText, prompt: "搜索歌曲")
+            .searchable(text: $searchText, prompt: L("搜索歌曲"))
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") {
+                    Button(L("取消")) {
                         dismiss()
                     }
                     .disabled(isSubmitting)
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("添加") {
+                    Button(L("添加")) {
                         submit()
                     }
                     .disabled(selectedIDs.isEmpty || isSubmitting)
@@ -74,7 +74,7 @@ struct AddToPlaylistSheet: View {
             }
             .overlay {
                 if isSubmitting {
-                    ProgressView("添加中")
+                    ProgressView(L("添加中"))
                         .padding(MusicFreeSpacingTokens.large)
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
                 }

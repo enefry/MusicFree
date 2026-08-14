@@ -42,3 +42,5 @@ Docs/UIReview-*/flow-*.png
 **/*.wav
 **/*.flac
 .build
+.codex
+.noindex

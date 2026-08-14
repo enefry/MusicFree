@@ -60,7 +60,7 @@ public struct PlaylistScene: View {
 
         NavigationSplitView {
             PlaylistListView(viewModel: listViewModel)
-                .navigationTitle("播放列表")
+                .navigationTitle(L("播放列表"))
         } detail: {
             if let playlist = listViewModel.selectedPlaylist,
                let detailViewModel,
@@ -82,12 +82,12 @@ public struct PlaylistScene: View {
                 )
                 .id(playlist.id)
             } else if listViewModel.selectedPlaylist != nil {
-                ProgressView("加载歌曲")
+                ProgressView(L("加载歌曲"))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 EmptyStateView(
-                    title: "选择一个歌单",
-                    message: "歌单详情和播放操作会显示在这里。",
+                    title: L("选择一个歌单"),
+                    message: L("歌单详情和播放操作会显示在这里。"),
                     systemImage: "music.note.list"
                 )
             }

@@ -9,9 +9,9 @@ public enum MusicFreeAppearance: String, CaseIterable, Identifiable, Sendable {
 
     public var title: String {
         switch self {
-        case .system: return "系统"
-        case .light: return "明亮"
-        case .dark: return "暗黑"
+        case .system: return MusicFreeLocalization.localized("appearance.system")
+        case .light: return MusicFreeLocalization.localized("appearance.light")
+        case .dark: return MusicFreeLocalization.localized("appearance.dark")
         }
     }
 

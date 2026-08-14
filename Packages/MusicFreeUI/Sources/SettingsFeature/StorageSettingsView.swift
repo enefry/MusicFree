@@ -7,34 +7,34 @@ struct StorageSettingsView: View {
     @Bindable var viewModel: SettingsViewModel
 
     var body: some View {
-        Section("存储状态") {
+        Section(L("存储状态")) {
             if let usage = viewModel.storageUsage {
-                LabeledContent("媒体文件", value: byteText(usage.managedMediaBytes))
-                LabeledContent("导入暂存", value: byteText(usage.cacheBytes))
-                LabeledContent("隔离文件", value: byteText(usage.quarantineBytes))
+                LabeledContent(L("媒体文件"), value: byteText(usage.managedMediaBytes))
+                LabeledContent(L("导入暂存"), value: byteText(usage.cacheBytes))
+                LabeledContent(L("隔离文件"), value: byteText(usage.quarantineBytes))
                 if let available = usage.availableBytes {
-                    LabeledContent("可用空间", value: byteText(available))
+                    LabeledContent(L("可用空间"), value: byteText(available))
                 }
                 if usage.pendingRemovalCount > 0 {
                     Label(
-                        "有 \(usage.pendingRemovalCount) 个待完成的删除事务",
+                        L("有 %d 个待完成的删除事务", usage.pendingRemovalCount),
                         systemImage: "exclamationmark.triangle"
                     )
                     .foregroundStyle(MusicFreeColorTokens.warning)
                 }
             } else {
-                Text("存储状态暂不可用")
+                Text(L("存储状态暂不可用"))
                     .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
             }
 
             if viewModel.isRefreshingStorage {
-                ProgressView("正在刷新存储状态")
+                ProgressView(L("正在刷新存储状态"))
             }
 
             Button {
                 Task { await viewModel.refreshStorageUsage() }
             } label: {
-                Label("刷新存储状态", systemImage: "arrow.clockwise")
+                Label(L("刷新存储状态"), systemImage: "arrow.clockwise")
             }
             .accessibilityIdentifier("settings.storage.refresh")
             .disabled(storageActionsDisabled)
@@ -42,7 +42,7 @@ struct StorageSettingsView: View {
             Button {
                 viewModel.requestStorageMaintenance(.clearImportStaging)
             } label: {
-                Label("清理导入暂存", systemImage: "trash")
+                Label(L("清理导入暂存"), systemImage: "trash")
             }
             .disabled(storageActionsDisabled)
             .accessibilityIdentifier("settings.storage.clearStaging")
@@ -50,7 +50,7 @@ struct StorageSettingsView: View {
             Button {
                 viewModel.requestStorageMaintenance(.repairPendingRemovals)
             } label: {
-                Label("修复待删除项目", systemImage: "checkmark.circle")
+                Label(L("修复待删除项目"), systemImage: "checkmark.circle")
             }
             .disabled(storageActionsDisabled)
             .accessibilityIdentifier("settings.storage.repairRemovals")
@@ -58,7 +58,7 @@ struct StorageSettingsView: View {
             Button {
                 viewModel.requestStorageMaintenance(.clearFinalizedQuarantine)
             } label: {
-                Label("清理已完成隔离", systemImage: "archivebox")
+                Label(L("清理已完成隔离"), systemImage: "archivebox")
             }
             .disabled(storageActionsDisabled)
             .accessibilityIdentifier("settings.storage.clearQuarantine")
@@ -66,15 +66,15 @@ struct StorageSettingsView: View {
             maintenanceStatus
         }
 
-        Section("存储策略") {
-            Toggle("自动整理缓存", isOn: automaticPruningBinding)
+        Section(L("存储策略")) {
+            Toggle(L("自动整理缓存"), isOn: automaticPruningBinding)
                 .toggleStyle(MusicFreeSwitchToggleStyle())
                 .accessibilityIdentifier("settings.storage.autoPrune")
                 .disabled(viewModel.isSaving)
 
             VStack(alignment: .leading, spacing: MusicFreeSpacingTokens.small) {
                 HStack {
-                    Text("缓存上限")
+                    Text(L("缓存上限"))
                     Spacer(minLength: MusicFreeSpacingTokens.medium)
                     Text(cacheLimitText)
                         .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
@@ -86,16 +86,16 @@ struct StorageSettingsView: View {
                     step: Double(256 * 1_024 * 1_024)
                 )
                 .disabled(viewModel.isSaving)
-                .accessibilityLabel(Text("缓存上限"))
+                .accessibilityLabel(Text(L("缓存上限")))
                 .accessibilityValue(Text(cacheLimitText))
                 .accessibilityIdentifier("settings.storage.cacheLimit")
             }
 
             Stepper(value: stagingRetentionDaysBinding, in: 0...30) {
                 HStack {
-                    Text("暂存保留时间")
+                    Text(L("暂存保留时间"))
                     Spacer(minLength: MusicFreeSpacingTokens.medium)
-                    Text("\(stagingRetentionDays) 天")
+                    Text(L("%d days", stagingRetentionDays))
                         .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
                 }
             }
@@ -146,9 +146,9 @@ struct StorageSettingsView: View {
         case .idle:
             EmptyView()
         case .loading:
-            ProgressView("正在维护存储")
+            ProgressView(L("正在维护存储"))
         case .completed(let result):
-            Text("已释放 \(byteText(result.freedBytes))")
+            Text(L("已释放 %@", byteText(result.freedBytes)))
                 .font(MusicFreeTypographyTokens.caption)
                 .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
         case .failed(let message):

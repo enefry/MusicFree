@@ -128,6 +128,23 @@ private enum SettingsFeatureTestError: Error, Sendable {
 }
 
 @MainActor
+private final class SettingsAppIconTestProvider: SettingsAppIconProviding {
+    var supportsAlternateIcons = true
+    var alternateIconName: String?
+    var nextError: Error?
+    private(set) var requestedNames: [String?] = []
+
+    func setAlternateIconName(_ alternateIconName: String?) async throws {
+        requestedNames.append(alternateIconName)
+        if let nextError {
+            self.nextError = nil
+            throw nextError
+        }
+        self.alternateIconName = alternateIconName
+    }
+}
+
+@MainActor
 @Test("Settings loads, validates, and serializes a saved playback change")
 func settingsFeatureLoadsAndSaves() async throws {
     let rate = try PlaybackRate(value: 1.5)
@@ -593,6 +610,46 @@ func dependencyLicenseMetadataRoundTrips() throws {
 
     #expect(decoded == dependency)
     #expect(decoded.licenseText?.contains("GENERAL PUBLIC LICENSE") == true)
+}
+
+@MainActor
+@Test("App icon selection reflects the icon accepted by the system provider")
+func appIconSelectionUpdatesAfterSuccess() async {
+    let provider = SettingsAppIconTestProvider()
+    let viewModel = AppIconSettingsViewModel(provider: provider)
+    let option = SettingsAppIconOption(
+        id: "circle",
+        title: "Circle",
+        alternateIconName: "AppIcon-cicle",
+        previewAssetName: "preview"
+    )
+
+    await viewModel.select(option)
+
+    #expect(provider.requestedNames.count == 1)
+    #expect(provider.requestedNames[0] == "AppIcon-cicle")
+    #expect(viewModel.isSelected(option))
+    #expect(viewModel.failureMessage == nil)
+}
+
+@MainActor
+@Test("App icon selection keeps the current icon when the system rejects a change")
+func appIconSelectionRollsBackAfterFailure() async {
+    let provider = SettingsAppIconTestProvider()
+    provider.nextError = SettingsFeatureTestError.write
+    let viewModel = AppIconSettingsViewModel(provider: provider)
+    let option = SettingsAppIconOption(
+        id: "music",
+        title: "Music",
+        alternateIconName: "AppIcon-music",
+        previewAssetName: "preview"
+    )
+
+    await viewModel.select(option)
+
+    #expect(provider.alternateIconName == nil)
+    #expect(!viewModel.isSelected(option))
+    #expect(viewModel.failureMessage != nil)
 }
 
 private func settleSettingsFeature() async {

@@ -53,7 +53,8 @@ public struct MiniPlayerView: View {
 
     public var body: some View {
         Group {
-            if let currentItem = viewModel.snapshot.currentItem {
+            if viewModel.isMiniPlayerVisible,
+               let currentItem = viewModel.snapshot.currentItem {
                 if isNativeTabAccessory {
                     content(currentItem: currentItem)
                         .frame(
@@ -97,8 +98,8 @@ public struct MiniPlayerView: View {
                     ? "pause.fill"
                     : "play.fill",
                 accessibilityLabel: viewModel.snapshot.phase == .playing
-                    ? "暂停"
-                    : "播放",
+                    ? L("暂停")
+                    : L("播放"),
                 isLoading: viewModel.presentationState == .loading
                     || viewModel.presentationState == .buffering,
                 foregroundColor: MusicFreeColorTokens.foregroundPrimary,
@@ -110,7 +111,7 @@ public struct MiniPlayerView: View {
 
             PlaybackControlButton(
                 systemImage: "forward.fill",
-                accessibilityLabel: "下一首",
+                accessibilityLabel: L("下一首"),
                 isEnabled: viewModel.canGoNext,
                 foregroundColor: MusicFreeColorTokens.foregroundPrimary,
                 backgroundColor: .clear,
@@ -169,7 +170,7 @@ public struct MiniPlayerView: View {
                     artworkID: item.display.artworkID,
                     sourceID: item.itemID.sourceID,
                     serving: artworkServing,
-                    accessibilityLabel: item.display.artworkID == nil ? "暂无封面" : "封面",
+                    accessibilityLabel: item.display.artworkID == nil ? L("暂无封面") : L("封面"),
                     placeholderTitle: item.display.title,
                     fillsAvailableWidth: true,
                     cornerRadius: 5

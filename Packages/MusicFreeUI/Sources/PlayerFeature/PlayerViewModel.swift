@@ -81,6 +81,24 @@ final class PlayerViewModel: ObservableObject {
     snapshot.currentItem?.artist
   }
 
+  /// The MiniPlayer represents an active single-track session. A stopped
+  /// coordinator intentionally retains the current item for later resume, so
+  /// checking only `currentItem` would leave the MiniPlayer visible after stop.
+  var isMiniPlayerVisible: Bool {
+    guard snapshot.currentItem != nil,
+          snapshot.queue.currentEntryID != nil,
+          snapshot.queue.currentItemID != nil else {
+      return false
+    }
+
+    switch snapshot.phase {
+    case .preparing, .buffering, .playing, .paused:
+      return true
+    case .idle, .stopped, .failed:
+      return false
+    }
+  }
+
   var displayedPosition: Duration {
     if isSeeking, let seekPosition {
       return clamped(seekPosition)

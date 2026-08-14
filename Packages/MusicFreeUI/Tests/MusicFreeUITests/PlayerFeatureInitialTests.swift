@@ -230,6 +230,54 @@ func playerFeatureQueueBoundaryAvailability() {
   #expect(repeatingLast.canGoNext)
 }
 
+@MainActor
+@Test("MiniPlayer hides without an active single-track session")
+func miniPlayerVisibilityFollowsPlaybackPhase() {
+  for phase in [PlaybackPhase.preparing, .buffering, .playing, .paused] {
+    let viewModel = PlayerViewModel(
+      serving: RecordingPlaybackServing(snapshot: makePlayerSnapshot(phase: phase)),
+      autoStart: false
+    )
+    #expect(viewModel.isMiniPlayerVisible)
+  }
+
+  for phase in [PlaybackPhase.idle, .stopped, .failed] {
+    let viewModel = PlayerViewModel(
+      serving: RecordingPlaybackServing(snapshot: makePlayerSnapshot(phase: phase)),
+      autoStart: false
+    )
+    #expect(!viewModel.isMiniPlayerVisible)
+  }
+
+  let noCurrentItem = PlayerViewModel(
+    serving: RecordingPlaybackServing(
+      snapshot: PlaybackSessionSnapshot(
+        state: PlaybackState(
+          phase: .paused,
+          generation: PlaybackGeneration(1)
+        ),
+        currentItem: nil,
+        queue: PlaybackQueueSummary()
+      )
+    ),
+    autoStart: false
+  )
+  #expect(!noCurrentItem.isMiniPlayerVisible)
+
+  let clearedQueueSnapshot = makePlayerSnapshot(phase: .paused)
+  let clearedQueue = PlayerViewModel(
+    serving: RecordingPlaybackServing(
+      snapshot: PlaybackSessionSnapshot(
+        state: clearedQueueSnapshot.state,
+        currentItem: clearedQueueSnapshot.currentItem,
+        queue: PlaybackQueueSummary()
+      )
+    ),
+    autoStart: false
+  )
+  #expect(!clearedQueue.isMiniPlayerVisible)
+}
+
 @Test("MiniPlayer horizontal swipes map to previous and next")
 func miniPlayerSwipeMapsHorizontalDirection() {
   #expect(

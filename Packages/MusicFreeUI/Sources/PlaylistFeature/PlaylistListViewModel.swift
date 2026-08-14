@@ -1,3 +1,4 @@
+import DesignSystem
 import LibraryAPI
 import MusicDomain
 import Observation
@@ -98,7 +99,7 @@ final class PlaylistListViewModel {
             playlists.append(created)
             selection = created.id
             loadState = .loaded
-            mutationState = .succeeded("已创建歌单")
+            mutationState = .succeeded(L("已创建歌单"))
             return true
         } catch let error where playlistFeatureIsCancellation(error) {
             mutationState = .idle
@@ -145,7 +146,7 @@ final class PlaylistListViewModel {
             )
             try Task.checkCancellation()
             playlists[index] = updated
-            mutationState = .succeeded("已重命名歌单")
+            mutationState = .succeeded(L("已重命名歌单"))
             return true
         } catch let error where playlistFeatureIsCancellation(error) {
             playlists[index] = original
@@ -196,7 +197,7 @@ final class PlaylistListViewModel {
         do {
             try await store.deletePlaylist(playlistID)
             try Task.checkCancellation()
-            mutationState = .succeeded("已删除歌单")
+            mutationState = .succeeded(L("已删除歌单"))
             return true
         } catch let error where playlistFeatureIsCancellation(error) {
             restore(original, at: index, selection: originalSelection)

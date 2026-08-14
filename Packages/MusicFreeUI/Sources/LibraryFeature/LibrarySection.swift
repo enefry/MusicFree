@@ -1,3 +1,4 @@
+import DesignSystem
 import MusicDomain
 
 /// The browse destinations available in the first local-library experience.
@@ -14,13 +15,13 @@ public enum LibrarySection: String, CaseIterable, Hashable, Identifiable, Sendab
 
     public var title: String {
         switch self {
-        case .tracks: return "歌曲"
-        case .favorites: return "收藏"
-        case .albums: return "专辑"
-        case .artists: return "艺人"
-        case .genres: return "流派"
-        case .folders: return "文件夹"
-        case .recent: return "播放历史"
+        case .tracks: return L("歌曲")
+        case .favorites: return L("收藏")
+        case .albums: return L("专辑")
+        case .artists: return L("艺人")
+        case .genres: return L("流派")
+        case .folders: return L("文件夹")
+        case .recent: return L("播放历史")
         }
     }
 
@@ -38,9 +39,9 @@ public enum LibrarySection: String, CaseIterable, Hashable, Identifiable, Sendab
 
     public var groupTitle: String {
         switch self {
-        case .tracks, .favorites: return "资料库"
-        case .albums, .artists, .genres, .folders: return "浏览"
-        case .recent: return "资料库"
+        case .tracks, .favorites: return L("资料库")
+        case .albums, .artists, .genres, .folders: return L("浏览")
+        case .recent: return L("资料库")
         }
     }
 }
@@ -62,8 +63,8 @@ enum LibrarySectionGroup: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .library: return "资料库"
-        case .browse: return "浏览"
+        case .library: return L("资料库")
+        case .browse: return L("浏览")
         }
     }
 

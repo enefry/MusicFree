@@ -38,52 +38,52 @@ final class MusicFreeBVTUITests: XCTestCase {
             tabBar.waitForExistence(timeout: 15),
             "The app must expose its main navigation as a native tab bar."
         )
-        for title in ["资料库", "播放列表", "设置"] {
+        for title in ["Library", "Playlists", "Settings"] {
             let button = tabBar.buttons[title].firstMatch
             XCTAssertTrue(button.exists, "Missing native tab: \(title)")
             XCTAssertTrue(button.isHittable, "Native tab is not hittable: \(title)")
         }
-        XCTAssertFalse(app.staticTexts["资料库不可用"].exists)
-        XCTAssertFalse(app.staticTexts["应用服务不可用"].exists)
+        XCTAssertFalse(app.staticTexts["Library unavailable"].exists)
+        XCTAssertFalse(app.staticTexts["App service unavailable"].exists)
     }
 
     @MainActor
     private func createPlaylist(in app: XCUIApplication) {
-        tapTab("播放列表", in: app)
+        tapTab("Playlists", in: app)
 
         let playlistRow = app.buttons.containing(
             .staticText,
             identifier: playlistName
         ).firstMatch
         if playlistRow.waitForExistence(timeout: 3) {
-            XCTAssertFalse(app.staticTexts["歌单加载失败"].exists)
+            XCTAssertFalse(app.staticTexts["Could not load playlist"].exists)
             return
         }
 
-        let createButton = app.buttons["新建歌单"].firstMatch
+        let createButton = app.buttons["New playlist"].firstMatch
         XCTAssertTrue(createButton.waitForExistence(timeout: 10))
         createButton.tap()
 
-        let nameField = app.textFields["名称"]
+        let nameField = app.textFields["Name"]
         XCTAssertTrue(nameField.waitForExistence(timeout: 5))
         nameField.tap()
         nameField.typeText(playlistName)
-        app.buttons["保存"].tap()
+        app.buttons["Save"].tap()
 
         XCTAssertTrue(nameField.waitForNonExistence(timeout: 10))
         let detail = app.descendants(matching: .any)["playlists.detail"].firstMatch
         if detail.waitForExistence(timeout: 5) {
-            let backButton = app.navigationBars.buttons["播放列表"].firstMatch
+            let backButton = app.navigationBars.buttons["Playlists"].firstMatch
             XCTAssertTrue(backButton.waitForExistence(timeout: 5))
             backButton.tap()
         }
         XCTAssertTrue(playlistRow.waitForExistence(timeout: 10))
-        XCTAssertFalse(app.staticTexts["操作失败"].exists)
+        XCTAssertFalse(app.staticTexts["Operation failed"].exists)
     }
 
     @MainActor
     private func changeStoragePreference(in app: XCUIApplication) -> String {
-        tapTab("设置", in: app)
+        tapTab("Settings", in: app)
         waitForSettingsForm(in: app)
 
         let refreshButton = app.buttons.matching(
@@ -91,8 +91,8 @@ final class MusicFreeBVTUITests: XCTestCase {
         ).firstMatch
         XCTAssertTrue(scrollToElement(refreshButton, in: app))
         refreshButton.tap()
-        XCTAssertTrue(app.staticTexts["媒体文件"].waitForExistence(timeout: 10))
-        XCTAssertFalse(app.staticTexts["设置加载失败"].exists)
+        XCTAssertTrue(app.staticTexts["Media files"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.staticTexts["Could not load settings"].exists)
 
         let pruningSwitch = app.switches["settings.storage.autoPrune"]
         XCTAssertTrue(scrollToElement(pruningSwitch, in: app))
@@ -109,8 +109,8 @@ final class MusicFreeBVTUITests: XCTestCase {
 
     @MainActor
     private func addSeededTrackToPlaylist(in app: XCUIApplication) {
-        tapTab("资料库", in: app)
-        openLibrarySection("歌曲", in: app)
+        tapTab("Library", in: app)
+        openLibrarySection("Songs", in: app)
 
         let track = app.staticTexts[trackTitle].firstMatch
         if !track.waitForExistence(timeout: 30) {
@@ -121,10 +121,10 @@ final class MusicFreeBVTUITests: XCTestCase {
             "The imported fixture must be available before testing playlist persistence."
         )
 
-        let backButton = app.navigationBars.buttons["资料库"].firstMatch
+        let backButton = app.navigationBars.buttons["Library"].firstMatch
         XCTAssertTrue(backButton.waitForExistence(timeout: 5))
         backButton.tap()
-        tapTab("播放列表", in: app)
+        tapTab("Playlists", in: app)
 
         let playlistRow = app.buttons.containing(
             .staticText,
@@ -140,7 +140,7 @@ final class MusicFreeBVTUITests: XCTestCase {
         }
 
         let addButton = app.buttons.matching(
-            NSPredicate(format: "label == '添加歌曲' AND enabled == true")
+            NSPredicate(format: "label == 'Add songs' AND enabled == true")
         ).firstMatch
         XCTAssertTrue(addButton.waitForExistence(timeout: 15))
         addButton.tap()
@@ -168,8 +168,8 @@ final class MusicFreeBVTUITests: XCTestCase {
 
     @MainActor
     private func playAndFavoriteSeededTrack(in app: XCUIApplication) {
-        tapTab("资料库", in: app)
-        openLibrarySection("歌曲", in: app)
+        tapTab("Library", in: app)
+        openLibrarySection("Songs", in: app)
 
         let track = app.staticTexts[trackTitle].firstMatch
         XCTAssertTrue(
@@ -193,25 +193,25 @@ final class MusicFreeBVTUITests: XCTestCase {
         let continuePlaying = app.scrollViews["player.nowPlaying.upperScroll"].firstMatch
         XCTAssertTrue(continuePlaying.waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts[trackTitle].firstMatch.waitForExistence(timeout: 10))
-        let favoriteButton = app.buttons["收藏"].firstMatch
-        let unfavoriteButton = app.buttons["取消收藏"].firstMatch
+        let favoriteButton = app.buttons["Favorite"].firstMatch
+        let unfavoriteButton = app.buttons["Remove from favorites"].firstMatch
         if favoriteButton.waitForExistence(timeout: 3) {
             favoriteButton.tap()
         }
         XCTAssertTrue(unfavoriteButton.waitForExistence(timeout: 10))
-        XCTAssertFalse(app.staticTexts["播放失败"].exists)
+        XCTAssertFalse(app.staticTexts["Playback failed"].exists)
     }
 
     @MainActor
     private func assertFavoritePersisted(in app: XCUIApplication) {
-        tapTab("资料库", in: app)
-        openLibrarySection("收藏", in: app)
+        tapTab("Library", in: app)
+        openLibrarySection("Favorites", in: app)
         XCTAssertTrue(app.staticTexts[trackTitle].firstMatch.waitForExistence(timeout: 15))
     }
 
     @MainActor
     private func assertPlaylistPersisted(in app: XCUIApplication) {
-        tapTab("播放列表", in: app)
+        tapTab("Playlists", in: app)
         let playlistRow = app.buttons.containing(
             .staticText,
             identifier: playlistName
@@ -224,7 +224,7 @@ final class MusicFreeBVTUITests: XCTestCase {
             detail.staticTexts[trackTitle].firstMatch.waitForExistence(timeout: 10),
             "Playlist membership and ordering must survive application relaunch."
         )
-        XCTAssertFalse(app.staticTexts["歌单加载失败"].exists)
+        XCTAssertFalse(app.staticTexts["Could not load playlist"].exists)
     }
 
     @MainActor
@@ -232,7 +232,7 @@ final class MusicFreeBVTUITests: XCTestCase {
         _ expectedValue: String,
         in app: XCUIApplication
     ) {
-        tapTab("设置", in: app)
+        tapTab("Settings", in: app)
         waitForSettingsForm(in: app)
         let pruningSwitch = app.switches["settings.storage.autoPrune"]
         XCTAssertTrue(scrollToElement(pruningSwitch, in: app))
@@ -246,17 +246,17 @@ final class MusicFreeBVTUITests: XCTestCase {
             settingsForm.waitForExistence(timeout: 15),
             "The settings form should appear after settings finish loading."
         )
-        XCTAssertFalse(app.staticTexts["设置加载失败"].exists)
+        XCTAssertFalse(app.staticTexts["Could not load settings"].exists)
     }
 
     @MainActor
     private func assertSeedWasIdempotent(in app: XCUIApplication) {
-        tapTab("资料库", in: app)
-        let libraryBackButton = app.navigationBars.buttons["资料库"].firstMatch
+        tapTab("Library", in: app)
+        let libraryBackButton = app.navigationBars.buttons["Library"].firstMatch
         if libraryBackButton.waitForExistence(timeout: 2) {
             libraryBackButton.tap()
         }
-        openLibrarySection("歌曲", in: app)
+        openLibrarySection("Songs", in: app)
         let tracks = app.descendants(matching: .any)["library.tracks"].firstMatch
         XCTAssertTrue(tracks.waitForExistence(timeout: 15))
         let trackRows = tracks.cells.containing(.staticText, identifier: trackTitle)

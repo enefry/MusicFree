@@ -1,4 +1,5 @@
 import AppServices
+import DesignSystem
 import Foundation
 import LibraryAPI
 import MusicDomain
@@ -7,7 +8,7 @@ import Observation
 @MainActor
 @Observable
 final class PlaylistTrackCandidateLoader {
-    private static let repeatedCursorMessage = "资料库分页游标重复，无法继续加载歌曲。"
+    private static let repeatedCursorMessage = L("资料库分页游标重复，无法继续加载歌曲。")
 
     private let library: (any LibraryServing)?
 

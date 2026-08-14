@@ -2,15 +2,25 @@ import DesignSystem
 import SwiftUI
 import Testing
 
+@Test("String Catalog resolves English and Simplified Chinese")
+func stringCatalogResolvesSupportedLanguages() {
+    #expect(
+        String(localized: MusicFreeLocalization.resource("专辑", language: .english)) == "Albums"
+    )
+    #expect(
+        String(localized: MusicFreeLocalization.resource("专辑", language: .chinese)) == "专辑"
+    )
+}
+
 @Test("Appearance options expose system, light, and dark schemes")
 func appearanceOptionsMapToColorSchemes() {
     #expect(MusicFreeAppearance.allCases == [.system, .light, .dark])
     #expect(MusicFreeAppearance.system.colorScheme == nil)
     #expect(MusicFreeAppearance.light.colorScheme == .light)
     #expect(MusicFreeAppearance.dark.colorScheme == .dark)
-    #expect(MusicFreeAppearance.system.title == "系统")
-    #expect(MusicFreeAppearance.light.title == "明亮")
-    #expect(MusicFreeAppearance.dark.title == "暗黑")
+    #expect(MusicFreeAppearance.system.title == "System")
+    #expect(MusicFreeAppearance.light.title == "Light")
+    #expect(MusicFreeAppearance.dark.title == "Dark")
 }
 
 @Test("DesignSystem exposes semantic tokens and stable layout metrics")

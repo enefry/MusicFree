@@ -33,13 +33,13 @@ struct QueueView: View {
   var body: some View {
     Group {
       if historyLoader.state == .idle || historyLoader.state == .loading {
-        ProgressView("正在载入播放历史")
+        ProgressView(L("正在载入播放历史"))
           .frame(maxWidth: .infinity, maxHeight: .infinity)
       } else if viewModel.snapshot.queue.entries.isEmpty,
          historyLoader.state == .empty {
         EmptyStateView(
-          title: "暂无播放记录",
-          message: "播放歌曲后，历史和继续播放队列会显示在这里。",
+          title: L("暂无播放记录"),
+          message: L("播放歌曲后，历史和继续播放队列会显示在这里。"),
           systemImage: "clock.arrow.circlepath"
         )
       } else {
@@ -50,7 +50,7 @@ struct QueueView: View {
 
               if let currentEntryID = viewModel.snapshot.queue.currentEntryID,
                  let currentEntry = viewModel.snapshot.queue.entries.first(where: { $0.id == currentEntryID }) {
-                Section("正在播放") {
+                Section(L("正在播放")) {
                   queueRow(currentEntry, isCurrent: true)
                     .id(QueueScrollPosition.current)
                     .accessibilityIdentifier("player.queue.current")
@@ -64,7 +64,7 @@ struct QueueView: View {
                   .listRowSeparator(.hidden)
               }
 
-              Section("继续播放") {
+              Section(L("继续播放")) {
                 if editor.isActive {
                   ForEach(editor.entries) { entry in
                     queueRow(entry, isCurrent: false)
@@ -72,7 +72,7 @@ struct QueueView: View {
                   .onMove(perform: editor.move)
                   .onDelete(perform: editor.remove)
                 } else if upcomingEntries.isEmpty {
-                  Text("队列末尾")
+                  Text(L("队列末尾"))
                     .font(.subheadline)
                     .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
                     .frame(minHeight: MusicFreeLayoutMetrics.minimumHitTarget)
@@ -100,35 +100,35 @@ struct QueueView: View {
         }
       }
     }
-    .navigationTitle("播放队列")
+    .navigationTitle(L("播放队列"))
     .navigationBarTitleDisplayMode(.inline)
     .interactiveDismissDisabled(editor.isActive)
     .confirmationDialog(
-      "清空播放队列？",
+      L("清空播放队列？"),
       isPresented: $isClearConfirmationPresented,
       titleVisibility: .visible
     ) {
-      Button("清空队列", role: .destructive) {
+      Button(L("清空队列"), role: .destructive) {
         viewModel.clearQueue()
       }
-      Button("取消", role: .cancel) {}
+      Button(L("取消"), role: .cancel) {}
     } message: {
-      Text("当前播放也会停止，资料库中的歌曲不会被删除。")
+      Text(L("当前播放也会停止，资料库中的歌曲不会被删除。"))
     }
     .confirmationDialog(
-      "清除播放历史？",
+      L("清除播放历史？"),
       isPresented: $isHistoryClearConfirmationPresented,
       titleVisibility: .visible
     ) {
-      Button("清除播放历史", role: .destructive) {
+      Button(L("清除播放历史"), role: .destructive) {
         Task { await historyLoader.clear() }
       }
-      Button("取消", role: .cancel) {}
+      Button(L("取消"), role: .cancel) {}
     } message: {
-      Text("歌曲仍会保留在资料库中，累计播放统计不会重置。")
+      Text(L("歌曲仍会保留在资料库中，累计播放统计不会重置。"))
     }
     .alert(
-      "无法更新播放队列",
+      L("无法更新播放队列"),
       isPresented: Binding(
         get: { editor.failureMessage != nil },
         set: { isPresented in
@@ -136,12 +136,12 @@ struct QueueView: View {
         }
       )
     ) {
-      Button("好", role: .cancel) { editor.dismissFailure() }
+      Button(L("好"), role: .cancel) { editor.dismissFailure() }
     } message: {
-      Text(editor.failureMessage ?? "请稍后重试。")
+      Text(editor.failureMessage ?? L("请稍后重试。"))
     }
     .alert(
-      "播放历史不可用",
+      L("播放历史不可用"),
       isPresented: Binding(
         get: { historyLoader.failureMessage != nil },
         set: { isPresented in
@@ -149,9 +149,9 @@ struct QueueView: View {
         }
       )
     ) {
-      Button("好", role: .cancel) { historyLoader.dismissFailure() }
+      Button(L("好"), role: .cancel) { historyLoader.dismissFailure() }
     } message: {
-      Text(historyLoader.failureMessage ?? "请稍后重试。")
+      Text(historyLoader.failureMessage ?? L("请稍后重试。"))
     }
     .task(id: queueKey) {
       await loadTracks()
@@ -174,7 +174,7 @@ struct QueueView: View {
       case .idle, .loading:
         HStack(spacing: MusicFreeSpacingTokens.small) {
           ProgressView()
-          Text("正在载入播放历史")
+          Text(L("正在载入播放历史"))
             .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
         }
         .frame(minHeight: MusicFreeLayoutMetrics.minimumHitTarget)
@@ -184,7 +184,7 @@ struct QueueView: View {
         Button {
           Task { await historyLoader.load() }
         } label: {
-          Label("载入失败，点击重试", systemImage: "arrow.clockwise")
+          Label(L("载入失败，点击重试"), systemImage: "arrow.clockwise")
             .frame(maxWidth: .infinity, minHeight: MusicFreeLayoutMetrics.minimumHitTarget)
         }
         .buttonStyle(.plain)
@@ -192,7 +192,7 @@ struct QueueView: View {
         .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
       case .empty:
-        Text("暂无播放历史")
+        Text(L("暂无播放历史"))
           .font(MusicFreeTypographyTokens.secondary)
           .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
           .frame(minHeight: MusicFreeLayoutMetrics.minimumHitTarget)
@@ -200,7 +200,7 @@ struct QueueView: View {
           .listRowSeparator(.hidden)
       case .loaded:
         if displayedHistoryItems.isEmpty {
-          Text("当前歌曲尚未形成历史记录")
+          Text(L("当前歌曲尚未形成历史记录"))
             .font(MusicFreeTypographyTokens.secondary)
             .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
             .frame(minHeight: MusicFreeLayoutMetrics.minimumHitTarget)
@@ -214,9 +214,9 @@ struct QueueView: View {
       }
     } header: {
       HStack {
-        Text("历史")
+        Text(L("历史"))
         Spacer()
-        Button("清除", role: .destructive) {
+        Button(L("清除"), role: .destructive) {
           isHistoryClearConfirmationPresented = true
         }
         .disabled(historyLoader.items.isEmpty || historyLoader.isClearing)
@@ -245,7 +245,7 @@ struct QueueView: View {
           artworkID: item.track.artworkID,
           sourceID: item.track.id.sourceID,
           serving: artworkServing,
-          accessibilityLabel: item.track.artworkID == nil ? "暂无封面" : "封面",
+          accessibilityLabel: item.track.artworkID == nil ? L("暂无封面") : L("封面"),
           placeholderTitle: item.track.title
         )
 
@@ -272,7 +272,7 @@ struct QueueView: View {
     .padding(.vertical, MusicFreeSpacingTokens.small)
     .frame(minHeight: MusicFreeLayoutMetrics.compactRowMinimumHeight)
     .accessibilityElement(children: .combine)
-    .accessibilityHint("重新播放歌曲")
+    .accessibilityHint(L("重新播放歌曲"))
     .accessibilityIdentifier("player.history.play.\(item.sessionID.uuidString)")
     .listRowBackground(Color.clear)
     .listRowSeparatorTint(MusicFreeColorTokens.separator.opacity(0.72))
@@ -305,8 +305,8 @@ struct QueueView: View {
         sourceID: entry.itemID.sourceID,
         serving: artworkServing,
         accessibilityLabel: (track?.artworkID ?? currentDisplay?.artworkID) == nil
-          ? "暂无封面"
-          : "封面",
+          ? L("暂无封面")
+          : L("封面"),
         placeholderTitle: track?.title ?? currentDisplay?.title
       )
 
@@ -356,7 +356,7 @@ struct QueueView: View {
         Button(role: .destructive) {
           viewModel.removeQueueEntry(entry.id)
         } label: {
-          Label("移除", systemImage: "trash")
+          Label(L("移除"), systemImage: "trash")
         }
       }
     }
@@ -373,7 +373,7 @@ struct QueueView: View {
   private var queueToolbar: some ToolbarContent {
     if editor.isActive {
       ToolbarItem(placement: .cancellationAction) {
-        Button("取消") {
+        Button(L("取消")) {
           editor.cancel()
         }
         .disabled(editor.isSaving)
@@ -386,9 +386,9 @@ struct QueueView: View {
         } label: {
           if editor.isSaving {
             ProgressView()
-              .accessibilityLabel(Text("正在保存播放顺序"))
+              .accessibilityLabel(Text(L("正在保存播放顺序")))
           } else {
-            Text("完成")
+            Text(L("完成"))
           }
         }
         .disabled(editor.isSaving)
@@ -402,21 +402,21 @@ struct QueueView: View {
           Image(systemName: "arrow.up.arrow.down")
         }
         .disabled(upcomingEntries.isEmpty)
-        .accessibilityLabel(Text("编辑播放顺序"))
+        .accessibilityLabel(Text(L("编辑播放顺序")))
         .accessibilityIdentifier("player.queue.edit")
 
         Menu {
           Button(role: .destructive) {
             isClearConfirmationPresented = true
           } label: {
-            Label("清空播放队列", systemImage: "trash")
+            Label(L("清空播放队列"), systemImage: "trash")
           }
           .disabled(viewModel.snapshot.queue.entries.isEmpty)
           .accessibilityIdentifier("player.queue.clear")
         } label: {
           Image(systemName: "ellipsis")
         }
-        .accessibilityLabel(Text("更多队列操作"))
+        .accessibilityLabel(Text(L("更多队列操作")))
       }
     }
   }
@@ -522,7 +522,7 @@ struct PlaybackModeControls: View {
         Image(systemName: repeatIcon(viewModel.snapshot.queue.repeatMode))
           .frame(width: MusicFreeLayoutMetrics.minimumHitTarget, height: MusicFreeLayoutMetrics.minimumHitTarget)
       }
-      .accessibilityLabel(Text("重复模式"))
+      .accessibilityLabel(Text(L("重复模式")))
       .accessibilityValue(Text(repeatTitle(viewModel.snapshot.queue.repeatMode)))
 
       Button {
@@ -537,9 +537,9 @@ struct PlaybackModeControls: View {
           ? MusicFreeColorTokens.accent
           : MusicFreeColorTokens.foregroundPrimary
       )
-      .accessibilityLabel(Text("随机播放"))
+      .accessibilityLabel(Text(L("随机播放")))
       .accessibilityValue(
-        Text(viewModel.snapshot.queue.shuffleMode == .on ? "已开启" : "已关闭")
+        Text(viewModel.snapshot.queue.shuffleMode == .on ? L("已开启") : L("已关闭"))
       )
       .accessibilityAddTraits(
         viewModel.snapshot.queue.shuffleMode == .on ? .isSelected : []
@@ -557,11 +557,11 @@ struct PlaybackModeControls: View {
   private func repeatTitle(_ mode: PlaybackRepeatMode) -> String {
     switch mode {
     case .off:
-      return "关闭重复"
+      return L("关闭重复")
     case .one:
-      return "重复单曲"
+      return L("重复单曲")
     case .all:
-      return "重复队列"
+      return L("重复队列")
     }
   }
 }

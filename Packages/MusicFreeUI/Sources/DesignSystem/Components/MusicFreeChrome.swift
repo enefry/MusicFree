@@ -84,7 +84,7 @@ public struct MusicFreeDetailActionBar: View {
     private var splitPillActions: some View {
         HStack(spacing: MusicFreeSpacingTokens.small) {
             MusicFreePillActionButton(
-                title: "播放",
+                title: L("播放"),
                 systemImage: "play.fill",
                 isEnabled: isEnabled,
                 action: playAction
@@ -92,7 +92,7 @@ public struct MusicFreeDetailActionBar: View {
             .accessibilityIdentifier(playAccessibilityIdentifier ?? "")
 
             MusicFreePillActionButton(
-                title: "随机播放",
+                title: L("随机播放"),
                 systemImage: "shuffle",
                 isEnabled: isEnabled,
                 action: shuffleAction
@@ -115,11 +115,11 @@ public struct MusicFreeDetailActionBar: View {
             .tint(MusicFreeColorTokens.foregroundPrimary)
             .disabled(!isEnabled)
             .opacity(isEnabled ? 1 : 0.45)
-            .accessibilityLabel("随机播放")
+            .accessibilityLabel(L("随机播放"))
             .accessibilityIdentifier(shuffleAccessibilityIdentifier ?? "")
 
             Button(action: playAction) {
-                Label("播放", systemImage: "play.fill")
+                Label(L("播放"), systemImage: "play.fill")
                     .font(.headline.weight(.semibold))
                     .labelStyle(.titleAndIcon)
                     .foregroundStyle(MusicFreeColorTokens.backgroundPrimary)
@@ -164,7 +164,7 @@ public struct MusicFreeSwitchToggleStyle: ToggleStyle {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
-        .accessibilityValue(Text(configuration.isOn ? "已开启" : "已关闭"))
+        .accessibilityValue(Text(configuration.isOn ? L("已开启") : L("已关闭")))
         .accessibilityAddTraits(.isToggle)
         .accessibilityAction {
             configuration.isOn.toggle()

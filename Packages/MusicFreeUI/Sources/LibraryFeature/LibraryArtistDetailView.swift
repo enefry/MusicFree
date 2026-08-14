@@ -28,12 +28,12 @@ struct LibraryArtistDetailView: View {
     var body: some View {
         Group {
             if isLoading {
-                ProgressView("加载艺人")
+                ProgressView(L("加载艺人"))
             } else if let failureMessage {
                 ErrorStateView(
-                    title: "艺人加载失败",
+                    title: L("艺人加载失败"),
                     message: failureMessage,
-                    retryTitle: "重试",
+                    retryTitle: L("重试"),
                     retry: { Task { await load() } }
                 )
             } else {
@@ -43,8 +43,8 @@ struct LibraryArtistDetailView: View {
 
                         if albums.isEmpty {
                             EmptyStateView(
-                                title: "暂无专辑",
-                                message: "这个艺人暂时没有专辑。",
+                                title: L("暂无专辑"),
+                                message: L("这个艺人暂时没有专辑。"),
                                 systemImage: "square.stack"
                             )
                         } else {
@@ -81,7 +81,7 @@ struct LibraryArtistDetailView: View {
                 } label: {
                     Image(systemName: "ellipsis")
                 }
-                .accessibilityLabel("艺人选项")
+                .accessibilityLabel(L("艺人选项"))
                 .accessibilityIdentifier("library.artistDetail.menu")
             }
         }
@@ -99,7 +99,7 @@ struct LibraryArtistDetailView: View {
         VStack(spacing: MusicFreeSpacingTokens.medium) {
             ArtworkView(
                 image: artworkLoader.image,
-                accessibilityLabel: "\(artistName)的艺人图片",
+                accessibilityLabel: L("%@ artist image", artistName),
                 placeholderSystemImage: "person.fill",
                 placeholderTitle: artistName,
                 fillsAvailableWidth: true
@@ -152,14 +152,14 @@ struct LibraryArtistDetailView: View {
                         isPending: isCollectionQueueActionPending(target)
                     )
                 }
-                .accessibilityHint("打开专辑，按住显示播放队列操作")
+                .accessibilityHint(L("打开专辑，按住显示播放队列操作"))
             }
         }
         .accessibilityIdentifier("library.artist.albums")
     }
 
     private var artistName: String {
-        artist?.name ?? "艺人详情"
+        artist?.name ?? L("艺人详情")
     }
 
     private var artworkKey: String {

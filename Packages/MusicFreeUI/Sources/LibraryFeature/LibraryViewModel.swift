@@ -1,4 +1,5 @@
 import Combine
+import DesignSystem
 import Foundation
 import AppServices
 import LibraryAPI
@@ -241,6 +242,26 @@ public final class LibraryViewModel: ObservableObject {
         load(section: section, reset: true)
     }
 
+    public func removeDeletedTrack(_ itemID: MediaItemID) {
+        tracks.removeAll { $0.id == itemID }
+        favoriteTracks.removeAll { $0.id == itemID }
+        recentTracks.removeAll { $0.id == itemID }
+        playbackHistory.removeAll { $0.track.id == itemID }
+
+        for section in [LibrarySection.tracks, .favorites, .recent]
+            where itemsCount(for: section) == 0
+        {
+            switch state(for: section) {
+            case .loaded, .empty:
+                states[section] = .empty
+            case .idle, .loading, .failed:
+                // Do not turn an unqueried section into an empty result. It
+                // still needs to perform its first load when selected.
+                break
+            }
+        }
+    }
+
     public func clearPlaybackHistory() async {
         guard !playbackHistory.isEmpty, !isClearingPlaybackHistory else { return }
         isClearingPlaybackHistory = true
@@ -397,12 +418,12 @@ public final class LibraryViewModel: ObservableObject {
                 guard let self, !Task.isCancelled else { return }
                 self.importTask = nil
                 guard !receivedTerminalEvent else { return }
-                self.importState = .failed("导入服务提前结束，未返回结果。")
+                self.importState = .failed(L("导入服务提前结束，未返回结果。"))
             } catch is CancellationError {
                 // Explicit cancellation is represented by the service's cancelled event.
             } catch {
                 self?.importTask = nil
-                self?.importState = .failed(self?.message(for: error) ?? "导入失败。")
+                self?.importState = .failed(self?.message(for: error) ?? L("import.failed.message"))
             }
         }
     }
@@ -435,7 +456,7 @@ public final class LibraryViewModel: ObservableObject {
     }
 
     public func handlePickerFailure(_ message: String) {
-        importState = .failed(message.isEmpty ? "无法打开文件选择器。" : message)
+        importState = .failed(message.isEmpty ? L("无法打开文件选择器。") : message)
     }
 
     private func startOverviewLoad() {
@@ -928,7 +949,7 @@ public final class LibraryViewModel: ObservableObject {
            !description.isEmpty {
             return description
         }
-        return "资料库暂时无法加载，请稍后重试。"
+        return L("资料库暂时无法加载，请稍后重试。")
     }
 }
 

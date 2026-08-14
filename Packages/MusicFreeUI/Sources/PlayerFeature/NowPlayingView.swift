@@ -71,31 +71,31 @@ struct NowPlayingView: View {
             switch viewModel.presentationState {
             case .empty:
                 EmptyStateView(
-                    title: "当前没有播放内容",
-                    message: "从资料库选择一首歌曲开始播放。",
+                    title: L("当前没有播放内容"),
+                    message: L("从资料库选择一首歌曲开始播放。"),
                     systemImage: "play.circle"
                 )
             case .loading:
-                LoadingStateView(isLoading: true, label: "正在准备播放") {
+                LoadingStateView(isLoading: true, label: L("正在准备播放")) {
                     playbackContent
                 }
             case .buffering:
-                LoadingStateView(isLoading: true, label: "正在缓冲") {
+                LoadingStateView(isLoading: true, label: L("正在缓冲")) {
                     playbackContent
                 }
             case .playing, .paused, .stopped:
                 playbackContent
             case .failed(let error):
                 ErrorStateView(
-                    title: "播放失败",
+                    title: L("播放失败"),
                     message: playerErrorMessage(error),
-                    retryTitle: "重试",
+                    retryTitle: L("重试"),
                     retry: viewModel.play
                 )
             case .unsupported:
                 EmptyStateView(
-                    title: "暂不支持",
-                    message: "当前播放引擎不支持此操作。",
+                    title: L("暂不支持"),
+                    message: L("当前播放引擎不支持此操作。"),
                     systemImage: "nosign"
                 )
             }
@@ -117,7 +117,7 @@ struct NowPlayingView: View {
             favoriteController.load(itemID: viewModel.snapshot.currentItemID)
         }
         .alert(
-            "暂不可用",
+            L("暂不可用"),
             isPresented: Binding(
                 get: { unavailableFeature != nil },
                 set: { isPresented in
@@ -125,9 +125,9 @@ struct NowPlayingView: View {
                 }
             )
         ) {
-            Button("好", role: .cancel) { unavailableFeature = nil }
+            Button(L("好"), role: .cancel) { unavailableFeature = nil }
         } message: {
-            Text(unavailableFeature ?? "当前播放引擎尚未提供此功能。")
+            Text(unavailableFeature ?? L("当前播放引擎尚未提供此功能。"))
         }
     }
 
@@ -287,14 +287,14 @@ struct NowPlayingView: View {
         HStack(alignment: .center, spacing: MusicFreeSpacingTokens.medium) {
             ArtworkView(
                 image: artworkLoader.image,
-                accessibilityLabel: viewModel.snapshot.currentItem?.artworkID == nil ? "暂无封面" : "封面",
+                accessibilityLabel: viewModel.snapshot.currentItem?.artworkID == nil ? L("暂无封面") : L("封面"),
                 fillsAvailableWidth: true
             )
             .frame(width: 72, height: 72)
             .shadow(color: .black.opacity(colorScheme == .dark ? 0.28 : 0.16), radius: 12, y: 6)
 
             VStack(alignment: .leading, spacing: MusicFreeSpacingTokens.xSmall) {
-                Text(viewModel.currentTitle ?? "正在播放")
+                Text(viewModel.currentTitle ?? L("正在播放"))
                     .font(.title2.weight(.bold))
                     .foregroundStyle(playerForegroundPrimary)
                     .lineLimit(2)
@@ -325,17 +325,17 @@ struct NowPlayingView: View {
                     .background(playerControlFill, in: Circle())
             }
             .foregroundStyle(playerForegroundPrimary)
-            .accessibilityLabel(Text(favoriteController.isFavorite ? "取消收藏" : "收藏"))
+            .accessibilityLabel(Text(favoriteController.isFavorite ? L("取消收藏") : L("收藏")))
 
             Menu {
                 ShareLink(item: shareText) {
-                    Label("分享", systemImage: "square.and.arrow.up")
+                    Label(L("分享"), systemImage: "square.and.arrow.up")
                 }
                 if let itemID = viewModel.snapshot.currentItemID {
                     Button {
                         viewModel.send(.enqueue(itemID: itemID, at: nil))
                     } label: {
-                        Label("加入播放队列", systemImage: "text.append")
+                        Label(L("加入播放队列"), systemImage: "text.append")
                     }
                 }
             } label: {
@@ -345,7 +345,7 @@ struct NowPlayingView: View {
                     .background(playerControlFill, in: Circle())
             }
             .foregroundStyle(playerForegroundPrimary)
-            .accessibilityLabel(Text("更多操作"))
+            .accessibilityLabel(Text(L("更多操作")))
         }
     }
 
@@ -366,9 +366,9 @@ struct NowPlayingView: View {
                         in: Capsule()
                     )
             }
-            .accessibilityLabel(Text("随机播放"))
+            .accessibilityLabel(Text(L("随机播放")))
             .accessibilityValue(
-                Text(viewModel.snapshot.queue.shuffleMode == .on ? "已开启" : "已关闭")
+                Text(viewModel.snapshot.queue.shuffleMode == .on ? L("已开启") : L("已关闭"))
             )
             .accessibilityAddTraits(
                 viewModel.snapshot.queue.shuffleMode == .on ? .isSelected : []
@@ -393,7 +393,7 @@ struct NowPlayingView: View {
                         in: Capsule()
                     )
             }
-            .accessibilityLabel(Text("重复模式"))
+            .accessibilityLabel(Text(L("重复模式")))
             .accessibilityValue(Text(repeatTitle(viewModel.snapshot.queue.repeatMode)))
             .accessibilityAddTraits(
                 viewModel.snapshot.queue.repeatMode == .off ? [] : .isSelected
@@ -414,9 +414,9 @@ struct NowPlayingView: View {
                         in: Capsule()
                     )
             }
-            .accessibilityLabel(Text("连续播放"))
+            .accessibilityLabel(Text(L("连续播放")))
             .accessibilityValue(
-                Text(viewModel.snapshot.queue.repeatMode == .all ? "已开启" : "已关闭")
+                Text(viewModel.snapshot.queue.repeatMode == .all ? L("已开启") : L("已关闭"))
             )
             .accessibilityAddTraits(
                 viewModel.snapshot.queue.repeatMode == .all ? .isSelected : []
@@ -428,14 +428,14 @@ struct NowPlayingView: View {
                     .frame(maxWidth: .infinity, minHeight: 48)
                     .background(playerControlFill, in: Capsule())
             }
-            .accessibilityLabel(Text("打开播放队列"))
+            .accessibilityLabel(Text(L("打开播放队列")))
             .accessibilityIdentifier("player.queue")
         }
         .foregroundStyle(playerForegroundPrimary)
     }
 
     private var shareText: String {
-        let title = viewModel.currentTitle ?? "正在播放"
+        let title = viewModel.currentTitle ?? L("正在播放")
         guard let artist = viewModel.currentArtist, !artist.isEmpty else { return title }
         return "\(title) - \(artist)"
     }
@@ -446,7 +446,7 @@ struct NowPlayingView: View {
 
         if !entries.isEmpty {
             VStack(alignment: .leading, spacing: MusicFreeSpacingTokens.small) {
-                Text("继续播放")
+                Text(L("继续播放"))
                     .font(.title3.weight(.bold))
                     .foregroundStyle(playerForegroundPrimary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -496,7 +496,7 @@ struct NowPlayingView: View {
         HStack {
             PlaybackControlButton(
                 systemImage: "backward.fill",
-                accessibilityLabel: "上一首",
+                accessibilityLabel: L("上一首"),
                 isEnabled: viewModel.canGoPrevious,
                 foregroundColor: playerForegroundPrimary,
                 backgroundColor: .clear,
@@ -508,7 +508,7 @@ struct NowPlayingView: View {
 
             PlaybackControlButton(
                 systemImage: viewModel.snapshot.phase == .playing ? "pause.fill" : "play.fill",
-                accessibilityLabel: viewModel.snapshot.phase == .playing ? "暂停" : "播放",
+                accessibilityLabel: viewModel.snapshot.phase == .playing ? L("暂停") : L("播放"),
                 isLoading: viewModel.presentationState == .loading || viewModel.presentationState == .buffering,
                 foregroundColor: playerForegroundPrimary,
                 backgroundColor: .clear,
@@ -520,7 +520,7 @@ struct NowPlayingView: View {
 
             PlaybackControlButton(
                 systemImage: "forward.fill",
-                accessibilityLabel: "下一首",
+                accessibilityLabel: L("下一首"),
                 isEnabled: viewModel.canGoNext,
                 foregroundColor: playerForegroundPrimary,
                 backgroundColor: .clear,
@@ -545,7 +545,7 @@ struct NowPlayingView: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(playerForegroundSecondary)
-            .accessibilityLabel(Text(viewModel.isMuted ? "取消静音" : "静音"))
+            .accessibilityLabel(Text(viewModel.isMuted ? L("取消静音") : L("静音")))
 
             Slider(
                 value: Binding(
@@ -564,23 +564,23 @@ struct NowPlayingView: View {
                 .foregroundStyle(playerForegroundSecondary)
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(Text("音量"))
+        .accessibilityLabel(Text(L("音量")))
     }
 
     private var footerControls: some View {
         HStack {
             Button {
-                unavailableFeature = "当前音频源没有可显示的歌词。"
+                unavailableFeature = L("当前音频源没有可显示的歌词。")
             } label: {
                 Image(systemName: "quote.bubble")
                     .font(.title3)
             }
-            .accessibilityLabel(Text("歌词"))
+            .accessibilityLabel(Text(L("歌词")))
 
             Spacer()
 
             Button {
-                unavailableFeature = "当前版本暂不支持 AirPlay 输出。"
+                unavailableFeature = L("当前版本暂不支持 AirPlay 输出。")
             } label: {
                 Image(systemName: "airplayaudio")
                     .font(.title3)
@@ -593,7 +593,7 @@ struct NowPlayingView: View {
                 Image(systemName: "list.bullet.circle.fill")
                     .font(.title2)
             }
-            .accessibilityLabel(Text("播放队列"))
+            .accessibilityLabel(Text(L("播放队列")))
             .accessibilityIdentifier("player.queue.footer")
         }
         .foregroundStyle(playerForegroundSecondary)
@@ -680,20 +680,20 @@ struct NowPlayingView: View {
 
     private func repeatTitle(_ mode: PlaybackRepeatMode) -> String {
         switch mode {
-        case .off: return "关闭重复"
-        case .one: return "重复单曲"
-        case .all: return "重复队列"
+        case .off: return L("关闭重复")
+        case .one: return L("重复单曲")
+        case .all: return L("重复队列")
         }
     }
 
     private func playerErrorMessage(_ error: PlaybackError) -> String {
         switch error {
         case .resourceUnavailable:
-            return "音频资源暂时不可用。"
+            return L("音频资源暂时不可用。")
         case .cancelled:
-            return "播放操作已取消。"
+            return L("播放操作已取消。")
         default:
-            return "播放操作无法完成，请稍后重试。"
+            return L("播放操作无法完成，请稍后重试。")
         }
     }
 }
@@ -712,12 +712,12 @@ private struct ContinuePlayingRow: View {
                     artworkID: track?.artworkID,
                     sourceID: entry.itemID.sourceID,
                     serving: artworkServing,
-                    accessibilityLabel: track?.artworkID == nil ? "暂无封面" : "封面",
+                    accessibilityLabel: track?.artworkID == nil ? L("暂无封面") : L("封面"),
                     placeholderTitle: track?.title
                 )
 
                 VStack(alignment: .leading, spacing: MusicFreeSpacingTokens.xSmall) {
-                    Text(track?.title ?? "正在载入歌曲")
+                    Text(track?.title ?? L("正在载入歌曲"))
                         .font(MusicFreeTypographyTokens.rowTitle)
                         .foregroundStyle(MusicFreeColorTokens.foregroundPrimary)
                         .lineLimit(1)
@@ -741,6 +741,6 @@ private struct ContinuePlayingRow: View {
         .buttonStyle(.plain)
         .padding(.vertical, MusicFreeSpacingTokens.small)
         .frame(minHeight: MusicFreeLayoutMetrics.compactRowMinimumHeight)
-        .accessibilityLabel(Text(track?.title ?? "播放队列歌曲"))
+        .accessibilityLabel(Text(track?.title ?? L("播放队列歌曲")))
     }
 }

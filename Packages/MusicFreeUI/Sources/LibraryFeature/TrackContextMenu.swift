@@ -1,3 +1,4 @@
+import DesignSystem
 import MusicDomain
 import SwiftUI
 
@@ -26,7 +27,7 @@ struct TrackQueueMenuActions: View {
         Button {
             enqueueNextTracks?([trackID])
         } label: {
-            Label("下一首播放", systemImage: "text.line.first.and.arrowtriangle.forward")
+            Label(L("下一首播放"), systemImage: "text.line.first.and.arrowtriangle.forward")
         }
         .disabled(enqueueNextTracks == nil)
         .accessibilityIdentifier(
@@ -36,7 +37,7 @@ struct TrackQueueMenuActions: View {
         Button {
             enqueueTracks?([trackID])
         } label: {
-            Label("加入队列", systemImage: "text.append")
+            Label(L("加入队列"), systemImage: "text.append")
         }
         .disabled(enqueueTracks == nil)
         .accessibilityIdentifier(
@@ -47,11 +48,81 @@ struct TrackQueueMenuActions: View {
             Button {
                 addToPlaylist([trackID])
             } label: {
-                Label("添加到播放列表", systemImage: "text.badge.plus")
+                Label(L("添加到播放列表"), systemImage: "text.badge.plus")
             }
             .accessibilityIdentifier(
                 "\(accessibilityPrefix).addToPlaylist.\(trackID.externalID)"
             )
         }
+    }
+}
+
+struct TrackDeletionPresentationModifier: ViewModifier {
+    @Binding var pendingTrack: Track?
+    @Binding var errorMessage: String?
+    let isDeleting: Bool
+    let delete: (Track) -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .confirmationDialog(
+                L("删除歌曲？"),
+                isPresented: Binding(
+                    get: { pendingTrack != nil },
+                    set: { isPresented in
+                        if !isPresented { pendingTrack = nil }
+                    }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button(L("删除歌曲"), role: .destructive) {
+                    guard let track = pendingTrack else { return }
+                    pendingTrack = nil
+                    delete(track)
+                }
+                .disabled(isDeleting)
+                Button(L("取消"), role: .cancel) {}
+            } message: {
+                if let title = pendingTrack?.title {
+                    Text(
+                        L("将从资料库和 App 托管存储中删除“%@”；Documents 中的原始文件不会被删除。", title)
+                    )
+                } else {
+                    Text(L("歌曲将从资料库和 App 托管存储中删除。"))
+                }
+            }
+            .alert(
+                L("无法删除歌曲"),
+                isPresented: Binding(
+                    get: { errorMessage != nil },
+                    set: { isPresented in
+                        if !isPresented { errorMessage = nil }
+                    }
+                )
+            ) {
+                Button(L("好"), role: .cancel) {
+                    errorMessage = nil
+                }
+            } message: {
+                Text(errorMessage ?? L("请稍后重试。"))
+            }
+    }
+}
+
+extension View {
+    func trackDeletionPresentation(
+        pendingTrack: Binding<Track?>,
+        errorMessage: Binding<String?>,
+        isDeleting: Bool,
+        delete: @escaping (Track) -> Void
+    ) -> some View {
+        modifier(
+            TrackDeletionPresentationModifier(
+                pendingTrack: pendingTrack,
+                errorMessage: errorMessage,
+                isDeleting: isDeleting,
+                delete: delete
+            )
+        )
     }
 }

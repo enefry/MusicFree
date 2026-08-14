@@ -14,13 +14,16 @@ struct PlaybackHistoryView: View {
 
     @State private var artistNames: [ArtistID: String] = [:]
     @State private var isClearConfirmationPresented = false
+    @State private var pendingDeletionTrack: Track?
+    @State private var deletionErrorMessage: String?
+    @State private var deletingTrackID: MediaItemID?
 
     var body: some View {
         LibraryContentState(
             state: viewModel.state(for: .recent),
             hasContent: !viewModel.playbackHistory.isEmpty,
-            emptyTitle: "暂无播放历史",
-            emptyMessage: "播放过的歌曲会按时间显示在这里。",
+            emptyTitle: L("暂无播放历史"),
+            emptyMessage: L("播放过的歌曲会按时间显示在这里。"),
             emptySystemImage: "clock.arrow.circlepath",
             retry: { viewModel.retry(section: .recent) }
         ) {
@@ -33,6 +36,8 @@ struct PlaybackHistoryView: View {
                                 subtitle: artistSubtitle(for: item.track),
                                 artworkServing: artworkServing,
                                 action: { playTrack?(item.track.id) },
+                                requestDelete: { pendingDeletionTrack = item.track },
+                                isDeleting: deletingTrackID == item.track.id,
                                 enqueueNextTracks: enqueueNextTracks,
                                 enqueueTracks: enqueueTracks,
                                 addToPlaylist: addToPlaylist
@@ -56,7 +61,7 @@ struct PlaybackHistoryView: View {
         .accessibilityIdentifier("library.playbackHistory")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button("清除", role: .destructive) {
+                Button(L("清除"), role: .destructive) {
                     isClearConfirmationPresented = true
                 }
                 .disabled(
@@ -67,19 +72,19 @@ struct PlaybackHistoryView: View {
             }
         }
         .confirmationDialog(
-            "清除播放历史？",
+            L("清除播放历史？"),
             isPresented: $isClearConfirmationPresented,
             titleVisibility: .visible
         ) {
-            Button("清除播放历史", role: .destructive) {
+            Button(L("清除播放历史"), role: .destructive) {
                 Task { await viewModel.clearPlaybackHistory() }
             }
-            Button("取消", role: .cancel) {}
+            Button(L("取消"), role: .cancel) {}
         } message: {
-            Text("歌曲仍会保留在资料库中，累计播放统计不会重置。")
+            Text(L("歌曲仍会保留在资料库中，累计播放统计不会重置。"))
         }
         .alert(
-            "无法清除播放历史",
+            L("无法清除播放历史"),
             isPresented: Binding(
                 get: { viewModel.playbackHistoryClearError != nil },
                 set: { isPresented in
@@ -87,12 +92,18 @@ struct PlaybackHistoryView: View {
                 }
             )
         ) {
-            Button("好", role: .cancel) {
+            Button(L("好"), role: .cancel) {
                 viewModel.dismissPlaybackHistoryClearError()
             }
         } message: {
-            Text(viewModel.playbackHistoryClearError ?? "请稍后重试。")
+            Text(viewModel.playbackHistoryClearError ?? L("请稍后重试。"))
         }
+        .trackDeletionPresentation(
+            pendingTrack: $pendingDeletionTrack,
+            errorMessage: $deletionErrorMessage,
+            isDeleting: deletingTrackID != nil,
+            delete: deleteTrack
+        )
         .task(id: historyMetadataKey) {
             await loadArtistNames()
         }
@@ -125,6 +136,23 @@ struct PlaybackHistoryView: View {
             return
         } catch {
             artistNames = [:]
+        }
+    }
+
+    private func deleteTrack(_ track: Track) {
+        guard deletingTrackID == nil else { return }
+        let itemID = track.id
+        deletingTrackID = itemID
+        Task { @MainActor in
+            defer { deletingTrackID = nil }
+            do {
+                _ = try await viewModel.library.delete([itemID])
+                viewModel.removeDeletedTrack(itemID)
+            } catch is CancellationError {
+                return
+            } catch {
+                deletionErrorMessage = error.localizedDescription
+            }
         }
     }
 }
@@ -161,10 +189,10 @@ enum PlaybackHistoryPresentation {
     }
 
     static func sectionTitle(for date: Date, now: Date, calendar: Calendar) -> String {
-        if calendar.isDate(date, inSameDayAs: now) { return "今天" }
+        if calendar.isDate(date, inSameDayAs: now) { return L("今天") }
         if let yesterday = calendar.date(byAdding: .day, value: -1, to: now),
            calendar.isDate(date, inSameDayAs: yesterday) {
-            return "昨天"
+            return L("昨天")
         }
         return date.formatted(.dateTime.year().month().day())
     }
@@ -175,6 +203,8 @@ private struct PlaybackHistoryRow: View {
     let subtitle: String?
     let artworkServing: (any ArtworkServing)?
     let action: () -> Void
+    let requestDelete: () -> Void
+    let isDeleting: Bool
     let enqueueNextTracks: (([MediaItemID]) -> Void)?
     let enqueueTracks: (([MediaItemID]) -> Void)?
     let addToPlaylist: (([MediaItemID]) -> Void)?
@@ -188,7 +218,7 @@ private struct PlaybackHistoryRow: View {
                     title: item.track.title,
                     subtitle: subtitle,
                     artwork: artworkLoader.image,
-                    artworkAccessibilityLabel: "\(item.track.title)的专辑封面"
+                    artworkAccessibilityLabel: L("%@ album artwork", item.track.title)
                 ) {
                     Text(item.lastEventAt, format: .dateTime.hour().minute())
                         .font(MusicFreeTypographyTokens.caption)
@@ -199,17 +229,25 @@ private struct PlaybackHistoryRow: View {
             .buttonStyle(.plain)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
-            .accessibilityHint("播放歌曲")
+            .accessibilityHint(L("播放歌曲"))
             .accessibilityIdentifier("library.playbackHistory.play.\(item.sessionID.uuidString)")
 
             Menu {
-                Button("播放", systemImage: "play.fill", action: action)
+                Button(L("播放"), systemImage: "play.fill", action: action)
                 TrackQueueMenuActions(
                     trackID: item.track.id,
                     accessibilityPrefix: "library.playbackHistory.menu",
                     enqueueNextTracks: enqueueNextTracks,
                     enqueueTracks: enqueueTracks,
                     addToPlaylist: addToPlaylist
+                )
+                Divider()
+                Button(role: .destructive, action: requestDelete) {
+                    Label(L("删除歌曲"), systemImage: "trash")
+                }
+                .disabled(isDeleting)
+                .accessibilityIdentifier(
+                    "library.playbackHistory.menu.delete.\(item.sessionID.uuidString)"
                 )
             } label: {
                 Image(systemName: "ellipsis")
@@ -221,7 +259,7 @@ private struct PlaybackHistoryRow: View {
                     .contentShape(Rectangle())
             }
             .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
-            .accessibilityLabel("歌曲选项")
+            .accessibilityLabel(L("歌曲选项"))
             .accessibilityIdentifier(
                 "library.playbackHistory.menu.\(item.sessionID.uuidString)"
             )

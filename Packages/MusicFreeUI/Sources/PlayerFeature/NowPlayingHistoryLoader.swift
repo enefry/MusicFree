@@ -1,5 +1,6 @@
 import AppServices
 import Combine
+import DesignSystem
 import Foundation
 import LibraryAPI
 import MusicDomain
@@ -70,7 +71,7 @@ final class NowPlayingHistoryLoader: ObservableObject {
         artistNames = [:]
         state = .failed
       }
-      failureMessage = "无法载入播放历史，请稍后重试。"
+      failureMessage = L("无法载入播放历史，请稍后重试。")
     }
   }
 
@@ -93,7 +94,7 @@ final class NowPlayingHistoryLoader: ObservableObject {
       return
     } catch {
       guard operationGeneration == expectedGeneration else { return }
-      failureMessage = "无法清除播放历史，请稍后重试。"
+      failureMessage = L("无法清除播放历史，请稍后重试。")
     }
   }
 

@@ -10,7 +10,7 @@ struct EqualizerSettingsView: View {
     var body: some View {
         Form {
             Section {
-                Toggle("均衡器", isOn: equalizerEnabledBinding)
+                Toggle(L("均衡器"), isOn: equalizerEnabledBinding)
                     .toggleStyle(MusicFreeSwitchToggleStyle())
                     .disabled(viewModel.isSaving)
                     .accessibilityIdentifier("settings.playback.equalizer")
@@ -21,7 +21,7 @@ struct EqualizerSettingsView: View {
                 adjustmentSection
             }
         }
-        .navigationTitle("均衡器")
+        .navigationTitle(L("均衡器"))
         .navigationBarTitleDisplayMode(.inline)
         .scrollContentBackground(.hidden)
         .background(MusicFreeColorTokens.backgroundGrouped)
@@ -30,10 +30,10 @@ struct EqualizerSettingsView: View {
     @ViewBuilder
     private var presetSection: some View {
         if !viewModel.equalizerPresets.isEmpty {
-            Section("预设") {
-                Picker("声音风格", selection: presetBinding) {
+            Section(L("预设")) {
+                Picker(L("声音风格"), selection: presetBinding) {
                     if viewModel.selectedEqualizerPresetID == nil {
-                        Text("自定义").tag(nil as UInt32?)
+                        Text(L("自定义")).tag(nil as UInt32?)
                     }
                     ForEach(viewModel.equalizerPresets) { preset in
                         Text(presetTitle(preset.name)).tag(Optional(preset.id))
@@ -48,11 +48,11 @@ struct EqualizerSettingsView: View {
 
     @ViewBuilder
     private var adjustmentSection: some View {
-        Section("调节") {
+        Section(L("调节")) {
             equalizerPreampControl
 
             if viewModel.equalizerBands.isEmpty {
-                Text("当前播放引擎没有提供可调频段。")
+                Text(L("当前播放引擎没有提供可调频段。"))
                     .font(MusicFreeTypographyTokens.caption)
                     .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
             } else {
@@ -66,7 +66,7 @@ struct EqualizerSettingsView: View {
     private var equalizerPreampControl: some View {
         VStack(alignment: .leading, spacing: MusicFreeSpacingTokens.small) {
             HStack {
-                Text("前级增益")
+                Text(L("前级增益"))
                 Spacer(minLength: MusicFreeSpacingTokens.medium)
                 Text(equalizerPreampText)
                     .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
@@ -80,7 +80,7 @@ struct EqualizerSettingsView: View {
                 onEditingChanged: handlePreampEditingChanged
             )
             .disabled(viewModel.isSaving)
-            .accessibilityLabel(Text("均衡器前级增益"))
+            .accessibilityLabel(Text(L("均衡器前级增益")))
             .accessibilityValue(Text(equalizerPreampText))
         }
     }
@@ -154,7 +154,7 @@ struct EqualizerSettingsView: View {
                     }
                 )
                 .disabled(viewModel.isSaving)
-                .accessibilityLabel(Text("\(frequencyText(band.centerFrequencyHz)) 频段增益"))
+                .accessibilityLabel(Text(L("%@ band gain", frequencyText(band.centerFrequencyHz))))
                 .accessibilityValue(Text(gainText))
                 .accessibilityIdentifier("settings.playback.equalizer.band.\(Int(band.centerFrequencyHz.rounded()))")
             }
@@ -181,24 +181,24 @@ struct EqualizerSettingsView: View {
 
     private func presetTitle(_ name: String) -> String {
         switch name.lowercased() {
-        case "flat": return "平直"
-        case "classical": return "古典"
-        case "club": return "俱乐部"
-        case "dance": return "舞曲"
-        case "full bass": return "重低音"
-        case "full bass and treble": return "重低音与高音"
-        case "full treble": return "高音"
-        case "headphones": return "耳机"
-        case "large hall": return "大型厅堂"
-        case "live": return "现场"
-        case "party": return "派对"
-        case "pop": return "流行"
-        case "reggae": return "雷鬼"
-        case "rock": return "摇滚"
-        case "ska": return "斯卡"
-        case "soft": return "柔和"
-        case "soft rock": return "柔和摇滚"
-        case "techno": return "电子"
+        case "flat": return L("平直")
+        case "classical": return L("古典")
+        case "club": return L("俱乐部")
+        case "dance": return L("舞曲")
+        case "full bass": return L("重低音")
+        case "full bass and treble": return L("重低音与高音")
+        case "full treble": return L("高音")
+        case "headphones": return L("耳机")
+        case "large hall": return L("大型厅堂")
+        case "live": return L("现场")
+        case "party": return L("派对")
+        case "pop": return L("流行")
+        case "reggae": return L("雷鬼")
+        case "rock": return L("摇滚")
+        case "ska": return L("斯卡")
+        case "soft": return L("柔和")
+        case "soft rock": return L("柔和摇滚")
+        case "techno": return L("电子")
         default: return name
         }
     }

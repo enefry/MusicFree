@@ -63,17 +63,17 @@ final class LibraryAddToPlaylistViewModel {
 
         let name = normalizedNewPlaylistName
         guard !name.isEmpty else {
-            errorMessage = "请输入播放列表名称。"
+            errorMessage = L("请输入播放列表名称。")
             return false
         }
         guard name.count <= 80 else {
-            errorMessage = "播放列表名称不能超过 80 个字符。"
+            errorMessage = L("播放列表名称不能超过 80 个字符。")
             return false
         }
         guard !playlists.contains(where: {
             $0.name.caseInsensitiveCompare(name) == .orderedSame
         }) else {
-            errorMessage = "播放列表名称已存在。"
+            errorMessage = L("播放列表名称已存在。")
             return false
         }
 
@@ -117,8 +117,8 @@ final class LibraryAddToPlaylistViewModel {
         let newItemIDs = itemIDs.filter { !existingIDs.contains($0) }
         guard !newItemIDs.isEmpty else {
             noticeMessage = itemIDs.count == 1
-                ? "这首歌曲已在该播放列表中。"
-                : "这些歌曲已全部在该播放列表中。"
+                ? L("这首歌曲已在该播放列表中。")
+                : L("这些歌曲已全部在该播放列表中。")
             return false
         }
 
@@ -174,7 +174,7 @@ final class LibraryAddToPlaylistViewModel {
 
     private func message(for error: Error) -> String {
         let text = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
-        return text.isEmpty ? "无法添加到播放列表，请稍后重试。" : text
+        return text.isEmpty ? L("无法添加到播放列表，请稍后重试。") : text
     }
 }
 
@@ -182,7 +182,7 @@ private enum LibraryAddToPlaylistError: LocalizedError {
     case repeatedCursor
 
     var errorDescription: String? {
-        "播放列表分页状态无效，请稍后重试。"
+        L("播放列表分页状态无效，请稍后重试。")
     }
 }
 
@@ -207,45 +207,45 @@ struct LibraryAddToPlaylistSheet: View {
             Group {
                 switch viewModel.loadState {
                 case .loading:
-                    ProgressView("加载播放列表")
+                    ProgressView(L("加载播放列表"))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 case .failed(let message):
                     ErrorStateView(
-                        title: "播放列表加载失败",
+                        title: L("播放列表加载失败"),
                         message: message,
-                        retryTitle: "重试",
+                        retryTitle: L("重试"),
                         retry: { Task { await viewModel.load() } }
                     )
                 case .loaded:
                     playlistList
                 }
             }
-            .navigationTitle("添加到播放列表")
+            .navigationTitle(L("添加到播放列表"))
             .navigationBarTitleDisplayMode(.inline)
-            .searchable(text: $searchText, prompt: "搜索播放列表")
+            .searchable(text: $searchText, prompt: L("搜索播放列表"))
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") { dismiss() }
+                    Button(L("取消")) { dismiss() }
                         .disabled(viewModel.isSubmitting)
                 }
             }
             .overlay {
                 if viewModel.isSubmitting {
-                    ProgressView("正在添加")
+                    ProgressView(L("正在添加"))
                         .padding(MusicFreeSpacingTokens.large)
                         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
                 }
             }
             .task { await viewModel.load() }
-            .alert("无法添加", isPresented: errorBinding) {
-                Button("好", role: .cancel) { viewModel.errorMessage = nil }
+            .alert(L("无法添加"), isPresented: errorBinding) {
+                Button(L("好"), role: .cancel) { viewModel.errorMessage = nil }
             } message: {
-                Text(viewModel.errorMessage ?? "请稍后重试。")
+                Text(viewModel.errorMessage ?? L("请稍后重试。"))
             }
-            .alert("无需重复添加", isPresented: noticeBinding) {
-                Button("好", role: .cancel) { viewModel.noticeMessage = nil }
+            .alert(L("无需重复添加"), isPresented: noticeBinding) {
+                Button(L("好"), role: .cancel) { viewModel.noticeMessage = nil }
             } message: {
-                Text(viewModel.noticeMessage ?? "歌曲已在该播放列表中。")
+                Text(viewModel.noticeMessage ?? L("歌曲已在该播放列表中。"))
             }
             .accessibilityIdentifier("library.addToPlaylist")
         }
@@ -257,31 +257,31 @@ struct LibraryAddToPlaylistSheet: View {
                 Button {
                     withAnimation { viewModel.isCreatingPlaylist.toggle() }
                 } label: {
-                    Label("新建播放列表", systemImage: "plus.circle.fill")
+                    Label(L("新建播放列表"), systemImage: "plus.circle.fill")
                 }
                 .disabled(viewModel.isSubmitting)
                 .accessibilityIdentifier("library.addToPlaylist.create")
             }
 
             if viewModel.isCreatingPlaylist {
-                Section("新建播放列表") {
-                    TextField("播放列表名称", text: $viewModel.newPlaylistName)
+                Section(L("新建播放列表")) {
+                    TextField(L("播放列表名称"), text: $viewModel.newPlaylistName)
                         .textInputAutocapitalization(.words)
                         .submitLabel(.done)
                         .onSubmit(createAndAdd)
                         .accessibilityIdentifier("library.addToPlaylist.name")
 
                     Button(action: createAndAdd) {
-                        Label("创建并添加", systemImage: "checkmark")
+                        Label(L("创建并添加"), systemImage: "checkmark")
                     }
                     .disabled(!viewModel.canCreatePlaylist)
                     .accessibilityIdentifier("library.addToPlaylist.createAndAdd")
                 }
             }
 
-            Section("现有播放列表") {
+            Section(L("现有播放列表")) {
                 if filteredPlaylists.isEmpty {
-                    Text(searchText.isEmpty ? "暂无播放列表" : "没有匹配的播放列表")
+                    Text(searchText.isEmpty ? L("暂无播放列表") : L("没有匹配的播放列表"))
                         .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
                 } else {
                     ForEach(filteredPlaylists) { playlist in

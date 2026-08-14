@@ -57,8 +57,8 @@ struct GenresView: View {
         LibraryContentState(
             state: viewModel.state(for: .genres),
             hasContent: !viewModel.genres.isEmpty,
-            emptyTitle: "暂无流派",
-            emptyMessage: "导入带有流派信息的本地音频后会显示在这里。",
+            emptyTitle: L("暂无流派"),
+            emptyMessage: L("导入带有流派信息的本地音频后会显示在这里。"),
             emptySystemImage: "guitars",
             retry: { viewModel.retry(section: .genres) }
         ) {
@@ -136,6 +136,6 @@ struct GenresView: View {
             )
         }
         .accessibilityIdentifier("library.genre.open.\(genre.id.rawValue)")
-        .accessibilityHint("打开流派，按住显示播放队列操作")
+        .accessibilityHint(L("打开流派，按住显示播放队列操作"))
     }
 }

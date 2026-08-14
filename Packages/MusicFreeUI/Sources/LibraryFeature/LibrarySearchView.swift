@@ -149,7 +149,7 @@ struct LibraryContentState<Content: View>: View {
         } else {
             switch state {
             case .idle, .loading:
-                ProgressView("正在加载")
+                ProgressView(L("正在加载"))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             case .empty:
                 EmptyStateView(
@@ -159,9 +159,9 @@ struct LibraryContentState<Content: View>: View {
                 )
             case .failed(let message):
                 ErrorStateView(
-                    title: "资料库加载失败",
+                    title: L("资料库加载失败"),
                     message: message,
-                    retryTitle: "重试",
+                    retryTitle: L("重试"),
                     retry: retry
                 )
             case .loaded:
@@ -189,7 +189,7 @@ struct LibraryPageFooter: View {
                 Button {
                     viewModel.retry(section: section)
                 } label: {
-                    Label("加载下一页失败", systemImage: "arrow.clockwise")
+                    Label(L("加载下一页失败"), systemImage: "arrow.clockwise")
                 }
                 .foregroundStyle(MusicFreeColorTokens.destructive)
                 .accessibilityHint(Text(error))

@@ -8,6 +8,7 @@ import SwiftUI
 /// stable domain values to the view. They intentionally do not reach into
 /// SwiftData or the local media adapter.
 struct LibraryTrackDetailView: View {
+    @Environment(\.dismiss) private var dismiss
     let trackID: MediaItemID
     let library: any LibraryServing
     let playTrack: ((MediaItemID) -> Void)?
@@ -20,17 +21,20 @@ struct LibraryTrackDetailView: View {
     @State private var isLoading = true
     @State private var failureMessage: String?
     @State private var isSavingFavorite = false
+    @State private var pendingDeletionTrack: Track?
+    @State private var deletionErrorMessage: String?
+    @State private var deletingTrackID: MediaItemID?
     @StateObject private var artworkLoader = ArtworkImageLoader()
 
     var body: some View {
         Group {
             if isLoading {
-                ProgressView("加载歌曲")
+                ProgressView(L("加载歌曲"))
             } else if let failureMessage {
                 ErrorStateView(
-                    title: "歌曲加载失败",
+                    title: L("歌曲加载失败"),
                     message: failureMessage,
-                    retryTitle: "重试",
+                    retryTitle: L("重试"),
                     retry: { Task { await load() } }
                 )
             } else if let track {
@@ -38,7 +42,7 @@ struct LibraryTrackDetailView: View {
                     VStack(spacing: MusicFreeSpacingTokens.large) {
                         ArtworkView(
                             image: artworkLoader.image,
-                            accessibilityLabel: "\(track.title)的专辑封面",
+                            accessibilityLabel: L("%@ album artwork", track.title),
                             placeholderTitle: track.title,
                             fillsAvailableWidth: true
                         )
@@ -65,7 +69,7 @@ struct LibraryTrackDetailView: View {
                                     .accessibilityIdentifier("library.trackDetail.album")
                             }
                             if let duration = track.duration {
-                                Text("时长 \(format(duration))")
+                                Text(L("时长 %@", format(duration)))
                                     .font(.caption)
                                     .foregroundStyle(MusicFreeColorTokens.foregroundTertiary)
                                     .accessibilityIdentifier("library.trackDetail.duration")
@@ -74,7 +78,7 @@ struct LibraryTrackDetailView: View {
 
                         HStack(spacing: MusicFreeSpacingTokens.small) {
                             MusicFreePillActionButton(
-                                title: "播放歌曲",
+                                title: L("播放歌曲"),
                                 systemImage: "play.fill",
                                 isEnabled: playTrack != nil,
                                 action: { playTrack?(track.id) }
@@ -84,7 +88,7 @@ struct LibraryTrackDetailView: View {
                                 toggleFavorite(track)
                             } label: {
                                 Label(
-                                    track.isFavorite ? "取消收藏" : "收藏",
+                                    track.isFavorite ? L("取消收藏") : L("收藏"),
                                     systemImage: track.isFavorite ? "star.fill" : "star"
                                 )
                                 .font(.headline.weight(.semibold))
@@ -113,25 +117,40 @@ struct LibraryTrackDetailView: View {
                     )
                 }
             } else {
-                EmptyStateView(title: "找不到歌曲", systemImage: "music.note")
+                EmptyStateView(title: L("找不到歌曲"), systemImage: "music.note")
             }
         }
         .accessibilityIdentifier("library.trackDetail")
-        .navigationTitle(track?.title ?? "歌曲详情")
+        .navigationTitle(track?.title ?? L("歌曲详情"))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button(role: .destructive) {
+                    pendingDeletionTrack = track
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .disabled(track == nil || deletingTrackID != nil)
+                .accessibilityLabel(L("删除歌曲"))
+                .accessibilityIdentifier("library.trackDetail.delete")
+
                 Button {
                     if let track { addToPlaylist?([track.id]) }
                 } label: {
                     Image(systemName: "text.badge.plus")
                 }
                 .disabled(track == nil || addToPlaylist == nil)
-                .accessibilityLabel("添加到播放列表")
+                .accessibilityLabel(L("添加到播放列表"))
                 .accessibilityIdentifier("library.trackDetail.addToPlaylist")
             }
         }
         .task(id: trackID) { await load() }
+        .trackDeletionPresentation(
+            pendingTrack: $pendingDeletionTrack,
+            errorMessage: $deletionErrorMessage,
+            isDeleting: deletingTrackID != nil,
+            delete: deleteTrack
+        )
     }
 
     private var artworkKey: String {
@@ -235,6 +254,23 @@ struct LibraryTrackDetailView: View {
             }
         }
     }
+
+    private func deleteTrack(_ track: Track) {
+        guard deletingTrackID == nil else { return }
+        let itemID = track.id
+        deletingTrackID = itemID
+        Task { @MainActor in
+            defer { deletingTrackID = nil }
+            do {
+                _ = try await library.delete([itemID])
+                dismiss()
+            } catch is CancellationError {
+                return
+            } catch {
+                deletionErrorMessage = error.localizedDescription
+            }
+        }
+    }
 }
 
 struct LibraryCollectionDetailView: View {
@@ -244,8 +280,8 @@ struct LibraryCollectionDetailView: View {
 
         var title: String {
             switch self {
-            case .album: return "专辑详情"
-            case .genre: return "流派详情"
+            case .album: return L("专辑详情")
+            case .genre: return L("流派详情")
             }
         }
     }
@@ -272,23 +308,26 @@ struct LibraryCollectionDetailView: View {
     @State private var failureMessage: String?
     @State private var favoriteMutationIDs: Set<MediaItemID> = []
     @State private var artistNames: [ArtistID: String] = [:]
+    @State private var pendingDeletionTrack: Track?
+    @State private var deletionErrorMessage: String?
+    @State private var deletingTrackID: MediaItemID?
     @StateObject private var artworkLoader = ArtworkImageLoader()
 
     var body: some View {
         Group {
             if isLoading {
-                ProgressView("加载歌曲")
+                ProgressView(L("加载歌曲"))
             } else if let failureMessage {
                 ErrorStateView(
-                    title: "详情加载失败",
+                    title: L("详情加载失败"),
                     message: failureMessage,
-                    retryTitle: "重试",
+                    retryTitle: L("重试"),
                     retry: { Task { await load() } }
                 )
             } else if tracks.isEmpty {
                 EmptyStateView(
                     title: title ?? kind.title,
-                    message: "这个条目暂时没有可播放的歌曲。",
+                    message: L("这个条目暂时没有可播放的歌曲。"),
                     systemImage: kind.systemImage
                 )
             } else {
@@ -297,7 +336,7 @@ struct LibraryCollectionDetailView: View {
                         VStack(spacing: MusicFreeSpacingTokens.medium) {
                             ArtworkView(
                                 image: artworkLoader.image,
-                                accessibilityLabel: "\(title ?? kind.title)的封面",
+                                accessibilityLabel: L("%@ collection artwork", title ?? kind.title),
                                 placeholderSystemImage: kind.systemImage,
                                 placeholderTitle: title ?? kind.title,
                                 fillsAvailableWidth: true
@@ -330,7 +369,7 @@ struct LibraryCollectionDetailView: View {
                             detailTrackRows
                         }
                     } else {
-                        Section("歌曲") {
+                        Section(L("歌曲")) {
                             detailTrackRows
                         }
                     }
@@ -365,11 +404,17 @@ struct LibraryCollectionDetailView: View {
                 } label: {
                     Image(systemName: "ellipsis")
                 }
-                .accessibilityLabel("集合选项")
+                .accessibilityLabel(L("集合选项"))
                 .accessibilityIdentifier("library.collection.menu")
             }
         }
         .task(id: kind) { await load() }
+        .trackDeletionPresentation(
+            pendingTrack: $pendingDeletionTrack,
+            errorMessage: $deletionErrorMessage,
+            isDeleting: deletingTrackID != nil,
+            delete: deleteTrack
+        )
     }
 
     @ViewBuilder
@@ -383,6 +428,8 @@ struct LibraryCollectionDetailView: View {
                 playAction: { play(track) },
                 detailAction: { navigate(.track(track.id)) },
                 favoriteAction: { toggleFavorite(track) },
+                requestDelete: { pendingDeletionTrack = track },
+                isDeleting: deletingTrackID == track.id,
                 enqueueNextTracks: enqueueNextTracks,
                 enqueueTracks: enqueueTracks,
                 addToPlaylist: addTracksToPlaylist,
@@ -392,8 +439,8 @@ struct LibraryCollectionDetailView: View {
             .accessibilityValue(
                 Text(
                     LibraryAlbumTrackOrdering.displayNumber(for: track)
-                        .map { "曲目 \($0)" }
-                        ?? "第 \(index + 1) 首"
+                        .map { L("曲目 %d", $0) }
+                        ?? L("第 %d 首", index + 1)
                 )
             )
         }
@@ -459,7 +506,7 @@ struct LibraryCollectionDetailView: View {
                     .accessibilityIdentifier("library.collection.header.year")
             }
         } else {
-            Text("\(tracks.count) 首歌曲")
+            Text(L("%d tracks", tracks.count))
                 .font(MusicFreeTypographyTokens.secondary)
                 .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
         }
@@ -474,12 +521,12 @@ struct LibraryCollectionDetailView: View {
     private var albumTypeTitle: String? {
         guard let albumType = album?.albumType else { return nil }
         switch albumType {
-        case .album: return "专辑"
-        case .single: return "单曲"
+        case .album: return L("专辑")
+        case .single: return L("单曲")
         case .extendedPlay: return "EP"
-        case .compilation: return "精选集"
-        case .soundtrack: return "原声带"
-        case .live: return "现场录音"
+        case .compilation: return L("精选集")
+        case .soundtrack: return L("原声带")
+        case .live: return L("现场录音")
         case .unknown: return nil
         }
     }
@@ -537,6 +584,24 @@ struct LibraryCollectionDetailView: View {
                   let index = tracks.firstIndex(where: { $0.id == updated.id })
             else { return }
             tracks[index] = updated
+        }
+    }
+
+    private func deleteTrack(_ track: Track) {
+        guard deletingTrackID == nil else { return }
+        let itemID = track.id
+        deletingTrackID = itemID
+        Task { @MainActor in
+            defer { deletingTrackID = nil }
+            do {
+                _ = try await library.delete([itemID])
+                tracks.removeAll { $0.id == itemID }
+                favoriteMutationIDs.remove(itemID)
+            } catch is CancellationError {
+                return
+            } catch {
+                deletionErrorMessage = error.localizedDescription
+            }
         }
     }
 }
@@ -610,22 +675,25 @@ struct LibraryFolderDetailView: View {
     @State private var failureMessage: String?
     @State private var favoriteMutationIDs: Set<MediaItemID> = []
     @State private var artistNames: [ArtistID: String] = [:]
+    @State private var pendingDeletionTrack: Track?
+    @State private var deletionErrorMessage: String?
+    @State private var deletingTrackID: MediaItemID?
 
     var body: some View {
         Group {
             if isLoading {
-                ProgressView("加载歌曲")
+                ProgressView(L("加载歌曲"))
             } else if let failureMessage {
                 ErrorStateView(
-                    title: "文件夹加载失败",
+                    title: L("文件夹加载失败"),
                     message: failureMessage,
-                    retryTitle: "重试",
+                    retryTitle: L("重试"),
                     retry: { Task { await load() } }
                 )
             } else if tracks.isEmpty {
                 EmptyStateView(
                     title: path,
-                    message: "这个文件夹暂时没有可播放的歌曲。",
+                    message: L("这个文件夹暂时没有可播放的歌曲。"),
                     systemImage: "folder"
                 )
             } else {
@@ -634,7 +702,7 @@ struct LibraryFolderDetailView: View {
                         VStack(alignment: .leading, spacing: MusicFreeSpacingTokens.small) {
                             Label(path, systemImage: "folder.fill")
                                 .font(.title2.weight(.bold))
-                            Text("\(tracks.count) 首歌曲")
+                            Text(L("%d tracks", tracks.count))
                                 .font(MusicFreeTypographyTokens.secondary)
                                 .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
 
@@ -648,7 +716,7 @@ struct LibraryFolderDetailView: View {
                         .listRowSeparator(.hidden)
                     }
 
-                    Section("歌曲") {
+                    Section(L("歌曲")) {
                         ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
                             LibraryDetailTrackRow(
                                 track: track,
@@ -657,14 +725,16 @@ struct LibraryFolderDetailView: View {
                                 accessibilityPrefix: "library.folder.track",
                                 playAction: { play(track) },
                                 detailAction: { navigate(.track(track.id)) },
-                            favoriteAction: { toggleFavorite(track) },
-                            enqueueNextTracks: enqueueNextTracks,
-                            enqueueTracks: enqueueTracks,
-                            addToPlaylist: nil,
-                            isPlayEnabled: playTrack != nil || playTracks != nil,
+                                favoriteAction: { toggleFavorite(track) },
+                                requestDelete: { pendingDeletionTrack = track },
+                                isDeleting: deletingTrackID == track.id,
+                                enqueueNextTracks: enqueueNextTracks,
+                                enqueueTracks: enqueueTracks,
+                                addToPlaylist: nil,
+                                isPlayEnabled: playTrack != nil || playTracks != nil,
                                 isFavoriteEnabled: !favoriteMutationIDs.contains(track.id)
                             )
-                            .accessibilityValue(Text("第 \(index + 1) 首"))
+                            .accessibilityValue(Text(L("第 %d 首", index + 1)))
                         }
                     }
                 }
@@ -689,11 +759,17 @@ struct LibraryFolderDetailView: View {
                 } label: {
                     Image(systemName: "ellipsis")
                 }
-                .accessibilityLabel("文件夹选项")
+                .accessibilityLabel(L("文件夹选项"))
                 .accessibilityIdentifier("library.folderDetail.menu")
             }
         }
         .task(id: path) { await load() }
+        .trackDeletionPresentation(
+            pendingTrack: $pendingDeletionTrack,
+            errorMessage: $deletionErrorMessage,
+            isDeleting: deletingTrackID != nil,
+            delete: deleteTrack
+        )
     }
 
     private var collectionQueueTarget: LibraryCollectionQueueTarget {
@@ -754,6 +830,24 @@ struct LibraryFolderDetailView: View {
             tracks[index] = updated
         }
     }
+
+    private func deleteTrack(_ track: Track) {
+        guard deletingTrackID == nil else { return }
+        let itemID = track.id
+        deletingTrackID = itemID
+        Task { @MainActor in
+            defer { deletingTrackID = nil }
+            do {
+                _ = try await library.delete([itemID])
+                tracks.removeAll { $0.id == itemID }
+                favoriteMutationIDs.remove(itemID)
+            } catch is CancellationError {
+                return
+            } catch {
+                deletionErrorMessage = error.localizedDescription
+            }
+        }
+    }
 }
 
 private struct LibraryDetailTrackRow: View {
@@ -764,6 +858,8 @@ private struct LibraryDetailTrackRow: View {
     let playAction: () -> Void
     let detailAction: () -> Void
     let favoriteAction: () -> Void
+    let requestDelete: () -> Void
+    let isDeleting: Bool
     let enqueueNextTracks: (([MediaItemID]) -> Void)?
     let enqueueTracks: (([MediaItemID]) -> Void)?
     let addToPlaylist: (([MediaItemID]) -> Void)?
@@ -790,13 +886,13 @@ private struct LibraryDetailTrackRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .disabled(!isPlayEnabled)
             .accessibilityIdentifier("\(accessibilityPrefix).play.\(track.id.externalID)")
-            .accessibilityHint("播放歌曲")
+            .accessibilityHint(L("播放歌曲"))
 
             Menu {
-                Button("播放", systemImage: "play.fill", action: playAction)
+                Button(L("播放"), systemImage: "play.fill", action: playAction)
                     .disabled(!isPlayEnabled)
                     .accessibilityIdentifier("\(accessibilityPrefix).menu.play.\(track.id.externalID)")
-                Button("查看歌曲详情", systemImage: "info.circle", action: detailAction)
+                Button(L("查看歌曲详情"), systemImage: "info.circle", action: detailAction)
                     .accessibilityIdentifier("\(accessibilityPrefix).menu.detail.\(track.id.externalID)")
                 TrackQueueMenuActions(
                     trackID: track.id,
@@ -806,12 +902,18 @@ private struct LibraryDetailTrackRow: View {
                     addToPlaylist: addToPlaylist
                 )
                 Button(
-                    track.isFavorite ? "取消收藏" : "收藏",
+                    track.isFavorite ? L("取消收藏") : L("收藏"),
                     systemImage: track.isFavorite ? "star.slash" : "star",
                     action: favoriteAction
                 )
                 .disabled(!isFavoriteEnabled)
                 .accessibilityIdentifier("\(accessibilityPrefix).menu.favorite.\(track.id.externalID)")
+                Divider()
+                Button(role: .destructive, action: requestDelete) {
+                    Label(L("删除歌曲"), systemImage: "trash")
+                }
+                .disabled(isDeleting)
+                .accessibilityIdentifier("\(accessibilityPrefix).menu.delete.\(track.id.externalID)")
             } label: {
                 Image(systemName: "ellipsis")
                     .font(.headline.weight(.semibold))
@@ -822,7 +924,7 @@ private struct LibraryDetailTrackRow: View {
                     .contentShape(Rectangle())
             }
             .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
-            .accessibilityLabel("歌曲选项")
+            .accessibilityLabel(L("歌曲选项"))
             .accessibilityIdentifier("\(accessibilityPrefix).menu.\(track.id.externalID)")
             .padding(.trailing, MusicFreeSpacingTokens.contentInset)
         }

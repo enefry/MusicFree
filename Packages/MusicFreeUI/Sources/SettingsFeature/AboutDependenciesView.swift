@@ -11,19 +11,19 @@ struct AboutDependenciesView: View {
     var body: some View {
         Group {
             if isLoading {
-                ProgressView("加载发布信息")
+                ProgressView(L("加载发布信息"))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let releaseInfo {
                 releaseContent(releaseInfo)
             } else {
                 EmptyStateView(
-                    title: "暂无发布信息",
-                    message: "当前构建未提供只读发布清单。",
+                    title: L("暂无发布信息"),
+                    message: L("当前构建未提供只读发布清单。"),
                     systemImage: "info.circle"
                 )
             }
         }
-        .navigationTitle("关于与许可")
+        .navigationTitle(L("关于与许可"))
         .navigationBarTitleDisplayMode(.inline)
         .task {
             releaseInfo = await provider.releaseInfo()
@@ -35,19 +35,19 @@ struct AboutDependenciesView: View {
     private func releaseContent(_ releaseInfo: SettingsReleaseInfo) -> some View {
         Form {
             if hasApplicationMetadata(releaseInfo) {
-                Section("应用") {
+                Section(L("应用")) {
                     if let appVersion = nonEmpty(releaseInfo.appVersion) {
-                        LabeledContent("版本", value: appVersion)
+                        LabeledContent(L("版本"), value: appVersion)
                     }
                     if let buildNumber = nonEmpty(releaseInfo.buildNumber) {
-                        LabeledContent("构建", value: buildNumber)
+                        LabeledContent(L("构建"), value: buildNumber)
                     }
                 }
             }
 
-            Section("依赖许可") {
+            Section(L("依赖许可")) {
                 if releaseInfo.dependencies.isEmpty {
-                    Text("暂无依赖清单")
+                    Text(L("暂无依赖清单"))
                         .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
                 } else {
                     ForEach(releaseInfo.dependencies) { dependency in
@@ -67,9 +67,9 @@ struct AboutDependenciesView: View {
                     }
                 }
             }
-            Section("播放能力") {
-                capabilityRow("变速播放", isSupported: settingsViewModel.supportsVariableRate)
-                capabilityRow("均衡器", isSupported: settingsViewModel.supportsEqualizer)
+            Section(L("播放能力")) {
+                capabilityRow(L("变速播放"), isSupported: settingsViewModel.supportsVariableRate)
+                capabilityRow(L("均衡器"), isSupported: settingsViewModel.supportsEqualizer)
             }
         }
     }
@@ -81,7 +81,7 @@ struct AboutDependenciesView: View {
             HStack(spacing: MusicFreeSpacingTokens.xSmall) {
                 Image(systemName: isSupported ? "checkmark.circle.fill" : "clock")
                     .imageScale(.small)
-                Text(isSupported ? "已启用" : "待支持")
+                Text(isSupported ? L("已启用") : L("待支持"))
                     .lineLimit(1)
             }
             .foregroundStyle(
@@ -92,7 +92,7 @@ struct AboutDependenciesView: View {
             .font(MusicFreeTypographyTokens.caption)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(Text("\(title)，\(isSupported ? "已启用" : "待播放引擎支持")"))
+        .accessibilityLabel(Text(L("format.commaPair", title, isSupported ? L("已启用") : L("待播放引擎支持"))))
     }
 
     private func hasApplicationMetadata(_ releaseInfo: SettingsReleaseInfo) -> Bool {
@@ -105,9 +105,9 @@ struct AboutDependenciesView: View {
         let kind: String?
         switch dependency.kind {
         case .source:
-            kind = "源码"
+            kind = L("源码")
         case .binary:
-            kind = "二进制"
+            kind = L("二进制")
         case .other:
             kind = nil
         }
@@ -132,13 +132,13 @@ struct SettingsDiagnosticsView: View {
     var body: some View {
         Group {
             if isLoading {
-                ProgressView("加载诊断信息")
+                ProgressView(L("加载诊断信息"))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 diagnosticsContent
             }
         }
-        .navigationTitle("诊断信息")
+        .navigationTitle(L("诊断信息"))
         .navigationBarTitleDisplayMode(.inline)
         .task {
             snapshot = await provider.diagnostics()
@@ -150,7 +150,7 @@ struct SettingsDiagnosticsView: View {
     private var diagnosticsContent: some View {
         Form {
             if let lastFailure {
-                Section("最近一次设置错误") {
+                Section(L("最近一次设置错误")) {
                     Text(lastFailure.message)
                     Text(lastFailure.diagnosticCode)
                         .font(MusicFreeTypographyTokens.caption.monospaced())
@@ -158,9 +158,9 @@ struct SettingsDiagnosticsView: View {
                 }
             }
 
-            Section("记录") {
+            Section(L("记录")) {
                 if snapshot.entries.isEmpty {
-                    Text("暂无诊断记录")
+                    Text(L("暂无诊断记录"))
                         .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
                 } else {
                     ForEach(snapshot.entries) { entry in

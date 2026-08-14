@@ -11,6 +11,7 @@ struct RootScene: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("musicfree.appearance") private var persistedAppearance = MusicFreeAppearance.system.rawValue
+    @AppStorage(MusicFreeLocalization.languageStorageKey) private var persistedLanguage = MusicFreeLanguage.english.rawValue
     @State private var router: AppRouter
     @State private var sceneID = UUID()
     @State private var isSettingsResetConfirmationPresented = false
@@ -26,6 +27,7 @@ struct RootScene: View {
         startupAwareContent
             .tint(MusicFreeColorTokens.accent)
             .preferredColorScheme(appearance.colorScheme)
+            .environment(\.locale, language.locale)
             .task {
                 await startServices()
             }
@@ -47,16 +49,16 @@ struct RootScene: View {
                 }
             }
             .confirmationDialog(
-                "恢复默认设置？",
+                L("恢复默认设置？"),
                 isPresented: $isSettingsResetConfirmationPresented,
                 titleVisibility: .visible
             ) {
-                Button("恢复默认设置", role: .destructive) {
+                Button(L("恢复默认设置"), role: .destructive) {
                     Task { await container.resetCorruptedSettings() }
                 }
-                Button("取消", role: .cancel) {}
+                Button(L("取消"), role: .cancel) {}
             } message: {
-                Text("无法读取的设置数据将被替换，资料库和媒体文件不会被删除。")
+                Text(L("无法读取的设置数据将被替换，资料库和媒体文件不会被删除。"))
             }
     }
 
@@ -197,10 +199,13 @@ struct RootScene: View {
                     settingsServing: services.settingsServing,
                     storageMaintenance: services.storageMaintenanceServing,
                     appearance: appearanceBinding,
+                    language: languageBinding,
                     releaseInfoProvider: AppReleaseInfoProvider(),
                     diagnosticsProvider: AppDiagnosticsProvider(
                         exporter: container.diagnosticsExporter
-                    )
+                    ),
+                    appIconOptions: appIconOptions,
+                    appIconProvider: AppAlternateIconProvider()
                 )
             }
         }
@@ -292,10 +297,13 @@ struct RootScene: View {
                 settingsServing: services.settingsServing,
                 storageMaintenance: services.storageMaintenanceServing,
                 appearance: appearanceBinding,
+                language: languageBinding,
                 releaseInfoProvider: AppReleaseInfoProvider(),
                 diagnosticsProvider: AppDiagnosticsProvider(
                     exporter: container.diagnosticsExporter
-                )
+                ),
+                appIconOptions: appIconOptions,
+                appIconProvider: AppAlternateIconProvider()
             )
         }
     }
@@ -337,11 +345,45 @@ struct RootScene: View {
         MusicFreeAppearance(rawValue: persistedAppearance) ?? .system
     }
 
+    private var language: MusicFreeLanguage {
+        MusicFreeLanguage(rawValue: persistedLanguage) ?? .english
+    }
+
     private var appearanceBinding: Binding<MusicFreeAppearance> {
         Binding(
             get: { appearance },
             set: { persistedAppearance = $0.rawValue }
         )
+    }
+
+    private var languageBinding: Binding<MusicFreeLanguage> {
+        Binding(
+            get: { language },
+            set: { persistedLanguage = $0.rawValue }
+        )
+    }
+
+    private var appIconOptions: [SettingsAppIconOption] {
+        [
+            SettingsAppIconOption(
+                id: "default",
+                title: L("经典"),
+                alternateIconName: nil,
+                previewAssetName: "AppIcon-preview"
+            ),
+            SettingsAppIconOption(
+                id: "circle",
+                title: L("唱片"),
+                alternateIconName: "AppIcon-cicle",
+                previewAssetName: "AppIcon-cicle-preview"
+            ),
+            SettingsAppIconOption(
+                id: "music",
+                title: L("手写"),
+                alternateIconName: "AppIcon-music",
+                previewAssetName: "AppIcon-music-preview"
+            )
+        ]
     }
 
     func startServices() async {
@@ -378,7 +420,7 @@ struct RootScene: View {
                 description: Text(container.startupState.message)
             )
 
-            Button("重试启动", systemImage: "arrow.clockwise") {
+            Button(L("重试启动"), systemImage: "arrow.clockwise") {
                 Task { await startServices() }
             }
             .buttonStyle(.borderedProminent)
@@ -398,21 +440,21 @@ struct RootScene: View {
         .overlay(alignment: .trailing) {
             HStack(spacing: MusicFreeSpacingTokens.small) {
                 if container.startupState.issues.contains(.settingsCorrupted) {
-                    Button("恢复设置", systemImage: "arrow.counterclockwise") {
+                    Button(L("恢复设置"), systemImage: "arrow.counterclockwise") {
                         isSettingsResetConfirmationPresented = true
                     }
                     .labelStyle(.iconOnly)
-                    .accessibilityLabel("恢复默认设置")
+                    .accessibilityLabel(L("恢复默认设置"))
                 }
 
-                Button("重试", systemImage: "arrow.clockwise") {
+                Button(L("重试"), systemImage: "arrow.clockwise") {
                     Task {
                         await container.stopServicesAndDiscardComposition()
                         await startServices()
                     }
                 }
                 .labelStyle(.iconOnly)
-                .accessibilityLabel("重试启动")
+                .accessibilityLabel(L("重试启动"))
             }
             .padding(.trailing, MusicFreeSpacingTokens.medium)
         }
@@ -445,6 +487,6 @@ private struct MusicFreeLaunchAnimation: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("MusicFree")
-        .accessibilityValue("Startup")
+        .accessibilityValue(L("正在启动"))
     }
 }
