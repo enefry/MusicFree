@@ -9,6 +9,7 @@ public struct SettingsScene: View {
     private let diagnosticsProvider: any SettingsDiagnosticsProviding
     private let appIconOptions: [SettingsAppIconOption]
     private let appIconProvider: any SettingsAppIconProviding
+    private let sleepTimerServing: (any SleepTimerServing)?
     @Binding private var appearance: MusicFreeAppearance
     @Binding private var language: MusicFreeLanguage
     @State private var viewModel: SettingsViewModel
@@ -21,13 +22,15 @@ public struct SettingsScene: View {
         releaseInfoProvider: any SettingsReleaseInfoProviding,
         diagnosticsProvider: any SettingsDiagnosticsProviding,
         appIconOptions: [SettingsAppIconOption] = [],
-        appIconProvider: any SettingsAppIconProviding = EmptySettingsAppIconProvider()
+        appIconProvider: any SettingsAppIconProviding = EmptySettingsAppIconProvider(),
+        sleepTimerServing: (any SleepTimerServing)? = nil
 
     ) {
         self.releaseInfoProvider = releaseInfoProvider
         self.diagnosticsProvider = diagnosticsProvider
         self.appIconOptions = appIconOptions
         self.appIconProvider = appIconProvider
+        self.sleepTimerServing = sleepTimerServing
         _appearance = appearance
         _language = language
         _viewModel = State(initialValue: SettingsViewModel(store: store))
@@ -43,12 +46,14 @@ public struct SettingsScene: View {
         releaseInfoProvider: any SettingsReleaseInfoProviding = EmptySettingsReleaseInfoProvider(),
         diagnosticsProvider: any SettingsDiagnosticsProviding = EmptySettingsDiagnosticsProvider(),
         appIconOptions: [SettingsAppIconOption] = [],
-        appIconProvider: any SettingsAppIconProviding = EmptySettingsAppIconProvider()
+        appIconProvider: any SettingsAppIconProviding = EmptySettingsAppIconProvider(),
+        sleepTimerServing: (any SleepTimerServing)? = nil
     ) {
         self.releaseInfoProvider = releaseInfoProvider
         self.diagnosticsProvider = diagnosticsProvider
         self.appIconOptions = appIconOptions
         self.appIconProvider = appIconProvider
+        self.sleepTimerServing = sleepTimerServing
         _appearance = appearance
         _language = language
         _viewModel = State(initialValue: SettingsViewModel(
@@ -69,7 +74,8 @@ public struct SettingsScene: View {
             releaseInfoProvider: EmptySettingsReleaseInfoProvider(),
             diagnosticsProvider: EmptySettingsDiagnosticsProvider(),
             appIconOptions: [],
-            appIconProvider: EmptySettingsAppIconProvider()
+            appIconProvider: EmptySettingsAppIconProvider(),
+            sleepTimerServing: nil
         )
     }
 
@@ -196,7 +202,10 @@ public struct SettingsScene: View {
                 }
             }
 
-            PlaybackSettingsView(viewModel: viewModel)
+            PlaybackSettingsView(
+                viewModel: viewModel,
+                sleepTimerServing: sleepTimerServing
+            )
             ImportSettingsView(viewModel: viewModel)
             StorageSettingsView(viewModel: viewModel)
 

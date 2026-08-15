@@ -44,3 +44,6 @@ Docs/UIReview-*/flow-*.png
 .build
 .codex
 .noindex
+dist
+Design/AppStore
+Design/screenshot

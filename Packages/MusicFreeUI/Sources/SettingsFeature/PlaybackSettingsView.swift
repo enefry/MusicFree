@@ -1,3 +1,4 @@
+import AppServices
 import DesignSystem
 import Foundation
 import PlaybackAPI
@@ -6,10 +7,12 @@ import SwiftUI
 
 struct PlaybackSettingsView: View {
     @Bindable var viewModel: SettingsViewModel
+    let sleepTimerServing: (any SleepTimerServing)?
 
     var body: some View {
         Section(L("播放偏好")) {
             rateControl
+            sleepTimerLink
             equalizerLink
 
             capabilityNote(
@@ -17,6 +20,18 @@ struct PlaybackSettingsView: View {
                 message: L("当前播放引擎未启用均衡器，保存的均衡器设置会在支持后生效。")
             )
         }
+    }
+
+    private var sleepTimerLink: some View {
+        NavigationLink {
+            SleepTimerSettingsView(
+                settingsViewModel: viewModel,
+                serving: sleepTimerServing
+            )
+        } label: {
+            Label(L("Sleep timer"), systemImage: "moon.zzz")
+        }
+        .accessibilityIdentifier("settings.playback.sleepTimer.entry")
     }
 
     private var rateControl: some View {

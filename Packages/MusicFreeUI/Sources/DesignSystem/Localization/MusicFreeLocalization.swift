@@ -6,6 +6,10 @@ import SwiftUI
 public enum MusicFreeLanguage: String, CaseIterable, Identifiable, Sendable {
     case english = "en"
     case chinese = "zh-Hans"
+    case french = "fr"
+    case german = "de"
+    case spanish = "es"
+    case japanese = "ja"
 
     public var id: Self { self }
 
@@ -17,6 +21,10 @@ public enum MusicFreeLanguage: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .english: return "English"
         case .chinese: return "中文"
+        case .french: return "Français"
+        case .german: return "Deutsch"
+        case .spanish: return "Español"
+        case .japanese: return "日本語"
         }
     }
 }

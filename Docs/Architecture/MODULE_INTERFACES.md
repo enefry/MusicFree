@@ -28,7 +28,7 @@ MusicFreeApp
 ├── MusicFreeInfrastructure
 │   └── LocalMediaAdapter / LibraryPersistenceAdapter
 │       AppleSystemAdapter / PreferencesPersistenceAdapter
-├── MusicFreeVLCKit
+├── MusicFreeVLCKitAdapter
 │   └── VLCKitPlaybackAdapter
 └── MusicFreeCore
     └── MusicDomain / MediaSourceAPI / LibraryAPI / PlaybackAPI
@@ -42,7 +42,7 @@ Package 依赖固定为：
 
 - `MusicFreeCore` 不依赖其他本地 Package 或第三方二进制。
 - `MusicFreeInfrastructure` 只依赖 `MusicFreeCore`。
-- `MusicFreeVLCKit` 依赖 `MusicFreeCore` 与精确版本 `VLCKit-SPM`；Gate A0 只创建空 target，09 PLAN 才加入并解析二进制依赖。
+- `MusicFreeVLCKitAdapter` 依赖 `MusicFreeCore` 与精确版本的远端 `MusicFreeVLCKit` 二进制包；Gate A0 只创建空 target，09 PLAN 才加入并解析二进制依赖。
 - `MusicFreeUI` 只依赖 `MusicFreeCore`。
 - `MusicFreeApp` 负责组合四个 Package，任何 Package 都不得反向依赖 App。
 

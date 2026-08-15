@@ -3,7 +3,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "MusicFreeVLCKit",
+    name: "MusicFreeVLCKitAdapter",
     platforms: [
         .iOS(.v26)
     ],
@@ -13,8 +13,8 @@ let package = Package(
     dependencies: [
         .package(path: "../MusicFreeCore"),
         .package(
-            url: "https://github.com/MobileVLCKit-SPM/VLCKit-SPM.git",
-            exact: "4.0.0-alpha.20260805.1123"
+            url: "https://github.com/enefry/MusicFreeVLCKit.git",
+            exact: "4.0.0-audio.20260814.3"
         )
     ],
     targets: [
@@ -24,11 +24,11 @@ let package = Package(
                 .product(name: "MusicDomain", package: "MusicFreeCore"),
                 .product(name: "MediaSourceAPI", package: "MusicFreeCore"),
                 .product(name: "PlaybackAPI", package: "MusicFreeCore"),
-                .product(name: "VLCKit", package: "VLCKit-SPM")
+                .product(name: "VLCKit", package: "MusicFreeVLCKit")
             ]
         ),
         .testTarget(
-            name: "MusicFreeVLCKitTests",
+            name: "MusicFreeVLCKitAdapterTests",
             dependencies: [
                 "VLCKitPlaybackAdapter",
                 .product(name: "MusicTestSupport", package: "MusicFreeCore")

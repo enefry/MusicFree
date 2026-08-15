@@ -2,28 +2,147 @@
   "schemaVersion": 1,
   "dependencies": [
     {
-      "id": "vlckit-spm",
-      "name": "VLCKit-SPM",
-      "version": "4.0.0-alpha.20260805.1123",
-      "license": "MIT",
-      "kind": "source",
-      "sourceURL": "https://github.com/MobileVLCKit-SPM/VLCKit-SPM",
-      "buildMaterialsURL": "https://github.com/MobileVLCKit-SPM/VLCKit-SPM/releases/tag/4.0.0-alpha.20260805.1123",
-      "licenseURL": "https://github.com/MobileVLCKit-SPM/VLCKit-SPM/blob/4.0.0-alpha.20260805.1123/LICENSE",
-      "licenseFile": "VLCKit-SPM-MIT.txt",
-      "revision": "818aca0e9cd605c69a3a5670c2ae662b1ca0783e"
-    },
-    {
-      "id": "vlckit-binary",
-      "name": "VLCKit / libVLC binary",
-      "version": "4.0.0-alpha.20260805.1123",
+      "id": "musicfreevlckit",
+      "name": "MusicFreeVLCKit VLCKit wrapper",
+      "version": "4.0.0-audio.20260814.3",
       "license": "LGPL-2.1-or-later",
       "kind": "binary",
-      "sourceURL": "https://code.videolan.org/videolan/VLCKit",
-      "buildMaterialsURL": "https://github.com/MobileVLCKit-SPM/VLCKit-SPM/releases/tag/4.0.0-alpha.20260805.1123",
-      "licenseURL": "https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html",
-      "licenseFile": "VLCKit-LGPL-2.1.txt",
-      "checksum": "a8bd5703c324ed8e7c39241c6d091c56e99f13cf585b42fbeb0d4c6523f9386f"
+      "sourceURL": "https://github.com/enefry/MusicFreeVLCKit",
+      "buildMaterialsURL": "https://github.com/enefry/MusicFreeVLCKit/releases/tag/4.0.0-audio.20260814.3",
+      "licenseURL": "https://spdx.org/licenses/LGPL-2.1-or-later.html",
+      "licenseFile": "MusicFreeVLCKit/third-party-licenses/MusicFreeVLCKit-LGPL-2.1.txt",
+      "revision": "3813796f4fef2d6a5c23da0cc73ec85c3c7d658b",
+      "checksum": "ca6152d7c4e413c6463b29d0961911ac038b8b3c0eb97eb1b9f358228e81833f"
+    },
+    {
+      "id": "libvlc",
+      "name": "VideoLAN libVLC",
+      "license": "LGPL-2.1-or-later",
+      "kind": "binary",
+      "sourceURL": "https://code.videolan.org/videolan/vlc.git",
+      "buildMaterialsURL": "https://github.com/enefry/MusicFreeVLCKit/releases/tag/4.0.0-audio.20260814.3",
+      "licenseURL": "https://spdx.org/licenses/LGPL-2.1-or-later.html",
+      "licenseFile": "MusicFreeVLCKit/third-party-licenses/libVLC-COPYING.LIB",
+      "revision": "53391bb7b1be913d4b7df66d71ec1664e74be437"
+    },
+    {
+      "id": "ffmpeg",
+      "name": "ffmpeg contrib",
+      "version": "8.1.2",
+      "license": "LGPL-2.1-or-later",
+      "kind": "binary",
+      "buildMaterialsURL": "https://github.com/enefry/MusicFreeVLCKit/releases/tag/4.0.0-audio.20260814.3",
+      "licenseURL": "https://spdx.org/licenses/LGPL-2.1-or-later.html",
+      "licenseFile": "MusicFreeVLCKit/third-party-licenses/FFmpeg-COPYING.LGPLv2.1"
+    },
+    {
+      "id": "flac",
+      "name": "flac contrib",
+      "version": "1.5.0",
+      "license": "BSD-3-Clause OR LGPL-2.1-or-later",
+      "kind": "binary",
+      "buildMaterialsURL": "https://github.com/enefry/MusicFreeVLCKit/releases/tag/4.0.0-audio.20260814.3",
+      "licenseFile": "MusicFreeVLCKit/third-party-licenses/FLAC-COPYING.Xiph"
+    },
+    {
+      "id": "ogg",
+      "name": "ogg contrib",
+      "version": "1.3.6",
+      "license": "BSD-3-Clause",
+      "kind": "binary",
+      "buildMaterialsURL": "https://github.com/enefry/MusicFreeVLCKit/releases/tag/4.0.0-audio.20260814.3",
+      "licenseURL": "https://spdx.org/licenses/BSD-3-Clause.html",
+      "licenseFile": "MusicFreeVLCKit/third-party-licenses/Ogg-COPYING"
+    },
+    {
+      "id": "opus",
+      "name": "opus contrib",
+      "version": "1.6.1",
+      "license": "BSD-3-Clause",
+      "kind": "binary",
+      "buildMaterialsURL": "https://github.com/enefry/MusicFreeVLCKit/releases/tag/4.0.0-audio.20260814.3",
+      "licenseURL": "https://spdx.org/licenses/BSD-3-Clause.html",
+      "licenseFile": "MusicFreeVLCKit/third-party-licenses/Opus-COPYING"
+    },
+    {
+      "id": "vorbis",
+      "name": "vorbis contrib",
+      "version": "1.3.7",
+      "license": "BSD-3-Clause",
+      "kind": "binary",
+      "buildMaterialsURL": "https://github.com/enefry/MusicFreeVLCKit/releases/tag/4.0.0-audio.20260814.3",
+      "licenseURL": "https://spdx.org/licenses/BSD-3-Clause.html",
+      "licenseFile": "MusicFreeVLCKit/third-party-licenses/Vorbis-COPYING"
+    },
+    {
+      "id": "soxr",
+      "name": "soxr contrib",
+      "version": "0.1.3",
+      "license": "LGPL-2.1-or-later",
+      "kind": "binary",
+      "buildMaterialsURL": "https://github.com/enefry/MusicFreeVLCKit/releases/tag/4.0.0-audio.20260814.3",
+      "licenseURL": "https://spdx.org/licenses/LGPL-2.1-or-later.html",
+      "licenseFile": "MusicFreeVLCKit/third-party-licenses/SoXr-COPYING.LGPL"
+    },
+    {
+      "id": "taglib",
+      "name": "taglib contrib",
+      "version": "2.3",
+      "license": "LGPL-2.1-or-later",
+      "kind": "binary",
+      "buildMaterialsURL": "https://github.com/enefry/MusicFreeVLCKit/releases/tag/4.0.0-audio.20260814.3",
+      "licenseURL": "https://spdx.org/licenses/LGPL-2.1-or-later.html",
+      "licenseFile": "MusicFreeVLCKit/third-party-licenses/TagLib-COPYING.LGPL"
+    },
+    {
+      "id": "ebml",
+      "name": "ebml contrib",
+      "version": "1.4.6",
+      "license": "LGPL-2.1-or-later",
+      "kind": "binary",
+      "buildMaterialsURL": "https://github.com/enefry/MusicFreeVLCKit/releases/tag/4.0.0-audio.20260814.3",
+      "licenseURL": "https://spdx.org/licenses/LGPL-2.1-or-later.html",
+      "licenseFile": "MusicFreeVLCKit/third-party-licenses/EBML-LICENSE.LGPL"
+    },
+    {
+      "id": "matroska",
+      "name": "matroska contrib",
+      "version": "1.7.2",
+      "license": "LGPL-2.1-or-later",
+      "kind": "binary",
+      "buildMaterialsURL": "https://github.com/enefry/MusicFreeVLCKit/releases/tag/4.0.0-audio.20260814.3",
+      "licenseURL": "https://spdx.org/licenses/LGPL-2.1-or-later.html",
+      "licenseFile": "MusicFreeVLCKit/third-party-licenses/Matroska-LICENSE.LGPL"
+    },
+    {
+      "id": "smb2",
+      "name": "smb2 contrib",
+      "version": "6.1",
+      "license": "LGPL-2.1-or-later",
+      "kind": "binary",
+      "buildMaterialsURL": "https://github.com/enefry/MusicFreeVLCKit/releases/tag/4.0.0-audio.20260814.3",
+      "licenseURL": "https://spdx.org/licenses/LGPL-2.1-or-later.html",
+      "licenseFile": "MusicFreeVLCKit/third-party-licenses/SMB2-COPYING"
+    },
+    {
+      "id": "nfs",
+      "name": "nfs contrib",
+      "version": "6.0.2",
+      "license": "LGPL-2.1-or-later",
+      "kind": "binary",
+      "buildMaterialsURL": "https://github.com/enefry/MusicFreeVLCKit/releases/tag/4.0.0-audio.20260814.3",
+      "licenseURL": "https://spdx.org/licenses/LGPL-2.1-or-later.html",
+      "licenseFile": "MusicFreeVLCKit/third-party-licenses/NFS-COPYING"
+    },
+    {
+      "id": "zlib",
+      "name": "zlib contrib",
+      "version": "1.3.2",
+      "license": "Zlib",
+      "kind": "binary",
+      "buildMaterialsURL": "https://github.com/enefry/MusicFreeVLCKit/releases/tag/4.0.0-audio.20260814.3",
+      "licenseURL": "https://spdx.org/licenses/Zlib.html",
+      "licenseFile": "MusicFreeVLCKit/third-party-licenses/zlib-LICENSE"
     }
   ]
 }

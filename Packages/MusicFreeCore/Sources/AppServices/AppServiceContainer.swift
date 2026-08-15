@@ -35,6 +35,7 @@ public final class AppServiceContainer {
     public let importer: any ImportServing
     public let playlists: any PlaylistServing
     public let playback: any PlaybackServing
+    public let sleepTimer: any SleepTimerServing
     public let settings: any SettingsServing
     public let storageMaintenance: any StorageMaintenanceServing
 
@@ -43,6 +44,7 @@ public final class AppServiceContainer {
     private let importCoordinator: ImportCoordinator
     private let playlistCoordinator: PlaylistCoordinator
     private let playbackCoordinator: PlaybackCoordinator
+    private let sleepTimerCoordinator: SleepTimerCoordinator
     private let settingsCoordinator: SettingsCoordinator
     private let storageMaintenanceCoordinator: StorageMaintenanceCoordinator
     private var settingsTask: Task<Void, Never>?
@@ -78,8 +80,14 @@ public final class AppServiceContainer {
                 try await playbackService.handleLibraryDeletion(itemIDs)
             }
         )
+        let sleepTimerService = SleepTimerCoordinator(
+            playback: playbackService,
+            clock: dependencies.clock,
+            calendar: dependencies.calendar
+        )
 
         self.playbackCoordinator = playbackService
+        self.sleepTimerCoordinator = sleepTimerService
         self.libraryCoordinator = libraryService
         self.artworkCoordinator = ArtworkCoordinator(sourceResolver: sourceRegistry)
         self.importCoordinator = ImportCoordinator(importer: dependencies.mediaImporter)
@@ -100,6 +108,7 @@ public final class AppServiceContainer {
         importer = importCoordinator
         playlists = playlistCoordinator
         playback = playbackCoordinator
+        sleepTimer = sleepTimerCoordinator
         settings = settingsCoordinator
         storageMaintenance = storageMaintenanceCoordinator
     }
@@ -110,6 +119,7 @@ public final class AppServiceContainer {
     public var playlistServing: any PlaylistServing { playlists }
     public var playbackServing: any PlaybackServing { playback }
     public var playbackAudioServing: any PlaybackAudioServing { playbackCoordinator }
+    public var sleepTimerServing: any SleepTimerServing { sleepTimer }
     public var settingsServing: any SettingsServing { settings }
     public var storageMaintenanceServing: any StorageMaintenanceServing { storageMaintenance }
 
@@ -153,6 +163,9 @@ public final class AppServiceContainer {
                 try Task.checkCancellation()
                 try await self.playbackCoordinator.start()
                 try Task.checkCancellation()
+                self.sleepTimerCoordinator.start(
+                    preferences: settingsResult.effective.settings.playbackPreferences.sleepTimer
+                )
 
                 guard self.startTask?.id == attemptID,
                       self.stopTask == nil,
@@ -221,6 +234,7 @@ public final class AppServiceContainer {
             startAttempt?.task.cancel()
             self.settingsTask?.cancel()
             self.settingsTask = nil
+            self.sleepTimerCoordinator.stop()
             await self.playbackCoordinator.shutdown()
             if let startAttempt {
                 _ = await startAttempt.task.result
@@ -282,6 +296,9 @@ public final class AppServiceContainer {
             for await effective in stream {
                 guard !Task.isCancelled else { return }
                 await self.playbackCoordinator.apply(effective)
+                await self.sleepTimerCoordinator.update(
+                    preferences: effective.settings.playbackPreferences.sleepTimer
+                )
             }
         }
     }

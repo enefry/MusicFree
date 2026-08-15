@@ -2,13 +2,28 @@ import DesignSystem
 import SwiftUI
 import Testing
 
-@Test("String Catalog resolves English and Simplified Chinese")
+@Test("String Catalog resolves all six supported languages")
 func stringCatalogResolvesSupportedLanguages() {
+    #expect(
+        MusicFreeLanguage.allCases == [.english, .chinese, .french, .german, .spanish, .japanese]
+    )
     #expect(
         String(localized: MusicFreeLocalization.resource("专辑", language: .english)) == "Albums"
     )
     #expect(
         String(localized: MusicFreeLocalization.resource("专辑", language: .chinese)) == "专辑"
+    )
+    #expect(
+        String(localized: MusicFreeLocalization.resource("专辑", language: .french)) == "Albums"
+    )
+    #expect(
+        String(localized: MusicFreeLocalization.resource("专辑", language: .german)) == "Alben"
+    )
+    #expect(
+        String(localized: MusicFreeLocalization.resource("专辑", language: .spanish)) == "Álbumes"
+    )
+    #expect(
+        String(localized: MusicFreeLocalization.resource("专辑", language: .japanese)) == "アルバム"
     )
 }
 

@@ -25,6 +25,7 @@ public struct AppDependencies {
     public let systemCapabilities: SystemIntegrationCapabilitySnapshot
     public let playbackCapabilities: PlaybackCapabilities
     public let clock: any AppClock
+    public let calendar: Calendar
     public let idGenerator: any AppIDGenerating
     public let randomSource: any AppRandomSource
 
@@ -49,6 +50,7 @@ public struct AppDependencies {
         systemCapabilities: SystemIntegrationCapabilitySnapshot = .init(),
         playbackCapabilities: PlaybackCapabilities? = nil,
         clock: any AppClock = WallAppClock(),
+        calendar: Calendar = .autoupdatingCurrent,
         idGenerator: any AppIDGenerating = UUIDAppIDGenerator(),
         randomSource: any AppRandomSource = SystemAppRandomSource()
     ) throws {
@@ -85,6 +87,7 @@ public struct AppDependencies {
         self.systemCapabilities = systemCapabilities
         self.playbackCapabilities = playbackCapabilities ?? playbackEngine?.capabilities ?? []
         self.clock = clock
+        self.calendar = calendar
         self.idGenerator = idGenerator
         self.randomSource = randomSource
     }

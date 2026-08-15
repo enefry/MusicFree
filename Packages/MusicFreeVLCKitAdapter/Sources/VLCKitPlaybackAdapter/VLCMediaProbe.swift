@@ -3,14 +3,11 @@ import MediaSourceAPI
 
 #if canImport(VLCKit)
 import VLCKit
-#if canImport(UIKit)
-import UIKit
-#endif
 #endif
 
-/// Reads format-neutral metadata from the same VLCKit parser boundary used by
-/// the probe. The returned value remains ephemeral and is not persisted here.
-public final class VLCMetadataReader: @unchecked Sendable, MetadataReading {
+/// A VLCKit-backed media probe. The probe reports only values exposed by the
+/// parsed media object; it never infers format information from a filename.
+public final class VLCMediaProbe: @unchecked Sendable, MediaProbing {
   private let configuration: VLCKitAdapterConfiguration
 
 #if canImport(VLCKit)
@@ -20,19 +17,13 @@ public final class VLCMetadataReader: @unchecked Sendable, MetadataReading {
   public init(configuration: VLCKitAdapterConfiguration) throws {
     self.configuration = configuration
 #if canImport(VLCKit)
-    let library = VLCLibrary.shared()
-    library.setApplicationIdentifier(
-      configuration.applicationIdentifier,
-      withVersion: configuration.applicationVersion,
-      andApplicationIconName: ""
-    )
-    self.library = library
+    self.library = try VLCLibraryFactory.shared(configuration: configuration)
 #else
     throw VLCKitAdapterError.binaryUnavailable
 #endif
   }
 
-  public func readMetadata(from resource: PlaybackResource) async throws -> RawMediaMetadata {
+  public func probe(_ resource: PlaybackResource) async throws -> MediaProbeResult {
 #if canImport(VLCKit)
     do {
       try Task.checkCancellation()
@@ -52,23 +43,28 @@ public final class VLCMetadataReader: @unchecked Sendable, MetadataReading {
       _ = try await waiter.wait()
       try Task.checkCancellation()
 
-      let metadata = media.metaData
-      return RawMediaMetadata(
-        title: metadata.title,
-        artist: metadata.artist,
-        album: metadata.album,
-        albumArtist: metadata.albumArtist,
-        genre: metadata.genre,
-        trackNumber: metadata.trackNumber == 0 ? nil : Int(metadata.trackNumber),
-        discNumber: metadata.discNumber == 0 ? nil : Int(metadata.discNumber),
-        year: parseYear(metadata.date),
+      let tracks = media.audioTracks.enumerated().map { index, track in
+        ProbedAudioTrack(
+          index: index,
+          codec: normalized(track.codecName()),
+          sampleRate: track.audio.map { Double($0.rate) },
+          channelCount: track.audio.map { Int($0.channelsNumber) },
+          bitDepth: nil,
+          language: normalized(track.language),
+          title: normalized(track.trackDescription),
+          isDecodable: true
+        )
+      }
+      return try MediaProbeResult(
+        audioTracks: tracks,
+        container: nil,
         duration: duration(from: media.length),
-        artworks: artworkValues(from: metadata)
-      )
+        hasVideoTrack: media.tracksInformation.contains { $0.type.rawValue == 1 }
+      ).validated()
     } catch let error as MediaSourceError {
       throw error
     } catch {
-      throw mapMetadataError(error)
+      throw mapProbeError(error)
     }
 #else
     _ = resource
@@ -83,7 +79,7 @@ public final class VLCMetadataReader: @unchecked Sendable, MetadataReading {
     return UInt64(seconds) * 1_000 + UInt64(fractionalMilliseconds)
   }
 
-  private func mapMetadataError(_ error: Error) -> Error {
+  private func mapProbeError(_ error: Error) -> Error {
     if error is CancellationError {
       return MediaSourceError.cancelled
     }
@@ -104,44 +100,20 @@ public final class VLCMetadataReader: @unchecked Sendable, MetadataReading {
     return MediaSourceError.probeFailed(.readFailed)
   }
 
+  private func normalized(_ value: String?) -> String? {
+    guard let value else {
+      return nil
+    }
+    let result = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    return result.isEmpty ? nil : result
+  }
+
 #if canImport(VLCKit)
   private func duration(from time: VLCTime?) -> Duration? {
     guard let milliseconds = time?.value?.int64Value, milliseconds >= 0 else {
       return nil
     }
     return .milliseconds(milliseconds)
-  }
-
-  private func parseYear(_ value: String?) -> Int? {
-    guard let value else {
-      return nil
-    }
-    let digits = value.filter(\.isNumber)
-    guard digits.count >= 4, let year = Int(digits.prefix(4)), (1...9_999).contains(year) else {
-      return nil
-    }
-    return year
-  }
-
-  private func artworkValues(from metadata: VLCMedia.MetaData) -> [RawArtwork] {
-#if canImport(UIKit)
-    guard let image = metadata.artwork,
-          let data = image.pngData()
-    else {
-      return []
-    }
-    return [
-      RawArtwork(
-        data: data,
-        mimeType: "image/png",
-        pixelWidth: Int(image.size.width),
-        pixelHeight: Int(image.size.height)
-      )
-    ]
-#else
-    _ = metadata
-    return []
-#endif
   }
 #endif
 }

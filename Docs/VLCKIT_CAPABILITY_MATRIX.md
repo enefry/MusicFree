@@ -27,7 +27,7 @@ targets. Generated result bundles are intentionally not tracked.
 | Capability | Current app policy | Evidence | Status |
 | --- | --- | --- | --- |
 | Prepare/play/pause/stop | Adapter is constructed in `AppContainer` | `VLCPlaybackEngine` source and package compile; no physical-device session | implemented, runtime unverified |
-| State/time/error event mapping | Always available to the adapter | `MusicFreeVLCKitTests` state, terminal and error mapping tests | contract verified |
+| State/time/error event mapping | Always available to the adapter | `MusicFreeVLCKitAdapterTests` state, terminal and error mapping tests | contract verified |
 | Generation and item isolation | Always enforced | `VLCKitPlaybackAdapterInitialTests.generationFiltering` | contract verified |
 | Seek | Enabled in `AppContainer` policy | Policy resolver tests and app capability assertion; no hardware seek session | implemented, runtime unverified |
 | Variable rate | Enabled in `AppContainer` policy | Policy resolver tests and app capability assertion; no hardware rate session | implemented, runtime unverified |

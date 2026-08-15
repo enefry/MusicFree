@@ -5,6 +5,29 @@ import PlaybackAPI
 
 #if canImport(VLCKit)
 @preconcurrency import VLCKit
+
+/// Audio-profile builds retain these Objective-C accessors in the binary even
+/// when their declarations are absent from the generated Swift module.
+private enum VLCAudioProfileRuntimeAccess {
+  private static let audioKey = "audio"
+  private static let audioSelector = NSSelectorFromString(audioKey)
+  private static let rateKey = "rate"
+  private static let rateSetterSelector = NSSelectorFromString("setRate:")
+
+  static func setRate(_ rate: Float, on player: VLCMediaPlayer) throws {
+    guard player.responds(to: rateSetterSelector) else {
+      throw VLCKitAdapterError.engineFailure(code: "playback_rate_unavailable")
+    }
+    player.setValue(NSNumber(value: rate), forKey: rateKey)
+  }
+
+  static func audioController(for player: VLCMediaPlayer?) -> VLCAudio? {
+    guard let player, player.responds(to: audioSelector) else {
+      return nil
+    }
+    return player.value(forKey: audioKey) as? VLCAudio
+  }
+}
 #endif
 
 /// The single-resource VLCKit playback engine. Queue progression, recovery,
@@ -48,12 +71,7 @@ public final class VLCPlaybackEngine: PlaybackEngine, PlaybackAudioControlling {
     self.equalizerDescriptor = nil
 
 #if canImport(VLCKit)
-    let library = VLCLibrary.shared()
-    library.setApplicationIdentifier(
-      configuration.applicationIdentifier,
-      withVersion: configuration.applicationVersion,
-      andApplicationIconName: ""
-    )
+    let library = try VLCLibraryFactory.shared(configuration: configuration)
     self.library = library
 
     let equalizer = VLCAudioEqualizer()
@@ -126,7 +144,7 @@ public final class VLCPlaybackEngine: PlaybackEngine, PlaybackAudioControlling {
       player.media = media
       player.timeChangeUpdateInterval = 1
       player.minimalTimePeriod = 500_000
-      player.rate = configuredRate
+      try VLCAudioProfileRuntimeAccess.setRate(configuredRate, on: player)
       self.player = player
       self.delegateBridge = bridge
       applyAudioOutputIfAvailable()
@@ -254,8 +272,10 @@ public final class VLCPlaybackEngine: PlaybackEngine, PlaybackAudioControlling {
       throw PlaybackError.unsupportedCapability(.variableRate)
     }
 #if canImport(VLCKit)
+    if let player {
+      try VLCAudioProfileRuntimeAccess.setRate(rate, on: player)
+    }
     configuredRate = rate
-    player?.rate = rate
 #else
     throw PlaybackError.engineFailure(code: "vlckit_unavailable")
 #endif
@@ -304,7 +324,7 @@ public final class VLCPlaybackEngine: PlaybackEngine, PlaybackAudioControlling {
     }
     self.volume = volume
 #if canImport(VLCKit)
-    if let audio = player?.audio {
+    if let audio = VLCAudioProfileRuntimeAccess.audioController(for: player) {
       audio.volume = Int32((volume * 200).rounded())
     }
 #endif
@@ -313,7 +333,7 @@ public final class VLCPlaybackEngine: PlaybackEngine, PlaybackAudioControlling {
   public func setMuted(_ muted: Bool) throws {
     isMuted = muted
 #if canImport(VLCKit)
-    if let audio = player?.audio {
+    if let audio = VLCAudioProfileRuntimeAccess.audioController(for: player) {
       audio.isMuted = muted
     }
 #endif
@@ -455,7 +475,7 @@ public final class VLCPlaybackEngine: PlaybackEngine, PlaybackAudioControlling {
 
   private func applyAudioOutputIfAvailable() {
 #if canImport(VLCKit)
-    guard let audio = player?.audio else { return }
+    guard let audio = VLCAudioProfileRuntimeAccess.audioController(for: player) else { return }
     audio.volume = Int32((volume * 200).rounded())
     audio.isMuted = isMuted
 #endif

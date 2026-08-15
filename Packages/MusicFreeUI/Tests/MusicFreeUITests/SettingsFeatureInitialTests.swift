@@ -209,6 +209,50 @@ func settingsFeatureSavesAutomaticCachePruning() async {
 }
 
 @MainActor
+@Test("Settings add, edit, preserve, and delete automatic sleep schedules")
+func settingsFeatureEditsSleepTimerSchedules() async throws {
+    let store = SettingsFeatureTestStore()
+    let viewModel = SettingsViewModel(store: store)
+    let scheduleID = UUID(uuidString: "00000000-0000-0000-0000-000000000020")!
+
+    await viewModel.load()
+    viewModel.addSleepTimerSchedule(id: scheduleID)
+    await viewModel.waitForPendingWork()
+
+    var schedule = try #require(
+        viewModel.settings.playbackPreferences.sleepTimer.schedules.first
+    )
+    #expect(schedule.id == scheduleID)
+    #expect(schedule.startMinute == 23 * 60)
+    #expect(schedule.endMinute == 5 * 60)
+    #expect(schedule.durationMinutes == 20)
+
+    viewModel.setSleepTimerScheduleStartMinute(13 * 60, id: scheduleID)
+    await viewModel.waitForPendingWork()
+    viewModel.setSleepTimerScheduleEndMinute(14 * 60, id: scheduleID)
+    await viewModel.waitForPendingWork()
+    viewModel.setSleepTimerScheduleDuration(30, id: scheduleID)
+    await viewModel.waitForPendingWork()
+    viewModel.setSleepTimerScheduleEnabled(false, id: scheduleID)
+    await viewModel.waitForPendingWork()
+    viewModel.setPlaybackRate(1.5)
+    await viewModel.waitForPendingWork()
+
+    schedule = try #require(
+        viewModel.settings.playbackPreferences.sleepTimer.schedules.first
+    )
+    #expect(schedule.startMinute == 13 * 60)
+    #expect(schedule.endMinute == 14 * 60)
+    #expect(schedule.durationMinutes == 30)
+    #expect(!schedule.isEnabled)
+    #expect(viewModel.settings.playbackPreferences.rate.value == 1.5)
+
+    viewModel.deleteSleepTimerSchedule(id: scheduleID)
+    await viewModel.waitForPendingWork()
+    #expect(viewModel.settings.playbackPreferences.sleepTimer.schedules.isEmpty)
+}
+
+@MainActor
 @Test("Settings keeps advanced user intent editable when playback capabilities are unavailable")
 func settingsFeatureKeepsUnsupportedPreferences() async throws {
     let store = SettingsFeatureTestStore(playbackCapabilities: [])

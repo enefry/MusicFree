@@ -92,7 +92,7 @@ enum AppStartupState: Equatable, Sendable {
         case .loading:
             L("正在启动")
         case .ready:
-            "MusicFree"
+            L("app.name")
         case .degraded:
             L("部分功能不可用")
         case .recoveryRequired:

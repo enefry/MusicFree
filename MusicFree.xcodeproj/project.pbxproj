@@ -10,6 +10,7 @@
 		00A78AC6382BF574C560E21B /* AppBVTFixtureSeeder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F6EADE2EC0F4F376924A513 /* AppBVTFixtureSeeder.swift */; };
 		131FDD2CFF304F6FE827EA83 /* LibraryAPI in Frameworks */ = {isa = PBXBuildFile; productRef = 67697D05AD649B5DD1520BF5 /* LibraryAPI */; };
 		2369E498435B18775A9E6385 /* MusicFreeBVTUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F5806C533C458EDB154F116 /* MusicFreeBVTUITests.swift */; };
+		25C007654DCB71CCB53068CE /* AppIcon-cicle.icon in Resources */ = {isa = PBXBuildFile; fileRef = B5F70F3DAFA1328532257D13 /* AppIcon-cicle.icon */; };
 		29EC68E5B38C83D0BD0C3AAE /* DesignSystem in Frameworks */ = {isa = PBXBuildFile; productRef = 7C3657C2B735782EEC6368D9 /* DesignSystem */; };
 		312A8242460EE3BDD6982199 /* AppContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE0462857625ADCB3BFC93EB /* AppContainer.swift */; };
 		4839C2653E3F2A5690CB6D8B /* MusicFreeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C284983DC5EDF1C14143083B /* MusicFreeApp.swift */; };
@@ -21,6 +22,7 @@
 		5B7EE05B352A4B2B28DB14AA /* AppStartupState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30A8AD0B6F1561EE32A00077 /* AppStartupState.swift */; };
 		5CFE3CD22FB08AC14A44076E /* PreferencesPersistenceAdapter in Frameworks */ = {isa = PBXBuildFile; productRef = EC7B3ADAE3B6E9728F315112 /* PreferencesPersistenceAdapter */; };
 		640103AB1BD497534027124D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C9AC50CB549B33A3A1D448F8 /* Assets.xcassets */; };
+		C17A2F1E8B6A4D39A4E1C7B2 /* InfoPlist.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = C17A2F1E8B6A4D39A4E1C7B1 /* InfoPlist.xcstrings */; };
 		6AAE1290799E9C183BBF09EB /* PlayerFeature in Frameworks */ = {isa = PBXBuildFile; productRef = CFC12D4210CCDD324FE57403 /* PlayerFeature */; };
 		70553E6A19D71AF064EA7D4C /* MusicFreeFeatureLoadingUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30B49B75BD3CF769A178671E /* MusicFreeFeatureLoadingUITests.swift */; };
 		75BCE4E34ECF70FA91D7E2DA /* AppServices in Frameworks */ = {isa = PBXBuildFile; productRef = 0C617C68DBC812139DCD5226 /* AppServices */; };
@@ -28,11 +30,13 @@
 		9446DE5735BB34CD9D6A2F9D /* MediaSourceAPI in Frameworks */ = {isa = PBXBuildFile; productRef = 3E5F11EF130D4437F18892BB /* MediaSourceAPI */; };
 		A79DE6D83A5B829076850C09 /* LibraryPersistenceAdapter in Frameworks */ = {isa = PBXBuildFile; productRef = FFF24C80CA6B7348F8694F53 /* LibraryPersistenceAdapter */; };
 		ABDB5200A4CBC27488450525 /* LocalMediaAdapter in Frameworks */ = {isa = PBXBuildFile; productRef = 7E79A62F743BBB8395754DDB /* LocalMediaAdapter */; };
+		B786A49C0A7F73AF8103BDF1 /* AppIcon-music.icon in Resources */ = {isa = PBXBuildFile; fileRef = 53B63B03D481B67FD9679566 /* AppIcon-music.icon */; };
 		B896A2A6D5432117CE13F0E3 /* MusicFreeAppTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58C69628C1C2EF8D74CB8923 /* MusicFreeAppTests.swift */; };
 		C3A08F2716415B33DAD6F91C /* AppReleaseInfoProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A6FF3C5EC3AB14E74D9B969 /* AppReleaseInfoProvider.swift */; };
 		C906492ED477F4C7AC15E1E8 /* LibraryFeature in Frameworks */ = {isa = PBXBuildFile; productRef = 874BD6F07A1C5E9A8F72A143 /* LibraryFeature */; };
-		D14A7A3B5324F9418E9D1A01 /* AppAlternateIconProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = D14A7A3B5324F9418E9D1A02 /* AppAlternateIconProvider.swift */; };
 		D18DF8072E2F690DE8DC4720 /* RootScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE7A68F4EF5177A2E340F5F9 /* RootScene.swift */; };
+		D40A365C7EA6EC01E326CBDC /* AppIcon-cicle2.icon in Resources */ = {isa = PBXBuildFile; fileRef = 9CE14FDFC7F443F9FDAD9BEA /* AppIcon-cicle2.icon */; };
+		DFF2B6F1C0DB01758F78AA65 /* AppAlternateIconProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = A56E2F76B0D847C4E2B9B277 /* AppAlternateIconProvider.swift */; };
 		E8CB6403CFCDA49806D74A77 /* AppleSystemAdapter in Frameworks */ = {isa = PBXBuildFile; productRef = C93E10408AED35C0ABC809B1 /* AppleSystemAdapter */; };
 		EBEA3AFFA985B3F48A421C27 /* MusicFreeAppIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76D4D262D57ECB25B173E9D8 /* MusicFreeAppIntegrationTests.swift */; };
 		EE8C4FAFFD8CF0DBF29F6997 /* VLCKitPlaybackAdapter in Frameworks */ = {isa = PBXBuildFile; productRef = A51FF206DE67E258B516FA29 /* VLCKitPlaybackAdapter */; };
@@ -67,24 +71,28 @@
 		3F0790A851BF8BA38D9AB709 /* MusicFreeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MusicFreeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		3FC041AF8585D71296F4426D /* MusicFreeUI */ = {isa = PBXFileReference; lastKnownFileType = folder; name = MusicFreeUI; path = Packages/MusicFreeUI; sourceTree = SOURCE_ROOT; };
 		40F7499D0EE505AD1C5967B3 /* AppDiagnosticsExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDiagnosticsExporter.swift; sourceTree = "<group>"; };
+		53B63B03D481B67FD9679566 /* AppIcon-music.icon */ = {isa = PBXFileReference; lastKnownFileType = wrapper.icon; path = "AppIcon-music.icon"; sourceTree = "<group>"; };
 		58C69628C1C2EF8D74CB8923 /* MusicFreeAppTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicFreeAppTests.swift; sourceTree = "<group>"; };
 		5F5806C533C458EDB154F116 /* MusicFreeBVTUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicFreeBVTUITests.swift; sourceTree = "<group>"; };
+		5FD067236D983CC06DEB2B92 /* MusicFreeVLCKitAdapter */ = {isa = PBXFileReference; lastKnownFileType = folder; name = MusicFreeVLCKitAdapter; path = Packages/MusicFreeVLCKitAdapter; sourceTree = SOURCE_ROOT; };
 		6A6FF3C5EC3AB14E74D9B969 /* AppReleaseInfoProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppReleaseInfoProvider.swift; sourceTree = "<group>"; };
 		6CEE58CB284DF7FC0351D1B8 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		76D4D262D57ECB25B173E9D8 /* MusicFreeAppIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicFreeAppIntegrationTests.swift; sourceTree = "<group>"; };
 		7F71F76271CD3F53D43034DE /* MusicFreeCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = MusicFreeCore; path = Packages/MusicFreeCore; sourceTree = SOURCE_ROOT; };
 		8CC0D4F9A26EDD883F8BEE1C /* AppLifecycleCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLifecycleCoordinator.swift; sourceTree = "<group>"; };
+		9CE14FDFC7F443F9FDAD9BEA /* AppIcon-cicle2.icon */ = {isa = PBXFileReference; lastKnownFileType = wrapper.icon; path = "AppIcon-cicle2.icon"; sourceTree = "<group>"; };
 		A02F28114C31B00FC331F34C /* AppRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRouter.swift; sourceTree = "<group>"; };
+		A56E2F76B0D847C4E2B9B277 /* AppAlternateIconProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppAlternateIconProvider.swift; sourceTree = "<group>"; };
+		B5F70F3DAFA1328532257D13 /* AppIcon-cicle.icon */ = {isa = PBXFileReference; lastKnownFileType = wrapper.icon; path = "AppIcon-cicle.icon"; sourceTree = "<group>"; };
 		BBFFF5E9262B8D4C1AFC1396 /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = wrapper.icon; path = AppIcon.icon; sourceTree = "<group>"; };
 		C284983DC5EDF1C14143083B /* MusicFreeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicFreeApp.swift; sourceTree = "<group>"; };
 		C9AC50CB549B33A3A1D448F8 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		C17A2F1E8B6A4D39A4E1C7B1 /* InfoPlist.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = InfoPlist.xcstrings; sourceTree = "<group>"; };
 		CB19AC49A5EF8C6C3B46407C /* MusicFreeUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MusicFreeUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		D14A7A3B5324F9418E9D1A02 /* AppAlternateIconProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppAlternateIconProvider.swift; sourceTree = "<group>"; };
-		D96BE81A97FD53325EC459C3 /* MusicFreeVLCKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = MusicFreeVLCKit; path = Packages/MusicFreeVLCKit; sourceTree = SOURCE_ROOT; };
 		DE0462857625ADCB3BFC93EB /* AppContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppContainer.swift; sourceTree = "<group>"; };
 		EE7A68F4EF5177A2E340F5F9 /* RootScene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootScene.swift; sourceTree = "<group>"; };
 		FA2F9DA82693F248EABF714F /* MusicFreeInfrastructure */ = {isa = PBXFileReference; lastKnownFileType = folder; name = MusicFreeInfrastructure; path = Packages/MusicFreeInfrastructure; sourceTree = SOURCE_ROOT; };
-		"TEMP_081798A1-6AA4-4587-822F-939364940BF3" /* basic_config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = basic_config.xcconfig; sourceTree = "<group>"; };
+		"TEMP_97297FF9-7BB4-41C8-B270-07A41F03DDEF" /* basic_config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = basic_config.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -118,7 +126,7 @@
 				7F71F76271CD3F53D43034DE /* MusicFreeCore */,
 				FA2F9DA82693F248EABF714F /* MusicFreeInfrastructure */,
 				3FC041AF8585D71296F4426D /* MusicFreeUI */,
-				D96BE81A97FD53325EC459C3 /* MusicFreeVLCKit */,
+				5FD067236D983CC06DEB2B92 /* MusicFreeVLCKitAdapter */,
 			);
 			path = Packages;
 			sourceTree = "<group>";
@@ -131,7 +139,7 @@
 				60CFBF78405AC6DF247EC3A5 /* AppUITests */,
 				3E77732FF49F9495879669C2 /* Packages */,
 				AA65C671C6D7CE3A1324B482 /* Products */,
-				9B2F2554302C6A7700D6F897 /* Recovered References */,
+				9B2F31BE302F3C3100D6F897 /* Recovered References */,
 			);
 			sourceTree = "<group>";
 		};
@@ -144,10 +152,10 @@
 			path = AppUITests;
 			sourceTree = "<group>";
 		};
-		9B2F2554302C6A7700D6F897 /* Recovered References */ = {
+		9B2F31BE302F3C3100D6F897 /* Recovered References */ = {
 			isa = PBXGroup;
 			children = (
-				"TEMP_081798A1-6AA4-4587-822F-939364940BF3" /* basic_config.xcconfig */,
+				"TEMP_97297FF9-7BB4-41C8-B270-07A41F03DDEF" /* basic_config.xcconfig */,
 			);
 			name = "Recovered References";
 			sourceTree = "<group>";
@@ -164,17 +172,21 @@
 		9F3950BA52CEC504D182E5F5 /* App */ = {
 			isa = PBXGroup;
 			children = (
+				A56E2F76B0D847C4E2B9B277 /* AppAlternateIconProvider.swift */,
 				2F6EADE2EC0F4F376924A513 /* AppBVTFixtureSeeder.swift */,
 				DE0462857625ADCB3BFC93EB /* AppContainer.swift */,
 				40F7499D0EE505AD1C5967B3 /* AppDiagnosticsExporter.swift */,
 				30F0E43CFDFEAD0EF9C4AC8A /* AppDocumentsScanner.swift */,
+				B5F70F3DAFA1328532257D13 /* AppIcon-cicle.icon */,
+				9CE14FDFC7F443F9FDAD9BEA /* AppIcon-cicle2.icon */,
+				53B63B03D481B67FD9679566 /* AppIcon-music.icon */,
 				BBFFF5E9262B8D4C1AFC1396 /* AppIcon.icon */,
 				8CC0D4F9A26EDD883F8BEE1C /* AppLifecycleCoordinator.swift */,
 				6A6FF3C5EC3AB14E74D9B969 /* AppReleaseInfoProvider.swift */,
-				D14A7A3B5324F9418E9D1A02 /* AppAlternateIconProvider.swift */,
 				A02F28114C31B00FC331F34C /* AppRouter.swift */,
 				30A8AD0B6F1561EE32A00077 /* AppStartupState.swift */,
 				C9AC50CB549B33A3A1D448F8 /* Assets.xcassets */,
+				C17A2F1E8B6A4D39A4E1C7B1 /* InfoPlist.xcstrings */,
 				C284983DC5EDF1C14143083B /* MusicFreeApp.swift */,
 				6CEE58CB284DF7FC0351D1B8 /* PrivacyInfo.xcprivacy */,
 				EE7A68F4EF5177A2E340F5F9 /* RootScene.swift */,
@@ -293,6 +305,10 @@
 				Base,
 				en,
 				"zh-Hans",
+				fr,
+				de,
+				es,
+				ja,
 			);
 			mainGroup = 54BEEE8560B51D57802E9C1B;
 			minimizedProjectReferenceProxies = 1;
@@ -300,7 +316,7 @@
 				CAE30730191A0CCD98955387 /* XCLocalSwiftPackageReference "Packages/MusicFreeCore" */,
 				59BA4A4C2C9890A5ABDF28CB /* XCLocalSwiftPackageReference "Packages/MusicFreeInfrastructure" */,
 				9609D6FB8A27596F47F305AB /* XCLocalSwiftPackageReference "Packages/MusicFreeUI" */,
-				5C836496FD3EB2DF2EC39087 /* XCLocalSwiftPackageReference "Packages/MusicFreeVLCKit" */,
+				9D0AE2D27EDA3094D866E7BE /* XCLocalSwiftPackageReference "Packages/MusicFreeVLCKitAdapter" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = AA65C671C6D7CE3A1324B482 /* Products */;
@@ -319,8 +335,12 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				25C007654DCB71CCB53068CE /* AppIcon-cicle.icon in Resources */,
+				D40A365C7EA6EC01E326CBDC /* AppIcon-cicle2.icon in Resources */,
+				B786A49C0A7F73AF8103BDF1 /* AppIcon-music.icon in Resources */,
 				59919C5F86EEA3BDEBF83C97 /* AppIcon.icon in Resources */,
 				640103AB1BD497534027124D /* Assets.xcassets in Resources */,
+				C17A2F1E8B6A4D39A4E1C7B2 /* InfoPlist.xcstrings in Resources */,
 				4A9FE131107ADAB6F7247381 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -363,13 +383,13 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				DFF2B6F1C0DB01758F78AA65 /* AppAlternateIconProvider.swift in Sources */,
 				00A78AC6382BF574C560E21B /* AppBVTFixtureSeeder.swift in Sources */,
 				312A8242460EE3BDD6982199 /* AppContainer.swift in Sources */,
 				8E2BD49F9667BF6A977AA1B7 /* AppDiagnosticsExporter.swift in Sources */,
 				FA34096A93C4C5453015435C /* AppDocumentsScanner.swift in Sources */,
 				57DC4273D0F523510EBC0B4F /* AppLifecycleCoordinator.swift in Sources */,
 				C3A08F2716415B33DAD6F91C /* AppReleaseInfoProvider.swift in Sources */,
-				D14A7A3B5324F9418E9D1A01 /* AppAlternateIconProvider.swift in Sources */,
 				F847D3E4BB6326CF4FFDE2F9 /* AppRouter.swift in Sources */,
 				5B7EE05B352A4B2B28DB14AA /* AppStartupState.swift in Sources */,
 				4839C2653E3F2A5690CB6D8B /* MusicFreeApp.swift in Sources */,
@@ -504,7 +524,7 @@
 		};
 		CC4B1CF9D8BB13F57365D254 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = "TEMP_081798A1-6AA4-4587-822F-939364940BF3" /* basic_config.xcconfig */;
+			baseConfigurationReference = "TEMP_97297FF9-7BB4-41C8-B270-07A41F03DDEF" /* basic_config.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -564,7 +584,7 @@
 		};
 		E21137E88A49B11E7457FCAA /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = "TEMP_081798A1-6AA4-4587-822F-939364940BF3" /* basic_config.xcconfig */;
+			baseConfigurationReference = "TEMP_97297FF9-7BB4-41C8-B270-07A41F03DDEF" /* basic_config.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -693,13 +713,13 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Packages/MusicFreeInfrastructure;
 		};
-		5C836496FD3EB2DF2EC39087 /* XCLocalSwiftPackageReference "Packages/MusicFreeVLCKit" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = Packages/MusicFreeVLCKit;
-		};
 		9609D6FB8A27596F47F305AB /* XCLocalSwiftPackageReference "Packages/MusicFreeUI" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Packages/MusicFreeUI;
+		};
+		9D0AE2D27EDA3094D866E7BE /* XCLocalSwiftPackageReference "Packages/MusicFreeVLCKitAdapter" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/MusicFreeVLCKitAdapter;
 		};
 		CAE30730191A0CCD98955387 /* XCLocalSwiftPackageReference "Packages/MusicFreeCore" */ = {
 			isa = XCLocalSwiftPackageReference;

@@ -229,4 +229,40 @@ struct VLCKitPlaybackAdapterInitialTests {
     try engine.apply(AudioEffectConfiguration(equalizer: equalizer))
     try engine.apply(.neutral)
   }
+
+  @MainActor
+  @Test("Audio profile exposes rate, volume, and mute at runtime")
+  func audioProfileRuntimeAccessors() async throws {
+    let configuration = try VLCKitAdapterConfiguration(
+      applicationIdentifier: "com.example.musicfree",
+      applicationVersion: "1.0",
+      applicationName: "MusicFree",
+      capabilityPolicy: VLCKitCapabilityPolicy(enabledCapabilities: [.variableRate])
+    )
+    let engine = try VLCPlaybackEngine(configuration: configuration)
+    let mediaURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("musicfree-vlckit-audio-profile-\(UUID().uuidString)")
+      .appendingPathExtension("mp3")
+    #expect(FileManager.default.createFile(atPath: mediaURL.path, contents: Data()))
+    defer {
+      engine.dispose()
+      try? FileManager.default.removeItem(at: mediaURL)
+    }
+
+    try engine.setRate(1.25)
+    try await engine.prepare(
+      PlaybackItem(
+        itemID: MediaItemID(sourceID: .local, externalID: "audio-profile-runtime"),
+        resource: .local(mediaURL),
+        displaySnapshot: PlaybackDisplaySnapshot(title: "Audio Profile Runtime")
+      ),
+      startAt: nil
+    )
+    try engine.setRate(1)
+    try engine.setVolume(0.5)
+    try engine.setMuted(true)
+
+    #expect(engine.volume == 0.5)
+    #expect(engine.isMuted)
+  }
 }

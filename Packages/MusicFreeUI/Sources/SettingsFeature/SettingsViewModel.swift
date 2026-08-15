@@ -273,7 +273,8 @@ final class SettingsViewModel {
                         rate: rate,
                         equalizer: current.playbackPreferences.equalizer,
                         replayGain: current.playbackPreferences.replayGain,
-                        transition: current.playbackPreferences.transition
+                        transition: current.playbackPreferences.transition,
+                        sleepTimer: current.playbackPreferences.sleepTimer
                     ),
                     storagePreferences: current.storagePreferences
                 )
@@ -312,7 +313,8 @@ final class SettingsViewModel {
                     rate: current.playbackPreferences.rate,
                     equalizer: current.playbackPreferences.equalizer,
                     replayGain: mode,
-                    transition: current.playbackPreferences.transition
+                    transition: current.playbackPreferences.transition,
+                    sleepTimer: current.playbackPreferences.sleepTimer
                 ),
                 storagePreferences: current.storagePreferences
             )
@@ -332,7 +334,8 @@ final class SettingsViewModel {
                     rate: current.playbackPreferences.rate,
                     equalizer: equalizer,
                     replayGain: current.playbackPreferences.replayGain,
-                    transition: current.playbackPreferences.transition
+                    transition: current.playbackPreferences.transition,
+                    sleepTimer: current.playbackPreferences.sleepTimer
                 ),
                 storagePreferences: current.storagePreferences
             )
@@ -354,7 +357,8 @@ final class SettingsViewModel {
                         rate: current.playbackPreferences.rate,
                         equalizer: equalizer,
                         replayGain: current.playbackPreferences.replayGain,
-                        transition: current.playbackPreferences.transition
+                        transition: current.playbackPreferences.transition,
+                        sleepTimer: current.playbackPreferences.sleepTimer
                     ),
                     storagePreferences: current.storagePreferences
                 )
@@ -453,7 +457,8 @@ final class SettingsViewModel {
                         rate: current.playbackPreferences.rate,
                         equalizer: equalizer,
                         replayGain: current.playbackPreferences.replayGain,
-                        transition: current.playbackPreferences.transition
+                        transition: current.playbackPreferences.transition,
+                        sleepTimer: current.playbackPreferences.sleepTimer
                     ),
                     storagePreferences: current.storagePreferences
                 )
@@ -482,7 +487,8 @@ final class SettingsViewModel {
                         rate: current.playbackPreferences.rate,
                         equalizer: equalizer,
                         replayGain: current.playbackPreferences.replayGain,
-                        transition: current.playbackPreferences.transition
+                        transition: current.playbackPreferences.transition,
+                        sleepTimer: current.playbackPreferences.sleepTimer
                     ),
                     storagePreferences: current.storagePreferences
                 )
@@ -547,7 +553,8 @@ final class SettingsViewModel {
                     rate: current.playbackPreferences.rate,
                     equalizer: current.playbackPreferences.equalizer,
                     replayGain: current.playbackPreferences.replayGain,
-                    transition: transition
+                    transition: transition,
+                    sleepTimer: current.playbackPreferences.sleepTimer
                 ),
                 storagePreferences: current.storagePreferences
             )
@@ -566,7 +573,113 @@ final class SettingsViewModel {
                     rate: current.playbackPreferences.rate,
                     equalizer: current.playbackPreferences.equalizer,
                     replayGain: current.playbackPreferences.replayGain,
-                    transition: transition
+                    transition: transition,
+                    sleepTimer: current.playbackPreferences.sleepTimer
+                ),
+                storagePreferences: current.storagePreferences
+            )
+        }
+    }
+
+    func addSleepTimerSchedule(id: UUID = UUID()) {
+        do {
+            let schedule = try SleepTimerSchedule(
+                id: id,
+                startMinute: 23 * 60,
+                endMinute: 5 * 60,
+                durationMinutes: 20
+            )
+            try setSleepTimerSchedules(
+                settings.playbackPreferences.sleepTimer.schedules + [schedule]
+            )
+        } catch {
+            recordValidationFailure(error)
+        }
+    }
+
+    func setSleepTimerScheduleEnabled(_ isEnabled: Bool, id: UUID) {
+        updateSleepTimerSchedule(id: id) { schedule in
+            try SleepTimerSchedule(
+                id: schedule.id,
+                isEnabled: isEnabled,
+                startMinute: schedule.startMinute,
+                endMinute: schedule.endMinute,
+                durationMinutes: schedule.durationMinutes
+            )
+        }
+    }
+
+    func setSleepTimerScheduleStartMinute(_ startMinute: Int, id: UUID) {
+        updateSleepTimerSchedule(id: id) { schedule in
+            try SleepTimerSchedule(
+                id: schedule.id,
+                isEnabled: schedule.isEnabled,
+                startMinute: startMinute,
+                endMinute: schedule.endMinute,
+                durationMinutes: schedule.durationMinutes
+            )
+        }
+    }
+
+    func setSleepTimerScheduleEndMinute(_ endMinute: Int, id: UUID) {
+        updateSleepTimerSchedule(id: id) { schedule in
+            try SleepTimerSchedule(
+                id: schedule.id,
+                isEnabled: schedule.isEnabled,
+                startMinute: schedule.startMinute,
+                endMinute: endMinute,
+                durationMinutes: schedule.durationMinutes
+            )
+        }
+    }
+
+    func setSleepTimerScheduleDuration(_ durationMinutes: Int, id: UUID) {
+        updateSleepTimerSchedule(id: id) { schedule in
+            try SleepTimerSchedule(
+                id: schedule.id,
+                isEnabled: schedule.isEnabled,
+                startMinute: schedule.startMinute,
+                endMinute: schedule.endMinute,
+                durationMinutes: durationMinutes
+            )
+        }
+    }
+
+    func deleteSleepTimerSchedule(id: UUID) {
+        do {
+            try setSleepTimerSchedules(
+                settings.playbackPreferences.sleepTimer.schedules.filter { $0.id != id }
+            )
+        } catch {
+            recordValidationFailure(error)
+        }
+    }
+
+    private func updateSleepTimerSchedule(
+        id: UUID,
+        transform: (SleepTimerSchedule) throws -> SleepTimerSchedule
+    ) {
+        do {
+            var schedules = settings.playbackPreferences.sleepTimer.schedules
+            guard let index = schedules.firstIndex(where: { $0.id == id }) else { return }
+            schedules[index] = try transform(schedules[index])
+            try setSleepTimerSchedules(schedules)
+        } catch {
+            recordValidationFailure(error)
+        }
+    }
+
+    private func setSleepTimerSchedules(_ schedules: [SleepTimerSchedule]) throws {
+        let sleepTimer = try SleepTimerPreferences(schedules: schedules)
+        applyEdit { current in
+            AppSettings(
+                importPreferences: current.importPreferences,
+                playbackPreferences: PlaybackPreferences(
+                    rate: current.playbackPreferences.rate,
+                    equalizer: current.playbackPreferences.equalizer,
+                    replayGain: current.playbackPreferences.replayGain,
+                    transition: current.playbackPreferences.transition,
+                    sleepTimer: sleepTimer
                 ),
                 storagePreferences: current.storagePreferences
             )

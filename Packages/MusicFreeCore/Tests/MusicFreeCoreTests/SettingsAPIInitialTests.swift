@@ -14,9 +14,87 @@ func settingsDefaultsAreSafe() {
     #expect(settings.playbackPreferences.replayGain == .off)
     #expect(settings.playbackPreferences.transition.crossfadeDuration == .zero)
     #expect(settings.playbackPreferences.transition.gaplessPlaybackEnabled)
+    #expect(settings.playbackPreferences.sleepTimer == .defaults)
     #expect(settings.storagePreferences.cacheLimit == .fiveGiB)
     #expect(settings.storagePreferences.automaticallyPruneCache)
     #expect(settings.storagePreferences.stagingRetention == .seconds(7 * 24 * 60 * 60))
+}
+
+@Test("Sleep timer schedules handle daytime, overnight, and overlapping windows")
+func sleepTimerScheduleWindowsAndPriority() throws {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+    let overnightID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+    let lunchID = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
+    let overlapID = UUID(uuidString: "00000000-0000-0000-0000-000000000003")!
+    let preferences = try SleepTimerPreferences(schedules: [
+        SleepTimerSchedule(
+            id: overnightID,
+            startMinute: 23 * 60,
+            endMinute: 5 * 60,
+            durationMinutes: 20
+        ),
+        SleepTimerSchedule(
+            id: lunchID,
+            startMinute: 13 * 60,
+            endMinute: 14 * 60,
+            durationMinutes: 30
+        ),
+        SleepTimerSchedule(
+            id: overlapID,
+            startMinute: 23 * 60 + 30,
+            endMinute: 1 * 60,
+            durationMinutes: 10
+        ),
+    ])
+
+    let lateNight = calendar.date(from: DateComponents(
+        year: 2026,
+        month: 8,
+        day: 14,
+        hour: 23,
+        minute: 45
+    ))!
+    let lunch = calendar.date(from: DateComponents(
+        year: 2026,
+        month: 8,
+        day: 14,
+        hour: 13,
+        minute: 30
+    ))!
+    let overnightEnd = calendar.date(from: DateComponents(
+        year: 2026,
+        month: 8,
+        day: 15,
+        hour: 5
+    ))!
+
+    let lateNightMatches = preferences.activeSchedules(at: lateNight, calendar: calendar)
+    #expect(Set(lateNightMatches.map(\.id)) == [overnightID, overlapID])
+    #expect(lateNightMatches.map(\.durationMinutes).min() == 10)
+    #expect(preferences.activeSchedules(at: lunch, calendar: calendar).map(\.id) == [lunchID])
+    #expect(preferences.activeSchedules(at: overnightEnd, calendar: calendar).isEmpty)
+}
+
+@Test("Sleep timer schedules reject invalid values and duplicate IDs")
+func sleepTimerScheduleValidation() throws {
+    #expect(throws: SettingsError.self) {
+        try SleepTimerSchedule(startMinute: -1, endMinute: 60, durationMinutes: 20)
+    }
+    #expect(throws: SettingsError.self) {
+        try SleepTimerSchedule(startMinute: 0, endMinute: 60, durationMinutes: 0)
+    }
+
+    let id = UUID()
+    let schedule = try SleepTimerSchedule(
+        id: id,
+        startMinute: 0,
+        endMinute: 60,
+        durationMinutes: 20
+    )
+    #expect(throws: SettingsError.self) {
+        try SleepTimerPreferences(schedules: [schedule, schedule])
+    }
 }
 
 @Test("Typed setting values reject invalid ranges and duplicate bands")

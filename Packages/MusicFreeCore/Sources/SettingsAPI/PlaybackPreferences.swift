@@ -224,17 +224,20 @@ public struct PlaybackPreferences: Codable, Equatable, Hashable, Sendable {
     public let equalizer: EqualizerPreferences
     public let replayGain: ReplayGainMode
     public let transition: TransitionPreferences
+    public let sleepTimer: SleepTimerPreferences
 
     public init(
         rate: PlaybackRate = .normal,
         equalizer: EqualizerPreferences = .defaults,
         replayGain: ReplayGainMode = .off,
-        transition: TransitionPreferences = .defaults
+        transition: TransitionPreferences = .defaults,
+        sleepTimer: SleepTimerPreferences = .defaults
     ) {
         self.rate = rate
         self.equalizer = equalizer
         self.replayGain = replayGain
         self.transition = transition
+        self.sleepTimer = sleepTimer
     }
 
     public static let defaults = Self()
@@ -249,6 +252,7 @@ public struct PlaybackPreferences: Codable, Equatable, Hashable, Sendable {
         case equalizer
         case replayGain
         case transition
+        case sleepTimer
     }
 
     public init(from decoder: Decoder) throws {
@@ -259,6 +263,8 @@ public struct PlaybackPreferences: Codable, Equatable, Hashable, Sendable {
                 ?? .defaults,
             replayGain: try container.decodeIfPresent(ReplayGainMode.self, forKey: .replayGain) ?? .off,
             transition: try container.decodeIfPresent(TransitionPreferences.self, forKey: .transition)
+                ?? .defaults,
+            sleepTimer: try container.decodeIfPresent(SleepTimerPreferences.self, forKey: .sleepTimer)
                 ?? .defaults
         )
     }

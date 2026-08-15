@@ -17,7 +17,7 @@ check_exclusive_import() {
     fi
 }
 
-check_exclusive_import "VLCKit" "/Packages/MusicFreeVLCKit/Sources/VLCKitPlaybackAdapter/"
+check_exclusive_import "VLCKit" "/Packages/MusicFreeVLCKitAdapter/Sources/VLCKitPlaybackAdapter/"
 check_exclusive_import "SwiftData" "/Packages/MusicFreeInfrastructure/(Sources/LibraryPersistenceAdapter|Tests/MusicFreeInfrastructureTests)/"
 check_exclusive_import "AVFAudio" "/Packages/MusicFreeInfrastructure/Sources/AppleSystemAdapter/"
 check_exclusive_import "MediaPlayer" "/Packages/MusicFreeInfrastructure/Sources/AppleSystemAdapter/"

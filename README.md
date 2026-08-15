@@ -41,8 +41,8 @@ destinations can resolve to an unavailable “latest” runtime. Do not run the
 independent `xcodebuild` test commands in parallel because they share package
 and Simulator services.
 
-`MusicFreeVLCKit` is linked to the exact VLCKit 4.0 alpha recorded in
-`Packages/MusicFreeVLCKit/Package.resolved`; Simulator tests cover adapter
+`MusicFreeVLCKitAdapter` links the exact VLCKit release recorded in
+`Packages/MusicFreeVLCKitAdapter/Package.resolved`; Simulator tests cover adapter
 contracts, while physical-device playback and format validation remain
 separate release gates.
 

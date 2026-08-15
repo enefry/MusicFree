@@ -428,7 +428,7 @@ final class AppContainer: ObservableObject {
             ) as? String ?? "0",
             applicationName: Bundle.main.object(
                 forInfoDictionaryKey: "CFBundleDisplayName"
-            ) as? String ?? "MusicFree",
+            ) as? String ?? "MyMusic",
             capabilityPolicy: VLCKitCapabilityPolicy(
                 enabledCapabilities: [.seeking, .variableRate, .equalizer]
             )

@@ -205,7 +205,8 @@ struct RootScene: View {
                         exporter: container.diagnosticsExporter
                     ),
                     appIconOptions: appIconOptions,
-                    appIconProvider: AppAlternateIconProvider()
+                    appIconProvider: AppAlternateIconProvider(),
+                    sleepTimerServing: services.sleepTimerServing
                 )
             }
         }
@@ -230,7 +231,7 @@ struct RootScene: View {
                         .tag(destination)
                 }
             }
-            .navigationTitle("MusicFree")
+            .navigationTitle(L("app.name"))
             .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 320)
         } detail: {
             NavigationStack {
@@ -303,7 +304,8 @@ struct RootScene: View {
                     exporter: container.diagnosticsExporter
                 ),
                 appIconOptions: appIconOptions,
-                appIconProvider: AppAlternateIconProvider()
+                appIconProvider: AppAlternateIconProvider(),
+                sleepTimerServing: services.sleepTimerServing
             )
         }
     }
@@ -492,7 +494,7 @@ private struct MusicFreeLaunchAnimation: View {
                 .symbolEffect(.disappear)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("MusicFree")
+        .accessibilityLabel(L("app.name"))
         .accessibilityValue(L("正在启动"))
     }
 }

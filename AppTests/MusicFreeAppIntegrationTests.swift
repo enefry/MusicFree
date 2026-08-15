@@ -1076,6 +1076,58 @@ func releaseInfoProviderLoadsBundledLicenseMaterial() async throws {
     #expect(dependency.checksum == "checksum-456")
 }
 
+@Test("Release manifest exposes every license packaged by MusicFreeVLCKit")
+func releaseManifestIncludesEveryMusicFreeVLCKitLicense() async throws {
+    let sourceRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let sourceNotices = sourceRoot.appendingPathComponent(
+        "ThirdPartyNotices",
+        isDirectory: true
+    )
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("MusicFreeNoticesBundle-\(UUID().uuidString)", isDirectory: true)
+        .appendingPathExtension("bundle")
+    let bundledNotices = root.appendingPathComponent("ThirdPartyNotices", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let info: NSDictionary = [
+        "CFBundleIdentifier": "win.tools4me.musicplayer.notices-tests",
+        "CFBundlePackageType": "BNDL"
+    ]
+    try info.write(to: root.appendingPathComponent("Info.plist"))
+    try FileManager.default.copyItem(at: sourceNotices, to: bundledNotices)
+
+    let bundle = try #require(Bundle(url: root))
+    let releaseInfo = try #require(
+        await AppReleaseInfoProvider(bundle: bundle).releaseInfo()
+    )
+    let expectedLicenseFiles: Set<String> = [
+        "MusicFreeVLCKit/third-party-licenses/MusicFreeVLCKit-LGPL-2.1.txt",
+        "MusicFreeVLCKit/third-party-licenses/libVLC-COPYING.LIB",
+        "MusicFreeVLCKit/third-party-licenses/FFmpeg-COPYING.LGPLv2.1",
+        "MusicFreeVLCKit/third-party-licenses/FLAC-COPYING.Xiph",
+        "MusicFreeVLCKit/third-party-licenses/Ogg-COPYING",
+        "MusicFreeVLCKit/third-party-licenses/Opus-COPYING",
+        "MusicFreeVLCKit/third-party-licenses/Vorbis-COPYING",
+        "MusicFreeVLCKit/third-party-licenses/SoXr-COPYING.LGPL",
+        "MusicFreeVLCKit/third-party-licenses/TagLib-COPYING.LGPL",
+        "MusicFreeVLCKit/third-party-licenses/EBML-LICENSE.LGPL",
+        "MusicFreeVLCKit/third-party-licenses/Matroska-LICENSE.LGPL",
+        "MusicFreeVLCKit/third-party-licenses/SMB2-COPYING",
+        "MusicFreeVLCKit/third-party-licenses/NFS-COPYING",
+        "MusicFreeVLCKit/third-party-licenses/zlib-LICENSE"
+    ]
+
+    #expect(releaseInfo.dependencies.count == expectedLicenseFiles.count)
+    #expect(Set(releaseInfo.dependencies.compactMap(\.licenseFile)) == expectedLicenseFiles)
+    #expect(releaseInfo.dependencies.allSatisfy { dependency in
+        guard let licenseText = dependency.licenseText else { return false }
+        return !licenseText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    })
+}
+
 @Test("Documents scanner imports only when the file snapshot changes")
 func documentsScannerTracksSnapshotChanges() async throws {
     let root = FileManager.default.temporaryDirectory
