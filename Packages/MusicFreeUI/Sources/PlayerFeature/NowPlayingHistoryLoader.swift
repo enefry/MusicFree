@@ -117,7 +117,7 @@ final class NowPlayingHistoryLoader: ObservableObject {
     library: any LibraryServing
   ) async throws -> [ArtistID: String] {
     try await QueueArtistNameLoader.load(
-      artistIDs: Set(items.flatMap { $0.track.artistIDs }),
+      for: items.map(\.track),
       from: library
     )
   }

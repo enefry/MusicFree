@@ -32,6 +32,17 @@ private struct LibrarySnapshot {
     var artwork: [ArtworkID: ArtworkReference]
 }
 
+private struct MetadataPruneResult {
+    var albumIDs: Set<AlbumID> = []
+    var artistIDs: Set<ArtistID> = []
+    var genreIDs: Set<GenreID> = []
+    var artworkIDs: Set<ArtworkID> = []
+
+    var isEmpty: Bool {
+        albumIDs.isEmpty && artistIDs.isEmpty && genreIDs.isEmpty && artworkIDs.isEmpty
+    }
+}
+
 private enum PageKind: String, Codable {
     case tracks
     case albums
@@ -250,6 +261,33 @@ public actor LibraryPersistenceStore {
             return nil
         }
         return try LibraryRecordMapper.artist(from: record)
+    }
+
+    internal func artwork(id: ArtworkID) throws -> ArtworkReference? {
+        try ensureOpen()
+        let storageKey = PersistenceKey.artwork(id)
+        let descriptor = FetchDescriptor<ArtworkRecord>(
+            predicate: #Predicate { $0.storageKey == storageKey }
+        )
+        guard let record = try fetchFirst(descriptor) else {
+            return nil
+        }
+        return try LibraryRecordMapper.artwork(from: record)
+    }
+
+    internal func isArtworkReferenced(_ artworkID: ArtworkID) throws -> Bool {
+        try ensureOpen()
+        let snapshot = try loadLibrarySnapshot()
+        if snapshot.tracks.values.contains(where: { $0.value.artworkID == artworkID }) {
+            return true
+        }
+        if snapshot.albums.values.contains(where: { $0.value.artworkID == artworkID }) {
+            return true
+        }
+        if snapshot.artists.values.contains(where: { $0.value.artworkID == artworkID }) {
+            return true
+        }
+        return try playlistArtworkIDs().contains(artworkID)
     }
 
     internal func tracks(
@@ -522,7 +560,10 @@ public actor LibraryPersistenceStore {
             )
         }
         let snapshot = try loadLibrarySnapshot()
-        let sourceIDsByArtist = sourceIDsByArtist(snapshot.tracks.values)
+        let sourceIDsByArtist = sourceIDsByArtist(
+            snapshot.tracks.values,
+            albums: snapshot.albums
+        )
         let values = snapshot.artists.values.filter { stored in
             let artist = stored.value
             guard query.sourceID == nil || sourceIDsByArtist[artist.id]?.contains(query.sourceID!) == true else {
@@ -882,6 +923,18 @@ public actor LibraryPersistenceStore {
             }
         }
 
+        let prunedMetadata = try pruneUnreferencedMetadata(in: &after)
+        albumIDs.formUnion(prunedMetadata.albumIDs)
+        artistIDs.formUnion(prunedMetadata.artistIDs)
+        genreIDs.formUnion(prunedMetadata.genreIDs)
+        artworkIDs.formUnion(prunedMetadata.artworkIDs)
+        if !prunedMetadata.isEmpty {
+            categories.insert(.deletions)
+        }
+        if !prunedMetadata.albumIDs.isEmpty { categories.insert(.albums) }
+        if !prunedMetadata.artistIDs.isEmpty { categories.insert(.artists) }
+        if !prunedMetadata.genreIDs.isEmpty { categories.insert(.genres) }
+        if !prunedMetadata.artworkIDs.isEmpty { categories.insert(.artwork) }
         try validateReferences(in: after)
 
         let oldRevision = metadata.revision
@@ -908,6 +961,7 @@ public actor LibraryPersistenceStore {
                 guard let value = after.artwork[artworkID] else { continue }
                 try persistArtwork(value, existing: before.artwork[artworkID])
             }
+            try deletePrunedMetadata(prunedMetadata)
 
             let revision = try advanceRevision(idempotencyKey: transaction.idempotencyKey)
             try saveContext()
@@ -940,6 +994,15 @@ public actor LibraryPersistenceStore {
         }
         guard !existingTrackRecords.isEmpty else { return }
 
+        let before = try loadLibrarySnapshot()
+        var after = before
+        let existingItemIDs = Set(existingTrackRecords.map {
+            MediaItemID(sourceID: MediaSourceID($0.sourceID), externalID: $0.externalID)
+        })
+        existingItemIDs.forEach { after.tracks.removeValue(forKey: $0) }
+        let prunedMetadata = try pruneUnreferencedMetadata(in: &after)
+        try validateReferences(in: after)
+
         var playlistIDs = Set<PlaylistID>()
         let entryRecords = try fetch(PlaylistEntryRecord.self).filter { record in
             let itemID = MediaItemID(sourceID: MediaSourceID(record.sourceID), externalID: record.externalID)
@@ -961,6 +1024,7 @@ public actor LibraryPersistenceStore {
             for record in historyRecords {
                 context.delete(record)
             }
+            try deletePrunedMetadata(prunedMetadata)
 
             if let queueRecord = try fetch(PlaybackQueueRecord.self).first {
                 let snapshot = try PlaybackRecordMapper.queue(from: queueRecord)
@@ -992,13 +1056,19 @@ public actor LibraryPersistenceStore {
                 var categories: Set<LibraryChangeCategory> = [.tracks, .deletions]
                 if !entryRecords.isEmpty { categories.insert(.playlistEntries) }
                 if !historyRecords.isEmpty { categories.insert(.playbackHistory) }
+                if !prunedMetadata.albumIDs.isEmpty { categories.insert(.albums) }
+                if !prunedMetadata.artistIDs.isEmpty { categories.insert(.artists) }
+                if !prunedMetadata.genreIDs.isEmpty { categories.insert(.genres) }
+                if !prunedMetadata.artworkIDs.isEmpty { categories.insert(.artwork) }
                 publish(LibraryChange(
                     revision: revision,
                     categories: categories,
                     affectedIDs: LibraryAffectedIDs(
-                        trackIDs: Set(existingTrackRecords.map {
-                            MediaItemID(sourceID: MediaSourceID($0.sourceID), externalID: $0.externalID)
-                        }),
+                        trackIDs: existingItemIDs,
+                        albumIDs: prunedMetadata.albumIDs,
+                        artistIDs: prunedMetadata.artistIDs,
+                        genreIDs: prunedMetadata.genreIDs,
+                        artworkIDs: prunedMetadata.artworkIDs,
                         playlistIDs: playlistIDs
                     )
                 ))
@@ -1644,11 +1714,21 @@ public actor LibraryPersistenceStore {
         return result
     }
 
-    private func sourceIDsByArtist(_ tracks: Dictionary<MediaItemID, StoredTrack>.Values) -> [ArtistID: Set<MediaSourceID>] {
+    private func sourceIDsByArtist(
+        _ tracks: Dictionary<MediaItemID, StoredTrack>.Values,
+        albums: [AlbumID: StoredAlbum]
+    ) -> [ArtistID: Set<MediaSourceID>] {
         var result: [ArtistID: Set<MediaSourceID>] = [:]
         for track in tracks {
             for artistID in track.value.artistIDs {
                 result[artistID, default: []].insert(track.value.id.sourceID)
+            }
+            if let albumID = track.value.albumID,
+               let album = albums[albumID]
+            {
+                for artistID in album.value.artistIDs {
+                    result[artistID, default: []].insert(track.value.id.sourceID)
+                }
             }
         }
         return result
@@ -1711,6 +1791,65 @@ public actor LibraryPersistenceStore {
         changeHub.publish(change)
     }
 
+    private func pruneUnreferencedMetadata(
+        in snapshot: inout LibrarySnapshot
+    ) throws -> MetadataPruneResult {
+        var result = MetadataPruneResult()
+
+        let retainedAlbumIDs = Set(snapshot.tracks.values.compactMap { $0.value.albumID })
+        result.albumIDs = Set(snapshot.albums.keys).subtracting(retainedAlbumIDs)
+        for albumID in result.albumIDs {
+            snapshot.albums.removeValue(forKey: albumID)
+        }
+
+        var retainedArtistIDs = Set(snapshot.tracks.values.flatMap { $0.value.artistIDs })
+        retainedArtistIDs.formUnion(snapshot.albums.values.flatMap { $0.value.artistIDs })
+        result.artistIDs = Set(snapshot.artists.keys).subtracting(retainedArtistIDs)
+        for artistID in result.artistIDs {
+            snapshot.artists.removeValue(forKey: artistID)
+        }
+
+        let retainedGenreIDs = Set(snapshot.tracks.values.flatMap { $0.value.genreIDs })
+        result.genreIDs = Set(snapshot.genres.keys).subtracting(retainedGenreIDs)
+        for genreID in result.genreIDs {
+            snapshot.genres.removeValue(forKey: genreID)
+        }
+
+        var retainedArtworkIDs = Set(snapshot.tracks.values.compactMap { $0.value.artworkID })
+        retainedArtworkIDs.formUnion(snapshot.albums.values.compactMap { $0.value.artworkID })
+        retainedArtworkIDs.formUnion(snapshot.artists.values.compactMap { $0.value.artworkID })
+        retainedArtworkIDs.formUnion(try playlistArtworkIDs())
+        result.artworkIDs = Set(snapshot.artwork.keys).subtracting(retainedArtworkIDs)
+        for artworkID in result.artworkIDs {
+            snapshot.artwork.removeValue(forKey: artworkID)
+        }
+
+        return result
+    }
+
+    private func playlistArtworkIDs() throws -> Set<ArtworkID> {
+        Set(try fetch(PlaylistRecord.self).compactMap { record in
+            record.artworkID.map { ArtworkID(rawValue: $0) }
+        })
+    }
+
+    private func deletePrunedMetadata(_ result: MetadataPruneResult) throws {
+        guard !result.isEmpty else { return }
+
+        for record in try fetch(AlbumRecord.self) where result.albumIDs.contains(AlbumID(record.rawID)) {
+            context.delete(record)
+        }
+        for record in try fetch(ArtistRecord.self) where result.artistIDs.contains(ArtistID(record.rawID)) {
+            context.delete(record)
+        }
+        for record in try fetch(GenreRecord.self) where result.genreIDs.contains(GenreID(record.rawID)) {
+            context.delete(record)
+        }
+        for record in try fetch(ArtworkRecord.self) where result.artworkIDs.contains(ArtworkID(rawValue: record.rawID)) {
+            context.delete(record)
+        }
+    }
+
     private func validateReferences(in snapshot: LibrarySnapshot) throws {
         for stored in snapshot.tracks.values {
             let track = stored.value
@@ -1749,9 +1888,15 @@ public actor LibraryPersistenceStore {
             albumID: albumID,
             artistIDs: value.artistIDs,
             genreIDs: value.genreIDs,
+            trackNumber: value.trackNumber,
+            discNumber: value.discNumber,
+            fileName: value.fileName,
             folderPath: value.folderPath,
             duration: value.duration,
             technicalInfo: value.technicalInfo,
+            year: value.year,
+            comment: value.comment,
+            lyrics: value.lyrics,
             artwork: value.artwork,
             isFavorite: value.isFavorite,
             statistics: value.statistics
@@ -1766,9 +1911,15 @@ public actor LibraryPersistenceStore {
             albumID: value.albumID,
             artistIDs: artistIDs,
             genreIDs: value.genreIDs,
+            trackNumber: value.trackNumber,
+            discNumber: value.discNumber,
+            fileName: value.fileName,
             folderPath: value.folderPath,
             duration: value.duration,
             technicalInfo: value.technicalInfo,
+            year: value.year,
+            comment: value.comment,
+            lyrics: value.lyrics,
             artwork: value.artwork,
             isFavorite: value.isFavorite,
             statistics: value.statistics
@@ -1783,9 +1934,15 @@ public actor LibraryPersistenceStore {
             albumID: value.albumID,
             artistIDs: value.artistIDs,
             genreIDs: genreIDs,
+            trackNumber: value.trackNumber,
+            discNumber: value.discNumber,
+            fileName: value.fileName,
             folderPath: value.folderPath,
             duration: value.duration,
             technicalInfo: value.technicalInfo,
+            year: value.year,
+            comment: value.comment,
+            lyrics: value.lyrics,
             artwork: value.artwork,
             isFavorite: value.isFavorite,
             statistics: value.statistics
@@ -1800,9 +1957,15 @@ public actor LibraryPersistenceStore {
             albumID: value.albumID,
             artistIDs: value.artistIDs,
             genreIDs: value.genreIDs,
+            trackNumber: value.trackNumber,
+            discNumber: value.discNumber,
+            fileName: value.fileName,
             folderPath: value.folderPath,
             duration: value.duration,
             technicalInfo: value.technicalInfo,
+            year: value.year,
+            comment: value.comment,
+            lyrics: value.lyrics,
             artwork: artwork,
             isFavorite: value.isFavorite,
             statistics: value.statistics
@@ -1817,9 +1980,15 @@ public actor LibraryPersistenceStore {
             albumID: value.albumID,
             artistIDs: value.artistIDs,
             genreIDs: value.genreIDs,
+            trackNumber: value.trackNumber,
+            discNumber: value.discNumber,
+            fileName: value.fileName,
             folderPath: value.folderPath,
             duration: value.duration,
             technicalInfo: value.technicalInfo,
+            year: value.year,
+            comment: value.comment,
+            lyrics: value.lyrics,
             artwork: value.artwork,
             isFavorite: value.isFavorite,
             statistics: statistics

@@ -5,6 +5,7 @@ import MusicDomain
 enum LibraryArtistNameLoader {
     static func load(
         artistIDs: Set<ArtistID>,
+        sourceID: MediaSourceID,
         from library: any LibraryServing
     ) async throws -> [ArtistID: String] {
         guard !artistIDs.isEmpty else { return [:] }
@@ -16,7 +17,7 @@ enum LibraryArtistNameLoader {
         while names.count < artistIDs.count {
             try Task.checkCancellation()
             let page = try await library.browseArtists(
-                matching: ArtistQuery(sourceID: .local),
+                matching: ArtistQuery(sourceID: sourceID),
                 page: request
             )
             try Task.checkCancellation()
@@ -36,6 +37,22 @@ enum LibraryArtistNameLoader {
             request = nextRequest
         }
 
+        return names
+    }
+
+    static func load(
+        for tracks: [Track],
+        from library: any LibraryServing
+    ) async throws -> [ArtistID: String] {
+        let tracksBySource = Dictionary(grouping: tracks, by: { $0.id.sourceID })
+        var names: [ArtistID: String] = [:]
+        for sourceID in tracksBySource.keys.sorted() {
+            let artistIDs = Set(tracksBySource[sourceID, default: []].flatMap(\.artistIDs))
+            names.merge(
+                try await load(artistIDs: artistIDs, sourceID: sourceID, from: library),
+                uniquingKeysWith: { _, new in new }
+            )
+        }
         return names
     }
 }

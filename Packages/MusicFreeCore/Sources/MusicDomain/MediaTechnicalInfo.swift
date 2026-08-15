@@ -145,6 +145,8 @@ public struct MediaTechnicalInfo: Codable, Equatable, Hashable, Sendable {
     public let audioStreams: [AudioStreamInfo]
     /// Aggregate bit rate in bits per second, if reported.
     public let bitRate: Int?
+    /// File size in bytes, when the local source can report it.
+    public let fileSizeBytes: Int64?
 
     /// Creates technical metadata. No value is derived from a filename extension.
     public init(
@@ -152,7 +154,8 @@ public struct MediaTechnicalInfo: Codable, Equatable, Hashable, Sendable {
         codec: String? = nil,
         duration: Duration? = nil,
         audioStreams: [AudioStreamInfo] = [],
-        bitRate: Int? = nil
+        bitRate: Int? = nil,
+        fileSizeBytes: Int64? = nil
     ) {
         if let duration {
             _ = musicDomainNonNegativeDuration(duration, field: "duration")
@@ -160,12 +163,16 @@ public struct MediaTechnicalInfo: Codable, Equatable, Hashable, Sendable {
         if let bitRate {
             _ = musicDomainPositive(bitRate, field: "bitRate")
         }
+        if let fileSizeBytes {
+            precondition(fileSizeBytes >= 0, "MusicDomain fileSizeBytes cannot be negative")
+        }
 
         self.container = musicDomainOptionalText(container)
         self.codec = musicDomainOptionalText(codec)
         self.duration = duration
         self.audioStreams = audioStreams
         self.bitRate = bitRate
+        self.fileSizeBytes = fileSizeBytes
     }
 
     public var primaryAudioStream: AudioStreamInfo? {
@@ -190,14 +197,17 @@ public struct MediaTechnicalInfo: Codable, Equatable, Hashable, Sendable {
         case duration
         case audioStreams
         case bitRate
+        case fileSizeBytes
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let duration = try container.decodeIfPresent(Duration.self, forKey: .duration)
         let bitRate = try container.decodeIfPresent(Int.self, forKey: .bitRate)
+        let fileSizeBytes = try container.decodeIfPresent(Int64.self, forKey: .fileSizeBytes)
         guard duration == nil || duration! >= .zero,
-              bitRate == nil || bitRate! > 0
+              bitRate == nil || bitRate! > 0,
+              fileSizeBytes == nil || fileSizeBytes! >= 0
         else {
             throw musicDomainDecodingFailure(decoder, field: "MediaTechnicalInfo")
         }
@@ -206,7 +216,8 @@ public struct MediaTechnicalInfo: Codable, Equatable, Hashable, Sendable {
             codec: try container.decodeIfPresent(String.self, forKey: .codec),
             duration: duration,
             audioStreams: try container.decodeIfPresent([AudioStreamInfo].self, forKey: .audioStreams) ?? [],
-            bitRate: bitRate
+            bitRate: bitRate,
+            fileSizeBytes: fileSizeBytes
         )
     }
 
@@ -217,5 +228,6 @@ public struct MediaTechnicalInfo: Codable, Equatable, Hashable, Sendable {
         try container.encodeIfPresent(duration, forKey: .duration)
         try container.encode(audioStreams, forKey: .audioStreams)
         try container.encodeIfPresent(bitRate, forKey: .bitRate)
+        try container.encodeIfPresent(fileSizeBytes, forKey: .fileSizeBytes)
     }
 }

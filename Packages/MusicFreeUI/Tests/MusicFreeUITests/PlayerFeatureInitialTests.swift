@@ -151,6 +151,45 @@ func playerFeatureFiltersStaleGenerations() {
   #expect(viewModel.snapshot.position == .seconds(30))
 }
 
+@Test("Now Playing omits stale relationship labels after a Track is loaded")
+func nowPlayingMetadataDoesNotUseStaleRelationshipFallback() {
+  let track = Track(
+    id: MediaItemID(sourceID: .local, externalID: "loaded-track"),
+    title: "Loaded Track",
+    albumID: AlbumID("loaded-album"),
+    artistIDs: [ArtistID("loaded-artist")]
+  )
+
+  #expect(
+    NowPlayingHeaderMetadata.artistSubtitle(
+      for: track,
+      artistNames: [:],
+      fallback: "Old Artist"
+    ) == nil
+  )
+  #expect(
+    NowPlayingHeaderMetadata.albumSubtitle(
+      for: track,
+      albumNames: [:],
+      fallback: "Old Album"
+    ) == nil
+  )
+  #expect(
+    NowPlayingHeaderMetadata.artistSubtitle(
+      for: nil,
+      artistNames: [:],
+      fallback: "Snapshot Artist"
+    ) == "Snapshot Artist"
+  )
+  #expect(
+    NowPlayingHeaderMetadata.albumSubtitle(
+      for: nil,
+      albumNames: [:],
+      fallback: "Snapshot Album"
+    ) == "Snapshot Album"
+  )
+}
+
 @MainActor
 @Test("A seek drag emits one merged command at the final position")
 func playerFeatureMergesSeekUpdates() async {

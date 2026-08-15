@@ -51,6 +51,18 @@ func blankMetadataAndRelationships() {
     #expect(track.artwork == nil)
 }
 
+@Test("Composite content identities preserve ordered value boundaries")
+func compositeContentIdentityIsUnambiguous() {
+    #expect(
+        MusicContentIdentity.compositeToken(["ab", "c"])
+            != MusicContentIdentity.compositeToken(["a", "bc"])
+    )
+    #expect(
+        MusicContentIdentity.token("Album|Artist")
+            == MusicContentIdentity.token("Album|Artist")
+    )
+}
+
 @Test("Track numbering and album types use stable Codable values")
 func trackNumberingAndAlbumTypesRoundTrip() throws {
     let track = Track(
@@ -124,6 +136,74 @@ func domainModelsCodableRoundTrip() throws {
     #expect(decoded == track)
     #expect(decoded.technicalInfo?.primaryAudioStream?.sampleRate == 44_100)
     #expect(decoded.duration == .seconds(180))
+}
+
+@Test("LRC lyrics preserve plain text, offsets, and active-line lookup")
+func lyricsParseAndTrackPlaybackPosition() {
+    let timed = TrackLyrics(rawText: """
+    [ar:Fixture]
+    [offset:-500]
+    [00:01.50]First line
+    [00:03.000][00:04.2]Second line
+    """)
+
+    #expect(timed.isTimed)
+    #expect(timed.declaredOffsetMilliseconds == -500)
+    #expect(timed.timedLines.map(\.timestampMilliseconds) == [1_500, 3_000, 4_200])
+    #expect(timed.activeLineIndex(at: .seconds(1)) == 0)
+    #expect(timed.activeLineIndex(at: .seconds(2), runtimeOffsetMilliseconds: 1_000) == 1)
+    #expect(timed.activeLineIndex(at: .milliseconds(2_499)) == 0)
+    #expect(timed.activeLineIndex(at: .milliseconds(2_500)) == 1)
+
+    let plain = TrackLyrics(rawText: "First line\nSecond line")
+    #expect(!plain.isTimed)
+    #expect(plain.displayText == "First line\nSecond line")
+}
+
+@Test("LRC lyrics ignore a document-start UTF-8 BOM")
+func lyricsIgnoreDocumentStartBOM() {
+    let lyrics = TrackLyrics(rawText: "\u{FEFF}[00:01.00]BOM line")
+
+    #expect(lyrics.timedLines == [
+        LyricLine(timestampMilliseconds: 1_000, text: "BOM line")
+    ])
+    #expect(lyrics.rawText == "[00:01.00]BOM line")
+}
+
+@Test("Malformed or overflowing LRC timestamps are ignored")
+func lyricsIgnoreMalformedTimestamps() {
+    let lyrics = TrackLyrics(rawText: """
+    [999999999999999999999:00]Overflow
+    [153722867280912931:00:00]Three-part overflow
+    [00:01.2.3]Malformed fraction
+    [00:02]Valid
+    """)
+
+    #expect(lyrics.timedLines.map(\.text) == ["Valid"])
+}
+
+@Test("Negative LRC line timestamps are ignored without affecting valid lines")
+func lyricsIgnoreNegativeLineTimestamps() {
+    let lyrics = TrackLyrics(rawText: """
+    [-1:00]Negative minute
+    [-0:01]Negative zero hour
+    [00:-0]Negative zero seconds
+    [00:-0.5]Negative zero fraction
+    [00:01.00]Valid
+    """)
+
+    #expect(lyrics.timedLines.map(\.text) == ["Valid"])
+    #expect(lyrics.activeLineIndex(at: .zero) == nil)
+    #expect(lyrics.activeLineIndex(at: .seconds(1)) == 0)
+}
+
+@Test("Persisted lyrics reject negative timestamps")
+func invalidPersistedLyricTimestampIsRejected() {
+    let payload = #"{"rawText":"Bad","timedLines":[{"timestampMilliseconds":-1,"text":"Bad"}],"declaredOffsetMilliseconds":0}"#.data(using: .utf8)!
+
+    #expect(throws: DecodingError.self) {
+        try JSONDecoder().decode(TrackLyrics.self, from: payload)
+    }
 }
 
 @Test("Older model payloads decode with defaults for later optional fields")

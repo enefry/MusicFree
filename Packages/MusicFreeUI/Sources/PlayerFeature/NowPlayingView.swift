@@ -1,6 +1,7 @@
 import AppServices
 import DesignSystem
 import Foundation
+import LibraryAPI
 import MusicDomain
 import PlaybackAPI
 import SwiftUI
@@ -33,6 +34,33 @@ enum NowPlayingHeaderMetadata {
         let normalized = artist.trimmingCharacters(in: .whitespacesAndNewlines)
         return normalized.isEmpty ? nil : normalized
     }
+
+    static func artistSubtitle(
+        for track: Track?,
+        artistNames: [ArtistID: String],
+        fallback: String?
+    ) -> String? {
+        guard let track else {
+            return artistSubtitle(fallback)
+        }
+        return artistSubtitle(
+            QueueArtistNameLoader.subtitle(for: track, artistNames: artistNames)
+        )
+    }
+
+    static func albumSubtitle(
+        for track: Track?,
+        albumNames: [AlbumID: String],
+        fallback: String?
+    ) -> String? {
+        guard let track else {
+            return fallback
+        }
+        guard let albumID = track.albumID else {
+            return nil
+        }
+        return albumNames[albumID]
+    }
 }
 
 struct NowPlayingView: View {
@@ -48,7 +76,8 @@ struct NowPlayingView: View {
     @StateObject private var artworkLoader = ArtworkImageLoader()
     @State private var queueTracks: [MediaItemID: Track] = [:]
     @State private var queueArtistNames: [ArtistID: String] = [:]
-    @State private var unavailableFeature: String?
+    @State private var queueAlbumNames: [AlbumID: String] = [:]
+    @State private var isLyricsPresented = false
     @StateObject private var favoriteController: PlayerFavoriteController
 
     init(
@@ -105,7 +134,7 @@ struct NowPlayingView: View {
         .onDisappear { viewModel.stop() }
         .task(id: artworkKey) {
             await artworkLoader.load(
-                artworkID: viewModel.snapshot.currentItem?.artworkID,
+                artworkID: currentArtworkID,
                 sourceID: viewModel.snapshot.currentItemID?.sourceID,
                 serving: artworkServing
             )
@@ -113,21 +142,22 @@ struct NowPlayingView: View {
         .task(id: queueKey) {
             await loadQueueTracks()
         }
+        .task {
+            await observeLibraryChanges()
+        }
         .task(id: viewModel.snapshot.currentItemID) {
             favoriteController.load(itemID: viewModel.snapshot.currentItemID)
         }
-        .alert(
-            L("暂不可用"),
-            isPresented: Binding(
-                get: { unavailableFeature != nil },
-                set: { isPresented in
-                    if !isPresented { unavailableFeature = nil }
+        .sheet(isPresented: $isLyricsPresented) {
+            if let currentTrack, let lyrics = currentTrack.lyrics {
+                NavigationStack {
+                    LyricsView(
+                        title: currentTrack.title,
+                        lyrics: lyrics,
+                        player: viewModel
+                    )
                 }
-            )
-        ) {
-            Button(L("好"), role: .cancel) { unavailableFeature = nil }
-        } message: {
-            Text(unavailableFeature ?? L("当前播放引擎尚未提供此功能。"))
+            }
         }
     }
 
@@ -287,26 +317,26 @@ struct NowPlayingView: View {
         HStack(alignment: .center, spacing: MusicFreeSpacingTokens.medium) {
             ArtworkView(
                 image: artworkLoader.image,
-                accessibilityLabel: viewModel.snapshot.currentItem?.artworkID == nil ? L("暂无封面") : L("封面"),
+                accessibilityLabel: currentArtworkID == nil ? L("暂无封面") : L("封面"),
                 fillsAvailableWidth: true
             )
             .frame(width: 72, height: 72)
             .shadow(color: .black.opacity(colorScheme == .dark ? 0.28 : 0.16), radius: 12, y: 6)
 
             VStack(alignment: .leading, spacing: MusicFreeSpacingTokens.xSmall) {
-                Text(viewModel.currentTitle ?? L("正在播放"))
+                Text(currentTitle ?? L("正在播放"))
                     .font(.title2.weight(.bold))
                     .foregroundStyle(playerForegroundPrimary)
                     .lineLimit(2)
 
-                if let artist = NowPlayingHeaderMetadata.artistSubtitle(viewModel.currentArtist) {
+                if let artist = NowPlayingHeaderMetadata.artistSubtitle(currentArtist) {
                     Text(artist)
                         .font(.body)
                         .foregroundStyle(playerForegroundSecondary)
                         .lineLimit(1)
                 }
 
-                if let album = viewModel.snapshot.currentItem?.album {
+                if let album = currentAlbum {
                     Text(album)
                         .font(MusicFreeTypographyTokens.secondary)
                         .foregroundStyle(playerForegroundTertiary)
@@ -435,8 +465,8 @@ struct NowPlayingView: View {
     }
 
     private var shareText: String {
-        let title = viewModel.currentTitle ?? L("正在播放")
-        guard let artist = viewModel.currentArtist, !artist.isEmpty else { return title }
+        let title = currentTitle ?? L("正在播放")
+        guard let artist = currentArtist, !artist.isEmpty else { return title }
         return "\(title) - \(artist)"
     }
 
@@ -570,12 +600,14 @@ struct NowPlayingView: View {
     private var footerControls: some View {
         HStack {
             Button {
-                unavailableFeature = L("当前音频源没有可显示的歌词。")
+                isLyricsPresented = true
             } label: {
                 Image(systemName: "quote.bubble")
                     .font(.title3)
             }
+            .disabled(currentTrack?.lyrics == nil)
             .accessibilityLabel(Text(L("歌词")))
+            .accessibilityValue(Text(currentTrack?.lyrics == nil ? L("无歌词") : L("可用")))
 
             Spacer()
 
@@ -600,7 +632,39 @@ struct NowPlayingView: View {
     }
 
     private var artworkKey: String {
-        "\(viewModel.snapshot.currentItemID?.sourceID.rawValue ?? ""):\(viewModel.snapshot.currentItem?.artworkID?.rawValue ?? "")"
+        "\(viewModel.snapshot.currentItemID?.sourceID.rawValue ?? ""):\(currentArtworkID?.rawValue ?? "")"
+    }
+
+    private var currentTrack: Track? {
+        guard let itemID = viewModel.snapshot.currentItemID else { return nil }
+        return queueTracks[itemID]
+    }
+
+    private var currentArtworkID: ArtworkID? {
+        guard currentTrack != nil else {
+            return viewModel.snapshot.currentItem?.artworkID
+        }
+        return currentTrack?.artworkID
+    }
+
+    private var currentTitle: String? {
+        currentTrack?.title ?? viewModel.currentTitle
+    }
+
+    private var currentArtist: String? {
+        NowPlayingHeaderMetadata.artistSubtitle(
+            for: currentTrack,
+            artistNames: queueArtistNames,
+            fallback: viewModel.currentArtist
+        )
+    }
+
+    private var currentAlbum: String? {
+        NowPlayingHeaderMetadata.albumSubtitle(
+            for: currentTrack,
+            albumNames: queueAlbumNames,
+            fallback: viewModel.snapshot.currentItem?.album
+        )
     }
 
     private var playerBackdropColors: [Color] {
@@ -639,39 +703,99 @@ struct NowPlayingView: View {
     }
 
     private var queueKey: String {
-        viewModel.snapshot.queue.entries.map { $0.id.uuidString }.joined(separator: ",")
+        viewModel.snapshot.queue.entries.map {
+            "\($0.id.uuidString):\($0.itemID.sourceID.rawValue):\($0.itemID.externalID)"
+        }.joined(separator: ",")
     }
 
     private func loadQueueTracks() async {
         guard let library else {
             queueTracks = [:]
             queueArtistNames = [:]
+            queueAlbumNames = [:]
             return
         }
 
+        let entries = viewModel.snapshot.queue.entries
+        let expectedQueueKey = entries.map {
+            "\($0.id.uuidString):\($0.itemID.sourceID.rawValue):\($0.itemID.externalID)"
+        }.joined(separator: ",")
         var loaded: [MediaItemID: Track] = [:]
-        for entry in viewModel.snapshot.queue.entries {
+        for entry in entries {
             guard !Task.isCancelled else { return }
             if let track = try? await library.track(id: entry.itemID) {
                 loaded[entry.itemID] = track
             }
         }
         guard !Task.isCancelled else { return }
-        queueTracks = loaded
 
-        let artistIDs = Set(loaded.values.flatMap(\.artistIDs))
+        var loadedArtistNames: [ArtistID: String] = [:]
         do {
-            let names = try await QueueArtistNameLoader.load(
-                artistIDs: artistIDs,
+            loadedArtistNames = try await QueueArtistNameLoader.load(
+                for: Array(loaded.values),
                 from: library
             )
-            guard !Task.isCancelled else { return }
-            queueArtistNames = names
         } catch is CancellationError {
             return
         } catch {
-            queueArtistNames = [:]
+            loadedArtistNames = [:]
         }
+
+        var loadedAlbumNames: [AlbumID: String] = [:]
+        let tracksBySource = Dictionary(grouping: loaded.values, by: { $0.id.sourceID })
+        for (sourceID, tracks) in tracksBySource {
+            guard !Task.isCancelled else { return }
+            let albumIDs = Set(tracks.compactMap(\.albumID))
+            do {
+                loadedAlbumNames.merge(
+                    try await QueueAlbumNameLoader.load(
+                        albumIDs: albumIDs,
+                        sourceID: sourceID,
+                        from: library
+                    ),
+                    uniquingKeysWith: { _, new in new }
+                )
+            } catch is CancellationError {
+                return
+            } catch {
+                // Album names are supplementary; keep the track and artist data usable.
+            }
+        }
+        guard !Task.isCancelled, queueKey == expectedQueueKey else { return }
+        queueTracks = loaded
+        queueArtistNames = loadedArtistNames
+        queueAlbumNames = loadedAlbumNames
+    }
+
+    private func observeLibraryChanges() async {
+        guard let library else { return }
+        let stream = await library.makeChangeStream()
+        for await change in stream {
+            guard !Task.isCancelled else { return }
+            guard shouldReloadQueue(for: change) else { continue }
+            await loadQueueTracks()
+        }
+    }
+
+    private func shouldReloadQueue(for change: LibraryChange) -> Bool {
+        let queueIDs = Set(viewModel.snapshot.queue.entries.map(\.itemID))
+        guard !queueIDs.isEmpty else { return false }
+        if !queueIDs.isDisjoint(with: change.affectedIDs.trackIDs) {
+            return true
+        }
+
+        let artworkIDs = Set(queueTracks.values.compactMap(\.artworkID))
+        if !artworkIDs.isDisjoint(with: change.affectedIDs.artworkIDs) {
+            return true
+        }
+
+        let albumIDs = Set(queueTracks.values.compactMap(\.albumID))
+        if !albumIDs.isDisjoint(with: change.affectedIDs.albumIDs) {
+            return true
+        }
+
+        let artistIDs = Set(queueTracks.values.flatMap(\.artistIDs))
+        return !artistIDs.isDisjoint(with: change.affectedIDs.artistIDs)
     }
 
     private func repeatIcon(_ mode: PlaybackRepeatMode) -> String {

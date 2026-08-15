@@ -16,6 +16,7 @@ struct NormalizedMedia: Sendable {
 struct MetadataNormalizer: Sendable {
   func normalize(
     fileURL: URL,
+    stagedFileURL: URL? = nil,
     folderPath: String? = nil,
     contentHash: String,
     probe: MediaProbeResult,
@@ -34,19 +35,20 @@ struct MetadataNormalizer: Sendable {
 
     let artistName = Self.clean(metadata.artist)
     let albumArtistName = Self.clean(metadata.albumArtist) ?? artistName
+    let albumArtistNames = albumArtistName.map { [$0] } ?? []
     let albumTitle = Self.clean(metadata.album)
     let genreName = Self.clean(metadata.genre)
 
     let artistID = artistName.map { Self.artistID(for: $0) }
-    let albumArtistID = albumArtistName.map { Self.artistID(for: $0) }
+    let albumArtistIDs = albumArtistNames.map(Self.artistID)
     let genreID = genreName.map { Self.genreID(for: $0) }
     let albumID = albumTitle.map {
-      Self.albumID(for: $0, artistName: albumArtistName)
+      Self.albumID(for: $0, artistNames: albumArtistNames)
     }
 
     let artworkID: ArtworkID?
     if let artwork = metadata.firstArtwork, !artwork.data.isEmpty {
-      artworkID = ArtworkID(rawValue: "sha256-\(ContentHasher.hash(data: artwork.data))")
+      artworkID = ArtworkID(rawValue: "sha256-\(MusicContentIdentity.sha256Hex(artwork.data))")
     } else {
       artworkID = nil
     }
@@ -60,7 +62,9 @@ struct MetadataNormalizer: Sendable {
       container: Self.clean(probe.container),
       codec: streams.first?.codec,
       duration: duration,
-      audioStreams: streams
+      audioStreams: streams,
+      bitRate: Self.aggregateBitRate(streams),
+      fileSizeBytes: Self.fileSize(stagedFileURL ?? fileURL)
     )
 
     let track = Track(
@@ -72,9 +76,13 @@ struct MetadataNormalizer: Sendable {
       genreIDs: genreID.map { [$0] } ?? [],
       trackNumber: Self.positive(metadata.trackNumber),
       discNumber: Self.positive(metadata.discNumber),
+      fileName: fileURL.lastPathComponent,
       folderPath: folderPath,
       duration: duration,
       technicalInfo: technicalInfo,
+      year: Self.validYear(metadata.year),
+      comment: metadata.comment,
+      lyrics: metadata.lyrics.map(TrackLyrics.init(rawText:)),
       artwork: artworkReference
     )
 
@@ -85,7 +93,9 @@ struct MetadataNormalizer: Sendable {
     if let artistName, let artistID {
       mutations.append(.upsert(.artist(Artist(id: artistID, name: artistName))))
     }
-    if let albumArtistName, let albumArtistID, albumArtistID != artistID {
+    for (albumArtistID, albumArtistName) in zip(albumArtistIDs, albumArtistNames)
+      where albumArtistID != artistID
+    {
       mutations.append(.upsert(.artist(Artist(id: albumArtistID, name: albumArtistName))))
     }
     if let genreName, let genreID {
@@ -98,7 +108,7 @@ struct MetadataNormalizer: Sendable {
             Album(
               id: albumID,
               title: albumTitle,
-              artistIDs: albumArtistID.map { [$0] } ?? [],
+              artistIDs: albumArtistIDs,
               artwork: artworkReference,
               releaseYear: Self.validYear(metadata.year),
               trackCount: nil,
@@ -153,6 +163,14 @@ struct MetadataNormalizer: Sendable {
     return value
   }
 
+  private static func fileSize(_ fileURL: URL) -> Int64? {
+    guard let values = try? fileURL.resourceValues(forKeys: [.fileSizeKey]),
+          let fileSize = values.fileSize,
+          fileSize >= 0
+    else { return nil }
+    return Int64(fileSize)
+  }
+
   private static func audioStreamInfo(_ track: ProbedAudioTrack) -> AudioStreamInfo? {
     let channels = track.channelCount.flatMap { $0 > 0 ? $0 : nil }
     let channelLayout = channels.map { ChannelLayout(channelCount: $0) }
@@ -166,16 +184,37 @@ struct MetadataNormalizer: Sendable {
       sampleRate: sampleRate,
       bitDepth: bitDepth,
       channels: channels,
-      channelLayout: channelLayout
+      channelLayout: channelLayout,
+      bitRate: track.bitRate.flatMap { $0 > 0 ? $0 : nil }
     )
+  }
+
+  private static func aggregateBitRate(_ streams: [AudioStreamInfo]) -> Int? {
+    var total = 0
+    var hasValue = false
+    for stream in streams {
+      guard let bitRate = stream.bitRate else { continue }
+      let (nextTotal, overflow) = total.addingReportingOverflow(bitRate)
+      guard !overflow else { return nil }
+      total = nextTotal
+      hasValue = true
+    }
+    return hasValue ? total : nil
   }
 
   private static func artistID(for name: String) -> ArtistID {
     ArtistID(rawValue: "local-artist-\(stableToken(name))")
   }
 
-  private static func albumID(for title: String, artistName: String?) -> AlbumID {
-    AlbumID(rawValue: "local-album-\(stableToken(title + "|" + (artistName ?? "")))")
+  private static func albumID(for title: String, artistNames: [String]) -> AlbumID {
+    let token: String
+    if artistNames.count <= 1 {
+      // Preserve the pre-multi-artist ID format for existing libraries.
+      token = stableToken(title + "|" + (artistNames.first ?? ""))
+    } else {
+      token = MusicContentIdentity.compositeToken([title] + artistNames)
+    }
+    return AlbumID(rawValue: "local-album-\(token)")
   }
 
   private static func genreID(for name: String) -> GenreID {
@@ -183,7 +222,6 @@ struct MetadataNormalizer: Sendable {
   }
 
   private static func stableToken(_ value: String) -> String {
-    let digest = ContentHasher.hash(data: Data(value.utf8))
-    return digest.isEmpty ? String(value.hashValue, radix: 16) : digest
+    MusicContentIdentity.token(value)
   }
 }

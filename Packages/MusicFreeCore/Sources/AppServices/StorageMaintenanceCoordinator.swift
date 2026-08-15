@@ -44,6 +44,11 @@ internal actor StorageMaintenanceCoordinator: StorageMaintenanceServing {
         )
     }
 
+    func pruneOrphanedArtwork() async throws -> StorageMaintenanceResult {
+        guard let adapter else { throw StorageMaintenanceError.unavailable }
+        return try await adapter.pruneOrphanedArtwork()
+    }
+
     func pruneCache(
         to limit: StorageByteLimit,
         retainingStagingFor retention: Duration
@@ -56,10 +61,29 @@ internal actor StorageMaintenanceCoordinator: StorageMaintenanceServing {
     }
 
     func enforceAutomaticPruning(_ preferences: StoragePreferences) async throws {
-        guard preferences.automaticallyPruneCache, let adapter else { return }
-        _ = try await adapter.pruneCache(
-            to: preferences.cacheLimit,
-            retainingStagingFor: preferences.stagingRetention
-        )
+        guard let adapter else { return }
+        var firstFailure: Error?
+        if preferences.automaticallyPruneCache {
+            do {
+                _ = try await adapter.pruneCache(
+                    to: preferences.cacheLimit,
+                    retainingStagingFor: preferences.stagingRetention
+                )
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                firstFailure = error
+            }
+        }
+        do {
+            _ = try await adapter.pruneOrphanedArtwork()
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            firstFailure = firstFailure ?? error
+        }
+        if let firstFailure {
+            throw firstFailure
+        }
     }
 }

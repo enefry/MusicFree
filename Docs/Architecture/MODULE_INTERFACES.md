@@ -201,7 +201,7 @@ public protocol MetadataReading: Sendable {
 | --- | --- |
 | `LibraryQueries.swift` | `TrackQuery`、`AlbumQuery`、`ArtistQuery`、`GenreQuery`、`LibraryPageRequest`、排序与过滤枚举 |
 | `LibraryPage.swift` | `LibraryPage<Element>`、游标与是否存在下一页 |
-| `LibraryRepository.swift` | 单项读取、分页查询、事务写入、删除、变更流 |
+| `LibraryRepository.swift` | 单项读取、实际封面引用检查、分页查询、事务写入、删除、变更流 |
 | `LibraryTransaction.swift` | `LibraryTransaction`、upsert、关系和统计 mutation |
 | `PlaylistRepository.swift` | 歌单 CRUD、成员插入/移动/移除、批量重排 |
 | `PlaybackHistoryRepository.swift` | 播放开始、有效播放、完成、最近播放记录和清空历史 |
@@ -212,6 +212,7 @@ public protocol LibraryRepository: Sendable {
   func track(id: MediaItemID) async throws -> Track?
   func album(id: AlbumID) async throws -> Album?
   func artist(id: ArtistID) async throws -> Artist?
+  func isArtworkReferenced(_ artworkID: ArtworkID) async throws -> Bool
   func tracks(matching query: TrackQuery,
               page: LibraryPageRequest) async throws -> LibraryPage<Track>
   func albums(matching query: AlbumQuery,
@@ -347,6 +348,7 @@ public protocol SettingsRepository: Sendable {
 public protocol StorageMaintenanceServing: Sendable {
   func usage() async throws -> StorageUsageSnapshot
   func perform(_ actions: Set<StorageMaintenanceAction>) async throws -> StorageMaintenanceResult
+  func pruneOrphanedArtwork() async throws -> StorageMaintenanceResult
   func pruneCache(to limit: StorageByteLimit, retainingStagingFor retention: Duration) async throws -> StorageMaintenanceResult
 }
 ```

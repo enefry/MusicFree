@@ -24,6 +24,7 @@ struct LibraryTrackDetailView: View {
     @State private var pendingDeletionTrack: Track?
     @State private var deletionErrorMessage: String?
     @State private var deletingTrackID: MediaItemID?
+    @State private var isMetadataEditorPresented = false
     @StateObject private var artworkLoader = ArtworkImageLoader()
 
     var body: some View {
@@ -104,6 +105,23 @@ struct LibraryTrackDetailView: View {
                             .disabled(isSavingFavorite)
                             .accessibilityIdentifier("library.trackDetail.favorite")
                         }
+
+                        TrackTechnicalDetailsView(track: track)
+
+                        if let lyrics = track.lyrics {
+                            VStack(alignment: .leading, spacing: MusicFreeSpacingTokens.small) {
+                                Text(L("歌词"))
+                                    .font(.headline)
+                                Text(lyrics.displayText)
+                                    .font(.body)
+                                    .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
+                                    .lineLimit(6)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(MusicFreeSpacingTokens.medium)
+                            .background(MusicFreeColorTokens.backgroundSecondary, in: RoundedRectangle(cornerRadius: 8))
+                        }
                     }
                     .padding(.horizontal, MusicFreeSpacingTokens.contentInset)
                     .padding(.vertical, MusicFreeSpacingTokens.large)
@@ -135,6 +153,15 @@ struct LibraryTrackDetailView: View {
                 .accessibilityIdentifier("library.trackDetail.delete")
 
                 Button {
+                    isMetadataEditorPresented = true
+                } label: {
+                    Image(systemName: "pencil")
+                }
+                .disabled(track == nil || deletingTrackID != nil)
+                .accessibilityLabel(L("编辑歌曲"))
+                .accessibilityIdentifier("library.trackDetail.edit")
+
+                Button {
                     if let track { addToPlaylist?([track.id]) }
                 } label: {
                     Image(systemName: "text.badge.plus")
@@ -145,6 +172,20 @@ struct LibraryTrackDetailView: View {
             }
         }
         .task(id: trackID) { await load() }
+        .sheet(isPresented: $isMetadataEditorPresented) {
+            if let track {
+                NavigationStack {
+                    TrackMetadataEditorView(
+                        track: track,
+                        library: library,
+                        onSaved: { updated in
+                            self.track = updated
+                            Task { await loadRelatedMetadata(for: updated) }
+                        }
+                    )
+                }
+            }
+        }
         .trackDeletionPresentation(
             pendingTrack: $pendingDeletionTrack,
             errorMessage: $deletionErrorMessage,
@@ -196,6 +237,7 @@ struct LibraryTrackDetailView: View {
     private func resolveArtistNames(for track: Track) async -> [ArtistID: String] {
         (try? await LibraryArtistNameLoader.load(
             artistIDs: Set(track.artistIDs),
+            sourceID: track.id.sourceID,
             from: library
         )) ?? [:]
     }
@@ -587,6 +629,7 @@ struct LibraryCollectionDetailView: View {
             let artistIDs = Set(page.elements.flatMap(\.artistIDs) + (album?.artistIDs ?? []))
             artistNames = (try? await LibraryArtistNameLoader.load(
                 artistIDs: artistIDs,
+                sourceID: .local,
                 from: library
             )) ?? [:]
         } catch {
@@ -922,6 +965,7 @@ struct LibraryFolderDetailView: View {
             tracks = page.elements.filter { $0.folderPath == path }
             artistNames = (try? await LibraryArtistNameLoader.load(
                 artistIDs: Set(tracks.flatMap(\.artistIDs)),
+                sourceID: .local,
                 from: library
             )) ?? [:]
         } catch {

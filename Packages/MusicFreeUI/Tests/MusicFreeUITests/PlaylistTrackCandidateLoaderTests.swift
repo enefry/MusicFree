@@ -57,6 +57,7 @@ func playlistCandidatesLoadEveryPageAndAdd() async {
     #expect(library.requests.allSatisfy { $0.limit == LibraryPageRequest.maximumLimit })
     #expect(library.artistRequests.map(\.cursor?.rawValue) == [nil, "artist-page-2"])
     #expect(library.artistRequests.allSatisfy { $0.limit == LibraryPageRequest.maximumLimit })
+    #expect(library.artistSourceIDs == [.local, .local])
 
     let playlist = Playlist(id: PlaylistID("playlist-candidates"), name: "Candidates")
     let store = PlaylistCandidateMutationStore()
@@ -222,6 +223,7 @@ private final class PlaylistCandidateTestLibrary: LibraryServing {
     var requests: [LibraryPageRequest] = []
     var artistPages: [Result<LibraryPage<Artist>, Error>]
     var artistRequests: [LibraryPageRequest] = []
+    var artistSourceIDs: [MediaSourceID] = []
     var waitsForCancellation: Bool
     var observedCancellation = false
 
@@ -268,6 +270,9 @@ private final class PlaylistCandidateTestLibrary: LibraryServing {
         page: LibraryPageRequest
     ) async throws -> LibraryPage<Artist> {
         artistRequests.append(page)
+        if let sourceID = query.sourceID {
+            artistSourceIDs.append(sourceID)
+        }
         guard !artistPages.isEmpty else {
             return LibraryPage(elements: [])
         }

@@ -7,6 +7,34 @@ import MusicDomain
 import Testing
 import UIKit
 
+@Test("Track metadata editor preserves, edits, and clears relationship lists")
+func trackMetadataEditorRelationshipNames() {
+    #expect(
+        TrackMetadataEditorRelationshipNames.forUpdate(
+            originalNames: ["Artist One", "Artist Two"],
+            currentValue: "Artist One / Artist Two"
+        ) == ["Artist One", "Artist Two"]
+    )
+    #expect(
+        TrackMetadataEditorRelationshipNames.forUpdate(
+            originalNames: ["Album Artist"],
+            currentValue: ""
+        ) == []
+    )
+    #expect(
+        TrackMetadataEditorRelationshipNames.forUpdate(
+            originalNames: ["Old"],
+            currentValue: "New One / New Two / New One"
+        ) == ["New One", "New Two"]
+    )
+    #expect(
+        TrackMetadataEditorRelationshipNames.forUpdate(
+            originalNames: nil,
+            currentValue: ""
+        ) == nil
+    )
+}
+
 @MainActor
 @Test("Library view model transitions through loading, empty, error, retry, and loaded")
 func libraryStateTransitions() async throws {
@@ -62,6 +90,32 @@ func libraryPaginationDeduplicatesItems() async throws {
 
     #expect(viewModel.tracks.map(\.title) == ["one", "two", "three"])
     #expect(service.trackRequests.count == 2)
+}
+
+@MainActor
+@Test("Album lookup follows opaque continuation pages")
+func libraryAlbumLookupFollowsPagination() async throws {
+    let targetID = AlbumID("target-album")
+    let service = FakeLibraryService()
+    service.albumResponses = [
+        .success(
+            LibraryPage(
+                elements: [Album(id: AlbumID("first-album"), title: "First")],
+                nextCursor: LibraryCursor("albums-page-2")
+            )
+        ),
+        .success(LibraryPage(elements: [Album(id: targetID, title: "Target")]))
+    ]
+
+    let album = try await LibraryAlbumLoader.load(
+        albumID: targetID,
+        sourceID: .local,
+        from: service
+    )
+
+    #expect(album?.title == "Target")
+    #expect(service.albumPageRequests.count == 2)
+    #expect(service.albumPageRequests[1].cursor == LibraryCursor("albums-page-2"))
 }
 
 @MainActor

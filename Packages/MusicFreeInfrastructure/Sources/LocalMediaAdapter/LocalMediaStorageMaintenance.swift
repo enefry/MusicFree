@@ -1,4 +1,7 @@
 import Foundation
+import LibraryAPI
+import MediaSourceAPI
+import MusicDomain
 import SettingsAPI
 
 /// File-system accounting and non-destructive cache cleanup for the local
@@ -15,25 +18,36 @@ public actor LocalMediaStorageMaintenance: StorageMaintenanceServing {
     private let configuration: LocalMediaConfiguration
     private let coordinator: ImportCoordinator
     private let store: ManagedMediaStore
+    private let libraryRepository: (any LibraryRepository)?
     private let fileManager = FileManager.default
     private let now: @Sendable () -> Date
 
-    public init(configuration: LocalMediaConfiguration) throws {
+    private var artworkRoot: URL {
+        configuration.managedRoot.appendingPathComponent("artwork", isDirectory: true)
+    }
+
+    public init(
+        configuration: LocalMediaConfiguration,
+        libraryRepository: (any LibraryRepository)? = nil
+    ) throws {
         let coordinator = try ImportCoordinatorRegistry.shared.coordinator(for: configuration)
         self.configuration = configuration
         self.coordinator = coordinator
         self.store = coordinator.store
+        self.libraryRepository = libraryRepository
         self.now = Date.init
     }
 
     init(
         configuration: LocalMediaConfiguration,
+        libraryRepository: (any LibraryRepository)? = nil,
         now: @escaping @Sendable () -> Date
     ) throws {
         let coordinator = try ImportCoordinatorRegistry.shared.coordinator(for: configuration)
         self.configuration = configuration
         self.coordinator = coordinator
         self.store = coordinator.store
+        self.libraryRepository = libraryRepository
         self.now = now
     }
 
@@ -51,13 +65,17 @@ public actor LocalMediaStorageMaintenance: StorageMaintenanceServing {
     public func perform(
         _ actions: Set<StorageMaintenanceAction>
     ) async throws -> StorageMaintenanceResult {
-        let coordinatesStaging = actions.contains(.clearImportStaging)
-        if coordinatesStaging {
-            await coordinator.maintenanceGate.enterMaintenance()
+        let requiresMaintenance = actions.contains(.clearImportStaging)
+            || actions.contains(.clearFinalizedQuarantine)
+        let acquiredMaintenance = requiresMaintenance
+            ? await coordinator.maintenanceGate.enterMaintenance()
+            : false
+        if requiresMaintenance && !acquiredMaintenance {
+            throw CancellationError()
         }
         do {
             let before = try await usage()
-            if coordinatesStaging {
+            if actions.contains(.clearImportStaging) {
                 try clearChildren(of: configuration.stagingRoot)
             }
             if actions.contains(.clearFinalizedQuarantine) {
@@ -69,14 +87,41 @@ public actor LocalMediaStorageMaintenance: StorageMaintenanceServing {
                 usageAfter: after,
                 freedBytes: max(0, before.totalBytes - after.totalBytes)
             )
-            if coordinatesStaging {
+            if acquiredMaintenance {
                 await coordinator.maintenanceGate.leaveMaintenance()
             }
             return result
         } catch {
-            if coordinatesStaging {
+            if acquiredMaintenance {
                 await coordinator.maintenanceGate.leaveMaintenance()
             }
+            throw error
+        }
+    }
+
+    public func pruneOrphanedArtwork() async throws -> StorageMaintenanceResult {
+        guard let libraryRepository else {
+            let snapshot = try await usage()
+            return StorageMaintenanceResult(usageBefore: snapshot, usageAfter: snapshot)
+        }
+
+        let acquiredMaintenance = await coordinator.maintenanceGate.enterMaintenance()
+        if !acquiredMaintenance {
+            throw CancellationError()
+        }
+        do {
+            let before = try await usage()
+            try await pruneOrphanedArtworkFiles(using: libraryRepository)
+            let after = try await usage()
+            let result = StorageMaintenanceResult(
+                usageBefore: before,
+                usageAfter: after,
+                freedBytes: max(0, before.totalBytes - after.totalBytes)
+            )
+            await coordinator.maintenanceGate.leaveMaintenance()
+            return result
+        } catch {
+            await coordinator.maintenanceGate.leaveMaintenance()
             throw error
         }
     }
@@ -85,7 +130,10 @@ public actor LocalMediaStorageMaintenance: StorageMaintenanceServing {
         to limit: StorageByteLimit,
         retainingStagingFor retention: Duration
     ) async throws -> StorageMaintenanceResult {
-        await coordinator.maintenanceGate.enterMaintenance()
+        let acquiredMaintenance = await coordinator.maintenanceGate.enterMaintenance()
+        if !acquiredMaintenance {
+            throw CancellationError()
+        }
         do {
             let before = try await usage()
             try pruneStaging(
@@ -193,6 +241,36 @@ public actor LocalMediaStorageMaintenance: StorageMaintenanceServing {
         }
     }
 
+    private func pruneOrphanedArtworkFiles(
+        using repository: any LibraryRepository
+    ) async throws {
+        try fileManager.createDirectory(at: artworkRoot, withIntermediateDirectories: true)
+        let entries = try fileManager.contentsOfDirectory(
+            at: artworkRoot,
+            includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey],
+            options: []
+        ).sorted { $0.lastPathComponent < $1.lastPathComponent }
+
+        for entry in entries {
+            guard let artworkID = Self.artworkID(for: entry),
+                  try isSafeRegularFile(entry, inside: artworkRoot)
+            else {
+                continue
+            }
+
+            // Keep files referenced by any library object, even if the artwork
+            // record itself is damaged or missing. Cleanup must not turn a
+            // metadata inconsistency into data loss.
+            if try await repository.isArtworkReferenced(artworkID) {
+                continue
+            }
+            guard try artworkFileMatchesIdentifier(entry, artworkID: artworkID) else {
+                continue
+            }
+            try fileManager.removeItem(at: entry)
+        }
+    }
+
     private func cacheEntries() throws -> [CacheEntry] {
         let urls = try fileManager.contentsOfDirectory(
             at: configuration.stagingRoot,
@@ -230,9 +308,66 @@ public actor LocalMediaStorageMaintenance: StorageMaintenanceServing {
         try fileManager.removeItem(at: entry.url)
     }
 
+    private func isSafeRegularFile(_ url: URL, inside root: URL) throws -> Bool {
+        guard Self.isContained(url, in: root) else { return false }
+        let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+        return values.isRegularFile == true && values.isSymbolicLink != true
+    }
+
+    private func artworkFileMatchesIdentifier(
+        _ url: URL,
+        artworkID: ArtworkID
+    ) throws -> Bool {
+        let values = try url.resourceValues(forKeys: [.fileSizeKey])
+        guard let fileSize = values.fileSize,
+              fileSize <= ArtworkDataLimits.maximumByteCount,
+              let data = try readData(at: url, maximumByteCount: ArtworkDataLimits.maximumByteCount)
+        else {
+            return false
+        }
+        let expectedHash = String(artworkID.rawValue.dropFirst("sha256-".count))
+        return MusicContentIdentity.sha256Hex(data)
+            .caseInsensitiveCompare(expectedHash) == .orderedSame
+    }
+
+    private func readData(at url: URL, maximumByteCount: Int) throws -> Data? {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+
+        var data = Data()
+        while true {
+            let remaining = maximumByteCount - data.count
+            let readCount = remaining == 0 ? 1 : remaining + 1
+            guard let chunk = try handle.read(upToCount: readCount), !chunk.isEmpty else {
+                return data
+            }
+            guard chunk.count <= remaining else {
+                return nil
+            }
+            data.append(chunk)
+        }
+    }
+
+    private static func artworkID(for url: URL) -> ArtworkID? {
+        guard isSafeArtworkExtension(url.pathExtension) else { return nil }
+        let rawValue = url.deletingPathExtension().lastPathComponent
+        guard rawValue.hasPrefix("sha256-") else { return nil }
+        let hash = rawValue.dropFirst("sha256-".count)
+        guard hash.count == 64, hash.allSatisfy(\.isHexDigit) else { return nil }
+        return ArtworkID(rawValue: rawValue)
+    }
+
+    private static func isSafeArtworkExtension(_ ext: String) -> Bool {
+        !ext.isEmpty
+            && ext.count <= 16
+            && ext.allSatisfy {
+                $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_")
+            }
+    }
+
     private static func isContained(_ url: URL, in root: URL) -> Bool {
-        let rootPath = root.standardizedFileURL.path
-        let candidatePath = url.standardizedFileURL.path
+        let rootPath = root.resolvingSymlinksInPath().standardizedFileURL.path
+        let candidatePath = url.resolvingSymlinksInPath().standardizedFileURL.path
         return candidatePath.hasPrefix(rootPath + "/")
     }
 

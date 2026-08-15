@@ -142,6 +142,7 @@ func appServiceStartupSkipsDisabledAutomaticStoragePruning() async throws {
     _ = try await container.start()
 
     #expect(await maintenance.pruneCallCount == 0)
+    #expect(await maintenance.orphanPruneCallCount == 1)
     await container.stop()
 }
 
@@ -164,6 +165,7 @@ func appServiceStartupReportsAutomaticStoragePruningFailure() async throws {
     let report = try await container.start()
 
     #expect(report.fallbacks == [.storagePruningFailed])
+    #expect(await maintenance.orphanPruneCallCount == 1)
     #expect(engine.eventStreamCount == 1)
     await container.stop()
 }
@@ -221,7 +223,12 @@ func appServiceStopFencesInflightStart() async throws {
 func appServicesFavoriteCanToggleRepeatedly() async throws {
     let itemID = MediaItemID(sourceID: .local, externalID: "favorite-repeat")
     let repository = InMemoryLibraryRepository(
-        tracks: [Track(id: itemID, title: "Repeat Favorite")]
+        tracks: [Track(
+            id: itemID,
+            title: "Repeat Favorite",
+            trackNumber: 4,
+            discNumber: 2
+        )]
     )
     let container = try AppServiceContainer(
         dependencies: AppDependencies(libraryRepository: repository)
@@ -234,6 +241,12 @@ func appServicesFavoriteCanToggleRepeatedly() async throws {
     #expect(favorite.isFavorite)
     #expect(!unfavorite.isFavorite)
     #expect(favoriteAgain.isFavorite)
+    #expect(favorite.trackNumber == 4)
+    #expect(favorite.discNumber == 2)
+    #expect(unfavorite.trackNumber == 4)
+    #expect(unfavorite.discNumber == 2)
+    #expect(favoriteAgain.trackNumber == 4)
+    #expect(favoriteAgain.discNumber == 2)
     #expect(try await repository.track(id: itemID)?.isFavorite == true)
     let transactions = await repository.appliedTransactions
     #expect(transactions.count == 3)
@@ -534,10 +547,708 @@ func appServicesDeletionSaga() async throws {
     #expect(pendingRemover.pendingCount == 1)
 
     pendingQueue.failSave = false
-    let recovery = try await pendingContainer.library.recoverPendingRemovals()
+    let pendingMaintenance = ControlledStorageMaintenance(startsBlocked: false)
+    let recoveryContainer = try AppServiceContainer(
+        dependencies: AppDependencies(
+            managedMediaRemover: pendingRemover,
+            libraryRepository: pendingLibrary,
+            playbackQueueRepository: pendingQueue,
+            storageMaintenance: pendingMaintenance
+        )
+    )
+    let recovery = try await recoveryContainer.library.recoverPendingRemovals()
     #expect(recovery.finalizedTransactionIDs.count == 1)
     #expect(recovery.pendingTransactionIDs.isEmpty)
     #expect(pendingRemover.commitCount == 1)
+    await pendingMaintenance.waitUntilOrphanPruningStarts()
+    #expect(await pendingMaintenance.orphanPruneCallCount == 1)
+}
+
+@MainActor
+@Test("Library metadata updates replace app-owned fields atomically")
+func appServicesUpdateTrackMetadata() async throws {
+    let itemID = MediaItemID(sourceID: .local, externalID: "metadata-track")
+    let artistID = ArtistID("metadata-artist")
+    let albumID = AlbumID("metadata-album")
+    let genreID = GenreID("metadata-genre")
+    let track = Track(
+        id: itemID,
+        title: "Original",
+        albumID: albumID,
+        artistIDs: [artistID],
+        genreIDs: [genreID],
+        trackNumber: 1,
+        discNumber: 1,
+        year: 2020,
+        comment: "Original comment"
+    )
+    let repository = TestLibraryRepository(
+        tracks: [track],
+        albums: [Album(id: albumID, title: "Original Album", artistIDs: [artistID])],
+        artists: [Artist(id: artistID, name: "Original Artist")]
+    )
+    let container = try AppServiceContainer(
+        dependencies: AppDependencies(
+            artworkWriter: { _, _ in ArtworkWriteReceipt(wasCreated: true) },
+            libraryRepository: repository
+        )
+    )
+    let lyrics = TrackLyrics(rawText: "[00:01.00]Updated line")
+
+    let updated = try await container.library.updateMetadata(TrackMetadataUpdate(
+        itemID: itemID,
+        title: "  Updated  ",
+        artistName: "Updated Artist",
+        albumArtistName: "Updated Album Artist",
+        albumName: "Updated Album",
+        genreName: "Updated Genre",
+        trackNumber: 7,
+        discNumber: 2,
+        year: 2024,
+        comment: "Updated comment",
+        lyrics: lyrics,
+        artwork: .replace(Data("cover".utf8))
+    ))
+
+    #expect(updated.title == "Updated")
+    #expect(updated.artistIDs.count == 1)
+    #expect(updated.genreIDs.count == 1)
+    #expect(updated.trackNumber == 7)
+    #expect(updated.discNumber == 2)
+    #expect(updated.year == 2024)
+    #expect(updated.comment == "Updated comment")
+    #expect(updated.lyrics == lyrics)
+    #expect(updated.artworkID?.rawValue.hasPrefix("sha256-") == true)
+    #expect(try await repository.track(id: itemID) == updated)
+}
+
+@MainActor
+@Test("Renaming one track album does not mutate a shared album")
+func appServicesMetadataRenameSplitsSharedAlbum() async throws {
+    let firstID = MediaItemID(sourceID: .local, externalID: "shared-album-first")
+    let secondID = MediaItemID(sourceID: .local, externalID: "shared-album-second")
+    let albumID = AlbumID("shared-album")
+    let albumArtistID = ArtistID("shared-album-artist")
+    let repository = TestLibraryRepository(
+        tracks: [
+            Track(id: firstID, title: "First", albumID: albumID),
+            Track(id: secondID, title: "Second", albumID: albumID),
+        ],
+        albums: [Album(
+            id: albumID,
+            title: "Original Album",
+            sortTitle: "Original Sort",
+            artistIDs: [albumArtistID],
+            trackCount: 12
+        )]
+    )
+    let container = try AppServiceContainer(
+        dependencies: AppDependencies(libraryRepository: repository)
+    )
+
+    let updated = try await container.library.updateMetadata(TrackMetadataUpdate(
+        itemID: firstID,
+        title: "First",
+        albumArtistName: "Shared Album Artist",
+        albumName: "Renamed Album"
+    ))
+
+    #expect(updated.albumID != albumID)
+    #expect(try await repository.track(id: secondID)?.albumID == albumID)
+    #expect(try await repository.album(id: albumID)?.title == "Original Album")
+    #expect(try await repository.album(id: albumID)?.sortTitle == "Original Sort")
+    #expect(try await repository.album(id: albumID)?.trackCount == 12)
+    #expect(try await repository.album(id: updated.albumID!)?.title == "Renamed Album")
+    #expect(try await repository.album(id: updated.albumID!)?.sortTitle == nil)
+    #expect(try await repository.album(id: updated.albumID!)?.trackCount == nil)
+}
+
+@MainActor
+@Test("Metadata updates preserve existing album sort and count")
+func appServicesMetadataUpdatePreservesAlbumPresentationFields() async throws {
+    let itemID = MediaItemID(sourceID: .local, externalID: "same-album-track")
+    let albumID = AlbumID("same-album")
+    let artistID = ArtistID("same-album-artist")
+    let album = Album(
+        id: albumID,
+        title: "Album",
+        sortTitle: "Album, The",
+        artistIDs: [artistID],
+        releaseYear: 2001,
+        trackCount: 10
+    )
+    let repository = TestLibraryRepository(
+        tracks: [Track(id: itemID, title: "Track", albumID: albumID)],
+        albums: [album]
+    )
+    let container = try AppServiceContainer(
+        dependencies: AppDependencies(libraryRepository: repository)
+    )
+
+    _ = try await container.library.updateMetadata(TrackMetadataUpdate(
+        itemID: itemID,
+        title: "Updated Track",
+        albumName: "Album"
+    ))
+
+    let updatedAlbum = try #require(await repository.album(id: albumID))
+    #expect(updatedAlbum.sortTitle == album.sortTitle)
+    #expect(updatedAlbum.trackCount == album.trackCount)
+    #expect(updatedAlbum.releaseYear == album.releaseYear)
+}
+
+@MainActor
+@Test("Metadata updates preserve existing album artwork")
+func appServicesPreserveAlbumArtworkDuringTrackUpdate() async throws {
+    let itemID = MediaItemID(sourceID: .local, externalID: "album-artwork-track")
+    let albumID = AlbumID("album-artwork-album")
+    let albumArtwork = ArtworkReference(
+        id: ArtworkID("existing-album-cover"),
+        variants: [.original],
+        preferredVariant: .original
+    )
+    let albumArtistID = ArtistID("album-artwork-artist")
+    let repository = TestLibraryRepository(
+        tracks: [Track(id: itemID, title: "Track", albumID: albumID)],
+        albums: [Album(id: albumID, title: "Album", artistIDs: [albumArtistID], artwork: albumArtwork)]
+    )
+    let container = try AppServiceContainer(
+        dependencies: AppDependencies(libraryRepository: repository)
+    )
+
+    let updated = try await container.library.updateMetadata(TrackMetadataUpdate(
+        itemID: itemID,
+        title: "Updated",
+        albumName: "Album"
+    ))
+
+    #expect(updated.albumID == albumID)
+    #expect(try await repository.album(id: albumID)?.artwork == albumArtwork)
+}
+
+@MainActor
+@Test("Metadata updates preserve explicit multi-value relationships")
+func appServicesPreserveMultiValueMetadataRelationships() async throws {
+    let itemID = MediaItemID(sourceID: .local, externalID: "multi-metadata-track")
+    let albumID = AlbumID("multi-metadata-album")
+    let track = Track(
+        id: itemID,
+        title: "Original",
+        albumID: albumID,
+        artistIDs: [ArtistID("legacy-artist-1"), ArtistID("legacy-artist-2")],
+        genreIDs: [GenreID("legacy-genre-1"), GenreID("legacy-genre-2")]
+    )
+    let repository = TestLibraryRepository(
+        tracks: [track],
+        albums: [Album(id: albumID, title: "Album", artistIDs: [ArtistID("legacy-album-artist-1")])]
+    )
+    let container = try AppServiceContainer(
+        dependencies: AppDependencies(libraryRepository: repository)
+    )
+
+    let updated = try await container.library.updateMetadata(TrackMetadataUpdate(
+        itemID: itemID,
+        title: "Updated",
+        artistNames: ["Artist One", "Artist One", "Artist Two"],
+        albumArtistNames: ["Album Artist One", "Album Artist One", "Album Artist Two"],
+        albumName: "Album",
+        genreNames: ["Rock", "Rock", "Live"]
+    ))
+
+    #expect(updated.artistIDs == [
+        ArtistID("local-artist-\(MusicContentIdentity.token("Artist One"))"),
+        ArtistID("local-artist-\(MusicContentIdentity.token("Artist Two"))")
+    ])
+    #expect(updated.genreIDs == [
+        GenreID("local-genre-\(MusicContentIdentity.token("Rock"))"),
+        GenreID("local-genre-\(MusicContentIdentity.token("Live"))")
+    ])
+}
+
+@MainActor
+@Test("Editing track artists preserves an existing album identity and artists")
+func appServicesMetadataArtistEditPreservesExistingAlbumRelationship() async throws {
+    let itemID = MediaItemID(sourceID: .local, externalID: "existing-album-artist-edit")
+    let albumID = AlbumID("existing-album-artist-edit-album")
+    let albumArtistID = ArtistID("existing-album-artist")
+    let repository = TestLibraryRepository(
+        tracks: [Track(
+            id: itemID,
+            title: "Track",
+            albumID: albumID,
+            artistIDs: [ArtistID("old-track-artist")]
+        )],
+        albums: [Album(
+            id: albumID,
+            title: "Album",
+            artistIDs: [albumArtistID]
+        )]
+    )
+    let container = try AppServiceContainer(
+        dependencies: AppDependencies(libraryRepository: repository)
+    )
+
+    let updated = try await container.library.updateMetadata(TrackMetadataUpdate(
+        itemID: itemID,
+        title: "Track",
+        artistNames: ["New Track Artist"],
+        albumName: "Album"
+    ))
+
+    #expect(updated.albumID == albumID)
+    #expect(try await repository.album(id: albumID)?.artistIDs == [albumArtistID])
+    #expect(updated.artistIDs == [
+        ArtistID("local-artist-\(MusicContentIdentity.token("New Track Artist"))")
+    ])
+}
+
+@MainActor
+@Test("Renamed albums keep the importer-compatible artist-name identity")
+func appServicesMetadataAlbumRenameUsesArtistNamesForIdentity() async throws {
+    let itemID = MediaItemID(sourceID: .local, externalID: "album-identity-rename")
+    let albumID = AlbumID("album-identity-rename-original")
+    let albumArtistID = ArtistID("album-identity-rename-artist")
+    let repository = TestLibraryRepository(
+        tracks: [Track(id: itemID, title: "Track", albumID: albumID)],
+        albums: [Album(id: albumID, title: "Original Album", artistIDs: [albumArtistID])],
+        artists: [Artist(id: albumArtistID, name: "Album Artist")]
+    )
+    let container = try AppServiceContainer(
+        dependencies: AppDependencies(libraryRepository: repository)
+    )
+
+    let updated = try await container.library.updateMetadata(TrackMetadataUpdate(
+        itemID: itemID,
+        title: "Track",
+        albumName: "Renamed Album"
+    ))
+
+    #expect(updated.albumID == AlbumID(
+        "local-album-\(MusicContentIdentity.token("Renamed Album|Album Artist"))"
+    ))
+}
+
+@MainActor
+@Test("Concurrent metadata updates serialize around the complete read-modify-write")
+func appServicesSerializeConcurrentMetadataUpdates() async throws {
+    let itemID = MediaItemID(sourceID: .local, externalID: "serialized-metadata-update")
+    let albumID = AlbumID("serialized-metadata-album")
+    let lookupGate = ResolutionGate(releaseSubsequentLookupsImmediately: true)
+    let repository = TestLibraryRepository(
+        tracks: [Track(id: itemID, title: "Original", albumID: albumID)],
+        albums: [Album(id: albumID, title: "Album")],
+        metadataLookupGate: lookupGate
+    )
+    let container = try AppServiceContainer(
+        dependencies: AppDependencies(libraryRepository: repository)
+    )
+
+    let firstTask = Task { @MainActor in
+        try await container.library.updateMetadata(TrackMetadataUpdate(
+            itemID: itemID,
+            title: "First",
+            albumName: "Album"
+        ))
+    }
+    await lookupGate.waitUntilStarted()
+
+    let secondTask = Task { @MainActor in
+        try await container.library.updateMetadata(TrackMetadataUpdate(
+            itemID: itemID,
+            title: "Second",
+            albumName: "Album"
+        ))
+    }
+    for _ in 0..<20 { await Task.yield() }
+    #expect(await lookupGate.lookupCount() == 1)
+
+    await lookupGate.release()
+    let first = try await firstTask.value
+    let second = try await secondTask.value
+    #expect(first.title == "First")
+    #expect(second.title == "Second")
+    #expect(try await repository.track(id: itemID)?.title == "Second")
+}
+
+@MainActor
+@Test("Library deletion waits for an in-flight metadata update")
+func appServicesSerializesDeletionWithMetadataUpdates() async throws {
+    let itemID = MediaItemID(sourceID: .local, externalID: "delete-during-metadata")
+    let albumID = AlbumID("delete-during-metadata-album")
+    let lookupGate = ResolutionGate(releaseSubsequentLookupsImmediately: true)
+    let repository = TestLibraryRepository(
+        tracks: [Track(id: itemID, title: "Original", albumID: albumID)],
+        albums: [Album(id: albumID, title: "Album")],
+        metadataLookupGate: lookupGate
+    )
+    let container = try AppServiceContainer(
+        dependencies: AppDependencies(
+            managedMediaRemover: TestRemoval(),
+            libraryRepository: repository
+        )
+    )
+
+    let updateTask = Task { @MainActor in
+        try await container.library.updateMetadata(TrackMetadataUpdate(
+            itemID: itemID,
+            title: "Updated",
+            albumName: "Album"
+        ))
+    }
+    await lookupGate.waitUntilStarted()
+
+    let deletionTask = Task { @MainActor in
+        try await container.library.delete([itemID])
+    }
+    for _ in 0..<20 { await Task.yield() }
+    #expect(try await repository.track(id: itemID)?.title == "Original")
+
+    await lookupGate.release()
+    _ = try await updateTask.value
+    _ = try await deletionTask.value
+    #expect(try await repository.track(id: itemID) == nil)
+}
+
+@MainActor
+@Test("Metadata updates can explicitly clear album-artist relationships")
+func appServicesMetadataCanClearAlbumArtists() async throws {
+    let itemID = MediaItemID(sourceID: .local, externalID: "clear-album-artist")
+    let albumID = AlbumID("clear-album-artist-album")
+    let albumArtistID = ArtistID("clear-album-artist")
+    let repository = TestLibraryRepository(
+        tracks: [Track(
+            id: itemID,
+            title: "Track",
+            albumID: albumID,
+            artistIDs: [ArtistID("track-artist-one"), ArtistID("track-artist-two")]
+        )],
+        albums: [Album(id: albumID, title: "Album", artistIDs: [albumArtistID])]
+    )
+    let container = try AppServiceContainer(
+        dependencies: AppDependencies(libraryRepository: repository)
+    )
+
+    let updated = try await container.library.updateMetadata(TrackMetadataUpdate(
+        itemID: itemID,
+        title: "Track",
+        albumArtistNames: [],
+        albumName: "Album"
+    ))
+
+    let updatedAlbum = try #require(await repository.album(id: updated.albumID!))
+    #expect(updated.albumID != albumID)
+    #expect(updatedAlbum.artistIDs.isEmpty)
+    #expect(try await repository.album(id: albumID)?.artistIDs == [albumArtistID])
+}
+
+@MainActor
+@Test("Metadata updates use structured track artists for a new album fallback")
+func appServicesMetadataAlbumArtistFallbackPreservesMultipleArtists() async throws {
+    let itemID = MediaItemID(sourceID: .local, externalID: "multi-artist-album-fallback")
+    let artistNames = ["Artist One", "Artist Two"]
+    let repository = TestLibraryRepository(
+        tracks: [Track(id: itemID, title: "Track")]
+    )
+    let container = try AppServiceContainer(
+        dependencies: AppDependencies(libraryRepository: repository)
+    )
+
+    let updated = try await container.library.updateMetadata(TrackMetadataUpdate(
+        itemID: itemID,
+        title: "Track",
+        artistName: artistNames.joined(separator: " / "),
+        artistNames: artistNames,
+        albumName: "New Album"
+    ))
+
+    let album = try #require(await repository.album(id: updated.albumID!))
+    #expect(album.artistIDs == artistNames.map {
+        ArtistID("local-artist-\(MusicContentIdentity.token($0))")
+    })
+}
+
+@MainActor
+@Test("Same-title albums keep distinct ordered multi-artist identities")
+func appServicesMetadataSeparatesSameTitleMultiArtistAlbums() async throws {
+    let firstID = MediaItemID(sourceID: .local, externalID: "same-title-multi-artist-first")
+    let secondID = MediaItemID(sourceID: .local, externalID: "same-title-multi-artist-second")
+    let repository = TestLibraryRepository(
+        tracks: [
+            Track(id: firstID, title: "First Track"),
+            Track(id: secondID, title: "Second Track")
+        ]
+    )
+    let container = try AppServiceContainer(
+        dependencies: AppDependencies(libraryRepository: repository)
+    )
+
+    let first = try await container.library.updateMetadata(TrackMetadataUpdate(
+        itemID: firstID,
+        title: "First Track",
+        artistNames: ["Artist One", "Artist Two"],
+        albumArtistNames: ["Artist One", "Artist Two"],
+        albumName: "Shared Title"
+    ))
+    let second = try await container.library.updateMetadata(TrackMetadataUpdate(
+        itemID: secondID,
+        title: "Second Track",
+        artistNames: ["Artist One", "Artist Three"],
+        albumArtistNames: ["Artist One", "Artist Three"],
+        albumName: "Shared Title"
+    ))
+
+    #expect(first.albumID != nil)
+    #expect(second.albumID != nil)
+    #expect(first.albumID != second.albumID)
+    #expect(try await repository.album(id: first.albumID!)?.artistIDs == [
+        ArtistID("local-artist-\(MusicContentIdentity.token("Artist One"))"),
+        ArtistID("local-artist-\(MusicContentIdentity.token("Artist Two"))")
+    ])
+    #expect(try await repository.album(id: second.albumID!)?.artistIDs == [
+        ArtistID("local-artist-\(MusicContentIdentity.token("Artist One"))"),
+        ArtistID("local-artist-\(MusicContentIdentity.token("Artist Three"))")
+    ])
+}
+
+@MainActor
+@Test("Metadata updates preserve a custom track sort title")
+func appServicesMetadataPreservesCustomTrackSortTitle() async throws {
+    let itemID = MediaItemID(sourceID: .local, externalID: "custom-sort-title")
+    let repository = TestLibraryRepository(
+        tracks: [Track(id: itemID, title: "Original", sortTitle: "Original, The")]
+    )
+    let container = try AppServiceContainer(
+        dependencies: AppDependencies(libraryRepository: repository)
+    )
+
+    let updated = try await container.library.updateMetadata(TrackMetadataUpdate(
+        itemID: itemID,
+        title: "Updated"
+    ))
+
+    #expect(updated.sortTitle == "Original, The")
+}
+
+@MainActor
+@Test("Metadata replacement clears fields that are intentionally omitted")
+func appServicesMetadataReplacementClearsOmittedFields() async throws {
+    let itemID = MediaItemID(sourceID: .local, externalID: "metadata-replacement")
+    let albumID = AlbumID("metadata-replacement-album")
+    let artistID = ArtistID("metadata-replacement-artist")
+    let genreID = GenreID("metadata-replacement-genre")
+    let repository = TestLibraryRepository(
+        tracks: [Track(
+            id: itemID,
+            title: "Original",
+            albumID: albumID,
+            artistIDs: [artistID],
+            genreIDs: [genreID],
+            trackNumber: 3,
+            discNumber: 2,
+            year: 2020,
+            comment: "Comment",
+            lyrics: TrackLyrics(rawText: "Original lyrics"),
+            artwork: ArtworkReference(id: ArtworkID("original-artwork"))
+        )],
+        albums: [Album(id: albumID, title: "Album", artistIDs: [artistID])]
+    )
+    let container = try AppServiceContainer(
+        dependencies: AppDependencies(libraryRepository: repository)
+    )
+
+    let updated = try await container.library.updateMetadata(TrackMetadataUpdate(
+        itemID: itemID,
+        title: "Updated"
+    ))
+
+    #expect(updated.title == "Updated")
+    #expect(updated.albumID == nil)
+    #expect(updated.artistIDs.isEmpty)
+    #expect(updated.genreIDs.isEmpty)
+    #expect(updated.trackNumber == nil)
+    #expect(updated.discNumber == nil)
+    #expect(updated.year == nil)
+    #expect(updated.comment == nil)
+    #expect(updated.lyrics == nil)
+    #expect(updated.artwork?.id == ArtworkID("original-artwork"))
+}
+
+@MainActor
+@Test("Metadata relationship read failures are mapped at the app boundary")
+func appServicesMapMetadataRelationshipReadFailures() async throws {
+    let itemID = MediaItemID(sourceID: .local, externalID: "metadata-read-failure")
+    let albumID = AlbumID("metadata-read-failure-album")
+    let repository = TestLibraryRepository(
+        tracks: [Track(id: itemID, title: "Track", albumID: albumID)],
+        albums: [Album(id: albumID, title: "Album")],
+        metadataReadError: .capacity(.storageUnavailable)
+    )
+    let container = try AppServiceContainer(
+        dependencies: AppDependencies(libraryRepository: repository)
+    )
+
+    do {
+        _ = try await container.library.updateMetadata(TrackMetadataUpdate(
+            itemID: itemID,
+            title: "Updated",
+            albumName: "Album"
+        ))
+        Issue.record("Metadata update unexpectedly succeeded after album lookup failed")
+    } catch let error as AppServiceError {
+        #expect(error == .library(.capacity(.storageUnavailable)))
+    } catch {
+        Issue.record("Unexpected error type: \(error)")
+    }
+}
+
+@MainActor
+@Test("Cancelled metadata updates do not apply a library transaction")
+func appServicesCancelMetadataUpdateBeforeCommit() async throws {
+    let itemID = MediaItemID(sourceID: .local, externalID: "metadata-cancelled")
+    let albumID = AlbumID("metadata-cancelled-album")
+    let gate = ResolutionGate()
+    let repository = TestLibraryRepository(
+        tracks: [Track(id: itemID, title: "Original", albumID: albumID)],
+        albums: [Album(id: albumID, title: "Original Album")],
+        metadataLookupGate: gate
+    )
+    let container = try AppServiceContainer(
+        dependencies: AppDependencies(libraryRepository: repository)
+    )
+
+    let update = Task { @MainActor in
+        try await container.library.updateMetadata(TrackMetadataUpdate(
+            itemID: itemID,
+            title: "Updated",
+            albumName: "Updated Album"
+        ))
+    }
+    await gate.waitUntilStarted()
+    update.cancel()
+    await gate.release()
+
+    switch await update.result {
+    case .success:
+        Issue.record("A cancelled metadata update unexpectedly committed")
+    case .failure:
+        break
+    }
+    #expect(try await repository.track(id: itemID)?.title == "Original")
+}
+
+@MainActor
+@Test("Metadata artwork cleanup runs when the library transaction fails")
+func appServicesCleanUpNewArtworkAfterMetadataFailure() async throws {
+    let itemID = MediaItemID(sourceID: .local, externalID: "metadata-artwork-failure")
+    let repository = TestLibraryRepository(
+        tracks: [Track(id: itemID, title: "Track")],
+        applyError: .capacity(.storageUnavailable)
+    )
+    let cleanup = ArtworkCleanupRecorder()
+    let container = try AppServiceContainer(
+        dependencies: AppDependencies(
+            artworkWriter: { _, artworkID in
+                ArtworkWriteReceipt(wasCreated: true) { committed in
+                    if !committed {
+                        await cleanup.append(artworkID)
+                    }
+                }
+            },
+            libraryRepository: repository
+        )
+    )
+
+    do {
+        _ = try await container.library.updateMetadata(TrackMetadataUpdate(
+            itemID: itemID,
+            title: "Updated",
+            artwork: .replace(Data("failed-cover".utf8))
+        ))
+        Issue.record("Metadata update unexpectedly succeeded")
+    } catch let error as AppServiceError {
+        #expect(error == .library(.capacity(.storageUnavailable)))
+    }
+
+    #expect(await cleanup.ids == [
+        ArtworkID(rawValue: "sha256-\(MusicContentIdentity.sha256Hex(Data("failed-cover".utf8)))")
+    ])
+}
+
+@MainActor
+@Test("Artwork cleanup failure does not roll back committed metadata")
+func appServicesKeepMetadataWhenArtworkCleanupFails() async throws {
+    let itemID = MediaItemID(sourceID: .local, externalID: "metadata-artwork-prune-failure")
+    let repository = TestLibraryRepository(
+        tracks: [Track(id: itemID, title: "Original")]
+    )
+    let maintenance = ControlledStorageMaintenance(
+        startsBlocked: false,
+        failsOrphanPruning: true
+    )
+    let container = try AppServiceContainer(
+        dependencies: AppDependencies(
+            libraryRepository: repository,
+            storageMaintenance: maintenance
+        )
+    )
+
+    let updated = try await container.library.updateMetadata(TrackMetadataUpdate(
+        itemID: itemID,
+        title: "Updated"
+    ))
+    await maintenance.waitUntilOrphanPruningStarts()
+
+    #expect(updated.title == "Updated")
+    #expect(try await repository.track(id: itemID)?.title == "Updated")
+    #expect(await maintenance.orphanPruneCallCount == 1)
+}
+
+@Test("Artwork write receipts finish only once")
+func artworkWriteReceiptFinishesOnlyOnce() async {
+    let cleanup = ArtworkCleanupRecorder()
+    let artworkID = ArtworkID("receipt-once")
+    let receipt = ArtworkWriteReceipt(wasCreated: true) { committed in
+        if !committed {
+            await cleanup.append(artworkID)
+        }
+    }
+
+    await receipt.finish(committed: false)
+    await receipt.finish(committed: true)
+
+    #expect(await cleanup.ids == [artworkID])
+}
+
+@MainActor
+@Test("Metadata updates reject oversized artwork before writing")
+func appServicesRejectOversizedArtworkBeforeWriting() async throws {
+    let itemID = MediaItemID(sourceID: .local, externalID: "oversized-metadata-artwork")
+    let repository = TestLibraryRepository(
+        tracks: [Track(id: itemID, title: "Track")]
+    )
+    let writerRecorder = ArtworkWriterCallRecorder()
+    let container = try AppServiceContainer(
+        dependencies: AppDependencies(
+            artworkWriter: { _, _ in
+                await writerRecorder.record()
+                return ArtworkWriteReceipt(wasCreated: true)
+            },
+            libraryRepository: repository
+        )
+    )
+
+    do {
+        _ = try await container.library.updateMetadata(TrackMetadataUpdate(
+            itemID: itemID,
+            title: "Track",
+            artwork: .replace(Data(repeating: 0x7f, count: ArtworkDataLimits.maximumByteCount + 1))
+        ))
+        Issue.record("Oversized artwork unexpectedly succeeded")
+    } catch let error as AppServiceError {
+        #expect(error == .invalidRequest(operation: "library.metadata.artworkSize"))
+    }
+
+    #expect(await writerRecorder.count == 0)
 }
 
 @MainActor
@@ -1765,10 +2476,16 @@ private final class TestSource: MediaSource, @unchecked Sendable {
 }
 
 private actor ResolutionGate {
+    private let releaseSubsequentLookupsImmediately: Bool
     private var didStart = false
     private var isReleased = false
+    private var lookupCalls = 0
     private var startWaiters: [CheckedContinuation<Void, Never>] = []
     private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+    init(releaseSubsequentLookupsImmediately: Bool = false) {
+        self.releaseSubsequentLookupsImmediately = releaseSubsequentLookupsImmediately
+    }
 
     func waitUntilStarted() async {
         guard !didStart else { return }
@@ -1778,16 +2495,23 @@ private actor ResolutionGate {
     }
 
     func blockUntilReleased() async {
+        lookupCalls += 1
         didStart = true
         let waiters = startWaiters
         startWaiters.removeAll()
         for waiter in waiters {
             waiter.resume()
         }
-        guard !isReleased else { return }
+        guard !isReleased,
+              !releaseSubsequentLookupsImmediately || lookupCalls == 1
+        else { return }
         await withCheckedContinuation { continuation in
             releaseWaiters.append(continuation)
         }
+    }
+
+    func lookupCount() -> Int {
+        lookupCalls
     }
 
     func release() {
@@ -1840,19 +2564,27 @@ private final class TestLibraryRepository: LibraryRepository, @unchecked Sendabl
     private var values: [MediaItemID: Track]
     private var albumValues: [AlbumID: Album]
     private var artistValues: [ArtistID: Artist]
+    private var artworkValues: [ArtworkID: ArtworkReference]
     private let metadataLookupGate: ResolutionGate?
+    private let metadataReadError: LibraryError?
+    private let applyError: LibraryError?
     var removeError: LibraryError?
 
     init(
         tracks: [Track],
         albums: [Album] = [],
         artists: [Artist] = [],
-        metadataLookupGate: ResolutionGate? = nil
+        metadataLookupGate: ResolutionGate? = nil,
+        metadataReadError: LibraryError? = nil,
+        applyError: LibraryError? = nil
     ) {
         values = Dictionary(uniqueKeysWithValues: tracks.map { ($0.id, $0) })
         albumValues = Dictionary(uniqueKeysWithValues: albums.map { ($0.id, $0) })
         artistValues = Dictionary(uniqueKeysWithValues: artists.map { ($0.id, $0) })
+        artworkValues = [:]
         self.metadataLookupGate = metadataLookupGate
+        self.metadataReadError = metadataReadError
+        self.applyError = applyError
     }
 
     func track(id: MediaItemID) async throws -> Track? {
@@ -1861,12 +2593,18 @@ private final class TestLibraryRepository: LibraryRepository, @unchecked Sendabl
 
     func album(id: AlbumID) async throws -> Album? {
         await metadataLookupGate?.blockUntilReleased()
+        if let metadataReadError { throw metadataReadError }
         return withLock(lock) { albumValues[id] }
     }
 
     func artist(id: ArtistID) async throws -> Artist? {
         await metadataLookupGate?.blockUntilReleased()
+        if let metadataReadError { throw metadataReadError }
         return withLock(lock) { artistValues[id] }
+    }
+
+    func artwork(id: ArtworkID) async throws -> ArtworkReference? {
+        withLock(lock) { artworkValues[id] }
     }
 
     func tracks(
@@ -1899,10 +2637,21 @@ private final class TestLibraryRepository: LibraryRepository, @unchecked Sendabl
     }
 
     func apply(_ transaction: LibraryTransaction) async throws {
+        if let applyError { throw applyError }
         withLock(lock) {
             for mutation in transaction.mutations {
-                if case .upsert(.track(let track)) = mutation {
+                guard case .upsert(let upsert) = mutation else { continue }
+                switch upsert {
+                case .track(let track):
                     values[track.id] = track
+                case .album(let album):
+                    albumValues[album.id] = album
+                case .artist(let artist):
+                    artistValues[artist.id] = artist
+                case .genre:
+                    break
+                case .artwork(let artwork):
+                    artworkValues[artwork.id] = artwork
                 }
             }
         }
@@ -1921,6 +2670,22 @@ private final class TestLibraryRepository: LibraryRepository, @unchecked Sendabl
 
     func changes() -> AsyncStream<LibraryChange> {
         AsyncStream { $0.finish() }
+    }
+}
+
+private actor ArtworkCleanupRecorder {
+    private(set) var ids: [ArtworkID] = []
+
+    func append(_ artworkID: ArtworkID) {
+        ids.append(artworkID)
+    }
+}
+
+private actor ArtworkWriterCallRecorder {
+    private(set) var count = 0
+
+    func record() {
+        count += 1
     }
 }
 
@@ -2195,16 +2960,24 @@ private final class TestSettingsRepository: SettingsRepository, @unchecked Senda
 private actor ControlledStorageMaintenance: StorageMaintenanceServing {
     private let startsBlocked: Bool
     private let failsPruning: Bool
+    private let failsOrphanPruning: Bool
     private var pruningIsReleased: Bool
     private var startWaiters: [CheckedContinuation<Void, Never>] = []
+    private var orphanPruneStartWaiters: [CheckedContinuation<Void, Never>] = []
     private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
     private(set) var pruneCallCount = 0
+    private(set) var orphanPruneCallCount = 0
     private(set) var lastLimit: StorageByteLimit?
     private(set) var lastRetention: Duration?
 
-    init(startsBlocked: Bool = true, failsPruning: Bool = false) {
+    init(
+        startsBlocked: Bool = true,
+        failsPruning: Bool = false,
+        failsOrphanPruning: Bool = false
+    ) {
         self.startsBlocked = startsBlocked
         self.failsPruning = failsPruning
+        self.failsOrphanPruning = failsOrphanPruning
         self.pruningIsReleased = !startsBlocked
     }
 
@@ -2216,6 +2989,20 @@ private actor ControlledStorageMaintenance: StorageMaintenanceServing {
         _ actions: Set<StorageMaintenanceAction>
     ) async throws -> StorageMaintenanceResult {
         StorageMaintenanceResult(
+            usageBefore: StorageUsageSnapshot(),
+            usageAfter: StorageUsageSnapshot()
+        )
+    }
+
+    func pruneOrphanedArtwork() async throws -> StorageMaintenanceResult {
+        orphanPruneCallCount += 1
+        let waiters = orphanPruneStartWaiters
+        orphanPruneStartWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
+        if failsOrphanPruning {
+            throw StorageMaintenanceError.failed
+        }
+        return StorageMaintenanceResult(
             usageBefore: StorageUsageSnapshot(),
             usageAfter: StorageUsageSnapshot()
         )
@@ -2249,6 +3036,13 @@ private actor ControlledStorageMaintenance: StorageMaintenanceServing {
         guard pruneCallCount == 0 else { return }
         await withCheckedContinuation { continuation in
             startWaiters.append(continuation)
+        }
+    }
+
+    func waitUntilOrphanPruningStarts() async {
+        guard orphanPruneCallCount == 0 else { return }
+        await withCheckedContinuation { continuation in
+            orphanPruneStartWaiters.append(continuation)
         }
     }
 

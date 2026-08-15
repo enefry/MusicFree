@@ -5,6 +5,7 @@ import Foundation
 import LibraryPersistenceAdapter
 import LocalMediaAdapter
 import MediaSourceAPI
+import MusicDomain
 import PreferencesPersistenceAdapter
 import SettingsAPI
 import VLCKitPlaybackAdapter
@@ -497,7 +498,8 @@ final class AppContainer: ObservableObject {
         }
         let remover = try ManagedMediaRemover(configuration: localMediaConfiguration)
         let storageMaintenance = try LocalMediaStorageMaintenance(
-            configuration: localMediaConfiguration
+            configuration: localMediaConfiguration,
+            libraryRepository: libraryRepository
         )
         let settingsRepository = try UserDefaultsSettingsRepository(
             suiteName: PreferencesConfiguration.defaultSuiteName
@@ -512,10 +514,19 @@ final class AppContainer: ObservableObject {
         )
         let systemCapabilities = AppleSystemCapabilityDetector.current
         let mediaSources: [any MediaSource] = localSource.map { [$0] } ?? []
+        let artworkWriter: (@Sendable (Data, ArtworkID) async throws -> ArtworkWriteReceipt)?
+        if let localSource {
+            artworkWriter = { [localSource] data, artworkID in
+                try await localSource.beginArtworkWrite(data, artworkID: artworkID)
+            }
+        } else {
+            artworkWriter = nil
+        }
         let dependencies = try AppDependencies(
             mediaSources: mediaSources,
             mediaImporter: importer,
             managedMediaRemover: remover,
+            artworkWriter: artworkWriter,
             libraryRepository: libraryRepository,
             playlistRepository: playlistRepository,
             playbackQueueRepository: queueRepository,

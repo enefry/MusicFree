@@ -43,6 +43,31 @@ struct LocalMediaAdapterInitialTests {
     #expect(invalid.track.discNumber == nil)
   }
 
+  @Test("Metadata normalization carries reported audio bit rate into technical details")
+  func metadataNormalizationCarriesBitRate() throws {
+    let normalizer = MetadataNormalizer()
+    let normalized = try normalizer.normalize(
+      fileURL: URL(fileURLWithPath: "/fixture/bitrate.flac"),
+      contentHash: String(repeating: "c", count: 64),
+      probe: MediaProbeResult(
+        audioTracks: [
+          ProbedAudioTrack(
+            index: 0,
+            codec: "flac",
+            sampleRate: 44_100,
+            channelCount: 2,
+            bitRate: 768_000
+          )
+        ],
+        container: "flac"
+      ),
+      metadata: RawMediaMetadata(title: "Bitrate")
+    )
+
+    #expect(normalized.track.technicalInfo?.primaryAudioStream?.bitRate == 768_000)
+    #expect(normalized.track.technicalInfo?.bitRate == 768_000)
+  }
+
   @Test
   func sourceDeclaresCapabilitiesAndResolvesManagedResource() async throws {
     let fixture = try Fixture()
@@ -96,6 +121,314 @@ struct LocalMediaAdapterInitialTests {
     }
     #expect(artworkURL.path.hasPrefix(fixture.configuration.managedRoot.path + "/"))
     #expect(FileManager.default.fileExists(atPath: artworkURL.path))
+  }
+
+  @Test("Artwork writes reject an existing file with the wrong content hash")
+  func artworkWritesRejectMismatchedContent() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let store = try ManagedMediaStore(configuration: fixture.configuration)
+    let data = Data("expected-artwork".utf8)
+    let artworkID = ArtworkID("sha256-\(MusicContentIdentity.sha256Hex(data))")
+    let location = try await store.writeArtwork(data, artworkID: artworkID)
+    try Data("wrong-artwork".utf8).write(to: location.url)
+
+    do {
+      _ = try await store.writeArtwork(data, artworkID: artworkID)
+      Issue.record("A mismatched artwork file must not be reused")
+    } catch let error as LocalMediaError {
+      #expect(error == .destinationConflict)
+    } catch {
+      Issue.record("Unexpected artwork write error: \(error)")
+    }
+
+    do {
+      _ = try await store.artworkURL(for: artworkID)
+      Issue.record("A mismatched artwork file must not be resolved")
+    } catch let error as LocalMediaError {
+      #expect(error == .destinationConflict)
+    } catch {
+      Issue.record("Unexpected artwork lookup error: \(error)")
+    }
+  }
+
+  @Test("Legacy artwork extensions remain readable and collectible")
+  func legacyArtworkExtensionIsSupported() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let data = Data("legacy-artwork".utf8)
+    let artworkID = ArtworkID("sha256-\(MusicContentIdentity.sha256Hex(data))")
+    let artworkRoot = fixture.configuration.managedRoot
+      .appendingPathComponent("artwork", isDirectory: true)
+    try FileManager.default.createDirectory(
+      at: artworkRoot,
+      withIntermediateDirectories: true
+    )
+    let legacyURL = artworkRoot.appendingPathComponent(artworkID.rawValue + ".jpg")
+    try data.write(to: legacyURL)
+
+    let store = try ManagedMediaStore(configuration: fixture.configuration)
+    #expect(try await store.artworkURL(for: artworkID) == legacyURL)
+
+    let maintenance = try LocalMediaStorageMaintenance(
+      configuration: fixture.configuration,
+      libraryRepository: InMemoryLibraryRepository()
+    )
+    _ = try await maintenance.pruneOrphanedArtwork()
+    #expect(!FileManager.default.fileExists(atPath: legacyURL.path))
+  }
+
+  @Test("Artwork writes reject a new file when its content hash does not match the identifier")
+  func artworkWritesRejectNewMismatchedIdentifier() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let store = try ManagedMediaStore(configuration: fixture.configuration)
+    let data = Data("actual-artwork".utf8)
+    let artworkID = ArtworkID("sha256-\(MusicContentIdentity.sha256Hex(Data("different-artwork".utf8)))")
+    let destination = fixture.configuration.managedRoot
+      .appendingPathComponent("artwork", isDirectory: true)
+      .appendingPathComponent(artworkID.rawValue + ".bin")
+
+    do {
+      _ = try await store.writeArtwork(data, artworkID: artworkID)
+      Issue.record("Artwork content must match its content-addressed identifier")
+    } catch let error as LocalMediaError {
+      #expect(error == .invalidItemID)
+    } catch {
+      Issue.record("Unexpected artwork identifier error: \(error)")
+    }
+
+    #expect(!FileManager.default.fileExists(atPath: destination.path))
+  }
+
+  @Test("Artwork writes reject data larger than the shared artwork limit")
+  func artworkWritesRejectOversizedData() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let store = try ManagedMediaStore(configuration: fixture.configuration)
+    let artworkID = ArtworkID("sha256-\(String(repeating: "a", count: 64))")
+    let data = Data(repeating: 0x7f, count: ArtworkDataLimits.maximumByteCount + 1)
+
+    do {
+      _ = try await store.writeArtwork(data, artworkID: artworkID)
+      Issue.record("Artwork data over the shared limit must be rejected")
+    } catch let error as LocalMediaError {
+      #expect(error == .fileTooLarge)
+    } catch {
+      Issue.record("Unexpected oversized artwork error: \(error)")
+    }
+  }
+
+  @Test("Existing oversized artwork is rejected before it is read")
+  func artworkLookupRejectsOversizedExistingFile() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let store = try ManagedMediaStore(configuration: fixture.configuration)
+    let artworkID = ArtworkID("sha256-\(String(repeating: "a", count: 64))")
+    let artworkURL = fixture.configuration.managedRoot
+      .appendingPathComponent("artwork", isDirectory: true)
+      .appendingPathComponent(artworkID.rawValue + ".bin")
+    try makeSparseFile(
+      at: artworkURL,
+      byteCount: UInt64(ArtworkDataLimits.maximumByteCount) + 1
+    )
+
+    do {
+      _ = try await store.artworkURL(for: artworkID)
+      Issue.record("An existing artwork file over the shared limit must be rejected")
+    } catch let error as LocalMediaError {
+      #expect(error == .destinationConflict)
+    } catch {
+      Issue.record("Unexpected oversized artwork lookup error: \(error)")
+    }
+  }
+
+  @Test("Artwork write receipts retain shared files until all owners finish")
+  func artworkWriteReceiptsCoordinateSharedFiles() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let source = try fixture.makeSource()
+    let data = Data("shared-artwork-bytes".utf8)
+    let artworkID = ArtworkID("sha256-\(MusicContentIdentity.sha256Hex(data))")
+
+    let first = try await source.beginArtworkWrite(data, artworkID: artworkID)
+    let second = try await source.beginArtworkWrite(data, artworkID: artworkID)
+
+    #expect(first.wasCreated)
+    #expect(!second.wasCreated)
+    guard case .localFile(let artworkURL)? = try await source.artwork(for: artworkID) else {
+      Issue.record("Shared artwork must resolve while write receipts are active")
+      return
+    }
+
+    await first.finish(committed: false)
+    #expect(FileManager.default.fileExists(atPath: artworkURL.path))
+
+    await second.finish(committed: true)
+    #expect(FileManager.default.fileExists(atPath: artworkURL.path))
+  }
+
+  @Test("Source artwork claims coordinate with failed importer cleanup")
+  func sourceArtworkClaimSurvivesImporterFailure() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let input = fixture.inputRoot.appendingPathComponent("shared-artwork.mp3")
+    try Data("audio-data".utf8).write(to: input)
+
+    let source = try fixture.makeSource()
+    let artworkData = Data("artwork".utf8)
+    let artworkID = ArtworkID("sha256-\(MusicContentIdentity.sha256Hex(artworkData))")
+    let receipt = try await source.beginArtworkWrite(artworkData, artworkID: artworkID)
+    let repository = InMemoryLibraryRepository(failsWrites: true)
+    let importer = try fixture.makeImporter(repository: repository)
+
+    let events = try await collect(
+      importer.importMedia(
+        MediaImportRequest(importID: UUID(), urls: [input])
+      )
+    )
+    let result = try completedResult(in: events)
+    #expect(result.failed == 1)
+    #expect(result.imported == 0)
+    #expect(result.duplicate == 0)
+    #expect(result.skipped == 0)
+
+    guard case .localFile(let artworkURL)? = try await source.artwork(for: artworkID) else {
+      Issue.record("A metadata artwork claim must survive a failed importer transaction")
+      await receipt.finish(committed: false)
+      return
+    }
+    #expect(FileManager.default.fileExists(atPath: artworkURL.path))
+    await receipt.finish(committed: true)
+  }
+
+  @Test("Import stores same-name sidecar lyrics and safe file details")
+  func importStoresSidecarLyricsAndFileDetails() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let albumRoot = fixture.inputRoot.appendingPathComponent("Albums/Live", isDirectory: true)
+    try FileManager.default.createDirectory(at: albumRoot, withIntermediateDirectories: true)
+    let input = albumRoot.appendingPathComponent("sidecar.mp3")
+    let audio = Data("sidecar-audio".utf8)
+    try audio.write(to: input)
+    try """
+    [offset:-250]
+    [00:01.00]Sidecar line
+    """.data(using: .utf8)!.write(
+      to: albumRoot.appendingPathComponent("sidecar.lrc")
+    )
+
+    let repository = InMemoryLibraryRepository()
+    let importer = try fixture.makeImporter(repository: repository)
+    let events = try await collect(
+      importer.importMedia(MediaImportRequest(importID: UUID(), urls: [fixture.inputRoot]))
+    )
+    let result = try completedResult(in: events)
+    let itemID = try #require(persistedItemID(in: events))
+    let track = try #require(await repository.track(id: itemID))
+
+    #expect(result.imported == 1)
+    #expect(track.fileName == "sidecar.mp3")
+    #expect(track.folderPath == "Albums/Live")
+    #expect(track.relativePath == "Albums/Live/sidecar.mp3")
+    #expect(track.technicalInfo?.fileSizeBytes == Int64(audio.count))
+    #expect(track.lyrics?.declaredOffsetMilliseconds == -250)
+    #expect(track.lyrics?.timedLines.map(\.text) == ["Sidecar line"])
+  }
+
+  @Test("Sidecar lyrics keep a case-insensitive directory fallback")
+  func sidecarLyricsUseCaseInsensitiveDirectoryFallback() throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let mediaURL = fixture.inputRoot.appendingPathComponent("CaseFallback.mp3")
+    let sidecarURL = fixture.inputRoot.appendingPathComponent("CaseFallback.LRC")
+    try Data("audio".utf8).write(to: mediaURL)
+    try "[00:01.00]Case fallback".data(using: .utf8)!.write(to: sidecarURL)
+
+    #expect(
+      try LocalLyricsReader.readSidecar(for: mediaURL) == "[00:01.00]Case fallback"
+    )
+  }
+
+  @Test("Import ignores a sidecar lyrics symlink")
+  func importIgnoresSidecarLyricsSymlink() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let input = fixture.inputRoot.appendingPathComponent("symlink-sidecar.mp3")
+    try Data("symlink-sidecar-audio".utf8).write(to: input)
+    let outsideLyrics = fixture.root.appendingPathComponent("outside.lrc")
+    try "[00:01.00]Outside lyrics".data(using: .utf8)!.write(to: outsideLyrics)
+    try FileManager.default.createSymbolicLink(
+      at: fixture.inputRoot.appendingPathComponent("symlink-sidecar.lrc"),
+      withDestinationURL: outsideLyrics
+    )
+
+    let repository = InMemoryLibraryRepository()
+    let importer = try fixture.makeImporter(repository: repository)
+    let events = try await collect(
+      importer.importMedia(MediaImportRequest(importID: UUID(), urls: [input]))
+    )
+    let itemID = try #require(persistedItemID(in: events))
+    let track = try #require(await repository.track(id: itemID))
+
+    #expect(track.lyrics == nil)
+  }
+
+  @Test("Import ignores an oversized sidecar lyrics file")
+  func importIgnoresOversizedSidecarLyrics() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let input = fixture.inputRoot.appendingPathComponent("oversized-sidecar.mp3")
+    try Data("oversized-sidecar-audio".utf8).write(to: input)
+    let prefix = Data("[00:01.00]Should not be imported\n".utf8)
+    var sidecarData = prefix
+    sidecarData.append(Data(repeating: 0x20, count: 2 * 1024 * 1024 + 1 - prefix.count))
+    try sidecarData.write(
+      to: fixture.inputRoot.appendingPathComponent("oversized-sidecar.lrc")
+    )
+
+    let repository = InMemoryLibraryRepository()
+    let importer = try fixture.makeImporter(repository: repository)
+    let events = try await collect(
+      importer.importMedia(MediaImportRequest(importID: UUID(), urls: [input]))
+    )
+    let itemID = try #require(persistedItemID(in: events))
+    let track = try #require(await repository.track(id: itemID))
+
+    #expect(track.lyrics == nil)
+  }
+
+  @Test("Sidecar lyrics keep the configured byte limit during a raced read")
+  func sidecarLyricsKeepByteLimitDuringRead() throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let mediaURL = fixture.inputRoot.appendingPathComponent("raced-sidecar.mp3")
+    let sidecarURL = fixture.inputRoot.appendingPathComponent("raced-sidecar.lrc")
+    try Data("audio".utf8).write(to: mediaURL)
+    try Data(repeating: 0x20, count: LocalLyricsReader.maximumByteCount + 1).write(to: sidecarURL)
+
+    #expect(try LocalLyricsReader.readSidecar(for: mediaURL) == nil)
+  }
+
+  @Test("Import records the staged file size when the source changes after staging")
+  func importUsesStagedFileSize() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let input = fixture.inputRoot.appendingPathComponent("staged-size.mp3")
+    try Data("small".utf8).write(to: input)
+
+    let repository = InMemoryLibraryRepository()
+    let importer = try fixture.makeImporter(
+      repository: repository,
+      probe: SourceMutatingProbe(sourceURL: input)
+    )
+    let events = try await collect(
+      importer.importMedia(MediaImportRequest(importID: UUID(), urls: [input]))
+    )
+    let itemID = try #require(persistedItemID(in: events))
+    let track = try #require(await repository.track(id: itemID))
+
+    #expect(track.technicalInfo?.fileSizeBytes == 5)
   }
 
   @Test
@@ -218,6 +551,46 @@ struct LocalMediaAdapterInitialTests {
     })
   }
 
+  @Test("Duplicate imports reject a corrupted managed file before skip")
+  func duplicateImportRejectsCorruptedManagedFile() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let input = fixture.inputRoot.appendingPathComponent("corrupted-duplicate.mp3")
+    try Data("original-content".utf8).write(to: input)
+    let repository = InMemoryLibraryRepository()
+    let importer = try fixture.makeImporter(repository: repository)
+
+    let initialEvents = try await collect(
+      importer.importMedia(MediaImportRequest(importID: UUID(), urls: [input]))
+    )
+    let itemID = try #require(persistedItemID(in: initialEvents))
+    let source = try fixture.makeSource()
+    let resource = try await source.resolve(itemID)
+    guard case .localFile(let managedURL) = resource else {
+      Issue.record("Imported media must resolve to a managed local file")
+      return
+    }
+    try Data("corrupted-content".utf8).write(to: managedURL)
+
+    let events = try await collect(
+      importer.importMedia(MediaImportRequest(
+        importID: UUID(),
+        urls: [input],
+        duplicatePolicy: .skip
+      ))
+    )
+    let result = try completedResult(in: events)
+
+    #expect(result.imported == 0)
+    #expect(result.skipped == 0)
+    #expect(result.failed == 1)
+    #expect(await repository.applyAttemptCount() == 1)
+    #expect(events.contains { event in
+      if case .itemFailed(_, _, let error) = event { return error == .copyFailed }
+      return false
+    })
+  }
+
   @Test("A managed file without its library record is recovered on retry")
   func retryRecoversManagedFileMissingLibraryRecord() async throws {
     let fixture = try Fixture()
@@ -294,6 +667,33 @@ struct LocalMediaAdapterInitialTests {
       if case .itemFailed(_, _, let error) = event { return error == .persistenceFailed }
       return false
     })
+  }
+
+  @Test("A failed import removes artwork written before the library commit")
+  func failedImportRemovesNewArtwork() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let input = fixture.inputRoot.appendingPathComponent("artwork-fails.mp3")
+    try Data("artwork-failure-content".utf8).write(to: input)
+
+    let repository = InMemoryLibraryRepository(failsWrites: true)
+    let importer = try fixture.makeImporter(repository: repository)
+    let events = try await collect(
+      importer.importMedia(MediaImportRequest(importID: UUID(), urls: [input]))
+    )
+    let result = try completedResult(in: events)
+
+    #expect(result.imported == 0)
+    #expect(result.failed == 1)
+    #expect(await repository.applyAttemptCount() == 1)
+    let artworkRoot = fixture.configuration.managedRoot
+      .appendingPathComponent("artwork", isDirectory: true)
+    let artworkFiles = try FileManager.default.contentsOfDirectory(
+      at: artworkRoot,
+      includingPropertiesForKeys: nil,
+      options: [.skipsHiddenFiles]
+    )
+    #expect(artworkFiles.isEmpty)
   }
 
   @Test("Recovery never overwrites a conflicting managed target")
@@ -894,6 +1294,45 @@ struct LocalMediaAdapterInitialTests {
     #expect(try await maintenance.usage().pendingRemovalCount == 1)
   }
 
+  @Test("Unreadable pending manifests do not restore content with a forged filename")
+  func unreadablePendingManifestRejectsForgedContentIdentity() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let expectedContent = Data("expected-recovery-content".utf8)
+    let forgedContent = Data("different-content".utf8)
+    let expectedID = "sha256-" + MusicContentIdentity.sha256Hex(expectedContent)
+    let forgedID = "sha256-" + MusicContentIdentity.sha256Hex(
+      Data("expected-but-forged".utf8)
+    )
+    let mediaRoot = fixture.configuration.quarantineRoot
+      .appendingPathComponent("pending", isDirectory: true)
+      .appendingPathComponent("legacy-corrupt", isDirectory: true)
+      .appendingPathComponent("media", isDirectory: true)
+    try FileManager.default.createDirectory(at: mediaRoot, withIntermediateDirectories: true)
+    let expectedURL = mediaRoot.appendingPathComponent(expectedID + ".mp3")
+    let forgedURL = mediaRoot.appendingPathComponent(forgedID + ".mp3")
+    try expectedContent.write(to: expectedURL)
+    try forgedContent.write(to: forgedURL)
+    try Data("not-json".utf8).write(
+      to: mediaRoot.deletingLastPathComponent().appendingPathComponent("manifest.json")
+    )
+
+    let store = try ManagedMediaStore(configuration: fixture.configuration)
+    #expect(try await store.pendingRemovals().isEmpty)
+
+    let managedRoot = fixture.configuration.managedRoot.appendingPathComponent(
+      "items",
+      isDirectory: true
+    )
+    #expect(FileManager.default.fileExists(
+      atPath: managedRoot.appendingPathComponent(expectedID + ".mp3").path
+    ))
+    #expect(!FileManager.default.fileExists(
+      atPath: managedRoot.appendingPathComponent(forgedID + ".mp3").path
+    ))
+    #expect(FileManager.default.fileExists(atPath: forgedURL.path))
+  }
+
   @Test("Failed prepare compensation preserves quarantine for restart recovery")
   func failedPrepareCompensationRemainsRecoverable() async throws {
     let fixture = try Fixture()
@@ -1015,6 +1454,84 @@ struct LocalMediaAdapterInitialTests {
     #expect(result.freedBytes >= 40)
     #expect(!fileManager.fileExists(atPath: stagingArtifact.path))
     #expect(!fileManager.fileExists(atPath: committedArtifact.path))
+  }
+
+  @Test("Orphaned artwork cleanup preserves referenced and invalid files")
+  func orphanedArtworkCleanupPreservesReferencedArtwork() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let repository = InMemoryLibraryRepository()
+    let store = try ManagedMediaStore(configuration: fixture.configuration)
+    let referencedData = Data("referenced-artwork".utf8)
+    let orphanedData = Data("orphaned-artwork".utf8)
+    let referencedID = ArtworkID(
+      "sha256-\(MusicContentIdentity.sha256Hex(referencedData))"
+    )
+    let orphanedID = ArtworkID(
+      "sha256-\(MusicContentIdentity.sha256Hex(orphanedData))"
+    )
+    let referencedLocation = try await store.writeArtwork(
+      referencedData,
+      artworkID: referencedID
+    )
+    let orphanedLocation = try await store.writeArtwork(
+      orphanedData,
+      artworkID: orphanedID
+    )
+    let invalidID = ArtworkID("sha256-\(String(repeating: "a", count: 64))")
+    let invalidURL = fixture.configuration.managedRoot
+      .appendingPathComponent("artwork", isDirectory: true)
+      .appendingPathComponent(invalidID.rawValue + ".bin")
+    let malformedURL = fixture.configuration.managedRoot
+      .appendingPathComponent("artwork", isDirectory: true)
+      .appendingPathComponent("manual.bin")
+    let oversizedID = ArtworkID("sha256-\(String(repeating: "b", count: 64))")
+    let oversizedURL = fixture.configuration.managedRoot
+      .appendingPathComponent("artwork", isDirectory: true)
+      .appendingPathComponent(oversizedID.rawValue + ".bin")
+    try Data("not-the-hash".utf8).write(to: invalidURL)
+    try Data("manual".utf8).write(to: malformedURL)
+    try makeSparseFile(
+      at: oversizedURL,
+      byteCount: UInt64(ArtworkDataLimits.maximumByteCount) + 1
+    )
+
+    let reference = ArtworkReference(
+      id: referencedID,
+      variants: [.original],
+      preferredVariant: .original
+    )
+    let orphanedReference = ArtworkReference(
+      id: orphanedID,
+      variants: [.original],
+      preferredVariant: .original
+    )
+    let transaction = try LibraryTransaction(
+      idempotencyKey: "artwork-reference",
+      mutations: [
+        .upsert(.artwork(reference)),
+        .upsert(.artwork(orphanedReference)),
+        .upsert(.track(Track(
+          id: MediaItemID(sourceID: .local, externalID: "artwork-owner"),
+          title: "Artwork owner",
+          artwork: reference
+        )))
+      ]
+    )
+    try await repository.apply(transaction)
+
+    let maintenance = try LocalMediaStorageMaintenance(
+      configuration: fixture.configuration,
+      libraryRepository: repository
+    )
+    let result = try await maintenance.pruneOrphanedArtwork()
+
+    #expect(result.freedBytes >= Int64(orphanedData.count))
+    #expect(FileManager.default.fileExists(atPath: referencedLocation.url.path))
+    #expect(!FileManager.default.fileExists(atPath: orphanedLocation.url.path))
+    #expect(FileManager.default.fileExists(atPath: invalidURL.path))
+    #expect(FileManager.default.fileExists(atPath: malformedURL.path))
+    #expect(FileManager.default.fileExists(atPath: oversizedURL.path))
   }
 
   @Test("Automatic pruning removes stale staging before oldest cache entries")
@@ -1143,6 +1660,124 @@ struct LocalMediaAdapterInitialTests {
     #expect(await clearState.isFinished)
   }
 
+  @Test("Finalized quarantine clear waits for an active import batch")
+  func finalizedQuarantineClearDoesNotRaceActiveImport() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let input = fixture.inputRoot.appendingPathComponent("active-quarantine-clear.mp3")
+    try Data("active-quarantine-clear-content".utf8).write(to: input)
+    let committedArtifact = fixture.configuration.quarantineRoot
+      .appendingPathComponent("committed", isDirectory: true)
+      .appendingPathComponent("before-import-finishes.json")
+    try FileManager.default.createDirectory(
+      at: committedArtifact.deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+    try Data("committed".utf8).write(to: committedArtifact)
+
+    let probe = FirstCallBlockingProbe()
+    let importer = try fixture.makeImporter(
+      repository: InMemoryLibraryRepository(),
+      probe: probe
+    )
+    let maintenance = try LocalMediaStorageMaintenance(configuration: fixture.configuration)
+    let importTask = Task {
+      try await collect(
+        importer.importMedia(MediaImportRequest(importID: UUID(), urls: [input]))
+      )
+    }
+    await probe.waitUntilFirstCallBlocks()
+
+    let clearState = AsyncCompletionState()
+    let clearTask = Task {
+      _ = try await maintenance.perform([.clearFinalizedQuarantine])
+      await clearState.finish()
+    }
+    for _ in 0..<10 { await Task.yield() }
+    #expect(!(await clearState.isFinished))
+    #expect(FileManager.default.fileExists(atPath: committedArtifact.path))
+
+    await probe.releaseFirstCall()
+    _ = try completedResult(in: try await importTask.value)
+    try await clearTask.value
+    #expect(await clearState.isFinished)
+    #expect(!FileManager.default.fileExists(atPath: committedArtifact.path))
+  }
+
+  @Test("Managed media removal uses the shared maintenance gate")
+  func managedMediaRemovalWaitsForMaintenanceWindow() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let remover = try ManagedMediaRemover(configuration: fixture.configuration)
+    let importer = try fixture.makeImporter(repository: InMemoryLibraryRepository())
+    let coordinator = try ImportCoordinatorRegistry.shared.coordinator(
+      for: fixture.configuration
+    )
+    _ = importer
+    #expect(await coordinator.maintenanceGate.enterMaintenance())
+
+    let state = AsyncCompletionState()
+    let pendingTask = Task {
+      _ = try await remover.pendingRemovals()
+      await state.finish()
+    }
+    for _ in 0..<10 { await Task.yield() }
+    #expect(!(await state.isFinished))
+
+    await coordinator.maintenanceGate.leaveMaintenance()
+    try await pendingTask.value
+    #expect(await state.isFinished)
+  }
+
+  @Test("Cancelled maintenance gate waiters do not poison ownership")
+  func cancelledMaintenanceGateWaitersReleaseWithoutPoisoningGate() async {
+    let gate = ImportMaintenanceGate()
+
+    #expect(await gate.enterImport())
+    let maintenanceWaiter = Task { await gate.enterMaintenance() }
+    for _ in 0..<20 { await Task.yield() }
+    maintenanceWaiter.cancel()
+    #expect(await maintenanceWaiter.value == false)
+    await gate.leaveImport()
+
+    #expect(await gate.enterMaintenance())
+    let importWaiter = Task { await gate.enterImport() }
+    for _ in 0..<20 { await Task.yield() }
+    importWaiter.cancel()
+    #expect(await importWaiter.value == false)
+    await gate.leaveMaintenance()
+
+    #expect(await gate.enterImport())
+    await gate.leaveImport()
+  }
+
+  @Test("Cancelling an import while waiting for maintenance does not run it")
+  func cancelledImportWaitingForMaintenanceDoesNotRun() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let repository = InMemoryLibraryRepository()
+    let importer = try fixture.makeImporter(repository: repository)
+    let coordinator = try ImportCoordinatorRegistry.shared.coordinator(
+      for: fixture.configuration
+    )
+    #expect(await coordinator.maintenanceGate.enterMaintenance())
+
+    let importID = UUID()
+    let importTask = Task {
+      try await collect(
+        importer.importMedia(MediaImportRequest(importID: importID, urls: []))
+      )
+    }
+    for _ in 0..<20 { await Task.yield() }
+    await importer.cancelImport(importID)
+
+    let events = try await importTask.value
+    let result = try completedResult(in: events)
+    #expect(result.status == .cancelled)
+    #expect(await repository.applyAttemptCount() == 0)
+    await coordinator.maintenanceGate.leaveMaintenance()
+  }
+
   @Test
   func invalidSourceAndBookmarkValuesAreRejected() async throws {
     let fixture = try Fixture()
@@ -1241,6 +1876,15 @@ private struct FixedProbe: MediaProbing {
   }
 }
 
+private struct SourceMutatingProbe: MediaProbing {
+  let sourceURL: URL
+
+  func probe(_ resource: PlaybackResource) async throws -> MediaProbeResult {
+    try Data(repeating: 1, count: 32).write(to: sourceURL)
+    return try await FixedProbe().probe(resource)
+  }
+}
+
 private actor FirstCallBlockingProbe: MediaProbing {
   private var didBlock = false
   private var isBlocked = false
@@ -1312,6 +1956,7 @@ private struct FixedMetadataReader: MetadataReading {
 
 private final actor InMemoryLibraryRepository: LibraryRepository {
   private var tracks: [MediaItemID: Track] = [:]
+  private var artworks: [ArtworkID: ArtworkReference] = [:]
   private var applyAttempts = 0
   private let failsWrites: Bool
   private let failFirstWriteAfterRelease: Bool
@@ -1337,6 +1982,14 @@ private final actor InMemoryLibraryRepository: LibraryRepository {
 
   func artist(id: ArtistID) async throws -> Artist? {
     nil
+  }
+
+  func artwork(id: ArtworkID) async throws -> ArtworkReference? {
+    artworks[id]
+  }
+
+  func isArtworkReferenced(_ artworkID: ArtworkID) async throws -> Bool {
+    tracks.values.contains { $0.artworkID == artworkID }
   }
 
   func tracks(
@@ -1377,8 +2030,15 @@ private final actor InMemoryLibraryRepository: LibraryRepository {
       throw LibraryError.capacity(.storageUnavailable)
     }
     for mutation in transaction.mutations {
-      guard case .upsert(.track(let track)) = mutation else { continue }
-      tracks[track.id] = track
+      guard case .upsert(let upsert) = mutation else { continue }
+      switch upsert {
+      case .track(let track):
+        tracks[track.id] = track
+      case .artwork(let artwork):
+        artworks[artwork.id] = artwork
+      default:
+        continue
+      }
     }
   }
 

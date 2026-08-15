@@ -22,6 +22,14 @@ public final class SwiftDataLibraryRepository: LibraryRepository, Sendable {
         try await store.artist(id: id)
     }
 
+    public func artwork(id: ArtworkID) async throws -> ArtworkReference? {
+        try await store.artwork(id: id)
+    }
+
+    public func isArtworkReferenced(_ artworkID: ArtworkID) async throws -> Bool {
+        try await store.isArtworkReferenced(artworkID)
+    }
+
     public func tracks(
         matching query: TrackQuery,
         page: LibraryPageRequest

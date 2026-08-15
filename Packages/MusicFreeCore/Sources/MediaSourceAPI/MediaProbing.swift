@@ -7,6 +7,8 @@ public struct ProbedAudioTrack: Codable, Equatable, Sendable {
   public let sampleRate: Double?
   public let channelCount: Int?
   public let bitDepth: Int?
+  /// Bit rate in bits per second, when the probe reports it.
+  public let bitRate: Int?
   public let language: String?
   public let title: String?
   public let isDecodable: Bool
@@ -17,6 +19,7 @@ public struct ProbedAudioTrack: Codable, Equatable, Sendable {
     sampleRate: Double? = nil,
     channelCount: Int? = nil,
     bitDepth: Int? = nil,
+    bitRate: Int? = nil,
     language: String? = nil,
     title: String? = nil,
     isDecodable: Bool = true
@@ -26,6 +29,7 @@ public struct ProbedAudioTrack: Codable, Equatable, Sendable {
     self.sampleRate = sampleRate
     self.channelCount = channelCount
     self.bitDepth = bitDepth
+    self.bitRate = bitRate
     self.language = language
     self.title = title
     self.isDecodable = isDecodable

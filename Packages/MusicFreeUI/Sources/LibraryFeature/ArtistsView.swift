@@ -12,6 +12,7 @@ struct ArtistsView: View {
     let enqueueNextCollection: ((LibraryCollectionQueueTarget) -> Void)?
     let enqueueCollection: ((LibraryCollectionQueueTarget) -> Void)?
     let isCollectionQueueActionPending: (LibraryCollectionQueueTarget) -> Bool
+    let compactRoute: ((LibraryDestination) -> LibraryCompactRoute)?
 
     @State private var editMode: EditMode = .inactive
     @State private var selectedArtistIDs: Set<ArtistID> = []
@@ -25,7 +26,8 @@ struct ArtistsView: View {
         artworkServing: (any ArtworkServing)? = nil,
         enqueueNextCollection: ((LibraryCollectionQueueTarget) -> Void)? = nil,
         enqueueCollection: ((LibraryCollectionQueueTarget) -> Void)? = nil,
-        isCollectionQueueActionPending: @escaping (LibraryCollectionQueueTarget) -> Bool = { _ in false }
+        isCollectionQueueActionPending: @escaping (LibraryCollectionQueueTarget) -> Bool = { _ in false },
+        compactRoute: ((LibraryDestination) -> LibraryCompactRoute)? = nil
     ) {
         self.viewModel = viewModel
         self.navigate = navigate
@@ -33,6 +35,7 @@ struct ArtistsView: View {
         self.enqueueNextCollection = enqueueNextCollection
         self.enqueueCollection = enqueueCollection
         self.isCollectionQueueActionPending = isCollectionQueueActionPending
+        self.compactRoute = compactRoute
     }
 
     private var orderedArtists: [Artist] {
@@ -74,7 +77,10 @@ struct ArtistsView: View {
                                 action: { navigate(.artist(artist.id)) },
                                 selectionAction: { toggleSelection(for: artist.id) },
                                 isSelected: selectedArtistIDs.contains(artist.id),
-                                isEditing: isEditing
+                                isEditing: isEditing,
+                                destination: compactRoute.map {
+                                    $0(.artist(artist.id))
+                                }
                             )
                             .listRowInsets(EdgeInsets())
                             .onAppear {
@@ -224,32 +230,19 @@ private struct ArtistRow: View {
     let selectionAction: () -> Void
     let isSelected: Bool
     let isEditing: Bool
+    let destination: LibraryCompactRoute?
 
     @StateObject private var artworkLoader = ArtworkImageLoader()
 
     var body: some View {
-        Button(action: isEditing ? selectionAction : action) {
-            ZStack(alignment: .leading) {
-                MediaRow(
-                    title: artist.name,
-                    artwork: artworkLoader.image,
-                    artworkAccessibilityLabel: L("%@ artist artwork", artist.name),
-                    placeholderSystemImage: "person.fill"
-                )
-                if isEditing {
-                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                        .font(.title2)
-                        .foregroundStyle(
-                            isSelected
-                                ? MusicFreeColorTokens.accent
-                                : MusicFreeColorTokens.foregroundTertiary
-                        )
-                        .background(
-                            Circle()
-                                .fill(MusicFreeColorTokens.backgroundPrimary)
-                        )
-                        .padding(.leading, MusicFreeSpacingTokens.small)
-                        .accessibilityHidden(true)
+        Group {
+            if !isEditing, let destination {
+                NavigationLink(value: destination) {
+                    rowContent
+                }
+            } else {
+                Button(action: isEditing ? selectionAction : action) {
+                    rowContent
                 }
             }
         }
@@ -270,6 +263,32 @@ private struct ArtistRow: View {
                 sourceID: .local,
                 serving: artworkServing
             )
+        }
+    }
+
+    private var rowContent: some View {
+        ZStack(alignment: .leading) {
+            MediaRow(
+                title: artist.name,
+                artwork: artworkLoader.image,
+                artworkAccessibilityLabel: L("%@ artist artwork", artist.name),
+                placeholderSystemImage: "person.fill"
+            )
+            if isEditing {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.title2)
+                    .foregroundStyle(
+                        isSelected
+                            ? MusicFreeColorTokens.accent
+                            : MusicFreeColorTokens.foregroundTertiary
+                    )
+                    .background(
+                        Circle()
+                            .fill(MusicFreeColorTokens.backgroundPrimary)
+                    )
+                    .padding(.leading, MusicFreeSpacingTokens.small)
+                    .accessibilityHidden(true)
+            }
         }
     }
 

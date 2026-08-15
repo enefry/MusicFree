@@ -313,6 +313,7 @@ struct TracksView: View {
             let service = viewModel.library
             async let artistNameTask = LibraryArtistNameLoader.load(
                 artistIDs: Set(visibleTracks.flatMap(\.artistIDs)),
+                sourceID: .local,
                 from: service
             )
             async let albumsPage = service.browseAlbums(

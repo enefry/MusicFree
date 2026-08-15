@@ -50,6 +50,7 @@ public final class VLCMediaProbe: @unchecked Sendable, MediaProbing {
           sampleRate: track.audio.map { Double($0.rate) },
           channelCount: track.audio.map { Int($0.channelsNumber) },
           bitDepth: nil,
+          bitRate: track.bitrate == 0 ? nil : Int(track.bitrate),
           language: normalized(track.language),
           title: normalized(track.trackDescription),
           isDecodable: true

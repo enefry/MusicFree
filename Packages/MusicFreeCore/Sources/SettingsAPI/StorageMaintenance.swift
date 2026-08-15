@@ -81,6 +81,7 @@ public enum StorageMaintenanceError: Error, Equatable, Hashable, Sendable, Local
 public protocol StorageMaintenanceServing: Sendable {
     func usage() async throws -> StorageUsageSnapshot
     func perform(_ actions: Set<StorageMaintenanceAction>) async throws -> StorageMaintenanceResult
+    func pruneOrphanedArtwork() async throws -> StorageMaintenanceResult
     func pruneCache(
         to limit: StorageByteLimit,
         retainingStagingFor retention: Duration
@@ -88,6 +89,12 @@ public protocol StorageMaintenanceServing: Sendable {
 }
 
 public extension StorageMaintenanceServing {
+    /// Orphan cleanup is optional for adapters without a managed artwork store.
+    func pruneOrphanedArtwork() async throws -> StorageMaintenanceResult {
+        let snapshot = try await usage()
+        return StorageMaintenanceResult(usageBefore: snapshot, usageAfter: snapshot)
+    }
+
     /// Optional automatic-maintenance capability. Adapters without a cache
     /// return a no-op result while preserving the existing maintenance port.
     func pruneCache(

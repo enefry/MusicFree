@@ -32,6 +32,8 @@ public struct RawMediaMetadata: Codable, Equatable, Sendable {
   public let composer: String?
   public let genre: String?
   public let comment: String?
+  /// Embedded plain-text or timestamped lyrics, when exposed by the source.
+  public let lyrics: String?
   public let trackNumber: Int?
   public let discNumber: Int?
   public let year: Int?
@@ -46,6 +48,7 @@ public struct RawMediaMetadata: Codable, Equatable, Sendable {
     composer: String? = nil,
     genre: String? = nil,
     comment: String? = nil,
+    lyrics: String? = nil,
     trackNumber: Int? = nil,
     discNumber: Int? = nil,
     year: Int? = nil,
@@ -59,6 +62,7 @@ public struct RawMediaMetadata: Codable, Equatable, Sendable {
     self.composer = Self.normalized(composer)
     self.genre = Self.normalized(genre)
     self.comment = Self.normalized(comment)
+    self.lyrics = Self.normalized(lyrics)
     self.trackNumber = trackNumber
     self.discNumber = discNumber
     self.year = year
@@ -68,6 +72,24 @@ public struct RawMediaMetadata: Codable, Equatable, Sendable {
 
   public var firstArtwork: RawArtwork? {
     artworks.first
+  }
+
+  public func replacingLyrics(_ lyrics: String?) -> Self {
+    Self(
+      title: title,
+      artist: artist,
+      album: album,
+      albumArtist: albumArtist,
+      composer: composer,
+      genre: genre,
+      comment: comment,
+      lyrics: lyrics,
+      trackNumber: trackNumber,
+      discNumber: discNumber,
+      year: year,
+      duration: duration,
+      artworks: artworks
+    )
   }
 
   private static func normalized(_ value: String?) -> String? {

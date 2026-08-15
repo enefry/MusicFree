@@ -343,9 +343,8 @@ public struct MiniPlayerView: View {
             }
         }
 
-        let artistIDs = Set(loadedTracks.values.flatMap(\.artistIDs))
         let artistNames = (try? await QueueArtistNameLoader.load(
-            artistIDs: artistIDs,
+            for: Array(loadedTracks.values),
             from: library
         )) ?? [:]
         guard !Task.isCancelled else { return }

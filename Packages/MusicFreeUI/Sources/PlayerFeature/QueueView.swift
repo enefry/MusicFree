@@ -162,6 +162,9 @@ struct QueueView: View {
     .task {
       await historyLoader.observeChanges()
     }
+    .task {
+      await observeLibraryChanges()
+    }
     .onChange(of: viewModel.snapshot.queue) { _, queue in
       editor.synchronize(with: queue)
     }
@@ -470,6 +473,7 @@ struct QueueView: View {
       artistNames = [:]
       return
     }
+    let expectedQueueKey = queueKey
     var loaded: [MediaItemID: Track] = [:]
     for entry in viewModel.snapshot.queue.entries {
       guard !Task.isCancelled else { return }
@@ -478,21 +482,48 @@ struct QueueView: View {
       }
     }
     guard !Task.isCancelled else { return }
-    tracks = loaded
 
-    let requiredArtistIDs = Set(loaded.values.flatMap(\.artistIDs))
+    var loadedArtistNames: [ArtistID: String] = [:]
     do {
-      let loadedArtistNames = try await QueueArtistNameLoader.load(
-        artistIDs: requiredArtistIDs,
+      loadedArtistNames = try await QueueArtistNameLoader.load(
+        for: Array(loaded.values),
         from: library
       )
-      guard !Task.isCancelled else { return }
-      artistNames = loadedArtistNames
     } catch is CancellationError {
       return
     } catch {
-      artistNames = [:]
+      loadedArtistNames = [:]
     }
+
+    guard !Task.isCancelled, queueKey == expectedQueueKey else { return }
+    tracks = loaded
+    artistNames = loadedArtistNames
+  }
+
+  private func observeLibraryChanges() async {
+    guard let library else { return }
+    let stream = await library.makeChangeStream()
+    for await change in stream {
+      guard !Task.isCancelled else { return }
+      guard shouldReloadQueue(for: change) else { continue }
+      await loadTracks()
+    }
+  }
+
+  private func shouldReloadQueue(for change: LibraryChange) -> Bool {
+    let queueIDs = Set(viewModel.snapshot.queue.entries.map(\.itemID))
+    guard !queueIDs.isEmpty else { return false }
+    if !queueIDs.isDisjoint(with: change.affectedIDs.trackIDs) {
+      return true
+    }
+
+    let artworkIDs = Set(tracks.values.compactMap(\.artworkID))
+    if !artworkIDs.isDisjoint(with: change.affectedIDs.artworkIDs) {
+      return true
+    }
+
+    let artistIDs = Set(tracks.values.flatMap(\.artistIDs))
+    return !artistIDs.isDisjoint(with: change.affectedIDs.artistIDs)
   }
 
 }

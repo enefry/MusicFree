@@ -45,6 +45,69 @@ func recordMappersPersistNumberingAndAlbumType() throws {
     #expect(try LibraryRecordMapper.track(from: trackRecord) == track)
 }
 
+@Test("artwork reference checks include tracks, collections, and playlists")
+func artworkReferenceChecksIncludeAllLibraryOwners() async throws {
+    let store = try LibraryPersistenceStore(configuration: .inMemory)
+    let library = SwiftDataLibraryRepository(store: store)
+    let playlistRepository = SwiftDataPlaylistRepository(store: store)
+    let trackArtworkID = ArtworkID("artwork-track-owner")
+    let albumArtworkID = ArtworkID("artwork-album-owner")
+    let artistArtworkID = ArtworkID("artwork-artist-owner")
+    let playlistArtworkID = ArtworkID("artwork-playlist-owner")
+    let orphanArtworkID = ArtworkID("artwork-no-owner")
+    let playlistArtworkOwnerID = MediaItemID(
+        sourceID: .local,
+        externalID: "playlist-artwork-owner"
+    )
+
+    try await library.apply(try LibraryTransaction(
+        idempotencyKey: "artwork-owner-references",
+        mutations: [
+            .upsert(.artwork(ArtworkReference(id: trackArtworkID))),
+            .upsert(.artwork(ArtworkReference(id: albumArtworkID))),
+            .upsert(.artwork(ArtworkReference(id: artistArtworkID))),
+            .upsert(.artwork(ArtworkReference(id: playlistArtworkID))),
+            .upsert(.artwork(ArtworkReference(id: orphanArtworkID))),
+            .upsert(.album(Album(
+                id: AlbumID("artwork-owner-album"),
+                title: "Album",
+                artwork: ArtworkReference(id: albumArtworkID)
+            ))),
+            .upsert(.artist(Artist(
+                id: ArtistID("artwork-owner-artist"),
+                name: "Artist",
+                artwork: ArtworkReference(id: artistArtworkID)
+            ))),
+            .upsert(.track(Track(
+                id: MediaItemID(sourceID: .local, externalID: "artwork-owner-track"),
+                title: "Track",
+                albumID: AlbumID("artwork-owner-album"),
+                artistIDs: [ArtistID("artwork-owner-artist")],
+                artwork: ArtworkReference(id: trackArtworkID)
+            ))),
+            // Keep the playlist artwork record alive until the playlist is
+            // created; the transaction prunes unreferenced artwork records.
+            .upsert(.track(Track(
+                id: playlistArtworkOwnerID,
+                title: "Playlist artwork owner",
+                artwork: ArtworkReference(id: playlistArtworkID)
+            )))
+        ]
+    ))
+    _ = try await playlistRepository.create(PlaylistDraft(
+        name: "Playlist",
+        artworkID: playlistArtworkID
+    ))
+    try await library.remove([playlistArtworkOwnerID])
+
+    #expect(try await library.isArtworkReferenced(trackArtworkID))
+    #expect(try await library.isArtworkReferenced(albumArtworkID))
+    #expect(try await library.isArtworkReferenced(artistArtworkID))
+    #expect(try await library.isArtworkReferenced(playlistArtworkID))
+    #expect(!(try await library.isArtworkReferenced(orphanArtworkID)))
+    await store.close()
+}
+
 @Test("library persistence round trips and paginates with stable ordering")
 func libraryPersistenceRoundTripAndPagination() async throws {
     let directory = try makeTemporaryDirectory()
@@ -87,6 +150,183 @@ func libraryPersistenceRoundTripAndPagination() async throws {
     #expect(try await library.album(id: AlbumID("album-1"))?.title == "Album")
     #expect(try await library.artist(id: ArtistID("artist-1"))?.name == "Artist")
     await reopenedStore.close()
+}
+
+@Test("relation mutations preserve track numbering and metadata overrides")
+func relationMutationsPreserveTrackMetadata() async throws {
+    let store = try LibraryPersistenceStore(configuration: .inMemory)
+    let library = SwiftDataLibraryRepository(store: store)
+    let itemID = MediaItemID(sourceID: .local, externalID: "relation-metadata-track")
+    let albumID = AlbumID("relation-metadata-album")
+    let artistID = ArtistID("relation-metadata-artist")
+    let genreID = GenreID("relation-metadata-genre")
+    let artworkID = ArtworkID("relation-metadata-artwork")
+    let track = Track(
+        id: itemID,
+        title: "Relation Metadata",
+        trackNumber: 7,
+        discNumber: 3,
+        fileName: "relation.mp3",
+        technicalInfo: nil,
+        year: 2024,
+        comment: "kept",
+        lyrics: TrackLyrics(rawText: "line"),
+        artwork: ArtworkReference(id: artworkID)
+    )
+
+    try await library.apply(try LibraryTransaction(
+        idempotencyKey: "relation-metadata",
+        mutations: [
+            .upsert(.album(Album(id: albumID, title: "Album"))),
+            .upsert(.artist(Artist(id: artistID, name: "Artist"))),
+            .upsert(.genre(Genre(id: genreID, name: "Genre"))),
+            .upsert(.artwork(ArtworkReference(id: artworkID))),
+            .upsert(.track(track)),
+            .relation(.setAlbum(trackID: itemID, albumID: albumID)),
+            .relation(.setArtists(trackID: itemID, artistIDs: [artistID])),
+            .relation(.setGenres(trackID: itemID, genreIDs: [genreID])),
+            .relation(.setArtwork(trackID: itemID, artworkID: artworkID)),
+        ]
+    ))
+
+    #expect(try await library.track(id: itemID) == Track(
+        id: itemID,
+        title: "Relation Metadata",
+        albumID: albumID,
+        artistIDs: [artistID],
+        genreIDs: [genreID],
+        trackNumber: 7,
+        discNumber: 3,
+        fileName: "relation.mp3",
+        year: 2024,
+        comment: "kept",
+        lyrics: TrackLyrics(rawText: "line"),
+        artwork: ArtworkReference(id: artworkID)
+    ))
+    await store.close()
+}
+
+@Test("source-aware artist browsing includes album artists")
+func sourceAwareArtistBrowsingIncludesAlbumArtists() async throws {
+    let store = try LibraryPersistenceStore(configuration: .inMemory)
+    let library = SwiftDataLibraryRepository(store: store)
+    let itemID = MediaItemID(sourceID: .local, externalID: "album-artist-source")
+    let albumID = AlbumID("album-artist-source-album")
+    let trackArtistID = ArtistID("album-artist-source-track-artist")
+    let albumArtistID = ArtistID("album-artist-source-album-artist")
+
+    try await library.apply(try LibraryTransaction(
+        idempotencyKey: "album-artist-source",
+        mutations: [
+            .upsert(.album(Album(
+                id: albumID,
+                title: "Album",
+                artistIDs: [albumArtistID]
+            ))),
+            .upsert(.artist(Artist(id: trackArtistID, name: "Track Artist"))),
+            .upsert(.artist(Artist(id: albumArtistID, name: "Album Artist"))),
+            .upsert(.track(Track(
+                id: itemID,
+                title: "Track",
+                albumID: albumID,
+                artistIDs: [trackArtistID]
+            )))
+        ]
+    ))
+
+    let localArtists = try await library.artists(
+        matching: ArtistQuery(sourceID: .local),
+        page: try LibraryPageRequest(limit: 10)
+    )
+    let remoteArtists = try await library.artists(
+        matching: ArtistQuery(sourceID: MediaSourceID(rawValue: "remote")),
+        page: try LibraryPageRequest(limit: 10)
+    )
+
+    #expect(Set(localArtists.elements.map(\.id)) == Set([trackArtistID, albumArtistID]))
+    #expect(remoteArtists.elements.isEmpty)
+    await store.close()
+}
+
+@Test("metadata replacement removes no-longer-referenced records atomically")
+func metadataReplacementPrunesOrphanedRecords() async throws {
+    let store = try LibraryPersistenceStore(configuration: .inMemory)
+    let library = SwiftDataLibraryRepository(store: store)
+    let itemID = MediaItemID(sourceID: .local, externalID: "metadata-prune-update")
+    let albumID = AlbumID("metadata-prune-album")
+    let artistID = ArtistID("metadata-prune-artist")
+    let genreID = GenreID("metadata-prune-genre")
+    let artworkID = ArtworkID("metadata-prune-artwork")
+    let initialTrack = Track(
+        id: itemID,
+        title: "Initial",
+        albumID: albumID,
+        artistIDs: [artistID],
+        genreIDs: [genreID],
+        artwork: ArtworkReference(id: artworkID)
+    )
+
+    try await library.apply(try LibraryTransaction(
+        idempotencyKey: "metadata-prune-initial",
+        mutations: [
+            .upsert(.album(Album(id: albumID, title: "Album", artistIDs: [artistID]))),
+            .upsert(.artist(Artist(id: artistID, name: "Artist"))),
+            .upsert(.genre(Genre(id: genreID, name: "Genre"))),
+            .upsert(.artwork(ArtworkReference(id: artworkID))),
+            .upsert(.track(initialTrack)),
+        ]
+    ))
+
+    let changes = library.changes()
+    var iterator = changes.makeAsyncIterator()
+    try await library.apply(try LibraryTransaction(
+        idempotencyKey: "metadata-prune-update",
+        mutations: [.upsert(.track(Track(id: itemID, title: "Updated")))]
+    ))
+
+    #expect(try await library.album(id: albumID) == nil)
+    #expect(try await library.artist(id: artistID) == nil)
+    #expect(try await library.genres(
+        matching: GenreQuery(),
+        page: try LibraryPageRequest(limit: 10)
+    ).elements.isEmpty)
+    do {
+        _ = try await SwiftDataPlaylistRepository(store: store).create(
+            PlaylistDraft(name: "Artwork probe", artworkID: artworkID)
+        )
+        Issue.record("An unreferenced artwork record must be removed")
+    } catch let error as LibraryError {
+        #expect(error == .constraint(.danglingReference))
+    }
+
+    let change = try #require(await iterator.next())
+    #expect(change.categories.contains(.deletions))
+    #expect(change.affectedIDs.albumIDs == [albumID])
+    #expect(change.affectedIDs.artistIDs == [artistID])
+    #expect(change.affectedIDs.genreIDs == [genreID])
+    #expect(change.affectedIDs.artworkIDs == [artworkID])
+    await store.close()
+}
+
+@Test("removing the last track prunes its metadata records")
+func removeLastTrackPrunesMetadataRecords() async throws {
+    let store = try LibraryPersistenceStore(configuration: .inMemory)
+    let library = SwiftDataLibraryRepository(store: store)
+    let values = makeLibraryValues()
+    try await library.apply(try LibraryTransaction(
+        idempotencyKey: "metadata-prune-remove-initial",
+        mutations: values.mutations
+    ))
+
+    try await library.remove(Set(values.tracks.map(\.id)))
+
+    #expect(try await library.album(id: AlbumID("album-1")) == nil)
+    #expect(try await library.artist(id: ArtistID("artist-1")) == nil)
+    #expect(try await library.genres(
+        matching: GenreQuery(),
+        page: try LibraryPageRequest(limit: 10)
+    ).elements.isEmpty)
+    await store.close()
 }
 
 @Test("playlist metadata and ordered entries survive store recreation")
@@ -239,6 +479,23 @@ func libraryTransactionErrorsAndRollback() async throws {
     } catch let error as LibraryError {
         #expect(error == .conflict(.revisionMismatch(expected: .initial, actual: LibraryRevision(1))))
     }
+
+    let enrichedTrack = Track(
+        id: validTrack.id,
+        title: "Enriched",
+        fileName: "enriched.flac",
+        folderPath: "Albums/Live",
+        technicalInfo: MediaTechnicalInfo(fileSizeBytes: 1234),
+        year: 2024,
+        comment: "Comment",
+        lyrics: TrackLyrics(rawText: "[00:01.00]Line")
+    )
+    try await library.apply(try LibraryTransaction(
+        idempotencyKey: "enriched-transaction",
+        mutations: [.upsert(.track(enrichedTrack))]
+    ))
+    let restoredEnrichedTrack = try #require(await library.track(id: validTrack.id))
+    #expect(restoredEnrichedTrack == enrichedTrack)
     await store.close()
 }
 

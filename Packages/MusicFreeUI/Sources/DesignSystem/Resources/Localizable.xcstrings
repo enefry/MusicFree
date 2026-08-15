@@ -9350,6 +9350,47 @@
         }
       }
     },
+    "收藏列表" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Favorites"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "收藏"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Favoris"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Favoriten"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Favoritos"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "お気に入り"
+          }
+        }
+      }
+    },
     "收藏的歌曲会显示在这里。" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -19147,6 +19188,358 @@
             "value" : "デフォルトの再生速度"
           }
         }
+      }
+    },
+    "%d 声道" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "%d channels" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "%d 声道" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "%d canaux" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "%d Kanäle" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "%d canales" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%d チャンネル" } }
+      }
+    },
+    "专辑艺人" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Album artist" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "专辑艺人" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Artiste de l’album" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Album-Interpret" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Artista del álbum" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "アルバムアーティスト" } }
+      }
+    },
+    "位深" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Bit depth" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "位深" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Profondeur de bits" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Bittiefe" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Profundidad de bits" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ビット深度" } }
+      }
+    },
+    "保存后移除当前封面" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Remove current artwork after saving" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "保存后移除当前封面" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Supprimer la pochette actuelle après l’enregistrement" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Aktuelles Cover nach dem Speichern entfernen" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Eliminar la portada actual después de guardar" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "保存後に現在のアートワークを削除" } }
+      }
+    },
+    "可用" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Available" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "可用" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Disponible" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Verfügbar" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Disponible" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "利用可能" } }
+      }
+    },
+    "基本信息" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Basic information" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "基本信息" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Informations de base" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Grundlegende Informationen" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Información básica" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "基本情報" } }
+      }
+    },
+    "声道" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Channels" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "声道" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Canaux" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Kanäle" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Canales" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "チャンネル" } }
+      }
+    },
+    "容器" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Container" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "容器" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Conteneur" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Container" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Contenedor" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "コンテナ" } }
+      }
+    },
+    "已选择新封面" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "New artwork selected" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已选择新封面" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Nouvelle pochette sélectionnée" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Neues Cover ausgewählt" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Nueva portada seleccionada" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "新しいアートワークを選択済み" } }
+      }
+    },
+    "年份" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Year" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "年份" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Année" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Jahr" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Año" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "年" } }
+      }
+    },
+    "当前封面将保留。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Current artwork will be kept." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "当前封面将保留。" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "La pochette actuelle sera conservée." } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Das aktuelle Cover bleibt erhalten." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Se conservará la portada actual." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "現在のアートワークは保持されます。" } }
+      }
+    },
+    "当前版本对相同内容统一跳过导入；替换和保留重复副本尚未接入。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "This version always skips identical content during import; replace and keep-duplicate options are not connected yet." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "当前版本对相同内容统一跳过导入；替换和保留重复副本尚未接入。" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Cette version ignore toujours les contenus identiques lors de l’importation ; les options de remplacement et de conservation des doublons ne sont pas encore disponibles." } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Diese Version überspringt beim Import immer identische Inhalte; Ersetzen und doppelte Kopien behalten sind noch nicht verfügbar." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Esta versión omite siempre el contenido idéntico al importar; las opciones de reemplazar y conservar duplicados aún no están disponibles." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "このバージョンでは同じ内容のインポートを常にスキップします。置き換えと重複コピーの保持にはまだ対応していません。" } }
+      }
+    },
+    "技术详情" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Technical details" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "技术详情" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Détails techniques" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Technische Details" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Detalles técnicos" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "技術詳細" } }
+      }
+    },
+    "支持普通歌词和带时间轴的 LRC 文本。保存后仅覆盖 App 资料库，不会改写原始音频标签。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Supports plain lyrics and timestamped LRC text. Saving only updates the app library and does not rewrite original audio tags." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "支持普通歌词和带时间轴的 LRC 文本。保存后仅覆盖 App 资料库，不会改写原始音频标签。" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Prend en charge les paroles simples et le texte LRC horodaté. L’enregistrement met uniquement à jour la bibliothèque de l’app et ne réécrit pas les balises audio d’origine." } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Unterstützt einfachen Liedtext und zeitcodierten LRC-Text. Beim Speichern wird nur die App-Mediathek aktualisiert, die ursprünglichen Audio-Tags werden nicht überschrieben." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Admite letras simples y texto LRC con marcas de tiempo. Guardar solo actualiza la biblioteca de la app y no sobrescribe las etiquetas de audio originales." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "通常の歌詞とタイムスタンプ付き LRC テキストに対応しています。保存するとアプリのライブラリだけが更新され、元の音声タグは書き換えられません。" } }
+      }
+    },
+    "文件位置" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "File location" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "文件位置" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Emplacement du fichier" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Dateispeicherort" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Ubicación del archivo" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ファイルの場所" } }
+      }
+    },
+    "文件大小" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "File size" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "文件大小" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Taille du fichier" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Dateigröße" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Tamaño del archivo" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ファイルサイズ" } }
+      }
+    },
+    "无歌词" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "No lyrics" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无歌词" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Aucune parole" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Kein Liedtext" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Sin letra" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "歌詞なし" } }
+      }
+    },
+    "无法保存歌曲" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not save song" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法保存歌曲" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Impossible d’enregistrer le morceau" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Titel konnte nicht gespeichert werden" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "No se pudo guardar la canción" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "曲を保存できませんでした" } }
+      }
+    },
+    "无法读取歌曲的艺人、专辑或流派信息，未保存任何修改。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not read the song’s artist, album, or genre information; no changes were saved." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法读取歌曲的艺人、专辑或流派信息，未保存任何修改。" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Impossible de lire les informations d’artiste, d’album ou de genre du morceau ; aucune modification n’a été enregistrée." } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Die Künstler-, Album- oder Genreinformationen des Titels konnten nicht gelesen werden; es wurden keine Änderungen gespeichert." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "No se pudo leer la información de artista, álbum o género de la canción; no se guardó ningún cambio." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "曲のアーティスト、アルバム、ジャンル情報を読み取れないため、変更は保存されませんでした。" } }
+      }
+    },
+    "曲目号" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Track number" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "曲目号" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Numéro de piste" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Titelnummer" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Número de pista" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "トラック番号" } }
+      }
+    },
+    "曲目号、碟片号和年份必须是有效数字。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Track, disc, and year must be valid numbers." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "曲目号、碟片号和年份必须是有效数字。" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Le numéro de piste, le numéro de disque et l’année doivent être des nombres valides." } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Titel-, Disc-Nummer und Jahr müssen gültige Zahlen sein." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "El número de pista, el número de disco y el año deben ser números válidos." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "トラック番号、ディスク番号、年は有効な数値である必要があります。" } }
+      }
+    },
+    "标题" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Title" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "标题" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Titre" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Titel" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Título" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "タイトル" } }
+      }
+    },
+    "标题不能为空。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Title cannot be empty." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "标题不能为空。" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Le titre ne peut pas être vide." } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Der Titel darf nicht leer sein." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "El título no puede estar vacío." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "タイトルを空にすることはできません。" } }
+      }
+    },
+    "歌词偏移 %d 毫秒" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Lyrics offset %d milliseconds" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "歌词偏移 %d 毫秒" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Décalage des paroles de %d ms" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Liedtextversatz %d ms" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Desfase de la letra de %d ms" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "歌詞オフセット %d ミリ秒" } }
+      }
+    },
+    "码率" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Bit rate" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "码率" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Débit binaire" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Bitrate" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Tasa de bits" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ビットレート" } }
+      }
+    },
+    "碟片号" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Disc number" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "碟片号" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Numéro de disque" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Discnummer" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Número de disco" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ディスク番号" } }
+      }
+    },
+    "移除封面" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Remove artwork" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "移除封面" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Supprimer la pochette" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Cover entfernen" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Eliminar portada" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "アートワークを削除" } }
+      }
+    },
+    "编号与年份" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Numbering and year" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "编号与年份" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Numérotation et année" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Nummerierung und Jahr" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Numeración y año" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "番号と年" } }
+      }
+    },
+    "编码" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Codec" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "编码" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Codec" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Codec" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Códec" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "コーデック" } }
+      }
+    },
+    "评论" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Comment" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "评论" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Commentaire" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Kommentar" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Comentario" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "コメント" } }
+      }
+    },
+    "选择封面" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Select artwork" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "选择封面" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Choisir une pochette" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Cover auswählen" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Seleccionar portada" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "アートワークを選択" } }
+      }
+    },
+    "采样率" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Sample rate" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "采样率" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Fréquence d’échantillonnage" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Abtastrate" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Frecuencia de muestreo" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "サンプルレート" } }
       }
     }
   },

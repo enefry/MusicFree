@@ -96,7 +96,8 @@ struct LibrarySearchView: View {
                     artworkServing: artworkServing,
                     enqueueNextCollection: enqueueNextCollection,
                     enqueueCollection: enqueueCollection,
-                    isCollectionQueueActionPending: isCollectionQueueActionPending
+                    isCollectionQueueActionPending: isCollectionQueueActionPending,
+                    compactRoute: compactRoute
                 )
             case .genres:
                 GenresView(

@@ -53,6 +53,11 @@ public final class VLCMetadataReader: @unchecked Sendable, MetadataReading {
         album: metadata.album,
         albumArtist: metadata.albumArtist,
         genre: metadata.genre,
+        comment: metadata.metaDescription,
+        lyrics: firstExtraValue(
+          from: metadata,
+          keys: ["lyrics", "LYRICS", "unsyncedlyrics", "UNSYNCEDLYRICS"]
+        ),
         trackNumber: metadata.trackNumber == 0 ? nil : Int(metadata.trackNumber),
         discNumber: metadata.discNumber == 0 ? nil : Int(metadata.discNumber),
         year: parseYear(metadata.date),
@@ -115,6 +120,15 @@ public final class VLCMetadataReader: @unchecked Sendable, MetadataReading {
       return nil
     }
     return year
+  }
+
+  private func firstExtraValue(from metadata: VLCMedia.MetaData, keys: [String]) -> String? {
+    for key in keys {
+      if let value = metadata.extraValue(forKey: key), !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        return value
+      }
+    }
+    return nil
   }
 
   private func artworkValues(from metadata: VLCMedia.MetaData) -> [RawArtwork] {

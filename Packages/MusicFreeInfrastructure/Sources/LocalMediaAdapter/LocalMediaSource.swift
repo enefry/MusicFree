@@ -21,6 +21,7 @@ public final class LocalMediaSource: MediaSource, @unchecked Sendable {
   public let descriptor: MediaSourceDescriptor
   public let capabilities: MediaSourceCapabilities
 
+  private let importCoordinator: ImportCoordinator
   private let store: ManagedMediaStore
   private let probeReader: any MediaProbing
   private let metadataReader: any MetadataReading
@@ -36,7 +37,9 @@ public final class LocalMediaSource: MediaSource, @unchecked Sendable {
     }
     self.descriptor = descriptor
     self.capabilities = Self.defaultCapabilities
-    self.store = try ManagedMediaStore(configuration: configuration)
+    let importCoordinator = try ImportCoordinatorRegistry.shared.coordinator(for: configuration)
+    self.importCoordinator = importCoordinator
+    self.store = importCoordinator.store
     self.probeReader = probe
     self.metadataReader = metadataReader
   }
@@ -79,6 +82,49 @@ public final class LocalMediaSource: MediaSource, @unchecked Sendable {
     } catch {
       throw Self.mapSourceError(error)
     }
+  }
+
+  /// Stores user-selected artwork in the same managed artwork root used by
+  /// imported embedded covers. The library transaction still owns the public
+  /// reference; this method only writes the bytes.
+  public func writeArtwork(_ data: Data, artworkID: ArtworkID) async throws -> Bool {
+    let acquiredImport = await importCoordinator.maintenanceGate.enterImport()
+    guard acquiredImport else { throw MediaSourceError.cancelled }
+    do {
+      let wasCreated = try await store.writeArtwork(data, artworkID: artworkID).wasCreated
+      await importCoordinator.maintenanceGate.leaveImport()
+      return wasCreated
+    } catch {
+      await importCoordinator.maintenanceGate.leaveImport()
+      throw Self.mapSourceError(error)
+    }
+  }
+
+  /// Starts a content-addressed artwork write and keeps its file reserved
+  /// until the owning library transaction reports its result.
+  public func beginArtworkWrite(
+    _ data: Data,
+    artworkID: ArtworkID
+  ) async throws -> ArtworkWriteReceipt {
+    let acquiredImport = await importCoordinator.maintenanceGate.enterImport()
+    guard acquiredImport else { throw MediaSourceError.cancelled }
+    do {
+      let location = try await store.beginImportedArtworkWrite(data, artworkID: artworkID)
+      return ArtworkWriteReceipt(wasCreated: location.wasCreated) {
+        [store, importCoordinator] committed in
+        await store.finishImportedArtworkWrite(artworkID, committed: committed)
+        await importCoordinator.maintenanceGate.leaveImport()
+      }
+    } catch {
+      await importCoordinator.maintenanceGate.leaveImport()
+      throw Self.mapSourceError(error)
+    }
+  }
+
+  /// Removes an artwork file only when the caller has established that it
+  /// created the file and no committed library transaction owns it yet.
+  public func removeArtwork(_ artworkID: ArtworkID) async {
+    await store.removeArtwork(artworkID)
   }
 
   private static func mapSourceError(_ error: Error) -> Error {

@@ -1,11 +1,11 @@
 # VLCKit capability matrix
 
-Last reviewed: 2026-08-11 (runtime EQ code alignment; physical-device rows remain unverified)
+Last reviewed: 2026-08-15 (P1 metadata/lyrics alignment; physical-device rows remain unverified)
 
 This matrix records what the current source and test evidence justify for the
-fixed `VLCKit-SPM` release `4.0.0-alpha.20260805.1123` (revision
-`818aca0e9cd605c69a3a5670c2ae662b1ca0783e`, checksum
-`a8bd5703c324ed8e7c39241c6d091c56e99f13cf585b42fbeb0d4c6523f9386f`).
+fixed source-control `VLCKit-SPM` release `4.0.0-audio.20260814.3` (revision
+`445372bbff2f516ea672084539df13e5bcff1984`). Source-control pins do not carry
+the binary archive checksum used by an artifact dependency.
 
 Status meanings:
 
@@ -32,7 +32,7 @@ targets. Generated result bundles are intentionally not tracked.
 | Seek | Enabled in `AppContainer` policy | Policy resolver tests and app capability assertion; no hardware seek session | implemented, runtime unverified |
 | Variable rate | Enabled in `AppContainer` policy | Policy resolver tests and app capability assertion; no hardware rate session | implemented, runtime unverified |
 | Volume and mute | Adapter API available | Source-level bounds and mapping; no route/device observation | implemented, runtime unverified |
-| Media probe and audio-track validation | Used by local import/source | `VLCMediaProbe` implementation; no checked-in real media fixture in this review | implemented, runtime unverified |
+| Media probe and audio-track validation | Used by local import/source | `VLCMediaProbe` implementation; no checked-in real media fixture in this review; container format is not exposed by the fixed VLCKit headers | implemented, runtime unverified |
 | Metadata and embedded artwork | Used by local import/source | `VLCMetadataReader` implementation; no physical-device fixture run | implemented, runtime unverified |
 | Runtime EQ | Enabled in `AppContainer` policy | Runtime `VLCAudioEqualizer` descriptor and native presets, band/preamp mapping, clear-on-disable, Core/UI/VLCKit/App tests; no physical-device listening session | implemented, runtime unverified |
 | ReplayGain | Not enabled | `VLCPlaybackEngine.apply` rejects it | off |

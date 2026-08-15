@@ -43,6 +43,13 @@ actor ManagedMediaStore {
   private let preparationInterruptionPoint: ManagedMediaPreparationInterruptionPoint?
   private let preparationFailurePlan: ManagedMediaPreparationFailurePlan?
   private let fileManager = FileManager.default
+  private let contentHasher = ContentHasher()
+  private struct ArtworkImportState {
+    var activeClaims: Int
+    var wasCreatedByImport: Bool
+    var hasCommittedOwner: Bool
+  }
+  private var artworkImportStates: [ArtworkID: ArtworkImportState] = [:]
 
   private var itemsRoot: URL {
     configuration.managedRoot.appendingPathComponent("items", isDirectory: true)
@@ -115,17 +122,13 @@ actor ManagedMediaStore {
     guard Self.isValidContentIdentifier(rawValue) else {
       throw LocalMediaError.invalidItemID
     }
-    let entries = try fileManager.contentsOfDirectory(
-      at: artworkRoot,
-      includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey],
-      options: [.skipsHiddenFiles]
-    )
-    let prefix = rawValue + "."
-    for entry in entries.sorted(by: { $0.path < $1.path }) {
-      guard entry.lastPathComponent.hasPrefix(prefix),
-            try isSafeRegularFile(entry, inside: artworkRoot)
-      else { continue }
-      return entry
+    for candidate in try artworkCandidates(forRawValue: rawValue) {
+      guard try isSafeRegularFile(candidate, inside: artworkRoot),
+            try artworkFileMatchesIdentifier(candidate, rawValue: rawValue)
+      else {
+        throw LocalMediaError.destinationConflict
+      }
+      return candidate
     }
     return nil
   }
@@ -155,6 +158,10 @@ actor ManagedMediaStore {
     guard !fileManager.fileExists(atPath: destination.path) else {
       throw LocalMediaError.destinationConflict
     }
+    let managedRelativePath = try relativePath(
+      for: destination,
+      inside: configuration.managedRoot
+    )
 
     do {
       try fileManager.moveItem(at: stagedURL, to: destination)
@@ -163,7 +170,7 @@ actor ManagedMediaStore {
     }
     return ManagedMediaLocation(
       url: destination,
-      relativePath: try relativePath(for: destination, inside: configuration.managedRoot)
+      relativePath: managedRelativePath
     )
   }
 
@@ -194,12 +201,23 @@ actor ManagedMediaStore {
     guard !data.isEmpty, Self.isValidContentIdentifier(artworkID.rawValue) else {
       throw LocalMediaError.invalidItemID
     }
+    guard data.count <= ArtworkDataLimits.maximumByteCount else {
+      throw LocalMediaError.fileTooLarge
+    }
+    guard artworkDataMatchesIdentifier(data, rawValue: artworkID.rawValue) else {
+      throw LocalMediaError.invalidItemID
+    }
     try fileManager.createDirectory(at: artworkRoot, withIntermediateDirectories: true)
     let destination = artworkRoot.appendingPathComponent(artworkID.rawValue + ".bin")
     guard Self.isContained(destination, in: configuration.managedRoot) else {
       throw LocalMediaError.rootContainmentViolation
     }
     if fileManager.fileExists(atPath: destination.path) {
+      guard try isSafeRegularFile(destination, inside: artworkRoot),
+            try artworkFileMatchesIdentifier(destination, rawValue: artworkID.rawValue)
+      else {
+        throw LocalMediaError.destinationConflict
+      }
       return ManagedArtworkLocation(url: destination, wasCreated: false)
     }
     do {
@@ -210,11 +228,47 @@ actor ManagedMediaStore {
     }
   }
 
+  func beginImportedArtworkWrite(
+    _ data: Data,
+    artworkID: ArtworkID
+  ) throws -> ManagedArtworkLocation {
+    let location = try writeArtwork(data, artworkID: artworkID)
+    var state = artworkImportStates[artworkID] ?? ArtworkImportState(
+      activeClaims: 0,
+      wasCreatedByImport: false,
+      hasCommittedOwner: false
+    )
+    state.activeClaims += 1
+    state.wasCreatedByImport = state.wasCreatedByImport || location.wasCreated
+    artworkImportStates[artworkID] = state
+    return location
+  }
+
+  func finishImportedArtworkWrite(_ artworkID: ArtworkID, committed: Bool) {
+    guard var state = artworkImportStates[artworkID] else { return }
+    state.activeClaims = max(0, state.activeClaims - 1)
+    state.hasCommittedOwner = state.hasCommittedOwner || committed
+    guard state.activeClaims == 0 else {
+      artworkImportStates[artworkID] = state
+      return
+    }
+
+    artworkImportStates[artworkID] = nil
+    if state.wasCreatedByImport && !state.hasCommittedOwner {
+      removeArtwork(artworkID)
+    }
+  }
+
   func removeArtwork(_ artworkID: ArtworkID) {
     guard Self.isValidContentIdentifier(artworkID.rawValue) else { return }
-    let url = artworkRoot.appendingPathComponent(artworkID.rawValue + ".bin")
-    guard Self.isContained(url, in: configuration.managedRoot) else { return }
-    try? fileManager.removeItem(at: url)
+    guard let candidates = try? artworkCandidates(forRawValue: artworkID.rawValue) else {
+      return
+    }
+    for candidate in candidates where
+      (try? isSafeRegularFile(candidate, inside: artworkRoot)) == true
+    {
+      try? fileManager.removeItem(at: candidate)
+    }
   }
 
   func prepareRemoval(of itemIDs: Set<MediaItemID>) throws -> MediaRemovalTransaction {
@@ -315,7 +369,7 @@ actor ManagedMediaStore {
     }
   }
 
-  func pendingRemovals() throws -> [MediaRemovalTransaction] {
+  func pendingRemovals() async throws -> [MediaRemovalTransaction] {
     var transactions: [MediaRemovalTransaction] = []
     for entry in try pendingEntries() {
       guard Self.isContained(entry, in: pendingRoot),
@@ -331,7 +385,7 @@ actor ManagedMediaStore {
         try validatePendingManifest(manifest, transactionRoot: entry)
         transactions.append(manifest.transaction)
       } catch {
-        repairMalformedPendingEntry(entry)
+        await repairMalformedPendingEntry(entry)
         continue
       }
     }
@@ -549,7 +603,7 @@ actor ManagedMediaStore {
     ).sorted(by: { $0.path < $1.path })
   }
 
-  private func repairMalformedPendingEntry(_ transactionRoot: URL) {
+  private func repairMalformedPendingEntry(_ transactionRoot: URL) async {
     guard Self.isContained(transactionRoot, in: pendingRoot) else { return }
     if let transactionID = UUID(uuidString: transactionRoot.lastPathComponent),
        markerExists(transactionID: transactionID, in: committedRoot)
@@ -596,6 +650,15 @@ actor ManagedMediaStore {
       guard candidateCounts[contentID] == 1,
             !fileManager.fileExists(atPath: destination.path)
       else {
+        continue
+      }
+      guard let contentHash = try? await contentHasher.hash(fileAt: source),
+            contentHash.caseInsensitiveCompare(
+              String(contentID.dropFirst("sha256-".count))
+            ) == .orderedSame
+      else {
+        // A malformed manifest is not permission to trust a filename. Only
+        // restore bytes whose content still matches their content address.
         continue
       }
       let existingManagedURL: URL?
@@ -708,6 +771,65 @@ actor ManagedMediaStore {
     return values.isRegularFile == true && values.isSymbolicLink != true
   }
 
+  private func artworkFileMatchesIdentifier(_ url: URL, rawValue: String) throws -> Bool {
+    let values = try url.resourceValues(forKeys: [.fileSizeKey])
+    guard let fileSize = values.fileSize,
+          fileSize <= ArtworkDataLimits.maximumByteCount,
+          let data = try readArtworkData(
+            at: url,
+            maximumByteCount: ArtworkDataLimits.maximumByteCount
+          )
+    else {
+      return false
+    }
+    return artworkDataMatchesIdentifier(data, rawValue: rawValue)
+  }
+
+  private func artworkCandidates(forRawValue rawValue: String) throws -> [URL] {
+    let prefix = rawValue + "."
+    return try fileManager.contentsOfDirectory(
+      at: artworkRoot,
+      includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey],
+      options: [.skipsHiddenFiles]
+    )
+    .filter { candidate in
+      candidate.lastPathComponent.hasPrefix(prefix)
+        && candidate.deletingPathExtension().lastPathComponent == rawValue
+        && Self.isSafeArtworkExtension(candidate.pathExtension)
+    }
+    .sorted {
+      let lhsIsCanonical = $0.pathExtension.caseInsensitiveCompare("bin") == .orderedSame
+      let rhsIsCanonical = $1.pathExtension.caseInsensitiveCompare("bin") == .orderedSame
+      if lhsIsCanonical != rhsIsCanonical {
+        return lhsIsCanonical
+      }
+      return $0.lastPathComponent < $1.lastPathComponent
+    }
+  }
+
+  private func readArtworkData(at url: URL, maximumByteCount: Int) throws -> Data? {
+    let handle = try FileHandle(forReadingFrom: url)
+    defer { try? handle.close() }
+
+    var data = Data()
+    while true {
+      let remaining = maximumByteCount - data.count
+      let readCount = remaining == 0 ? 1 : remaining + 1
+      guard let chunk = try handle.read(upToCount: readCount), !chunk.isEmpty else {
+        return data
+      }
+      guard chunk.count <= remaining else {
+        return nil
+      }
+      data.append(chunk)
+    }
+  }
+
+  private func artworkDataMatchesIdentifier(_ data: Data, rawValue: String) -> Bool {
+    let expectedHash = String(rawValue.dropFirst("sha256-".count))
+    return MusicContentIdentity.sha256Hex(data).caseInsensitiveCompare(expectedHash) == .orderedSame
+  }
+
   private func writeJSON<T: Encodable>(_ value: T, to url: URL) throws {
     guard Self.isContained(url, in: configuration.quarantineRoot) else {
       throw LocalMediaError.rootContainmentViolation
@@ -784,6 +906,14 @@ actor ManagedMediaStore {
       return ""
     }
     return ext
+  }
+
+  private static func isSafeArtworkExtension(_ ext: String) -> Bool {
+    !ext.isEmpty
+      && ext.count <= 16
+      && ext.allSatisfy {
+        $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_")
+      }
   }
 
   private static func isContained(_ url: URL, in root: URL) -> Bool {

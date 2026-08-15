@@ -74,6 +74,7 @@ struct ImportFileEnumerator: Sendable {
       }
 
       guard values.isRegularFile == true else { continue }
+      guard !Self.isLyricsSidecar(url) else { continue }
       if let maximumFileSize = configuration.maximumFileSize,
          let fileSize = values.fileSize,
          Int64(fileSize) > maximumFileSize
@@ -92,6 +93,10 @@ struct ImportFileEnumerator: Sendable {
     }
 
     return files.sorted { $0.url.path < $1.url.path }
+  }
+
+  private static func isLyricsSidecar(_ url: URL) -> Bool {
+    url.pathExtension.caseInsensitiveCompare("lrc") == .orderedSame
   }
 
   private static func relativeFolderPath(for fileURL: URL, root: URL) -> String? {

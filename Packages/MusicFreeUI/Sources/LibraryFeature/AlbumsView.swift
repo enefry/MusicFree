@@ -292,6 +292,7 @@ struct AlbumsView: View {
         do {
             artistNames = try await LibraryArtistNameLoader.load(
                 artistIDs: artistIDs,
+                sourceID: .local,
                 from: viewModel.library
             )
         } catch is CancellationError {

@@ -129,6 +129,7 @@ public protocol LibraryServing: Sendable {
         page: LibraryPageRequest
     ) async throws -> LibraryPage<Track>
     func setFavorite(_ isFavorite: Bool, for itemID: MediaItemID) async throws -> Track
+    func updateMetadata(_ update: TrackMetadataUpdate) async throws -> Track
     func delete(_ itemIDs: Set<MediaItemID>) async throws -> LibraryDeletionResult
     func recoverPendingRemovals() async throws -> LibraryRecoveryResult
     func makeChangeStream() async -> AsyncStream<LibraryChange>
@@ -198,6 +199,10 @@ public extension LibraryServing {
 
     func favorite(_ itemID: MediaItemID, isFavorite: Bool) async throws -> Track {
         try await setFavorite(isFavorite, for: itemID)
+    }
+
+    func updateMetadata(_ update: TrackMetadataUpdate) async throws -> Track {
+        throw AppServiceError.missingDependency("libraryMetadataEditor")
     }
 
     func browseGenres(

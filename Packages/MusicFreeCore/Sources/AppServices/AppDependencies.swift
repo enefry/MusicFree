@@ -12,6 +12,9 @@ public struct AppDependencies {
     public let mediaSources: [any MediaSource]
     public let mediaImporter: (any MediaImporting)?
     public let managedMediaRemover: (any ManagedMediaRemoving)?
+    /// Writes artwork bytes and returns a receipt that keeps a new file
+    /// reserved until the metadata transaction commits or rolls back.
+    public let artworkWriter: (@Sendable (Data, ArtworkID) async throws -> ArtworkWriteReceipt)?
     public let libraryRepository: (any LibraryRepository)?
     public let playlistRepository: (any PlaylistRepository)?
     public let playbackQueueRepository: (any PlaybackQueueRepository)?
@@ -37,6 +40,7 @@ public struct AppDependencies {
         mediaSources: [any MediaSource] = [],
         mediaImporter: (any MediaImporting)? = nil,
         managedMediaRemover: (any ManagedMediaRemoving)? = nil,
+        artworkWriter: (@Sendable (Data, ArtworkID) async throws -> ArtworkWriteReceipt)? = nil,
         libraryRepository: (any LibraryRepository)? = nil,
         playlistRepository: (any PlaylistRepository)? = nil,
         playbackQueueRepository: (any PlaybackQueueRepository)? = nil,
@@ -74,6 +78,7 @@ public struct AppDependencies {
         self.mediaSources = mediaSources
         self.mediaImporter = mediaImporter
         self.managedMediaRemover = managedMediaRemover
+        self.artworkWriter = artworkWriter
         self.libraryRepository = libraryRepository
         self.playlistRepository = playlistRepository
         self.playbackQueueRepository = playbackQueueRepository

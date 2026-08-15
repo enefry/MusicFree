@@ -70,9 +70,19 @@ public final class AppServiceContainer {
             idGenerator: dependencies.idGenerator,
             randomSource: dependencies.randomSource
         )
+        let artworkPruner: (@Sendable () async throws -> Void)?
+        if let storageMaintenance = dependencies.storageMaintenance {
+            artworkPruner = { [storageMaintenance] in
+                _ = try await storageMaintenance.pruneOrphanedArtwork()
+            }
+        } else {
+            artworkPruner = nil
+        }
         let libraryService = LibraryCoordinator(
             repository: dependencies.libraryRepository,
             remover: dependencies.managedMediaRemover,
+            artworkWriter: dependencies.artworkWriter,
+            artworkPruner: artworkPruner,
             queueRepository: dependencies.playbackQueueRepository,
             historyRepository: dependencies.playbackHistoryRepository,
             deletionHandler: { [weak playbackService] itemIDs in

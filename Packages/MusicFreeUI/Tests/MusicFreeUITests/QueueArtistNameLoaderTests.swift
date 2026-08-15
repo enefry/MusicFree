@@ -20,12 +20,17 @@ func queueArtistNamesTraverseEveryPage() async throws {
 
   let names = try await QueueArtistNameLoader.load(
     artistIDs: [requiredID],
+    sourceID: MediaSourceID(rawValue: "remote"),
     from: library
   )
 
   #expect(names == [requiredID: "Required"])
   #expect(library.requests.map(\.cursor) == [nil, LibraryCursor("page-2")])
   #expect(library.requests.allSatisfy { $0.limit == LibraryPageRequest.maximumLimit })
+  #expect(library.sourceIDs == [
+    MediaSourceID(rawValue: "remote"),
+    MediaSourceID(rawValue: "remote")
+  ])
 }
 
 @MainActor
@@ -42,6 +47,7 @@ func queueArtistNamesRejectRepeatedCursor() async {
   do {
     _ = try await QueueArtistNameLoader.load(
       artistIDs: [ArtistID("missing")],
+      sourceID: .local,
       from: library
     )
     Issue.record("Expected a repeated cursor error")
@@ -102,6 +108,7 @@ func queueSubtitlesStayHiddenWithoutResolvedArtists() {
 private final class QueueArtistTestLibrary: LibraryServing {
   var pages: [LibraryPage<Artist>]
   var requests: [LibraryPageRequest] = []
+  var sourceIDs: [MediaSourceID] = []
 
   init(pages: [LibraryPage<Artist>]) {
     self.pages = pages
@@ -128,6 +135,9 @@ private final class QueueArtistTestLibrary: LibraryServing {
     page: LibraryPageRequest
   ) async throws -> LibraryPage<Artist> {
     requests.append(page)
+    if let sourceID = query.sourceID {
+      sourceIDs.append(sourceID)
+    }
     guard !pages.isEmpty else {
       return LibraryPage(elements: [])
     }

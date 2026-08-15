@@ -152,6 +152,10 @@ private struct EmptyLibraryRepository: LibraryRepository {
         nil
     }
 
+    func artwork(id: ArtworkID) async throws -> ArtworkReference? {
+        nil
+    }
+
     func tracks(
         matching query: TrackQuery,
         page: LibraryPageRequest

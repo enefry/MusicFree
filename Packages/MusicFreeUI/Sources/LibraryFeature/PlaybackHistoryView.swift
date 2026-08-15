@@ -129,7 +129,7 @@ struct PlaybackHistoryView: View {
     private func loadArtistNames() async {
         do {
             artistNames = try await LibraryArtistNameLoader.load(
-                artistIDs: Set(viewModel.playbackHistory.flatMap { $0.track.artistIDs }),
+                for: viewModel.playbackHistory.map(\.track),
                 from: viewModel.library
             )
         } catch is CancellationError {

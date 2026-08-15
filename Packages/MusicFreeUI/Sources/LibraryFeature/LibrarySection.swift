@@ -16,7 +16,7 @@ public enum LibrarySection: String, CaseIterable, Hashable, Identifiable, Sendab
     public var title: String {
         switch self {
         case .tracks: return L("歌曲")
-        case .favorites: return L("收藏")
+        case .favorites: return L("收藏列表")
         case .albums: return L("专辑")
         case .artists: return L("艺人")
         case .genres: return L("流派")

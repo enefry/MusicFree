@@ -83,6 +83,18 @@ public actor InMemoryLibraryRepository: LibraryRepository, PlaybackHistoryReposi
         return artistStore[id]
     }
 
+    public func artwork(id: ArtworkID) async throws -> ArtworkReference? {
+        try checkReadFailure()
+        return artworkStore[id]
+    }
+
+    public func isArtworkReferenced(_ artworkID: ArtworkID) async throws -> Bool {
+        try checkReadFailure()
+        return trackStore.values.contains { $0.artworkID == artworkID }
+            || albumStore.values.contains { $0.artworkID == artworkID }
+            || artistStore.values.contains { $0.artworkID == artworkID }
+    }
+
     public func tracks(
         matching query: TrackQuery,
         page: LibraryPageRequest
@@ -127,7 +139,11 @@ public actor InMemoryLibraryRepository: LibraryRepository, PlaybackHistoryReposi
         try checkReadFailure()
         let values = artistStore.values.filter { artist in
             if let sourceID = query.sourceID,
-               !trackStore.values.contains(where: { $0.artistIDs.contains(artist.id) && $0.id.sourceID == sourceID }) {
+               !trackStore.values.contains(where: { track in
+                   guard track.id.sourceID == sourceID else { return false }
+                   if track.artistIDs.contains(artist.id) { return true }
+                   return track.albumID.flatMap { albumStore[$0]?.artistIDs.contains(artist.id) } == true
+               }) {
                 return false
             }
             guard let searchText = query.searchText?.lowercased() else { return true }
@@ -603,9 +619,15 @@ public actor InMemoryLibraryRepository: LibraryRepository, PlaybackHistoryReposi
             albumID: albumID,
             artistIDs: track.artistIDs,
             genreIDs: track.genreIDs,
+            trackNumber: track.trackNumber,
+            discNumber: track.discNumber,
+            fileName: track.fileName,
             folderPath: track.folderPath,
             duration: track.duration,
             technicalInfo: track.technicalInfo,
+            year: track.year,
+            comment: track.comment,
+            lyrics: track.lyrics,
             artwork: track.artwork,
             isFavorite: track.isFavorite,
             statistics: track.statistics
@@ -620,9 +642,15 @@ public actor InMemoryLibraryRepository: LibraryRepository, PlaybackHistoryReposi
             albumID: track.albumID,
             artistIDs: artistIDs,
             genreIDs: track.genreIDs,
+            trackNumber: track.trackNumber,
+            discNumber: track.discNumber,
+            fileName: track.fileName,
             folderPath: track.folderPath,
             duration: track.duration,
             technicalInfo: track.technicalInfo,
+            year: track.year,
+            comment: track.comment,
+            lyrics: track.lyrics,
             artwork: track.artwork,
             isFavorite: track.isFavorite,
             statistics: track.statistics
@@ -637,9 +665,15 @@ public actor InMemoryLibraryRepository: LibraryRepository, PlaybackHistoryReposi
             albumID: track.albumID,
             artistIDs: track.artistIDs,
             genreIDs: genreIDs,
+            trackNumber: track.trackNumber,
+            discNumber: track.discNumber,
+            fileName: track.fileName,
             folderPath: track.folderPath,
             duration: track.duration,
             technicalInfo: track.technicalInfo,
+            year: track.year,
+            comment: track.comment,
+            lyrics: track.lyrics,
             artwork: track.artwork,
             isFavorite: track.isFavorite,
             statistics: track.statistics
@@ -654,9 +688,15 @@ public actor InMemoryLibraryRepository: LibraryRepository, PlaybackHistoryReposi
             albumID: track.albumID,
             artistIDs: track.artistIDs,
             genreIDs: track.genreIDs,
+            trackNumber: track.trackNumber,
+            discNumber: track.discNumber,
+            fileName: track.fileName,
             folderPath: track.folderPath,
             duration: track.duration,
             technicalInfo: track.technicalInfo,
+            year: track.year,
+            comment: track.comment,
+            lyrics: track.lyrics,
             artwork: artworkID.map { ArtworkReference(id: $0) },
             isFavorite: track.isFavorite,
             statistics: track.statistics
@@ -671,9 +711,15 @@ public actor InMemoryLibraryRepository: LibraryRepository, PlaybackHistoryReposi
             albumID: track.albumID,
             artistIDs: track.artistIDs,
             genreIDs: track.genreIDs,
+            trackNumber: track.trackNumber,
+            discNumber: track.discNumber,
+            fileName: track.fileName,
             folderPath: track.folderPath,
             duration: track.duration,
             technicalInfo: track.technicalInfo,
+            year: track.year,
+            comment: track.comment,
+            lyrics: track.lyrics,
             artwork: track.artwork,
             isFavorite: track.isFavorite,
             statistics: statistics

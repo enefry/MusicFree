@@ -70,18 +70,35 @@ fileprivate actor ImportSessionRegistry {
 /// exclusive window. Waiting maintenance has priority so new imports cannot
 /// indefinitely postpone startup pruning.
 actor ImportMaintenanceGate {
+  private struct Waiter {
+    let id: UUID
+    let continuation: CheckedContinuation<Bool, Never>
+  }
+
   private var activeImportCount = 0
   private var maintenanceIsActive = false
-  private var waitingImports: [CheckedContinuation<Void, Never>] = []
-  private var waitingMaintenance: [CheckedContinuation<Void, Never>] = []
+  private var waitingImports: [Waiter] = []
+  private var waitingMaintenance: [Waiter] = []
 
-  func enterImport() async {
+  func enterImport() async -> Bool {
+    guard !Task.isCancelled else { return false }
     if !maintenanceIsActive, waitingMaintenance.isEmpty {
       activeImportCount += 1
-      return
+      return true
     }
-    await withCheckedContinuation { continuation in
-      waitingImports.append(continuation)
+    let waiterID = UUID()
+    return await withTaskCancellationHandler {
+      await withCheckedContinuation { continuation in
+        if Task.isCancelled {
+          continuation.resume(returning: false)
+        } else {
+          waitingImports.append(
+            Waiter(id: waiterID, continuation: continuation)
+          )
+        }
+      }
+    } onCancel: {
+      Task { await self.cancelImportWaiter(waiterID) }
     }
   }
 
@@ -93,23 +110,35 @@ actor ImportMaintenanceGate {
           !waitingMaintenance.isEmpty
     else { return }
     maintenanceIsActive = true
-    waitingMaintenance.removeFirst().resume()
+    waitingMaintenance.removeFirst().continuation.resume(returning: true)
   }
 
-  func enterMaintenance() async {
+  func enterMaintenance() async -> Bool {
+    guard !Task.isCancelled else { return false }
     if activeImportCount == 0, !maintenanceIsActive {
       maintenanceIsActive = true
-      return
+      return true
     }
-    await withCheckedContinuation { continuation in
-      waitingMaintenance.append(continuation)
+    let waiterID = UUID()
+    return await withTaskCancellationHandler {
+      await withCheckedContinuation { continuation in
+        if Task.isCancelled {
+          continuation.resume(returning: false)
+        } else {
+          waitingMaintenance.append(
+            Waiter(id: waiterID, continuation: continuation)
+          )
+        }
+      }
+    } onCancel: {
+      Task { await self.cancelMaintenanceWaiter(waiterID) }
     }
   }
 
   func leaveMaintenance() {
     precondition(maintenanceIsActive)
     if !waitingMaintenance.isEmpty {
-      waitingMaintenance.removeFirst().resume()
+      waitingMaintenance.removeFirst().continuation.resume(returning: true)
       return
     }
 
@@ -117,9 +146,25 @@ actor ImportMaintenanceGate {
     let imports = waitingImports
     waitingImports.removeAll()
     activeImportCount += imports.count
-    for continuation in imports {
-      continuation.resume()
+    for waiter in imports {
+      waiter.continuation.resume(returning: true)
     }
+  }
+
+  private func cancelImportWaiter(_ id: UUID) {
+    guard let index = waitingImports.firstIndex(where: { $0.id == id }) else {
+      return
+    }
+    let waiter = waitingImports.remove(at: index)
+    waiter.continuation.resume(returning: false)
+  }
+
+  private func cancelMaintenanceWaiter(_ id: UUID) {
+    guard let index = waitingMaintenance.firstIndex(where: { $0.id == id }) else {
+      return
+    }
+    let waiter = waitingMaintenance.remove(at: index)
+    waiter.continuation.resume(returning: false)
   }
 }
 
@@ -353,7 +398,26 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
           continuation.finish()
           return
         }
-        await self.coordinator.maintenanceGate.enterImport()
+        let acquiredImport = await self.coordinator.maintenanceGate.enterImport()
+        guard acquiredImport else {
+          await self.finishSession(request.importID, handle: handle)
+          continuation.yield(
+            .cancelled(
+              importID: request.importID,
+              result: MediaImportResult(
+                importID: request.importID,
+                imported: 0,
+                duplicate: 0,
+                skipped: 0,
+                failed: 0,
+                cancelled: 1,
+                status: .cancelled
+              )
+            )
+          )
+          continuation.finish()
+          return
+        }
         await self.run(
           request: request,
           continuation: continuation,
@@ -572,6 +636,7 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
   ) async throws -> ItemOutcome {
     var stagedURL: URL? = staged
     var managedLocation: ManagedMediaLocation?
+    var artworkWriteClaim: ArtworkID?
 
     do {
       // Recheck the library only after acquiring the content lock. A prior
@@ -580,6 +645,15 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
         forExternalID: itemID.externalID
       )
       if let existingManagedURL {
+        // The external ID identifies the source bytes, so an existing managed
+        // path is reusable only when its contents still match that identity.
+        // This check must precede duplicate handling; a corrupt managed file
+        // must not be silently accepted by the skip policy.
+        let managedContentHash = try await hasher.hash(fileAt: existingManagedURL)
+        guard managedContentHash.lowercased() == contentHash.lowercased() else {
+          throw LocalMediaError.destinationConflict
+        }
+
         let existingTrack: Track?
         do {
           existingTrack = try await libraryRepository.track(id: itemID)
@@ -600,13 +674,6 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
           }
         }
 
-        // A previous process can stop after the managed move but before the
-        // library transaction commits. Trust the content identity only after
-        // checking the durable file; never replace a conflicting target.
-        let managedContentHash = try await hasher.hash(fileAt: existingManagedURL)
-        guard managedContentHash.lowercased() == contentHash.lowercased() else {
-          throw LocalMediaError.destinationConflict
-        }
       }
 
       continuation.yield(.probing(importID: request.importID, url: fileURL))
@@ -626,7 +693,11 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
 
       let rawMetadata: RawMediaMetadata
       do {
-        rawMetadata = try await metadataReader.readMetadata(from: resource)
+        let embeddedMetadata = try await metadataReader.readMetadata(from: resource)
+        let sidecarLyrics = try? LocalLyricsReader.readSidecar(for: fileURL)
+        rawMetadata = embeddedMetadata.lyrics == nil
+          ? embeddedMetadata.replacingLyrics(sidecarLyrics ?? nil)
+          : embeddedMetadata
       } catch is CancellationError {
         throw CancellationError()
       } catch {
@@ -635,6 +706,7 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
 
       let normalized = try MetadataNormalizer().normalize(
         fileURL: fileURL,
+        stagedFileURL: staged,
         folderPath: folderPath,
         contentHash: contentHash,
         probe: probeResult,
@@ -652,7 +724,8 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
       if let artworkID = normalized.artworkID,
          let artworkData = normalized.artworkData
       {
-        _ = try await store.writeArtwork(artworkData, artworkID: artworkID)
+        _ = try await store.beginImportedArtworkWrite(artworkData, artworkID: artworkID)
+        artworkWriteClaim = artworkID
       }
 
       do {
@@ -662,19 +735,30 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
       } catch {
         throw LocalMediaError.persistenceFailed
       }
+      if let claim = artworkWriteClaim {
+        await store.finishImportedArtworkWrite(claim, committed: true)
+        artworkWriteClaim = nil
+      }
       await staging.remove(staged)
       stagedURL = nil
       return .imported
     } catch {
+      var recoveryFailed = false
       if let managedLocation, let stagedURL {
         do {
           try await store.moveManagedBack(managedLocation.url, to: stagedURL)
         } catch {
-          throw LocalMediaError.recoveryFailed
+          recoveryFailed = true
         }
       }
       if let stagedURL {
         await staging.remove(stagedURL)
+      }
+      if let artworkWriteClaim {
+        await store.finishImportedArtworkWrite(artworkWriteClaim, committed: false)
+      }
+      if recoveryFailed {
+        throw LocalMediaError.recoveryFailed
       }
       if let error = error as? CancellationError {
         throw error

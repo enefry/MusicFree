@@ -13,11 +13,16 @@ public struct Track: Codable, Equatable, Hashable, Identifiable, Sendable {
     public let trackNumber: Int?
     /// The one-based disc position within a multi-disc release.
     public let discNumber: Int?
+    /// The source file name without exposing an absolute path.
+    public let fileName: String?
     /// A source-provided logical folder, never an absolute filesystem path.
     /// It is nil for individually selected files or sources without folders.
     public let folderPath: String?
     public let duration: Duration?
     public let technicalInfo: MediaTechnicalInfo?
+    public let year: Int?
+    public let comment: String?
+    public let lyrics: TrackLyrics?
     public let artwork: ArtworkReference?
     public let isFavorite: Bool
     public let statistics: PlaybackStatistics
@@ -32,9 +37,13 @@ public struct Track: Codable, Equatable, Hashable, Identifiable, Sendable {
         genreIDs: [GenreID] = [],
         trackNumber: Int? = nil,
         discNumber: Int? = nil,
+        fileName: String? = nil,
         folderPath: String? = nil,
         duration: Duration? = nil,
         technicalInfo: MediaTechnicalInfo? = nil,
+        year: Int? = nil,
+        comment: String? = nil,
+        lyrics: TrackLyrics? = nil,
         artwork: ArtworkReference? = nil,
         isFavorite: Bool = false,
         statistics: PlaybackStatistics = .empty
@@ -48,6 +57,9 @@ public struct Track: Codable, Equatable, Hashable, Identifiable, Sendable {
         if let discNumber {
             precondition(discNumber > 0, "Track.discNumber must be positive")
         }
+        if let year {
+            precondition((1...9_999).contains(year), "Track.year is out of range")
+        }
 
         self.id = id
         self.title = musicDomainRequiredText(title, field: "Track.title")
@@ -57,9 +69,13 @@ public struct Track: Codable, Equatable, Hashable, Identifiable, Sendable {
         self.genreIDs = musicDomainUnique(genreIDs)
         self.trackNumber = trackNumber
         self.discNumber = discNumber
+        self.fileName = Self.normalizedFileName(fileName)
         self.folderPath = Self.normalizedFolderPath(folderPath)
         self.duration = duration
         self.technicalInfo = technicalInfo
+        self.year = year
+        self.comment = musicDomainOptionalText(comment)
+        self.lyrics = lyrics.flatMap { $0.isEmpty ? nil : $0 }
         self.artwork = artwork
         self.isFavorite = isFavorite
         self.statistics = statistics
@@ -86,9 +102,13 @@ public struct Track: Codable, Equatable, Hashable, Identifiable, Sendable {
         case genreIDs
         case trackNumber
         case discNumber
+        case fileName
         case folderPath
         case duration
         case technicalInfo
+        case year
+        case comment
+        case lyrics
         case artwork
         case isFavorite
         case statistics
@@ -100,10 +120,12 @@ public struct Track: Codable, Equatable, Hashable, Identifiable, Sendable {
         let duration = try container.decodeIfPresent(Duration.self, forKey: .duration)
         let trackNumber = try container.decodeIfPresent(Int.self, forKey: .trackNumber)
         let discNumber = try container.decodeIfPresent(Int.self, forKey: .discNumber)
+        let year = try container.decodeIfPresent(Int.self, forKey: .year)
         guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               duration == nil || duration! >= .zero,
               trackNumber == nil || trackNumber! > 0,
-              discNumber == nil || discNumber! > 0
+              discNumber == nil || discNumber! > 0,
+              year == nil || (1...9_999).contains(year!)
         else {
             throw musicDomainDecodingFailure(decoder, field: "Track")
         }
@@ -116,9 +138,13 @@ public struct Track: Codable, Equatable, Hashable, Identifiable, Sendable {
             genreIDs: try container.decodeIfPresent([GenreID].self, forKey: .genreIDs) ?? [],
             trackNumber: trackNumber,
             discNumber: discNumber,
+            fileName: try container.decodeIfPresent(String.self, forKey: .fileName),
             folderPath: try container.decodeIfPresent(String.self, forKey: .folderPath),
             duration: duration,
             technicalInfo: try container.decodeIfPresent(MediaTechnicalInfo.self, forKey: .technicalInfo),
+            year: year,
+            comment: try container.decodeIfPresent(String.self, forKey: .comment),
+            lyrics: try container.decodeIfPresent(TrackLyrics.self, forKey: .lyrics),
             artwork: try container.decodeIfPresent(ArtworkReference.self, forKey: .artwork),
             isFavorite: try container.decodeIfPresent(Bool.self, forKey: .isFavorite) ?? false,
             statistics: try container.decodeIfPresent(PlaybackStatistics.self, forKey: .statistics) ?? .empty
@@ -135,9 +161,13 @@ public struct Track: Codable, Equatable, Hashable, Identifiable, Sendable {
         try container.encode(genreIDs, forKey: .genreIDs)
         try container.encodeIfPresent(trackNumber, forKey: .trackNumber)
         try container.encodeIfPresent(discNumber, forKey: .discNumber)
+        try container.encodeIfPresent(fileName, forKey: .fileName)
         try container.encodeIfPresent(folderPath, forKey: .folderPath)
         try container.encodeIfPresent(duration, forKey: .duration)
         try container.encodeIfPresent(technicalInfo, forKey: .technicalInfo)
+        try container.encodeIfPresent(year, forKey: .year)
+        try container.encodeIfPresent(comment, forKey: .comment)
+        try container.encodeIfPresent(lyrics, forKey: .lyrics)
         try container.encodeIfPresent(artwork, forKey: .artwork)
         try container.encode(isFavorite, forKey: .isFavorite)
         try container.encode(statistics, forKey: .statistics)
@@ -150,6 +180,24 @@ public struct Track: Codable, Equatable, Hashable, Identifiable, Sendable {
               components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." })
         else { return nil }
         return components.joined(separator: "/")
+    }
+
+    private static func normalizedFileName(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty,
+              !normalized.contains("/"),
+              !normalized.contains("\\"),
+              normalized != ".",
+              normalized != ".."
+        else { return nil }
+        return normalized
+    }
+
+    public var relativePath: String? {
+        guard let fileName else { return folderPath }
+        if let folderPath { return "\(folderPath)/\(fileName)" }
+        return fileName
     }
 }
 
