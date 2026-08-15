@@ -579,13 +579,13 @@ struct NowPlayingView: View {
 
             Spacer()
 
-            Button {
-                unavailableFeature = L("当前版本暂不支持 AirPlay 输出。")
-            } label: {
-                Image(systemName: "airplayaudio")
-                    .font(.title3)
-            }
-            .accessibilityLabel(Text("AirPlay"))
+            SystemAudioRoutePicker(
+                accessibilityLabel: L("AirPlay")
+            )
+            .frame(
+                width: MusicFreeLayoutMetrics.minimumHitTarget,
+                height: MusicFreeLayoutMetrics.minimumHitTarget
+            )
 
             Spacer()
 

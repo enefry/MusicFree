@@ -23,6 +23,17 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "スケジュールを追加" } }
       }
     },
+    "AirPlay" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "AirPlay" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "AirPlay" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "AirPlay" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "AirPlay" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "AirPlay" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "AirPlay" } }
+      }
+    },
     "Automatic schedules" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -4907,6 +4918,47 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "完了"
+          }
+        }
+      }
+    },
+    "完成编辑歌曲" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Finish editing songs"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "完成编辑歌曲"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Terminer la modification des morceaux"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bearbeitung der Songs beenden"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Terminar la edición de canciones"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "曲の編集を完了"
           }
         }
       }
@@ -15325,6 +15377,47 @@
         }
       }
     },
+    "编辑歌曲" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Edit songs"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "编辑歌曲"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modifier les morceaux"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Songs bearbeiten"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Editar canciones"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "曲を編集"
+          }
+        }
+      }
+    },
     "编辑歌曲集合" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -17576,6 +17669,88 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "アルバムを選択"
+          }
+        }
+      }
+    },
+    "全选歌曲" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Select all songs"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "全选歌曲"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sélectionner tous les morceaux"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alle Titel auswählen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Seleccionar todas las canciones"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "すべての曲を選択"
+          }
+        }
+      }
+    },
+    "取消全选歌曲" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Deselect all songs"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "取消全选歌曲"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Désélectionner tous les morceaux"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auswahl aller Titel aufheben"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Deseleccionar todas las canciones"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "すべての曲の選択を解除"
           }
         }
       }
