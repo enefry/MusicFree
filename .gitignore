@@ -49,7 +49,6 @@ Docs/UIReview-*/flow-*.png
 .noindex
 dist
 Design/AppStore
-!Design/AppStore/
-!Design/AppStore/**
 Design/screenshot
 APP_STORE_SUBMISSION.md
+
