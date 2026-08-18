@@ -287,7 +287,7 @@ internal actor LibraryCoordinator: LibraryServing {
     }
 
     func updateMetadata(_ update: TrackMetadataUpdate) async throws -> Track {
-        guard let repository else {
+        guard repository != nil else {
             throw AppServiceError.missingDependency("libraryRepository")
         }
         try Task.checkCancellation()
@@ -302,6 +302,17 @@ internal actor LibraryCoordinator: LibraryServing {
         let acquired = await libraryMutationGate.enter()
         guard acquired else { throw CancellationError() }
 
+        return try await updateMetadataWhileHoldingGate(update, releaseGate: true)
+    }
+
+    private func updateMetadataWhileHoldingGate(
+        _ update: TrackMetadataUpdate,
+        releaseGate: Bool,
+        propagateArtworkToAlbumIfMissing: Bool = false
+    ) async throws -> Track {
+        guard let repository else {
+            throw AppServiceError.missingDependency("libraryRepository")
+        }
         var artworkWriteReceipt: ArtworkWriteReceipt?
         do {
             try Task.checkCancellation()
@@ -376,6 +387,7 @@ internal actor LibraryCoordinator: LibraryServing {
             }
 
             var artwork = current.artwork
+            var artworkWasReplaced = false
             var artworkMutation: LibraryMutation?
             switch update.artwork {
             case .keep:
@@ -401,6 +413,7 @@ internal actor LibraryCoordinator: LibraryServing {
                     preferredVariant: .original
                 )
                 artwork = replacement
+                artworkWasReplaced = true
                 artworkMutation = .upsert(.artwork(replacement))
             }
 
@@ -437,12 +450,14 @@ internal actor LibraryCoordinator: LibraryServing {
                     ?? (albumID == current.albumID ? existingAlbum?.sortTitle : nil)
                 let albumReleaseYear = sourceAlbum?.releaseYear
                     ?? (current.albumID == nil ? update.year : nil)
+                let albumArtwork = sourceAlbum?.artwork
+                    ?? (propagateArtworkToAlbumIfMissing && artworkWasReplaced ? artwork : nil)
                 mutations.append(.upsert(.album(Album(
                     id: albumID,
                     title: albumName,
                     sortTitle: albumSortTitle,
                     artistIDs: albumArtistIDs,
-                    artwork: sourceAlbum?.artwork,
+                    artwork: albumArtwork,
                     releaseYear: albumReleaseYear,
                     trackCount: albumTrackCount,
                     albumType: sourceAlbum?.albumType
@@ -489,12 +504,93 @@ internal actor LibraryCoordinator: LibraryServing {
                 await artworkWriteReceipt.finish(committed: true)
             }
             scheduleArtworkPrune()
-            await libraryMutationGate.leave()
+            if releaseGate {
+                await libraryMutationGate.leave()
+            }
             return updated
         } catch {
             if let artworkWriteReceipt {
                 await artworkWriteReceipt.finish(committed: false)
             }
+            if releaseGate {
+                await libraryMutationGate.leave()
+            }
+            throw AppServiceError.mapped(error, operation: "library.metadata")
+        }
+    }
+
+    func supplementMetadata(_ supplement: TrackMetadataSupplement) async throws -> Track {
+        guard let repository else {
+            throw AppServiceError.missingDependency("libraryRepository")
+        }
+        if supplement.artworkData != nil {
+            await waitForArtworkPrune()
+            try Task.checkCancellation()
+        }
+        let acquired = await libraryMutationGate.enter()
+        guard acquired else { throw CancellationError() }
+
+        do {
+            guard let current = try await repository.track(id: supplement.itemID) else {
+                throw AppServiceError.library(.constraint(.danglingReference))
+            }
+
+            let currentArtistNames = try await resolvedArtistNames(
+                for: current.artistIDs,
+                repository: repository
+            ) ?? []
+            let currentAlbum: Album?
+            if let albumID = current.albumID {
+                guard let album = try await repository.album(id: albumID) else {
+                    throw AppServiceError.library(.constraint(.danglingReference))
+                }
+                currentAlbum = album
+            } else {
+                currentAlbum = nil
+            }
+            let currentAlbumArtistNames = try await resolvedArtistNames(
+                for: currentAlbum?.artistIDs ?? [],
+                repository: repository
+            ) ?? []
+            let currentGenreNames = try await resolvedGenreNames(
+                for: current.genreIDs,
+                repository: repository
+            ) ?? []
+
+            let update = TrackMetadataUpdate(
+                itemID: supplement.itemID,
+                title: supplement.title ?? current.title,
+                artistNames: currentArtistNames.isEmpty
+                    ? supplement.artistName.map { [$0] } ?? []
+                    : currentArtistNames,
+                albumArtistNames: currentAlbumArtistNames.isEmpty
+                    ? supplement.albumArtistName.map { [$0] }
+                    : currentAlbumArtistNames,
+                albumName: currentAlbum?.title ?? supplement.albumName,
+                genreNames: currentGenreNames.isEmpty
+                    ? supplement.genreName.map { [$0] } ?? []
+                    : currentGenreNames,
+                trackNumber: current.trackNumber ?? supplement.trackNumber,
+                discNumber: current.discNumber ?? supplement.discNumber,
+                year: current.year ?? supplement.year,
+                comment: current.comment,
+                lyrics: current.lyrics,
+                artwork: current.artwork == nil && supplement.artworkData != nil
+                    ? .replace(supplement.artworkData!)
+                    : .keep
+            )
+
+            // The final read and commit happen while this caller still owns the
+            // mutation gate, so a manual edit cannot be overwritten between
+            // the supplement read and its transaction.
+            let result = try await updateMetadataWhileHoldingGate(
+                update,
+                releaseGate: false,
+                propagateArtworkToAlbumIfMissing: true
+            )
+            await libraryMutationGate.leave()
+            return result
+        } catch {
             await libraryMutationGate.leave()
             throw AppServiceError.mapped(error, operation: "library.metadata")
         }
@@ -693,6 +789,25 @@ internal actor LibraryCoordinator: LibraryServing {
                 return nil
             }
             let name = artist.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { return nil }
+            names.append(name)
+        }
+        return names
+    }
+
+    private func resolvedGenreNames(
+        for genreIDs: [GenreID],
+        repository: any LibraryRepository
+    ) async throws -> [String]? {
+        guard !genreIDs.isEmpty else { return [] }
+        var names: [String] = []
+        names.reserveCapacity(genreIDs.count)
+        for genreID in genreIDs {
+            try Task.checkCancellation()
+            guard let genre = try await repository.genre(id: genreID) else {
+                return nil
+            }
+            let name = genre.name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !name.isEmpty else { return nil }
             names.append(name)
         }

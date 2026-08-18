@@ -714,7 +714,6 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
         idempotencyKey: "local-import-\(request.importID.uuidString)-\(itemID.externalID)"
       )
 
-      continuation.yield(.persisting(importID: request.importID, itemID: normalized.itemID))
       if existingManagedURL == nil {
         managedLocation = try await store.moveToManaged(
           stagedURL: staged,
@@ -735,6 +734,7 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
       } catch {
         throw LocalMediaError.persistenceFailed
       }
+      continuation.yield(.persisting(importID: request.importID, itemID: normalized.itemID))
       if let claim = artworkWriteClaim {
         await store.finishImportedArtworkWrite(claim, committed: true)
         artworkWriteClaim = nil

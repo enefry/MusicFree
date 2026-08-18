@@ -83,6 +83,11 @@ public actor InMemoryLibraryRepository: LibraryRepository, PlaybackHistoryReposi
         return artistStore[id]
     }
 
+    public func genre(id: GenreID) async throws -> Genre? {
+        try checkReadFailure()
+        return genreStore[id]
+    }
+
     public func artwork(id: ArtworkID) async throws -> ArtworkReference? {
         try checkReadFailure()
         return artworkStore[id]

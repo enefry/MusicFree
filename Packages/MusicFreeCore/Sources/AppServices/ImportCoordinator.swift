@@ -3,12 +3,17 @@ import MediaSourceAPI
 
 internal actor ImportCoordinator: ImportServing {
     private let importer: (any MediaImporting)?
+    private let metadataEnrichment: (any MetadataEnrichmentServing)?
     private var sessions: [UUID: ImportSessionSnapshot] = [:]
     private var sessionTokens: [UUID: UUID] = [:]
     private var stateContinuations: [UUID: AsyncStream<ImportSessionSnapshot>.Continuation] = [:]
 
-    init(importer: (any MediaImporting)?) {
+    init(
+        importer: (any MediaImporting)?,
+        metadataEnrichment: (any MetadataEnrichmentServing)? = nil
+    ) {
         self.importer = importer
+        self.metadataEnrichment = metadataEnrichment
     }
 
     func start(_ request: MediaImportRequest)
@@ -88,6 +93,9 @@ internal actor ImportCoordinator: ImportServing {
             for try await event in upstream {
                 guard isActive(importID: importID, sessionToken: sessionToken) else { break }
                 update(with: event, sessionToken: sessionToken)
+                if case .persisting(_, let itemID) = event {
+                    await metadataEnrichment?.enqueue(itemID: itemID)
+                }
                 continuation.yield(event)
                 if event.isTerminal {
                     continuation.finish()

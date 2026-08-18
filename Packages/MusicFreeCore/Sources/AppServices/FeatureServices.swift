@@ -130,6 +130,7 @@ public protocol LibraryServing: Sendable {
     ) async throws -> LibraryPage<Track>
     func setFavorite(_ isFavorite: Bool, for itemID: MediaItemID) async throws -> Track
     func updateMetadata(_ update: TrackMetadataUpdate) async throws -> Track
+    func supplementMetadata(_ supplement: TrackMetadataSupplement) async throws -> Track
     func delete(_ itemIDs: Set<MediaItemID>) async throws -> LibraryDeletionResult
     func recoverPendingRemovals() async throws -> LibraryRecoveryResult
     func makeChangeStream() async -> AsyncStream<LibraryChange>
@@ -205,6 +206,10 @@ public extension LibraryServing {
         throw AppServiceError.missingDependency("libraryMetadataEditor")
     }
 
+    func supplementMetadata(_ supplement: TrackMetadataSupplement) async throws -> Track {
+        throw AppServiceError.missingDependency("libraryMetadataEditor")
+    }
+
     func browseGenres(
         matching _: GenreQuery,
         page _: LibraryPageRequest
@@ -235,6 +240,18 @@ public protocol ImportServing: Sendable {
     func cancel(_ importID: UUID) async
     func state(for importID: UUID) async -> ImportSessionSnapshot?
     func makeStateStream() async -> AsyncStream<ImportSessionSnapshot>
+}
+
+/// Optional catalog metadata enrichment owned by AppServices so import and
+/// settings views do not retain network tasks themselves.
+public protocol MetadataEnrichmentServing: Sendable {
+    func snapshot() async -> MetadataEnrichmentSnapshot
+    func makeSnapshotStream() async -> AsyncStream<MetadataEnrichmentSnapshot>
+    func requestAuthorization() async -> MetadataEnrichmentAuthorizationStatus
+    func setEnabled(_ enabled: Bool) async
+    func enqueue(itemID: MediaItemID) async
+    func startScan() async
+    func cancelScan() async
 }
 
 public extension ImportServing {

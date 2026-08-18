@@ -206,7 +206,8 @@ struct RootScene: View {
                     ),
                     appIconOptions: appIconOptions,
                     appIconProvider: AppAlternateIconProvider(),
-                    sleepTimerServing: services.sleepTimerServing
+                    sleepTimerServing: services.sleepTimerServing,
+                    metadataEnrichment: services.metadataEnrichmentServing
                 )
             }
         }
@@ -305,7 +306,8 @@ struct RootScene: View {
                 ),
                 appIconOptions: appIconOptions,
                 appIconProvider: AppAlternateIconProvider(),
-                sleepTimerServing: services.sleepTimerServing
+                sleepTimerServing: services.sleepTimerServing,
+                metadataEnrichment: services.metadataEnrichmentServing
             )
         }
     }

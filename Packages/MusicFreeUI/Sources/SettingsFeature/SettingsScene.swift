@@ -23,7 +23,8 @@ public struct SettingsScene: View {
         diagnosticsProvider: any SettingsDiagnosticsProviding,
         appIconOptions: [SettingsAppIconOption] = [],
         appIconProvider: any SettingsAppIconProviding = EmptySettingsAppIconProvider(),
-        sleepTimerServing: (any SleepTimerServing)? = nil
+        sleepTimerServing: (any SleepTimerServing)? = nil,
+        metadataEnrichment: (any MetadataEnrichmentServing)? = nil
 
     ) {
         self.releaseInfoProvider = releaseInfoProvider
@@ -33,7 +34,10 @@ public struct SettingsScene: View {
         self.sleepTimerServing = sleepTimerServing
         _appearance = appearance
         _language = language
-        _viewModel = State(initialValue: SettingsViewModel(store: store))
+        _viewModel = State(initialValue: SettingsViewModel(
+            store: store,
+            metadataEnrichment: metadataEnrichment
+        ))
     }
 
     /// The configured entry point used by the App composition root.
@@ -47,7 +51,8 @@ public struct SettingsScene: View {
         diagnosticsProvider: any SettingsDiagnosticsProviding = EmptySettingsDiagnosticsProvider(),
         appIconOptions: [SettingsAppIconOption] = [],
         appIconProvider: any SettingsAppIconProviding = EmptySettingsAppIconProvider(),
-        sleepTimerServing: (any SleepTimerServing)? = nil
+        sleepTimerServing: (any SleepTimerServing)? = nil,
+        metadataEnrichment: (any MetadataEnrichmentServing)? = nil
     ) {
         self.releaseInfoProvider = releaseInfoProvider
         self.diagnosticsProvider = diagnosticsProvider
@@ -60,7 +65,8 @@ public struct SettingsScene: View {
             store: AppServicesSettingsStore(
                 serving: settingsServing,
                 storageMaintenance: storageMaintenance
-            )
+            ),
+            metadataEnrichment: metadataEnrichment
         ))
     }
 
@@ -75,7 +81,8 @@ public struct SettingsScene: View {
             diagnosticsProvider: EmptySettingsDiagnosticsProvider(),
             appIconOptions: [],
             appIconProvider: EmptySettingsAppIconProvider(),
-            sleepTimerServing: nil
+            sleepTimerServing: nil,
+            metadataEnrichment: nil
         )
     }
 

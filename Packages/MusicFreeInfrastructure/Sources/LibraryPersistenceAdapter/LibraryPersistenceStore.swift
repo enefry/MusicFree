@@ -263,6 +263,18 @@ public actor LibraryPersistenceStore {
         return try LibraryRecordMapper.artist(from: record)
     }
 
+    internal func genre(id: GenreID) throws -> Genre? {
+        try ensureOpen()
+        let storageKey = id.rawValue
+        let descriptor = FetchDescriptor<GenreRecord>(
+            predicate: #Predicate { $0.storageKey == storageKey }
+        )
+        guard let record = try fetchFirst(descriptor) else {
+            return nil
+        }
+        return try LibraryRecordMapper.genre(from: record)
+    }
+
     internal func artwork(id: ArtworkID) throws -> ArtworkReference? {
         try ensureOpen()
         let storageKey = PersistenceKey.artwork(id)

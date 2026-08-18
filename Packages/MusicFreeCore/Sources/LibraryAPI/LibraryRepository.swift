@@ -6,6 +6,7 @@ public protocol LibraryRepository: Sendable {
     func track(id: MediaItemID) async throws -> Track?
     func album(id: AlbumID) async throws -> Album?
     func artist(id: ArtistID) async throws -> Artist?
+    func genre(id: GenreID) async throws -> Genre?
     func artwork(id: ArtworkID) async throws -> ArtworkReference?
     /// Returns whether any durable library object still points at the artwork.
     /// This is intentionally distinct from `artwork(id:)`: a record may remain
@@ -48,6 +49,14 @@ public protocol LibraryRepository: Sendable {
 }
 
 public extension LibraryRepository {
+    func genre(id: GenreID) async throws -> Genre? {
+        let page = try await genres(
+            matching: GenreQuery(),
+            page: LibraryPageRequest(limit: LibraryPageRequest.maximumLimit)
+        )
+        return page.elements.first { $0.id == id }
+    }
+
     func isArtworkReferenced(_ artworkID: ArtworkID) async throws -> Bool {
         try await artwork(id: artworkID) != nil
     }

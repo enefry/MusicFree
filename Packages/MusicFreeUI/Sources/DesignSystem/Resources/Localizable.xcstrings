@@ -19541,6 +19541,138 @@
         "es" : { "stringUnit" : { "state" : "translated", "value" : "Frecuencia de muestreo" } },
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "サンプルレート" } }
       }
+    },
+    "使用 MusicKit 补充元数据" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Use MusicKit to enrich metadata" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "使用 MusicKit 补充元数据" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Utiliser MusicKit pour compléter les métadonnées" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "MusicKit zum Ergänzen von Metadaten verwenden" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Usar MusicKit para completar metadatos" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "MusicKitでメタデータを補完" } }
+      }
+    },
+    "重新请求 Apple Music 权限" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Request Apple Music access again" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "重新请求 Apple Music 权限" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Redemander l’accès à Apple Music" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Apple-Music-Zugriff erneut anfordern" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Solicitar de nuevo el acceso a Apple Music" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Apple Musicのアクセスを再要求" } }
+      }
+    },
+    "正在扫描 %d/%d" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Scanning %d/%d" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在扫描 %d/%d" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Analyse %d/%d" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Scannen %d/%d" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Analizando %d/%d" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "スキャン中 %d/%d" } }
+      }
+    },
+    "扫描并补充" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Scan and enrich" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "扫描并补充" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Analyser et compléter" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Scannen und ergänzen" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Analizar y completar" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "スキャンして補完" } }
+      }
+    },
+    "取消扫描" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Cancel scan" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "取消扫描" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Annuler l’analyse" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Scan abbrechen" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Cancelar análisis" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "スキャンをキャンセル" } }
+      }
+    },
+    "开启后需要 Apple Music catalog 权限；只补充元数据和封面。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Apple Music catalog access is required after enabling; only metadata and artwork are added." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "开启后需要 Apple Music catalog 权限；只补充元数据和封面。" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "L’accès au catalogue Apple Music est requis après activation ; seules les métadonnées et la pochette sont ajoutées." } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Nach der Aktivierung ist der Zugriff auf den Apple-Music-Katalog erforderlich; nur Metadaten und Cover werden ergänzt." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Se requiere acceso al catálogo de Apple Music al activarlo; solo se añaden metadatos y portada." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "有効にするとApple Musicカタログへのアクセスが必要です。メタデータとアートワークのみ補完します。" } }
+      }
+    },
+    "Apple Music catalog 可用；本地已有信息不会被覆盖。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Apple Music catalog is available; existing local information will not be overwritten." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Apple Music catalog 可用；本地已有信息不会被覆盖。" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Le catalogue Apple Music est disponible ; les informations locales existantes ne seront pas remplacées." } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Der Apple-Music-Katalog ist verfügbar; vorhandene lokale Informationen werden nicht überschrieben." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "El catálogo de Apple Music está disponible; no se sobrescribirá la información local existente." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Apple Musicカタログを利用できます。既存のローカル情報は上書きしません。" } }
+      }
+    },
+    "Apple Music catalog 权限已拒绝，请在系统设置中允许。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Apple Music catalog access was denied. Allow it in Settings." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Apple Music catalog 权限已拒绝，请在系统设置中允许。" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "L’accès au catalogue Apple Music a été refusé. Autorisez-le dans Réglages." } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Der Zugriff auf den Apple-Music-Katalog wurde abgelehnt. Erlauben Sie ihn in den Einstellungen." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Se denegó el acceso al catálogo de Apple Music. Permítelo en Ajustes." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Apple Musicカタログへのアクセスが拒否されました。設定で許可してください。" } }
+      }
+    },
+    "当前设备限制使用 Apple Music catalog。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "This device restricts Apple Music catalog access." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "当前设备限制使用 Apple Music catalog。" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Cet appareil restreint l’accès au catalogue Apple Music." } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Dieses Gerät beschränkt den Zugriff auf den Apple-Music-Katalog." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Este dispositivo restringe el acceso al catálogo de Apple Music." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "このデバイスではApple Musicカタログの利用が制限されています。" } }
+      }
+    },
+    "当前系统不支持 MusicKit 元数据补充。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "MusicKit metadata enrichment is not supported on this system." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "当前系统不支持 MusicKit 元数据补充。" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "L’enrichissement des métadonnées avec MusicKit n’est pas pris en charge sur ce système." } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Die Anreicherung von Metadaten mit MusicKit wird auf diesem System nicht unterstützt." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Este sistema no admite el enriquecimiento de metadatos con MusicKit." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "このシステムではMusicKitのメタデータ補完に対応していません。" } }
+      }
+    },
+    "扫描未完成，请稍后重试。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "The scan did not finish. Try again later." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "扫描未完成，请稍后重试。" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "L’analyse n’est pas terminée. Réessayez plus tard." } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Der Scan wurde nicht abgeschlossen. Versuchen Sie es später erneut." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "El análisis no terminó. Inténtalo de nuevo más tarde." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "スキャンが完了しませんでした。後でもう一度お試しください。" } }
+      }
+    },
+    "已处理 %d 首，匹配 %d 首，无匹配 %d 首，不确定 %d 首，失败 %d 首。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Processed %d tracks: %d matched, %d not found, %d ambiguous, %d failed." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已处理 %d 首，匹配 %d 首，无匹配 %d 首，不确定 %d 首，失败 %d 首。" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "%d titres traités : %d correspondances, %d introuvables, %d ambigus, %d échecs." } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "%d Titel verarbeitet: %d Treffer, %d nicht gefunden, %d mehrdeutig, %d fehlgeschlagen." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "%d pistas procesadas: %d coincidencias, %d no encontradas, %d ambiguas, %d fallidas." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%d曲を処理：一致 %d曲、未検出 %d曲、候補不明 %d曲、失敗 %d曲。" } }
+      }
     }
   },
   "version" : "1.2"

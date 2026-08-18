@@ -10,15 +10,21 @@ public enum DuplicateImportPolicy: String, Codable, CaseIterable, Equatable, Has
 /// User intent for importing media into the library.
 public struct ImportPreferences: Codable, Equatable, Hashable, Sendable {
     public let duplicatePolicy: DuplicateImportPolicy
+    public let useMusicKitMetadataEnrichment: Bool
 
-    public init(duplicatePolicy: DuplicateImportPolicy = .skipExisting) {
+    public init(
+        duplicatePolicy: DuplicateImportPolicy = .skipExisting,
+        useMusicKitMetadataEnrichment: Bool = false
+    ) {
         self.duplicatePolicy = duplicatePolicy
+        self.useMusicKitMetadataEnrichment = useMusicKitMetadataEnrichment
     }
 
     public static let defaults = Self()
 
     private enum CodingKeys: String, CodingKey {
         case duplicatePolicy
+        case useMusicKitMetadataEnrichment
     }
 
     public init(from decoder: Decoder) throws {
@@ -27,7 +33,18 @@ public struct ImportPreferences: Codable, Equatable, Hashable, Sendable {
             duplicatePolicy: try container.decodeIfPresent(
                 DuplicateImportPolicy.self,
                 forKey: .duplicatePolicy
-            ) ?? .skipExisting
+            ) ?? .skipExisting,
+            useMusicKitMetadataEnrichment: try container.decodeIfPresent(
+                Bool.self,
+                forKey: .useMusicKitMetadataEnrichment
+            ) ?? false
+        )
+    }
+
+    public func settingMusicKitMetadataEnrichment(_ enabled: Bool) -> Self {
+        Self(
+            duplicatePolicy: duplicatePolicy,
+            useMusicKitMetadataEnrichment: enabled
         )
     }
 }

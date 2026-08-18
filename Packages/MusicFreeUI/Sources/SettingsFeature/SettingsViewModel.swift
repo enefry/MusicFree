@@ -1,6 +1,7 @@
 import AppServices
 import DesignSystem
 import Foundation
+import LibraryAPI
 import Observation
 import PlaybackAPI
 import SettingsAPI
@@ -15,6 +16,7 @@ final class SettingsViewModel {
     }
 
     let store: any SettingsFeatureStore
+    private let metadataEnrichment: (any MetadataEnrichmentServing)?
 
     private(set) var settings: AppSettings = .defaults
     private(set) var playbackCapabilities: PlaybackCapabilities = []
@@ -26,6 +28,7 @@ final class SettingsViewModel {
     private(set) var maintenanceState: SettingsMaintenanceState = .idle
     private(set) var lastFailure: SettingsFeatureFailure?
     private(set) var isRefreshingStorage = false
+    private(set) var metadataEnrichmentSnapshot = MetadataEnrichmentSnapshot()
     private(set) var playbackRateDraft: Double?
     private(set) var equalizerPreampDraft: Double?
     var isResetConfirmationPresented = false
@@ -33,6 +36,9 @@ final class SettingsViewModel {
     private(set) var requestedMaintenanceAction: StorageMaintenanceAction?
 
     private var changeObservationTask: Task<Void, Never>?
+    private var metadataObservationTask: Task<Void, Never>?
+    private var metadataActionTask: Task<Void, Never>?
+    private var metadataRuntimeTask: Task<Void, Never>?
     private var operationTask: Task<Void, Never>?
     private var pendingOperation: SettingsOperation?
     private var inFlightOperation: SettingsOperation?
@@ -43,9 +49,15 @@ final class SettingsViewModel {
     private var equalizerBandGainDrafts: [Int: Double] = [:]
     private var storageRefreshTask: Task<Void, Never>?
     private var storageRefreshGeneration: UInt64 = 0
+    private var metadataIntentGeneration: UInt64 = 0
+    private var metadataRuntimeGeneration: UInt64 = 0
 
-    init(store: any SettingsFeatureStore) {
+    init(
+        store: any SettingsFeatureStore,
+        metadataEnrichment: (any MetadataEnrichmentServing)? = nil
+    ) {
         self.store = store
+        self.metadataEnrichment = metadataEnrichment
     }
 
     var isLoading: Bool {
@@ -124,7 +136,11 @@ final class SettingsViewModel {
         await cancelStorageRefresh()
         changeObservationTask?.cancel()
         changeObservationTask = nil
+        metadataObservationTask?.cancel()
+        metadataObservationTask = nil
+        invalidateMetadataTasks()
         await cancelOperations()
+        await waitForMetadataWork()
 
         loadState = .loading
         mutationState = .idle
@@ -139,6 +155,19 @@ final class SettingsViewModel {
             }
         }
 
+        if let metadataEnrichment {
+            metadataEnrichmentSnapshot = await metadataEnrichment.snapshot()
+            let metadataStream = await metadataEnrichment.makeSnapshotStream()
+            metadataObservationTask = Task { @MainActor [weak self] in
+                for await value in metadataStream {
+                    guard !Task.isCancelled else { return }
+                    self?.metadataEnrichmentSnapshot = value
+                }
+            }
+        } else {
+            metadataEnrichmentSnapshot = MetadataEnrichmentSnapshot()
+        }
+
         do {
             let loaded = try await store.load().validated()
             try Task.checkCancellation()
@@ -151,6 +180,7 @@ final class SettingsViewModel {
             equalizerDescriptor = effective.equalizerDescriptor
             systemCapabilities = effective.systemCapabilities
             loadState = .loaded
+            syncMetadataRuntime(for: loaded)
             await refreshStorageUsage()
         } catch is CancellationError {
             changeObservationTask?.cancel()
@@ -241,12 +271,23 @@ final class SettingsViewModel {
     func stopObservingChanges() {
         changeObservationTask?.cancel()
         changeObservationTask = nil
+        metadataObservationTask?.cancel()
+        metadataObservationTask = nil
+        invalidateMetadataTasks()
     }
 
     /// Waits for the current serialized save/reset worker. Tests and previews
     /// can use this to observe a deterministic post-mutation state.
     func waitForPendingWork() async {
         await operationTask?.value
+    }
+
+    /// Waits for authorization and runtime synchronization started by the
+    /// settings feature. This keeps async toggle behavior deterministic in
+    /// tests and when a settings scene is recreated.
+    func waitForMetadataWork() async {
+        await metadataActionTask?.value
+        await metadataRuntimeTask?.value
     }
 
     /// Cancels pending work and restores the last value acknowledged by the
@@ -689,11 +730,136 @@ final class SettingsViewModel {
     func setDuplicateImportPolicy(_ policy: DuplicateImportPolicy) {
         applyEdit { current in
             AppSettings(
-                importPreferences: ImportPreferences(duplicatePolicy: policy),
+                importPreferences: ImportPreferences(
+                    duplicatePolicy: policy,
+                    useMusicKitMetadataEnrichment: current.importPreferences.useMusicKitMetadataEnrichment
+                ),
                 playbackPreferences: current.playbackPreferences,
                 storagePreferences: current.storagePreferences
             )
         }
+    }
+
+    func setMusicKitMetadataEnrichmentEnabled(_ isEnabled: Bool) {
+        guard canEditPlayback else { return }
+        metadataIntentGeneration = nextGeneration(after: metadataIntentGeneration)
+        let generation = metadataIntentGeneration
+        metadataActionTask?.cancel()
+        metadataRuntimeTask?.cancel()
+        metadataRuntimeGeneration = nextGeneration(after: metadataRuntimeGeneration)
+
+        guard let metadataEnrichment else {
+            return
+        }
+
+        if !isEnabled {
+            applyMusicKitMetadataSetting(false)
+            let service = metadataEnrichment
+            metadataActionTask = Task { @MainActor [weak self] in
+                await service.setEnabled(false)
+                guard let self,
+                      self.metadataIntentGeneration == generation
+                else { return }
+                self.metadataEnrichmentSnapshot = await service.snapshot()
+            }
+            return
+        }
+
+        metadataActionTask = Task { @MainActor [weak self] in
+            let authorization = await metadataEnrichment.requestAuthorization()
+            guard !Task.isCancelled,
+                  let self,
+                  self.metadataIntentGeneration == generation
+            else { return }
+            guard authorization == .authorized else {
+                await metadataEnrichment.setEnabled(false)
+                return
+            }
+
+            self.applyMusicKitMetadataSetting(true)
+            await self.waitForPendingWork()
+            guard !Task.isCancelled,
+                  self.metadataIntentGeneration == generation,
+                  self.settings.importPreferences.useMusicKitMetadataEnrichment,
+                  self.mutationState == .saved
+            else {
+                await metadataEnrichment.setEnabled(false)
+                return
+            }
+            await metadataEnrichment.setEnabled(true)
+            self.metadataEnrichmentSnapshot = await metadataEnrichment.snapshot()
+        }
+    }
+
+    func startMusicKitMetadataScan() {
+        guard metadataEnrichmentSnapshot.isEnabled,
+              metadataEnrichmentSnapshot.authorization == .authorized,
+              metadataEnrichmentSnapshot.scan.status != .scanning
+        else { return }
+        Task { [metadataEnrichment] in
+            await metadataEnrichment?.startScan()
+        }
+    }
+
+    func cancelMusicKitMetadataScan() {
+        Task { [metadataEnrichment] in
+            await metadataEnrichment?.cancelScan()
+        }
+    }
+
+    func requestMusicKitAuthorization() {
+        metadataActionTask?.cancel()
+        guard let metadataEnrichment else { return }
+        metadataActionTask = Task { @MainActor [weak self] in
+            _ = await metadataEnrichment.requestAuthorization()
+            guard let self, !Task.isCancelled else { return }
+            self.metadataEnrichmentSnapshot = await metadataEnrichment.snapshot()
+        }
+    }
+
+    private func applyMusicKitMetadataSetting(_ isEnabled: Bool) {
+        applyEdit { current in
+            AppSettings(
+                importPreferences: current.importPreferences.settingMusicKitMetadataEnrichment(isEnabled),
+                playbackPreferences: current.playbackPreferences,
+                storagePreferences: current.storagePreferences
+            )
+        }
+    }
+
+    private func syncMetadataRuntime(for settings: AppSettings) {
+        metadataActionTask?.cancel()
+        metadataActionTask = nil
+        metadataRuntimeTask?.cancel()
+        metadataRuntimeGeneration = nextGeneration(after: metadataRuntimeGeneration)
+        let generation = metadataRuntimeGeneration
+        let requestedValue = settings.importPreferences.useMusicKitMetadataEnrichment
+        guard let metadataEnrichment else { return }
+        let previousTask = metadataRuntimeTask
+        metadataRuntimeTask = Task { @MainActor [weak self] in
+            await previousTask?.value
+            guard !Task.isCancelled else { return }
+            await metadataEnrichment.setEnabled(requestedValue)
+            guard !Task.isCancelled,
+                  let self,
+                  self.metadataRuntimeGeneration == generation
+            else { return }
+            let snapshot = await metadataEnrichment.snapshot()
+            self.metadataEnrichmentSnapshot = snapshot
+            if requestedValue,
+               !snapshot.isEnabled,
+               self.settings.importPreferences.useMusicKitMetadataEnrichment
+            {
+                self.applyMusicKitMetadataSetting(false)
+            }
+        }
+    }
+
+    private func invalidateMetadataTasks() {
+        metadataIntentGeneration = nextGeneration(after: metadataIntentGeneration)
+        metadataRuntimeGeneration = nextGeneration(after: metadataRuntimeGeneration)
+        metadataActionTask?.cancel()
+        metadataRuntimeTask?.cancel()
     }
 
     func setAutomaticallyPruneCache(_ isEnabled: Bool) {
@@ -783,6 +949,7 @@ final class SettingsViewModel {
         settings = .defaults
         mutationState = .saving
         lastFailure = nil
+        syncMetadataRuntime(for: .defaults)
         enqueue(.reset(id: nextOperationID()))
     }
 
@@ -892,6 +1059,7 @@ final class SettingsViewModel {
                     }
                     rollbackToCommitted()
                     mutationState = .failed(failure)
+                    syncMetadataRuntime(for: settings)
                 }
             }
 
@@ -911,6 +1079,7 @@ final class SettingsViewModel {
         inFlightOperation = nil
         failedSaveSettings = nil
         rollbackToCommitted()
+        syncMetadataRuntime(for: settings)
     }
 
     private func cancelStorageRefresh() async {
@@ -962,6 +1131,7 @@ final class SettingsViewModel {
             mutationState = .saved
             lastFailure = nil
             loadState = .loaded
+            syncMetadataRuntime(for: validated)
         } catch {
             lastFailure = makeFailure(from: error)
         }

@@ -22,6 +22,10 @@ public final class SwiftDataLibraryRepository: LibraryRepository, Sendable {
         try await store.artist(id: id)
     }
 
+    public func genre(id: GenreID) async throws -> Genre? {
+        try await store.genre(id: id)
+    }
+
     public func artwork(id: ArtworkID) async throws -> ArtworkReference? {
         try await store.artwork(id: id)
     }

@@ -20,6 +20,8 @@ public struct AppDependencies {
     public let playbackQueueRepository: (any PlaybackQueueRepository)?
     public let playbackHistoryRepository: (any PlaybackHistoryRepository)?
     public let settingsRepository: (any SettingsRepository)?
+    public let metadataEnrichmentProvider: (any MetadataEnrichmentProviding)?
+    public let metadataEnrichmentRecordRepository: (any MetadataEnrichmentRecordRepository)?
     public let storageMaintenance: (any StorageMaintenanceServing)?
     public let playbackEngine: (any PlaybackEngine)?
     public let audioSession: (any AudioSessionManaging)?
@@ -46,6 +48,8 @@ public struct AppDependencies {
         playbackQueueRepository: (any PlaybackQueueRepository)? = nil,
         playbackHistoryRepository: (any PlaybackHistoryRepository)? = nil,
         settingsRepository: (any SettingsRepository)? = nil,
+        metadataEnrichmentProvider: (any MetadataEnrichmentProviding)? = nil,
+        metadataEnrichmentRecordRepository: (any MetadataEnrichmentRecordRepository)? = nil,
         storageMaintenance: (any StorageMaintenanceServing)? = nil,
         playbackEngine: (any PlaybackEngine)? = nil,
         audioSession: (any AudioSessionManaging)? = nil,
@@ -84,6 +88,8 @@ public struct AppDependencies {
         self.playbackQueueRepository = playbackQueueRepository
         self.playbackHistoryRepository = playbackHistoryRepository
         self.settingsRepository = settingsRepository
+        self.metadataEnrichmentProvider = metadataEnrichmentProvider
+        self.metadataEnrichmentRecordRepository = metadataEnrichmentRecordRepository
         self.storageMaintenance = storageMaintenance
         self.playbackEngine = playbackEngine
         self.audioSession = audioSession

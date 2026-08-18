@@ -1,6 +1,8 @@
 @testable import SettingsFeature
 import AppServices
 import Foundation
+import LibraryAPI
+import MusicDomain
 import PlaybackAPI
 import SettingsAPI
 import SystemIntegrationAPI
@@ -144,6 +146,59 @@ private final class SettingsAppIconTestProvider: SettingsAppIconProviding {
     }
 }
 
+private actor SettingsMetadataEnrichmentTestService: MetadataEnrichmentServing {
+    private var current: MetadataEnrichmentSnapshot
+    private let requestedAuthorization: MetadataEnrichmentAuthorizationStatus
+    private var continuation: AsyncStream<MetadataEnrichmentSnapshot>.Continuation?
+    private(set) var enabledValues: [Bool] = []
+
+    init(
+        authorization: MetadataEnrichmentAuthorizationStatus,
+        requestedAuthorization: MetadataEnrichmentAuthorizationStatus? = nil
+    ) {
+        self.current = MetadataEnrichmentSnapshot(authorization: authorization)
+        self.requestedAuthorization = requestedAuthorization ?? authorization
+    }
+
+    func snapshot() async -> MetadataEnrichmentSnapshot {
+        current
+    }
+
+    func makeSnapshotStream() async -> AsyncStream<MetadataEnrichmentSnapshot> {
+        let (stream, continuation) = AsyncStream<MetadataEnrichmentSnapshot>.makeStream()
+        self.continuation = continuation
+        continuation.yield(current)
+        return stream
+    }
+
+    func requestAuthorization() async -> MetadataEnrichmentAuthorizationStatus {
+        current = MetadataEnrichmentSnapshot(
+            authorization: requestedAuthorization,
+            scan: current.scan
+        )
+        continuation?.yield(current)
+        return requestedAuthorization
+    }
+
+    func setEnabled(_ enabled: Bool) async {
+        enabledValues.append(enabled)
+        current = MetadataEnrichmentSnapshot(
+            isEnabled: enabled && current.authorization == .authorized,
+            authorization: current.authorization,
+            scan: current.scan
+        )
+        continuation?.yield(current)
+    }
+
+    func enqueue(itemID: MediaItemID) async {}
+    func startScan() async {}
+    func cancelScan() async {}
+
+    func recordedEnabledValues() -> [Bool] {
+        enabledValues
+    }
+}
+
 @MainActor
 @Test("Settings loads, validates, and serializes a saved playback change")
 func settingsFeatureLoadsAndSaves() async throws {
@@ -165,6 +220,71 @@ func settingsFeatureLoadsAndSaves() async throws {
     #expect(store.savedValues.count == 1)
     #expect(viewModel.settings.playbackPreferences.rate.value == 2.0)
     #expect(viewModel.mutationState == .saved)
+}
+
+@MainActor
+@Test("MusicKit metadata toggle persists only after authorization succeeds")
+func settingsFeatureGatesMusicKitMetadataByAuthorization() async {
+    let store = SettingsFeatureTestStore()
+    let service = SettingsMetadataEnrichmentTestService(
+        authorization: .notDetermined,
+        requestedAuthorization: .authorized
+    )
+    let viewModel = SettingsViewModel(store: store, metadataEnrichment: service)
+
+    await viewModel.load()
+    viewModel.setMusicKitMetadataEnrichmentEnabled(true)
+    await viewModel.waitForMetadataWork()
+    await viewModel.waitForPendingWork()
+
+    #expect(viewModel.settings.importPreferences.useMusicKitMetadataEnrichment)
+    #expect(store.savedValues.last?.importPreferences.useMusicKitMetadataEnrichment == true)
+    #expect(await service.recordedEnabledValues().last == true)
+    #expect((await service.snapshot()).isEnabled)
+}
+
+@MainActor
+@Test("MusicKit metadata toggle remains off when authorization is denied")
+func settingsFeatureDoesNotPersistUnauthorizedMusicKitMetadata() async {
+    let store = SettingsFeatureTestStore()
+    let service = SettingsMetadataEnrichmentTestService(
+        authorization: .denied,
+        requestedAuthorization: .denied
+    )
+    let viewModel = SettingsViewModel(store: store, metadataEnrichment: service)
+
+    await viewModel.load()
+    viewModel.setMusicKitMetadataEnrichmentEnabled(true)
+    await viewModel.waitForMetadataWork()
+    await viewModel.waitForPendingWork()
+
+    #expect(!viewModel.settings.importPreferences.useMusicKitMetadataEnrichment)
+    #expect(store.savedValues.isEmpty)
+    #expect(!(await service.snapshot()).isEnabled)
+}
+
+@MainActor
+@Test("Resetting settings disables MusicKit metadata runtime")
+func settingsFeatureResetDisablesMusicKitMetadataRuntime() async {
+    let initial = AppSettings(
+        importPreferences: ImportPreferences(useMusicKitMetadataEnrichment: true)
+    )
+    let store = SettingsFeatureTestStore(settings: initial)
+    let service = SettingsMetadataEnrichmentTestService(authorization: .authorized)
+    let viewModel = SettingsViewModel(store: store, metadataEnrichment: service)
+
+    await viewModel.load()
+    await viewModel.waitForMetadataWork()
+    #expect((await service.snapshot()).isEnabled)
+
+    viewModel.requestReset()
+    await viewModel.confirmReset()
+    await viewModel.waitForPendingWork()
+    await viewModel.waitForMetadataWork()
+
+    #expect(viewModel.settings == .defaults)
+    #expect(!(await service.snapshot()).isEnabled)
+    #expect(await service.recordedEnabledValues().last == false)
 }
 
 @MainActor

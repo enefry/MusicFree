@@ -33,6 +33,7 @@ public final class AppServiceContainer {
     public let library: any LibraryServing
     public let artwork: any ArtworkServing
     public let importer: any ImportServing
+    public let metadataEnrichment: any MetadataEnrichmentServing
     public let playlists: any PlaylistServing
     public let playback: any PlaybackServing
     public let sleepTimer: any SleepTimerServing
@@ -42,6 +43,7 @@ public final class AppServiceContainer {
     private let libraryCoordinator: LibraryCoordinator
     private let artworkCoordinator: ArtworkCoordinator
     private let importCoordinator: ImportCoordinator
+    private let metadataEnrichmentCoordinator: MetadataEnrichmentCoordinator
     private let playlistCoordinator: PlaylistCoordinator
     private let playbackCoordinator: PlaybackCoordinator
     private let sleepTimerCoordinator: SleepTimerCoordinator
@@ -95,12 +97,23 @@ public final class AppServiceContainer {
             clock: dependencies.clock,
             calendar: dependencies.calendar
         )
+        let metadataEnrichmentService = MetadataEnrichmentCoordinator(
+            provider: dependencies.metadataEnrichmentProvider,
+            recordRepository: dependencies.metadataEnrichmentRecordRepository,
+            libraryRepository: dependencies.libraryRepository,
+            library: libraryService,
+            clock: dependencies.clock
+        )
 
         self.playbackCoordinator = playbackService
         self.sleepTimerCoordinator = sleepTimerService
         self.libraryCoordinator = libraryService
         self.artworkCoordinator = ArtworkCoordinator(sourceResolver: sourceRegistry)
-        self.importCoordinator = ImportCoordinator(importer: dependencies.mediaImporter)
+        self.metadataEnrichmentCoordinator = metadataEnrichmentService
+        self.importCoordinator = ImportCoordinator(
+            importer: dependencies.mediaImporter,
+            metadataEnrichment: metadataEnrichmentService
+        )
         self.playlistCoordinator = PlaylistCoordinator(repository: dependencies.playlistRepository)
         self.settingsCoordinator = SettingsCoordinator(
             repository: dependencies.settingsRepository,
@@ -116,6 +129,7 @@ public final class AppServiceContainer {
         library = libraryCoordinator
         artwork = artworkCoordinator
         importer = importCoordinator
+        metadataEnrichment = metadataEnrichmentCoordinator
         playlists = playlistCoordinator
         playback = playbackCoordinator
         sleepTimer = sleepTimerCoordinator
@@ -126,6 +140,9 @@ public final class AppServiceContainer {
     public var libraryServing: any LibraryServing { library }
     public var artworkServing: any ArtworkServing { artwork }
     public var importServing: any ImportServing { importer }
+    public var metadataEnrichmentServing: any MetadataEnrichmentServing {
+        metadataEnrichment
+    }
     public var playlistServing: any PlaylistServing { playlists }
     public var playbackServing: any PlaybackServing { playback }
     public var playbackAudioServing: any PlaybackAudioServing { playbackCoordinator }
@@ -157,6 +174,11 @@ public final class AppServiceContainer {
                 let recovery = try await self.libraryCoordinator.recoverPendingRemovals()
                 try Task.checkCancellation()
                 let settingsResult = try await self.effectiveSettingsOrDefault()
+                try Task.checkCancellation()
+                await self.metadataEnrichmentCoordinator.setEnabled(
+                    settingsResult.effective.settings.importPreferences
+                        .useMusicKitMetadataEnrichment
+                )
                 try Task.checkCancellation()
                 var fallbacks = settingsResult.fallbacks
                 do {
@@ -244,6 +266,7 @@ public final class AppServiceContainer {
             startAttempt?.task.cancel()
             self.settingsTask?.cancel()
             self.settingsTask = nil
+            await self.metadataEnrichmentCoordinator.setEnabled(false)
             self.sleepTimerCoordinator.stop()
             await self.playbackCoordinator.shutdown()
             if let startAttempt {
@@ -308,6 +331,9 @@ public final class AppServiceContainer {
                 await self.playbackCoordinator.apply(effective)
                 await self.sleepTimerCoordinator.update(
                     preferences: effective.settings.playbackPreferences.sleepTimer
+                )
+                await self.metadataEnrichmentCoordinator.setEnabled(
+                    effective.settings.importPreferences.useMusicKitMetadataEnrichment
                 )
             }
         }

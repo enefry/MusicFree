@@ -416,6 +416,12 @@ final class AppContainer: ObservableObject {
         let playlistRepository = SwiftDataPlaylistRepository(store: store)
         let queueRepository = SwiftDataPlaybackQueueRepository(store: store)
         let historyRepository = SwiftDataPlaybackHistoryRepository(store: store)
+        let metadataEnrichmentRecordRepository = FileMetadataEnrichmentRecordRepository(
+            fileURL: appSupportRoot
+                .appendingPathComponent("Library", isDirectory: true)
+                .appendingPathComponent("metadata-enrichment.json", isDirectory: false)
+        )
+        let metadataEnrichmentProvider = MusicKitMetadataProvider()
 
         let localMediaConfiguration = try LocalMediaConfiguration(
             managedRoot: appSupportRoot.appendingPathComponent("Media", isDirectory: true),
@@ -532,6 +538,8 @@ final class AppContainer: ObservableObject {
             playbackQueueRepository: queueRepository,
             playbackHistoryRepository: historyRepository,
             settingsRepository: settingsRepository,
+            metadataEnrichmentProvider: metadataEnrichmentProvider,
+            metadataEnrichmentRecordRepository: metadataEnrichmentRecordRepository,
             storageMaintenance: storageMaintenance,
             playbackEngine: playbackEngine,
             audioSession: audioSession,
