@@ -4,12 +4,13 @@ import Observation
 import SettingsAPI
 import SwiftUI
 
-public struct SettingsScene: View {
+public struct SettingsScene<AdditionsContent: View>: View {
     private let releaseInfoProvider: any SettingsReleaseInfoProviding
     private let diagnosticsProvider: any SettingsDiagnosticsProviding
     private let appIconOptions: [SettingsAppIconOption]
     private let appIconProvider: any SettingsAppIconProviding
     private let sleepTimerServing: (any SleepTimerServing)?
+    private let additionContent: AdditionsContent?
     @Binding private var appearance: MusicFreeAppearance
     @Binding private var language: MusicFreeLanguage
     @State private var viewModel: SettingsViewModel
@@ -24,8 +25,8 @@ public struct SettingsScene: View {
         appIconOptions: [SettingsAppIconOption] = [],
         appIconProvider: any SettingsAppIconProviding = EmptySettingsAppIconProvider(),
         sleepTimerServing: (any SleepTimerServing)? = nil,
-        metadataEnrichment: (any MetadataEnrichmentServing)? = nil
-
+        metadataEnrichment: (any MetadataEnrichmentServing)? = nil,
+        @ViewBuilder additionContent: () -> AdditionsContent? = { nil }
     ) {
         self.releaseInfoProvider = releaseInfoProvider
         self.diagnosticsProvider = diagnosticsProvider
@@ -38,6 +39,7 @@ public struct SettingsScene: View {
             store: store,
             metadataEnrichment: metadataEnrichment
         ))
+        self.additionContent = additionContent()
     }
 
     /// The configured entry point used by the App composition root.
@@ -52,7 +54,8 @@ public struct SettingsScene: View {
         appIconOptions: [SettingsAppIconOption] = [],
         appIconProvider: any SettingsAppIconProviding = EmptySettingsAppIconProvider(),
         sleepTimerServing: (any SleepTimerServing)? = nil,
-        metadataEnrichment: (any MetadataEnrichmentServing)? = nil
+        metadataEnrichment: (any MetadataEnrichmentServing)? = nil,
+        @ViewBuilder additionContent: () -> AdditionsContent? = { nil }
     ) {
         self.releaseInfoProvider = releaseInfoProvider
         self.diagnosticsProvider = diagnosticsProvider
@@ -68,6 +71,7 @@ public struct SettingsScene: View {
             ),
             metadataEnrichment: metadataEnrichment
         ))
+        self.additionContent = additionContent()
     }
 
     /// Compatibility initializer for package graph checks and previews.
@@ -191,7 +195,7 @@ public struct SettingsScene: View {
                 }
                 .pickerStyle(.menu)
                 .accessibilityIdentifier("settings.language")
-                
+
                 Picker(L("配色"), selection: $appearance) {
                     ForEach(MusicFreeAppearance.allCases) { option in
                         Label(option.title, systemImage: option.systemImage)
@@ -200,7 +204,7 @@ public struct SettingsScene: View {
                 }
                 .pickerStyle(.menu)
                 .accessibilityIdentifier("settings.appearance")
-                
+
                 if !appIconOptions.isEmpty {
                     AppIconSettingsView(
                         options: appIconOptions,
@@ -243,6 +247,11 @@ public struct SettingsScene: View {
                 }
                 .disabled(viewModel.isSaving)
                 .accessibilityIdentifier("settings.reset")
+            }
+            if let additionContent {
+                Section {
+                    additionContent
+                }
             }
         }
         .accessibilityIdentifier("settings.form")

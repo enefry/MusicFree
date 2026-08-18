@@ -22,7 +22,6 @@
 		5B7EE05B352A4B2B28DB14AA /* AppStartupState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30A8AD0B6F1561EE32A00077 /* AppStartupState.swift */; };
 		5CFE3CD22FB08AC14A44076E /* PreferencesPersistenceAdapter in Frameworks */ = {isa = PBXBuildFile; productRef = EC7B3ADAE3B6E9728F315112 /* PreferencesPersistenceAdapter */; };
 		640103AB1BD497534027124D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C9AC50CB549B33A3A1D448F8 /* Assets.xcassets */; };
-		C17A2F1E8B6A4D39A4E1C7B2 /* InfoPlist.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = C17A2F1E8B6A4D39A4E1C7B1 /* InfoPlist.xcstrings */; };
 		6AAE1290799E9C183BBF09EB /* PlayerFeature in Frameworks */ = {isa = PBXBuildFile; productRef = CFC12D4210CCDD324FE57403 /* PlayerFeature */; };
 		70553E6A19D71AF064EA7D4C /* MusicFreeFeatureLoadingUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30B49B75BD3CF769A178671E /* MusicFreeFeatureLoadingUITests.swift */; };
 		75BCE4E34ECF70FA91D7E2DA /* AppServices in Frameworks */ = {isa = PBXBuildFile; productRef = 0C617C68DBC812139DCD5226 /* AppServices */; };
@@ -32,6 +31,7 @@
 		ABDB5200A4CBC27488450525 /* LocalMediaAdapter in Frameworks */ = {isa = PBXBuildFile; productRef = 7E79A62F743BBB8395754DDB /* LocalMediaAdapter */; };
 		B786A49C0A7F73AF8103BDF1 /* AppIcon-music.icon in Resources */ = {isa = PBXBuildFile; fileRef = 53B63B03D481B67FD9679566 /* AppIcon-music.icon */; };
 		B896A2A6D5432117CE13F0E3 /* MusicFreeAppTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58C69628C1C2EF8D74CB8923 /* MusicFreeAppTests.swift */; };
+		C17A2F1E8B6A4D39A4E1C7B2 /* InfoPlist.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = C17A2F1E8B6A4D39A4E1C7B1 /* InfoPlist.xcstrings */; };
 		C3A08F2716415B33DAD6F91C /* AppReleaseInfoProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A6FF3C5EC3AB14E74D9B969 /* AppReleaseInfoProvider.swift */; };
 		C906492ED477F4C7AC15E1E8 /* LibraryFeature in Frameworks */ = {isa = PBXBuildFile; productRef = 874BD6F07A1C5E9A8F72A143 /* LibraryFeature */; };
 		D18DF8072E2F690DE8DC4720 /* RootScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE7A68F4EF5177A2E340F5F9 /* RootScene.swift */; };
@@ -85,9 +85,9 @@
 		A56E2F76B0D847C4E2B9B277 /* AppAlternateIconProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppAlternateIconProvider.swift; sourceTree = "<group>"; };
 		B5F70F3DAFA1328532257D13 /* AppIcon-cicle.icon */ = {isa = PBXFileReference; lastKnownFileType = wrapper.icon; path = "AppIcon-cicle.icon"; sourceTree = "<group>"; };
 		BBFFF5E9262B8D4C1AFC1396 /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = wrapper.icon; path = AppIcon.icon; sourceTree = "<group>"; };
+		C17A2F1E8B6A4D39A4E1C7B1 /* InfoPlist.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = InfoPlist.xcstrings; sourceTree = "<group>"; };
 		C284983DC5EDF1C14143083B /* MusicFreeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicFreeApp.swift; sourceTree = "<group>"; };
 		C9AC50CB549B33A3A1D448F8 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		C17A2F1E8B6A4D39A4E1C7B1 /* InfoPlist.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = InfoPlist.xcstrings; sourceTree = "<group>"; };
 		CB19AC49A5EF8C6C3B46407C /* MusicFreeUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MusicFreeUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		DE0462857625ADCB3BFC93EB /* AppContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppContainer.swift; sourceTree = "<group>"; };
 		EE7A68F4EF5177A2E340F5F9 /* RootScene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootScene.swift; sourceTree = "<group>"; };
@@ -140,6 +140,7 @@
 				3E77732FF49F9495879669C2 /* Packages */,
 				AA65C671C6D7CE3A1324B482 /* Products */,
 				9B2F31BE302F3C3100D6F897 /* Recovered References */,
+				9B096F543033F66700C9D416 /* Frameworks */,
 			);
 			sourceTree = "<group>";
 		};
@@ -150,6 +151,13 @@
 				30B49B75BD3CF769A178671E /* MusicFreeFeatureLoadingUITests.swift */,
 			);
 			path = AppUITests;
+			sourceTree = "<group>";
+		};
+		9B096F543033F66700C9D416 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 		9B2F31BE302F3C3100D6F897 /* Recovered References */ = {

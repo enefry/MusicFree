@@ -207,10 +207,15 @@ struct RootScene: View {
                     appIconOptions: appIconOptions,
                     appIconProvider: AppAlternateIconProvider(),
                     sleepTimerServing: services.sleepTimerServing,
-                    metadataEnrichment: services.metadataEnrichmentServing
+                    metadataEnrichment: services.metadataEnrichmentServing,
+                    additionContent: additionSettingsContent
                 )
             }
         }
+    }
+
+    @ViewBuilder
+    private func additionSettingsContent() -> some View {
     }
 
     private var compactTabSelection: Binding<String> {
@@ -307,7 +312,8 @@ struct RootScene: View {
                 appIconOptions: appIconOptions,
                 appIconProvider: AppAlternateIconProvider(),
                 sleepTimerServing: services.sleepTimerServing,
-                metadataEnrichment: services.metadataEnrichmentServing
+                metadataEnrichment: services.metadataEnrichmentServing,
+                additionContent: additionSettingsContent
             )
         }
     }
