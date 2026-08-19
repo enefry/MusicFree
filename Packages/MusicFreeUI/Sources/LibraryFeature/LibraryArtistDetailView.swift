@@ -7,7 +7,6 @@ import SwiftUI
 /// Artist details are album-first, matching the way Apple Music presents an
 /// artist's catalog. Track loading is kept solely for the two playback actions.
 struct LibraryArtistDetailView: View {
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     let artistID: ArtistID
     let artist: Artist?
     let library: any LibraryServing
@@ -55,13 +54,6 @@ struct LibraryArtistDetailView: View {
                     .padding(.vertical, MusicFreeSpacingTokens.large)
                 }
                 .scrollIndicators(.hidden)
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    if horizontalSizeClass == .compact {
-                        Color.clear
-                            .frame(height: MusicFreeLayoutMetrics.compactTabAccessoryClearance)
-                            .accessibilityHidden(true)
-                    }
-                }
                 .background(MusicFreeColorTokens.backgroundPrimary)
             }
         }

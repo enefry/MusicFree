@@ -29,7 +29,7 @@ public actor MusicKitMetadataProvider: MetadataEnrichmentProviding {
     public func search(
         _ query: MetadataEnrichmentQuery
     ) async throws -> [MetadataEnrichmentCandidate] {
-        guard let term = query.searchTerm else {
+        guard !query.searchTerms.isEmpty else {
             return []
         }
         guard MusicAuthorization.currentStatus == .authorized else {
@@ -37,6 +37,31 @@ public actor MusicKitMetadataProvider: MetadataEnrichmentProviding {
         }
         try Task.checkCancellation()
 
+        var allCandidates: [MetadataEnrichmentCandidate] = []
+        for term in query.searchTerms.prefix(Self.maximumSearchVariants) {
+            let candidates = try await search(term: term, query: query)
+            appendUnique(candidates, to: &allCandidates)
+
+            switch MetadataEnrichmentMatcher.match(query: query, candidates: candidates) {
+            case .matched:
+                // Do not spend extra requests broadening an already reliable
+                // result. This keeps normal enrichment to one MusicKit call.
+                return candidates
+            case .noMatch, .ambiguous:
+                continue
+            }
+        }
+        return allCandidates
+    }
+
+    // The first term is the normal path. At most three fallback terms are
+    // attempted for titles that need progressively broader matching.
+    private static let maximumSearchVariants = 4
+
+    private func search(
+        term: String,
+        query: MetadataEnrichmentQuery
+    ) async throws -> [MetadataEnrichmentCandidate] {
         var request = MusicCatalogSearchRequest(term: term, types: [Song.self])
         request.limit = 10
         // We only consume songs. On affected iOS releases, top-results
@@ -77,6 +102,16 @@ public actor MusicKitMetadataProvider: MetadataEnrichmentProviding {
             )
         }
         return Array(candidates)
+    }
+
+    private func appendUnique(
+        _ candidates: [MetadataEnrichmentCandidate],
+        to allCandidates: inout [MetadataEnrichmentCandidate]
+    ) {
+        var knownIDs = Set(allCandidates.map(\.catalogID))
+        for candidate in candidates where knownIDs.insert(candidate.catalogID).inserted {
+            allCandidates.append(candidate)
+        }
     }
 
     public func artworkData(
@@ -191,15 +226,19 @@ public actor MusicKitMetadataProvider: MetadataEnrichmentProviding {
 
     private static func mapRequestError(_ error: Error) -> MetadataEnrichmentError {
         if let error = error as? MusicDataRequest.Error {
-            if error.status == 429 {
+            let responseStatus = validHTTPStatus(error.originalResponse.urlResponse.statusCode)
+            let serviceStatus = validHTTPStatus(error.status)
+            if responseStatus == 429 || serviceStatus == 429 {
                 return .rateLimited(
                     retryAfterSeconds: Self.retryAfterSeconds(from: error.originalResponse.urlResponse),
-                    httpStatus: error.status
+                    httpStatus: responseStatus ?? serviceStatus
                 )
             }
+            let diagnosticStatus = error.status > 0 ? String(error.status) : "unknown"
+            let diagnosticCode = error.code > 0 ? "_code_\(error.code)" : ""
             return .requestFailed(
-                code: "music_data_\(error.status)",
-                httpStatus: error.status > 0 ? error.status : nil
+                code: "music_data_status_\(diagnosticStatus)\(diagnosticCode)",
+                httpStatus: responseStatus
             )
         }
         if let status = inferredHTTPStatus(from: error) {
@@ -218,6 +257,10 @@ public actor MusicKitMetadataProvider: MetadataEnrichmentProviding {
             return .requestFailed(code: "cancelled", httpStatus: nil)
         }
         return .requestFailed(code: "music_data_request_failed", httpStatus: nil)
+    }
+
+    private static func validHTTPStatus(_ status: Int) -> Int? {
+        (100...599).contains(status) ? status : nil
     }
 
     /// Some MusicKit catalog failures are surfaced as response parsing errors

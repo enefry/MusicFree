@@ -56,10 +56,15 @@ public final class VLCMediaProbe: @unchecked Sendable, MediaProbing {
           isDecodable: true
         )
       }
+      let vlcDuration = duration(from: media.length)
+      let reliableDuration = await VLCMediaDurationReader.reliableDuration(
+        for: resource,
+        fallback: vlcDuration
+      )
       return try MediaProbeResult(
         audioTracks: tracks,
         container: nil,
-        duration: duration(from: media.length),
+        duration: reliableDuration,
         hasVideoTrack: media.tracksInformation.contains { $0.type.rawValue == 1 }
       ).validated()
     } catch let error as MediaSourceError {

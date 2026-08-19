@@ -2,6 +2,7 @@ import LibraryFeature
 import PlayerFeature
 import PlaylistFeature
 import SettingsFeature
+import SwiftUI
 import Testing
 
 @MainActor
@@ -11,6 +12,5 @@ func featureEntryPointsCompile() {
     _ = PlayerScene()
     _ = MiniPlayerView()
     _ = PlaylistScene()
-    _ = SettingsScene()
+    _ = SettingsScene<EmptyView>()
 }
-

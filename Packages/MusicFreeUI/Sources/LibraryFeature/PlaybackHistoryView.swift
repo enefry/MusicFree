@@ -52,7 +52,9 @@ struct PlaybackHistoryView: View {
                     }
                 }
 
-                LibraryPageFooter(section: .recent, viewModel: viewModel)
+                if viewModel.shouldShowPageFooter(for: .recent) {
+                    LibraryPageFooter(section: .recent, viewModel: viewModel)
+                }
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)

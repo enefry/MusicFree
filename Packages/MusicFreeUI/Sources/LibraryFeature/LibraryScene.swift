@@ -315,6 +315,9 @@ public struct LibraryScene: View {
                 kind: .album(albumID),
                 title: album?.title,
                 album: album,
+                onAlbumUpdated: { updated in
+                    resolvedAlbums[updated.id] = updated
+                },
                 library: viewModel.library,
                 playTracks: playTracks,
                 playTrack: playTrack,
@@ -353,6 +356,7 @@ public struct LibraryScene: View {
                 kind: .genre(genreID),
                 title: viewModel.genres.first(where: { $0.id == genreID })?.name,
                 album: nil,
+                onAlbumUpdated: nil,
                 library: viewModel.library,
                 playTracks: playTracks,
                 playTrack: playTrack,

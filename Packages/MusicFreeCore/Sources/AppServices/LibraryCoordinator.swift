@@ -305,6 +305,72 @@ internal actor LibraryCoordinator: LibraryServing {
         return try await updateMetadataWhileHoldingGate(update, releaseGate: true)
     }
 
+    func updateAlbumMetadata(_ update: AlbumMetadataUpdate) async throws -> Album {
+        guard let repository else {
+            throw AppServiceError.missingDependency("libraryRepository")
+        }
+        try Task.checkCancellation()
+        guard !update.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw AppServiceError.invalidRequest(operation: "library.albumMetadata.title")
+        }
+        guard update.releaseYear == nil || (1...9_999).contains(update.releaseYear!) else {
+            throw AppServiceError.invalidRequest(operation: "library.albumMetadata.year")
+        }
+
+        let acquired = await libraryMutationGate.enter()
+        guard acquired else { throw CancellationError() }
+
+        do {
+            try Task.checkCancellation()
+            guard let current = try await repository.album(id: update.albumID) else {
+                throw AppServiceError.library(.constraint(.danglingReference))
+            }
+
+            let artistNames = update.artistNames ?? []
+            let artistIDs = artistNames.map(Self.artistID)
+            var mutations: [LibraryMutation] = []
+            for (artistID, artistName) in zip(artistIDs, artistNames) {
+                mutations.append(.upsert(.artist(Artist(id: artistID, name: artistName))))
+            }
+
+            let updatedSortTitle: String?
+            if let currentSortTitle = current.sortTitle {
+                updatedSortTitle = currentSortTitle == current.title
+                    ? update.title
+                    : currentSortTitle
+            } else {
+                updatedSortTitle = nil
+            }
+
+            let updated = Album(
+                id: current.id,
+                title: update.title,
+                sortTitle: updatedSortTitle,
+                artistIDs: artistIDs,
+                artwork: current.artwork,
+                releaseYear: update.releaseYear,
+                trackCount: current.trackCount,
+                albumType: current.albumType
+            )
+            mutations.append(.upsert(.album(updated)))
+
+            let transaction = try LibraryTransaction(
+                idempotencyKey: Self.stableKey(
+                    prefix: "album-metadata",
+                    albumID: update.albumID
+                ) + "." + UUID().uuidString,
+                mutations: mutations
+            )
+            try Task.checkCancellation()
+            try await repository.apply(transaction)
+            await libraryMutationGate.leave()
+            return updated
+        } catch {
+            await libraryMutationGate.leave()
+            throw AppServiceError.mapped(error, operation: "library.albumMetadata")
+        }
+    }
+
     private func updateMetadataWhileHoldingGate(
         _ update: TrackMetadataUpdate,
         releaseGate: Bool,
@@ -574,7 +640,7 @@ internal actor LibraryCoordinator: LibraryServing {
                 discNumber: current.discNumber ?? supplement.discNumber,
                 year: current.year ?? supplement.year,
                 comment: current.comment,
-                lyrics: current.lyrics,
+                lyrics: supplement.lyrics ?? current.lyrics,
                 artwork: current.artwork == nil && supplement.artworkData != nil
                     ? .replace(supplement.artworkData!)
                     : .keep
@@ -902,6 +968,15 @@ internal actor LibraryCoordinator: LibraryServing {
     private static func stableKey(prefix: String, itemID: MediaItemID) -> String {
         var hash: UInt64 = 14_695_981_039_346_656_037
         for byte in "\(itemID.sourceID.rawValue):\(itemID.externalID)".utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 1_099_511_628_211
+        }
+        return "app.\(prefix).\(String(hash, radix: 16))"
+    }
+
+    private static func stableKey(prefix: String, albumID: AlbumID) -> String {
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        for byte in albumID.rawValue.utf8 {
             hash ^= UInt64(byte)
             hash &*= 1_099_511_628_211
         }

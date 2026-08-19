@@ -53,7 +53,8 @@ internal enum VLCPlaybackEventMapper {
 
   static func events(
     for event: VLCPlaybackDelegateEvent,
-    stopWasRequested: Bool
+    stopWasRequested: Bool,
+    playbackStarted: Bool
   ) -> [PlaybackEvent] {
     switch event {
     case .state(let generation, let itemID, let code):
@@ -71,8 +72,10 @@ internal enum VLCPlaybackEventMapper {
             error: .engineFailure(code: "vlc_error")
           )
         )
-      } else if code == VLCPlaybackStateCode.stopped,
-                !stopWasRequested
+      } else if (code == VLCPlaybackStateCode.stopping
+                 || code == VLCPlaybackStateCode.stopped),
+                !stopWasRequested,
+                playbackStarted
       {
         mapped.append(
           .ended(

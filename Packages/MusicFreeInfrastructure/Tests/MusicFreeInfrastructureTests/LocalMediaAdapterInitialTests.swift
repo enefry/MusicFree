@@ -8,6 +8,25 @@ import Testing
 @testable import LocalMediaAdapter
 
 struct LocalMediaAdapterInitialTests {
+  @Test("Metadata normalization prefers the probed media duration")
+  func metadataNormalizationPrefersProbedDuration() throws {
+    let normalized = try MetadataNormalizer().normalize(
+      fileURL: URL(fileURLWithPath: "/fixture/duration.m4a"),
+      contentHash: String(repeating: "d", count: 64),
+      probe: MediaProbeResult(
+        audioTracks: [ProbedAudioTrack(index: 0, codec: "aac")],
+        duration: .seconds(222)
+      ),
+      metadata: RawMediaMetadata(
+        title: "Duration",
+        duration: .seconds(12)
+      )
+    )
+
+    #expect(normalized.track.duration == .seconds(222))
+    #expect(normalized.track.technicalInfo?.duration == .seconds(222))
+  }
+
   @Test("Metadata normalization preserves positive track and disc numbers")
   func metadataNormalizationPreservesNumbering() throws {
     let normalizer = MetadataNormalizer()

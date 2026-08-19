@@ -493,6 +493,32 @@ func nowPlayingArtistSubtitleRequiresArtistMetadata() {
   #expect(NowPlayingHeaderMetadata.artistSubtitle(" \n ") == nil)
 }
 
+@Test("Now Playing normalizes empty titles before rendering")
+func nowPlayingTitleRequiresVisibleMetadata() {
+  #expect(NowPlayingHeaderMetadata.title("BVT Title") == "BVT Title")
+  #expect(NowPlayingHeaderMetadata.title("  BVT Title \n") == "BVT Title")
+  #expect(NowPlayingHeaderMetadata.title(" \n ") == nil)
+  #expect(NowPlayingHeaderMetadata.title(nil) == nil)
+}
+
+@Test("Player progress displays the elapsed and remaining clocks")
+func playerFormattingUsesRemainingDuration() {
+  #expect(PlayerFormatting.duration(.seconds(3)) == "0:03")
+  #expect(
+    PlayerFormatting.remaining(
+      position: .seconds(3),
+      duration: .seconds(203)
+    ) == "-3:20"
+  )
+  #expect(
+    PlayerFormatting.remaining(
+      position: .seconds(240),
+      duration: .seconds(203)
+    ) == "-0:00"
+  )
+  #expect(PlayerFormatting.remaining(position: nil, duration: nil) == "--:--")
+}
+
 @MainActor
 @Test("Now Playing history loads artist metadata and clears without losing rows on failure")
 func nowPlayingHistoryLoaderLoadAndClear() async {

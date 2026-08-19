@@ -2,9 +2,7 @@ import Foundation
 import MusicDomain
 
 /// The catalog provider used to supplement local library metadata.
-public enum MetadataEnrichmentProvider: String, Codable, Equatable, Hashable, Sendable {
-    case musicKit
-}
+public typealias MetadataEnrichmentProvider = MetadataProviderID
 
 /// A field that may be filled by a catalog match. Lyrics are deliberately not
 /// part of this list because MusicKit catalog search does not provide lyric
@@ -77,6 +75,56 @@ public struct MetadataEnrichmentRecord: Codable, Equatable, Hashable, Sendable {
         self.lastErrorCode = lastErrorCode
         self.lastHTTPStatus = lastHTTPStatus
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case itemID
+        case provider
+        case queryFingerprint
+        case catalogID
+        case candidateCount
+        case status
+        case attemptCount
+        case lastAttemptAt
+        case nextRetryAt
+        case updatedFields
+        case lastErrorCode
+        case lastHTTPStatus
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            itemID: try container.decode(MediaItemID.self, forKey: .itemID),
+            // Version 1 records predate the provider field and were all
+            // produced by MusicKit.
+            provider: try container.decodeIfPresent(
+                MetadataEnrichmentProvider.self,
+                forKey: .provider
+            ) ?? .musicKit,
+            queryFingerprint: try container.decode(
+                String.self,
+                forKey: .queryFingerprint
+            ),
+            catalogID: try container.decodeIfPresent(String.self, forKey: .catalogID),
+            candidateCount: try container.decodeIfPresent(
+                Int.self,
+                forKey: .candidateCount
+            ),
+            status: try container.decode(
+                MetadataEnrichmentRecordStatus.self,
+                forKey: .status
+            ),
+            attemptCount: try container.decodeIfPresent(Int.self, forKey: .attemptCount) ?? 0,
+            lastAttemptAt: try container.decodeIfPresent(Date.self, forKey: .lastAttemptAt),
+            nextRetryAt: try container.decodeIfPresent(Date.self, forKey: .nextRetryAt),
+            updatedFields: try container.decodeIfPresent(
+                Set<MetadataEnrichmentField>.self,
+                forKey: .updatedFields
+            ) ?? [],
+            lastErrorCode: try container.decodeIfPresent(String.self, forKey: .lastErrorCode),
+            lastHTTPStatus: try container.decodeIfPresent(Int.self, forKey: .lastHTTPStatus)
+        )
+    }
 }
 
 /// A transient query assembled from the current local track. `fileName` is a
@@ -135,23 +183,59 @@ public struct MetadataEnrichmentQuery: Hashable, Sendable {
     /// MusicKit receives a compact title/artist term. Album is used as a
     /// fallback when the local artist is absent.
     public var searchTerm: String? {
-        let preferredTitle = isFilenameFallback ? filenameTitle : title
-        let parts: [String]
         if let filenameArtist, isFilenameFallback, artistName == nil {
-            parts = [filenameArtist, preferredTitle].compactMap { $0 }
-        } else if let preferredTitle, let artistName {
-            parts = [preferredTitle, artistName]
-        } else if let preferredTitle, let albumName {
-            parts = [preferredTitle, albumName]
-        } else if let preferredTitle {
-            parts = [preferredTitle]
-        } else if let fileName {
-            parts = [fileName]
-        } else {
-            parts = []
+            return makeSearchTerm(
+                title: filenameTitle,
+                secondary: filenameArtist,
+                secondaryComesFirst: true
+            )
         }
-        let term = parts.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
-        return term.isEmpty ? nil : term
+        if let artistName {
+            return makeSearchTerm(title: preferredSearchTitle, secondary: artistName)
+        }
+        if let albumName {
+            return makeSearchTerm(title: preferredSearchTitle, secondary: albumName)
+        }
+        return makeSearchTerm(title: preferredSearchTitle, secondary: nil)
+            ?? makeSearchTerm(title: nil, secondary: fileName)
+    }
+
+    /// Search terms are ordered from most specific to most tolerant. Providers
+    /// can stop as soon as a reliable candidate is found, while still handling
+    /// titles whose embedded soundtrack/version description prevents a strict
+    /// title-plus-artist search from returning anything.
+    public var searchTerms: [String] {
+        var terms: [String] = []
+        appendSearchTerm(searchTerm, to: &terms)
+
+        guard let preferredSearchTitle else { return terms }
+        let simplifiedTitle = Self.searchTitle(preferredSearchTitle)
+        let searchArtist = artistName ?? (
+            isFilenameFallback ? filenameArtist : nil
+        )
+
+        if let simplifiedTitle, simplifiedTitle != preferredSearchTitle,
+           let searchArtist
+        {
+            appendSearchTerm(
+                makeSearchTerm(title: simplifiedTitle, secondary: searchArtist),
+                to: &terms
+            )
+        }
+        if let albumName {
+            appendSearchTerm(
+                makeSearchTerm(title: preferredSearchTitle, secondary: albumName),
+                to: &terms
+            )
+        }
+        appendSearchTerm(
+            makeSearchTerm(title: preferredSearchTitle, secondary: nil),
+            to: &terms
+        )
+        if let simplifiedTitle, simplifiedTitle != preferredSearchTitle {
+            appendSearchTerm(simplifiedTitle, to: &terms)
+        }
+        return terms
     }
 
     /// The record stores only normalized metadata and missing-field names.
@@ -197,6 +281,38 @@ public struct MetadataEnrichmentQuery: Hashable, Sendable {
             options: .regularExpression
         )
         return normalized(cleaned)
+    }
+
+    private var preferredSearchTitle: String? {
+        isFilenameFallback ? filenameTitle : title
+    }
+
+    private func makeSearchTerm(
+        title: String?,
+        secondary: String?,
+        secondaryComesFirst: Bool = false
+    ) -> String? {
+        let parts: [String]
+        if secondaryComesFirst {
+            parts = [secondary, title].compactMap { $0 }
+        } else {
+            parts = [title, secondary].compactMap { $0 }
+        }
+        let term = parts.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        return term.isEmpty ? nil : term
+    }
+
+    private func appendSearchTerm(_ term: String?, to terms: inout [String]) {
+        guard let term, !terms.contains(term) else { return }
+        terms.append(term)
+    }
+
+    private static func searchTitle(_ value: String) -> String? {
+        let openingDelimiters: Set<Character> = ["(", "[", "{", "（", "【"]
+        let endIndex = value.firstIndex {
+            openingDelimiters.contains($0)
+        } ?? value.endIndex
+        return normalized(String(value[..<endIndex]))
     }
 }
 
@@ -258,7 +374,7 @@ public enum MetadataEnrichmentMatchResult: Sendable, Equatable {
 public enum MetadataEnrichmentMatcher {
     /// Bump this when matching semantics change so persisted no-match decisions
     /// are evaluated again after an app update.
-    public static let revision = 2
+    public static let revision = 3
 
     private static let titleExtensionMarkers: Set<String> = [
         "acoustic",
@@ -378,6 +494,12 @@ public enum MetadataEnrichmentMatcher {
         if local == candidate {
             return 55
         }
+        if equivalent(local, candidate) {
+            // A catalog may expose a CJK title as its Latin transliteration.
+            // Keep this below an exact title match so transliteration alone
+            // cannot accept a weak candidate without artist/album evidence.
+            return 52
+        }
 
         // MusicKit commonly appends source and version labels, for example
         // "Title (From ... ) [Instrumental Version]". A word boundary keeps
@@ -477,6 +599,7 @@ public struct TrackMetadataSupplement: Sendable, Equatable {
     public let trackNumber: Int?
     public let discNumber: Int?
     public let year: Int?
+    public let lyrics: TrackLyrics?
     public let artworkData: Data?
 
     public init(
@@ -489,6 +612,7 @@ public struct TrackMetadataSupplement: Sendable, Equatable {
         trackNumber: Int? = nil,
         discNumber: Int? = nil,
         year: Int? = nil,
+        lyrics: TrackLyrics? = nil,
         artworkData: Data? = nil
     ) {
         self.itemID = itemID
@@ -500,6 +624,7 @@ public struct TrackMetadataSupplement: Sendable, Equatable {
         self.trackNumber = trackNumber.flatMap { $0 > 0 ? $0 : nil }
         self.discNumber = discNumber.flatMap { $0 > 0 ? $0 : nil }
         self.year = year.flatMap { (1...9_999).contains($0) ? $0 : nil }
+        self.lyrics = lyrics.flatMap { $0.isEmpty ? nil : $0 }
         self.artworkData = artworkData?.isEmpty == false ? artworkData : nil
     }
 
@@ -564,20 +689,84 @@ public struct MetadataEnrichmentSnapshot: Codable, Equatable, Sendable {
     public let isEnabled: Bool
     public let authorization: MetadataEnrichmentAuthorizationStatus
     public let scan: MetadataEnrichmentScanSnapshot
+    public let activeProvider: MetadataProviderID?
+    public let providerStatuses: [MetadataEnrichmentProviderSnapshot]
 
     public init(
         isEnabled: Bool = false,
         authorization: MetadataEnrichmentAuthorizationStatus = .unavailable,
-        scan: MetadataEnrichmentScanSnapshot = .init()
+        scan: MetadataEnrichmentScanSnapshot = .init(),
+        activeProvider: MetadataProviderID? = nil,
+        providerStatuses: [MetadataEnrichmentProviderSnapshot] = []
     ) {
         self.isEnabled = isEnabled
         self.authorization = authorization
         self.scan = scan
+        self.activeProvider = activeProvider
+        self.providerStatuses = providerStatuses
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case isEnabled
+        case authorization
+        case scan
+        case activeProvider
+        case providerStatuses
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            isEnabled: try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? false,
+            authorization: try container.decodeIfPresent(
+                MetadataEnrichmentAuthorizationStatus.self,
+                forKey: .authorization
+            ) ?? .unavailable,
+            scan: try container.decodeIfPresent(
+                MetadataEnrichmentScanSnapshot.self,
+                forKey: .scan
+            ) ?? .init(),
+            activeProvider: try container.decodeIfPresent(
+                MetadataProviderID.self,
+                forKey: .activeProvider
+            ),
+            providerStatuses: try container.decodeIfPresent(
+                [MetadataEnrichmentProviderSnapshot].self,
+                forKey: .providerStatuses
+            ) ?? []
+        )
     }
 
     public var isAvailable: Bool {
         authorization != .unavailable
     }
+
+    public func status(
+        for provider: MetadataProviderID
+    ) -> MetadataEnrichmentProviderSnapshot? {
+        providerStatuses.first { $0.provider == provider }
+    }
+}
+
+public struct MetadataEnrichmentProviderSnapshot: Codable, Equatable, Hashable, Sendable, Identifiable {
+    public let provider: MetadataProviderID
+    public let isEnabled: Bool
+    public let isRegistered: Bool
+    public let authorization: MetadataEnrichmentAuthorizationStatus
+
+    public init(
+        provider: MetadataProviderID,
+        isEnabled: Bool = false,
+        isRegistered: Bool = false,
+        authorization: MetadataEnrichmentAuthorizationStatus = .unavailable
+    ) {
+        self.provider = provider
+        self.isEnabled = isEnabled
+        self.isRegistered = isRegistered
+        self.authorization = authorization
+    }
+
+    public var id: MetadataProviderID { provider }
 }
 
 public enum MetadataEnrichmentError: Error, Equatable, Sendable {
@@ -604,7 +793,48 @@ public extension MetadataEnrichmentProviding {
 
 public protocol MetadataEnrichmentRecordRepository: Sendable {
     func record(for itemID: MediaItemID) async throws -> MetadataEnrichmentRecord?
+    func record(
+        for itemID: MediaItemID,
+        provider: MetadataProviderID
+    ) async throws -> MetadataEnrichmentRecord?
     func records() async throws -> [MetadataEnrichmentRecord]
+    func records(for provider: MetadataProviderID) async throws -> [MetadataEnrichmentRecord]
     func save(_ record: MetadataEnrichmentRecord) async throws
     func remove(itemID: MediaItemID) async throws
+    func remove(
+        itemID: MediaItemID,
+        provider: MetadataProviderID
+    ) async throws
+}
+
+public extension MetadataEnrichmentRecordRepository {
+    func record(
+        for itemID: MediaItemID,
+        provider: MetadataProviderID
+    ) async throws -> MetadataEnrichmentRecord? {
+        guard let record = try await record(for: itemID),
+              record.provider == provider
+        else {
+            return nil
+        }
+        return record
+    }
+
+    func records(
+        for provider: MetadataProviderID
+    ) async throws -> [MetadataEnrichmentRecord] {
+        let records = try await records()
+        return records.filter { $0.provider == provider }
+    }
+
+    func remove(
+        itemID: MediaItemID,
+        provider: MetadataProviderID
+    ) async throws {
+        guard let record = try await record(for: itemID, provider: provider) else {
+            return
+        }
+        guard record.itemID == itemID else { return }
+        try await remove(itemID: itemID)
+    }
 }

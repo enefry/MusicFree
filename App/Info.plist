@@ -30,6 +30,24 @@
 	<true/>
 	<key>NSAppleMusicUsageDescription</key>
 	<string>用于补充本地音频的歌曲元数据和封面。</string>
+	<key>MetadataServerBaseURL</key>
+	<string>$(METADATA_SERVER_BASE_URL)</string>
+	<key>MetadataServerRequestTimeout</key>
+	<string>$(METADATA_SERVER_REQUEST_TIMEOUT)</string>
+	<key>DiscogsAPIBaseURL</key>
+	<string>$(DISCOGS_API_BASE_URL)</string>
+	<key>DiscogsAPIUserAgent</key>
+	<string>$(DISCOGS_API_USER_AGENT)</string>
+	<key>DiscogsAPIToken</key>
+	<string>$(DISCOGS_API_TOKEN)</string>
+	<key>DiscogsAPIRequestTimeout</key>
+	<string>$(DISCOGS_API_REQUEST_TIMEOUT)</string>
+	<key>DiscogsAPIMinimumRequestInterval</key>
+	<string>$(DISCOGS_API_MINIMUM_REQUEST_INTERVAL)</string>
+	<key>LRCLIBAPIBaseURL</key>
+	<string>$(LRCLIB_API_BASE_URL)</string>
+	<key>LRCLIBAPIRequestTimeout</key>
+	<string>$(LRCLIB_API_REQUEST_TIMEOUT)</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UIBackgroundModes</key>

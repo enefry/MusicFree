@@ -623,6 +623,59 @@ func appServicesUpdateTrackMetadata() async throws {
 }
 
 @MainActor
+@Test("Album metadata updates one shared album for every track")
+func appServicesUpdateAlbumMetadata() async throws {
+    let albumID = AlbumID("album-level-edit")
+    let firstID = MediaItemID(sourceID: .local, externalID: "album-level-first")
+    let secondID = MediaItemID(sourceID: .local, externalID: "album-level-second")
+    let originalArtwork = ArtworkReference(
+        id: ArtworkID("album-level-artwork"),
+        variants: [.original],
+        preferredVariant: .original
+    )
+    let repository = TestLibraryRepository(
+        tracks: [
+            Track(id: firstID, title: "First", albumID: albumID),
+            Track(id: secondID, title: "Second", albumID: albumID),
+        ],
+        albums: [Album(
+            id: albumID,
+            title: "Wrong Album Name",
+            sortTitle: "Wrong Album Name",
+            artistIDs: [ArtistID("old-album-artist")],
+            artwork: originalArtwork,
+            releaseYear: 2001,
+            trackCount: 2,
+            albumType: .album
+        )],
+        artists: [Artist(id: ArtistID("old-album-artist"), name: "Old Album Artist")]
+    )
+    let container = try AppServiceContainer(
+        dependencies: AppDependencies(libraryRepository: repository)
+    )
+
+    let updated = try await container.library.updateAlbumMetadata(AlbumMetadataUpdate(
+        albumID: albumID,
+        title: "Correct Album Name",
+        artistNames: ["Correct Album Artist"],
+        releaseYear: 2024
+    ))
+
+    #expect(updated.id == albumID)
+    #expect(updated.title == "Correct Album Name")
+    #expect(updated.artistIDs == [
+        ArtistID("local-artist-\(MusicContentIdentity.token("Correct Album Artist"))")
+    ])
+    #expect(updated.releaseYear == 2024)
+    #expect(updated.artwork == originalArtwork)
+    #expect(updated.trackCount == 2)
+    #expect(updated.albumType == .album)
+    #expect(try await repository.album(id: albumID) == updated)
+    #expect(try await repository.track(id: firstID)?.albumID == albumID)
+    #expect(try await repository.track(id: secondID)?.albumID == albumID)
+}
+
+@MainActor
 @Test("Renaming one track album does not mutate a shared album")
 func appServicesMetadataRenameSplitsSharedAlbum() async throws {
     let firstID = MediaItemID(sourceID: .local, externalID: "shared-album-first")
@@ -1319,6 +1372,72 @@ func appServicesLibraryAndPlaybackPath() async throws {
 
     await container.playback.send(.play(itemID: itemID))
     #expect(engine.preparedItems.count == 2)
+}
+
+@MainActor
+@Test("Playback completion starts the next track from the beginning")
+func appServicesNaturalCompletionStartsNextTrackFromTheBeginning() async throws {
+    let firstID = MediaItemID(sourceID: .local, externalID: "completion-first")
+    let secondID = MediaItemID(sourceID: .local, externalID: "completion-second")
+    let entries = [firstID, secondID].enumerated().map { index, itemID in
+        PlaybackQueueEntry(
+            id: UUID(uuidString: String(
+                format: "00000000-0000-0000-0000-%012d",
+                450 + index
+            ))!,
+            itemID: itemID
+        )
+    }
+    let queue = TestQueueRepository(
+        value: PlaybackQueueSnapshot(
+            entries: entries,
+            currentEntryID: entries[0].id,
+            resumePosition: .seconds(10)
+        )
+    )
+    let engine = FakePlaybackEngine(capabilities: [.seeking])
+    let container = try AppServiceContainer(
+        dependencies: AppDependencies(
+            mediaSources: [TestSource()],
+            libraryRepository: TestLibraryRepository(tracks: [
+                Track(id: firstID, title: "Completion First", duration: .seconds(20)),
+                Track(id: secondID, title: "Completion Second", duration: .seconds(5)),
+            ]),
+            playbackQueueRepository: queue,
+            playbackEngine: engine
+        )
+    )
+    _ = try await container.start()
+
+    try await container.playback.execute(.resume)
+    #expect(engine.prepareCalls.count == 1)
+    #expect(engine.prepareCalls[0].startAt == .seconds(10))
+
+    let firstGeneration = engine.state.generation
+    engine.emit(.positionChanged(
+        generation: firstGeneration,
+        itemID: firstID,
+        position: .seconds(18),
+        duration: .seconds(20)
+    ))
+    engine.emit(.phaseChanged(
+        generation: firstGeneration,
+        itemID: firstID,
+        phase: .stopped
+    ))
+    engine.emit(.ended(
+        generation: firstGeneration,
+        itemID: firstID,
+        reason: .ended
+    ))
+    await waitForPreparedItemCount(2, on: engine)
+
+    #expect(engine.prepareCalls.map(\.item.itemID) == [firstID, secondID])
+    guard engine.prepareCalls.count >= 2 else { return }
+    #expect(engine.prepareCalls[1].startAt == nil)
+    #expect(container.playback.snapshot.currentItemID == secondID)
+    #expect(container.playback.snapshot.phase == .playing)
+    #expect(container.playback.snapshot.queue.resumePosition == nil)
 }
 
 @MainActor
@@ -2335,6 +2454,19 @@ private func makeAudioSessionPlaybackSetup(
 private func settleAppServiceEvents() async {
     for _ in 0..<20 {
         await Task.yield()
+    }
+}
+
+@MainActor
+private func waitForPreparedItemCount(
+    _ expectedCount: Int,
+    on engine: FakePlaybackEngine
+) async {
+    for _ in 0..<2_000 {
+        if engine.prepareCalls.count >= expectedCount {
+            return
+        }
+        try? await Task.sleep(for: .milliseconds(1))
     }
 }
 

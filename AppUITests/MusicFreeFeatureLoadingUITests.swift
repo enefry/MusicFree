@@ -31,6 +31,67 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
     }
 
     @MainActor
+    func testMetadataEnrichmentScanStartsAndCancels() {
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        app.launch()
+
+        let tabBar = app.tabBars.firstMatch
+        XCTAssertTrue(tabBar.waitForExistence(timeout: 15))
+        let settingsTab = tabBar.buttons.element(boundBy: 2)
+        XCTAssertTrue(settingsTab.waitForExistence(timeout: 5))
+        settingsTab.tap()
+
+        XCTAssertTrue(
+            app.descendants(matching: .any)["settings.form"].waitForExistence(timeout: 15)
+        )
+        let metadataEntry = app.descendants(matching: .any)[
+            "settings.import.metadataEnrichment.entry"
+        ].firstMatch
+        XCTAssertTrue(
+            scrollToElement(metadataEntry, in: app, maximumSwipes: 12),
+            "The metadata enrichment entry should be reachable in Settings."
+        )
+        metadataEntry.tap()
+
+        XCTAssertTrue(
+            app.descendants(matching: .any)["settings.import.metadata.section"]
+                .firstMatch
+                .waitForExistence(timeout: 5),
+            "The metadata enrichment page should expose a Metadata section."
+        )
+        XCTAssertTrue(
+            app.descendants(matching: .any)["settings.import.lyrics.section"]
+                .firstMatch
+                .waitForExistence(timeout: 5),
+            "The metadata enrichment page should expose a Lyrics section."
+        )
+
+        let scanButton = app.buttons["settings.import.musicKitScan"].firstMatch
+        XCTAssertTrue(
+            scanButton.waitForExistence(timeout: 10),
+            "The metadata scan action should be available when a provider is enabled."
+        )
+        scanButton.tap()
+
+        let progress = app.staticTexts["settings.import.musicKitProgress"].firstMatch
+        XCTAssertTrue(
+            progress.waitForExistence(timeout: 10),
+            "Starting a metadata scan should immediately update the nested page."
+        )
+
+        let cancelButton = app.buttons["settings.import.musicKitCancel"].firstMatch
+        XCTAssertTrue(cancelButton.waitForExistence(timeout: 5))
+        cancelButton.tap()
+
+        XCTAssertTrue(
+            scanButton.waitForExistence(timeout: 10),
+            "Cancelling a metadata scan should restore the scan action."
+        )
+        XCTAssertFalse(cancelButton.exists)
+    }
+
+    @MainActor
     func testAppleMusicLayoutReviewScreenshots() {
         let app = XCUIApplication()
         defer { app.terminate() }
@@ -101,6 +162,104 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
         openTrackDetailFromMenu(in: app)
         assertTrackDetailMetadata(in: app)
         attachScreenshot(named: "10-track-detail")
+    }
+
+    @MainActor
+    func testLibraryTrackLongPressShowsNativeContextActions() {
+        let app = reviewApp()
+        defer { app.terminate() }
+        app.launch()
+
+        XCTAssertTrue(tabButton("Library", in: app).waitForExistence(timeout: 15))
+        openLibrarySection("Songs", in: app)
+
+        let tracks = app.descendants(matching: .any)["library.tracks"].firstMatch
+        XCTAssertTrue(tracks.waitForExistence(timeout: 15))
+        XCTAssertFalse(
+            app.descendants(matching: .any)["library.tracks.edit"].exists,
+            "Songs must not expose an Edit entry to start deletion selection."
+        )
+
+        let trackRow = tracks.cells.matching(
+            NSPredicate(format: "identifier BEGINSWITH 'library.track.play.'")
+        ).firstMatch
+        XCTAssertTrue(
+            trackRow.waitForExistence(timeout: 15),
+            "The songs page must expose at least one row for long-press actions."
+        )
+        trackRow.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.5))
+            .press(forDuration: 1.0)
+
+        let favorite = app.buttons.matching(
+            NSPredicate(format: "label == 'Favorite' OR label == 'Remove from favorites'")
+        ).firstMatch
+        XCTAssertTrue(
+            favorite.waitForExistence(timeout: 5),
+            "Long press must expose the native favorite action."
+        )
+        let share = app.buttons["Share"].firstMatch
+        XCTAssertTrue(
+            share.waitForExistence(timeout: 5),
+            "Long press must expose the native share action."
+        )
+        let delete = app.buttons.matching(
+            NSPredicate(format: "label == 'Delete' OR label == 'Delete song'")
+        ).firstMatch
+        XCTAssertTrue(
+            delete.waitForExistence(timeout: 5),
+            "Long press must expose the native destructive delete action."
+        )
+        XCTAssertEqual(
+            favorite.frame.midY,
+            share.frame.midY,
+            accuracy: 5,
+            "Favorite and Share must be in the compact first action row."
+        )
+        XCTAssertEqual(
+            favorite.frame.midY,
+            delete.frame.midY,
+            accuracy: 5,
+            "Delete must be in the compact first action row."
+        )
+        attachScreenshot(named: "library-native-context-actions")
+    }
+
+    @MainActor
+    func testLibraryCollectionViewsKeepStableColumnsAndTail() {
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        app.launchArguments = [
+            "--bvt-seed-audio",
+            "--bvt-seed-layout-library",
+            "-AppleInterfaceStyle",
+            "Dark",
+            "-musicfree.language",
+            "en"
+        ]
+        app.launch()
+
+        XCTAssertTrue(tabButton("Library", in: app).waitForExistence(timeout: 15))
+        let pages: [(title: String, identifier: String, itemPrefix: String, isGrid: Bool)] = [
+            ("Albums", "library.albums", "library.album.open.", true),
+            ("Artists", "library.artists", "library.artist.open.", false),
+            ("Genres", "library.genres", "library.genre.open.", false),
+            ("Folders", "library.folders", "library.folder.open.", false),
+            ("Songs", "library.tracks", "library.track.play.", false)
+        ]
+
+        for page in pages {
+            openLibrarySection(page.title, in: app)
+            let content = app.descendants(matching: .any)[page.identifier].firstMatch
+            XCTAssertTrue(content.waitForExistence(timeout: 20))
+            assertCollectionPage(
+                content,
+                itemPrefix: page.itemPrefix,
+                isGrid: page.isGrid,
+                screenshotName: page.title.lowercased(),
+                in: app
+            )
+            backTo("Library", in: app)
+        }
     }
 
     @MainActor
@@ -234,6 +393,7 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
         openLibrarySection("Songs", in: app)
         let track = app.staticTexts[longTrackTitle].firstMatch
         XCTAssertTrue(track.waitForExistence(timeout: 30))
+        ensureTimedLyrics(for: longTrackTitle, in: app)
         attachScreenshot(named: "20-songs")
 
         let tracks = app.descendants(matching: .any)["library.tracks"].firstMatch
@@ -243,7 +403,7 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
         let miniPlayer = app.descendants(matching: .any)["player.mini"]
         XCTAssertTrue(miniPlayer.waitForExistence(timeout: 15))
 
-        let longTrackRow = tracks.buttons.containing(
+        let longTrackRow = tracks.cells.containing(
             .staticText,
             identifier: longTrackTitle
         ).firstMatch
@@ -256,8 +416,32 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
         attachScreenshot(named: "21-mini-player")
         miniPlayer.tap()
 
+        let artworkSurface = app.descendants(matching: .any)[
+            "player.nowPlaying.artwork"
+        ].firstMatch
         XCTAssertTrue(
-            app.staticTexts["Continue playing"].waitForExistence(timeout: 10),
+            artworkSurface.waitForExistence(timeout: 10),
+            "Opening the Mini Player must start in the artwork surface."
+        )
+        XCTAssertTrue(app.buttons["Favorite"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["More actions"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.sliders["Playback progress"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Pause"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Lyrics"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["AirPlay"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Play queue"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse(
+            app.scrollViews["player.nowPlaying.upperScroll"].firstMatch.exists,
+            "The artwork surface must not create a second queue scroll container."
+        )
+        attachScreenshot(named: "22-now-playing-default")
+
+        let queueButton = app.buttons["player.queue.footer"].firstMatch
+        XCTAssertTrue(queueButton.waitForExistence(timeout: 5))
+        queueButton.tap()
+
+        XCTAssertTrue(
+            app.staticTexts["Continue Playing"].waitForExistence(timeout: 10),
             "The regression fixture must include a visible Continue Playing row."
         )
 
@@ -278,6 +462,16 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
         XCTAssertFalse(continuePlayingList.staticTexts["BVT Album"].exists)
         XCTAssertFalse(continuePlayingList.staticTexts["Local music"].exists)
 
+        let modeControls = app.descendants(matching: .any)[
+            "player.nowPlaying.modeControls"
+        ].firstMatch
+        XCTAssertTrue(modeControls.waitForExistence(timeout: 5))
+        XCTAssertEqual(
+            modeControls.buttons.count,
+            4,
+            "Queue mode controls should stay as one four-button group."
+        )
+
         let nowPlayingTitle = app.staticTexts[longTrackTitle].firstMatch
         XCTAssertTrue(nowPlayingTitle.waitForExistence(timeout: 5))
         XCTAssertGreaterThanOrEqual(
@@ -291,7 +485,7 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
             "A long Now Playing title must not expand the player beyond the screen width."
         )
 
-        for label in ["Shuffle", "Repeat mode", "Autoplay", "Open play queue"] {
+        for label in ["Shuffle", "Repeat song", "Repeat queue"] {
             let control = app.buttons[label].firstMatch
             XCTAssertTrue(control.waitForExistence(timeout: 5))
             XCTAssertGreaterThanOrEqual(
@@ -305,7 +499,7 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
                 "\(label) must not be pushed beyond the trailing screen edge."
             )
         }
-        attachScreenshot(named: "22-now-playing")
+        attachScreenshot(named: "23-now-playing-queue")
 
         XCTAssertTrue(app.buttons["Pause"].firstMatch.waitForExistence(timeout: 5))
         guard let pauseButton = app.buttons.matching(identifier: "Pause")
@@ -315,7 +509,6 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
         }
         pauseButton.tap()
 
-        let queueButton = app.buttons["player.queue.footer"].firstMatch
         XCTAssertTrue(queueButton.waitForExistence(timeout: 5))
         let originalQueueButtonY = queueButton.frame.minY
         if queueScrollView.isHittable, !queueScrollView.frame.isEmpty {
@@ -334,6 +527,29 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
             accuracy: 1,
             "Scrolling Continue Playing must not move the pinned playback controls."
         )
+
+        let lyricsButton = app.buttons["Lyrics"].firstMatch
+        XCTAssertTrue(lyricsButton.waitForExistence(timeout: 5))
+        lyricsButton.tap()
+        let lyricsScrollView = app.scrollViews["player.nowPlaying.lyricsScroll"].firstMatch
+        XCTAssertTrue(
+            lyricsScrollView.waitForExistence(timeout: 15),
+            "The seeded local LRC should render one embedded lyrics scroll container."
+        )
+        XCTAssertFalse(
+            app.scrollViews["player.nowPlaying.upperScroll"].firstMatch.exists,
+            "Switching to lyrics must replace the queue scroll container."
+        )
+        XCTAssertTrue(
+            app.descendants(matching: .any)["player.nowPlaying.lyrics.line.0"]
+                .waitForExistence(timeout: 10)
+        )
+        attachScreenshot(named: "24-now-playing-lyrics")
+
+        let lyricsReturnButton = app.buttons["player.lyrics.footer"].firstMatch
+        XCTAssertTrue(lyricsReturnButton.waitForExistence(timeout: 5))
+        lyricsReturnButton.tap()
+        XCTAssertTrue(artworkSurface.waitForExistence(timeout: 5))
 
         device.orientation = .landscapeLeft
         let scrollingPlayer = app.scrollViews["player.nowPlaying.scroll"].firstMatch
@@ -360,6 +576,33 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
         let restoredQueueButton = app.buttons["player.queue.footer"].firstMatch
         XCTAssertTrue(restoredQueueButton.waitForExistence(timeout: 5))
         restoredQueueButton.tap()
+        XCTAssertTrue(
+            app.staticTexts["Continue Playing"].waitForExistence(timeout: 10)
+        )
+
+        let moreButton = app.buttons["More actions"].firstMatch
+        XCTAssertTrue(moreButton.waitForExistence(timeout: 5))
+        moreButton.tap()
+        let manageQueuePredicate = NSPredicate(
+            format: "label CONTAINS[c] %@", "Manage full queue"
+        )
+        let appManageQueueAction = app.descendants(matching: .any).matching(
+            manageQueuePredicate
+        ).firstMatch
+        let springBoard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let springBoardManageQueueAction = springBoard.descendants(matching: .any).matching(
+            manageQueuePredicate
+        ).firstMatch
+        let appMenuActionExists = appManageQueueAction.waitForExistence(timeout: 2)
+        XCTAssertTrue(
+            appMenuActionExists
+                || springBoardManageQueueAction.waitForExistence(timeout: 5),
+            "Full queue editing should remain behind the header menu."
+        )
+        let manageQueueAction = appMenuActionExists
+            ? appManageQueueAction
+            : springBoardManageQueueAction
+        manageQueueAction.tap()
         XCTAssertTrue(app.staticTexts["Play queue"].waitForExistence(timeout: 10))
         let queueList = app.descendants(matching: .any)["player.queue.list"].firstMatch
         XCTAssertTrue(queueList.waitForExistence(timeout: 10))
@@ -388,7 +631,7 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
             "Pulling down from the current item should reveal playback history."
         )
         XCTAssertTrue(app.buttons["player.history.clear"].firstMatch.isHittable)
-        attachScreenshot(named: "24-queue-history")
+        attachScreenshot(named: "25-queue-history")
 
         let editQueueButton = app.buttons["player.queue.edit"].firstMatch
         XCTAssertTrue(editQueueButton.waitForExistence(timeout: 5))
@@ -400,7 +643,7 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
         XCTAssertTrue(doneEditingButton.waitForExistence(timeout: 5))
         XCTAssertTrue(cancelEditingButton.waitForExistence(timeout: 5))
         XCTAssertTrue(queueList.exists)
-        attachScreenshot(named: "25-queue-sorting")
+        attachScreenshot(named: "26-queue-sorting")
 
         cancelEditingButton.tap()
         XCTAssertTrue(editQueueButton.waitForExistence(timeout: 5))
@@ -618,7 +861,7 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
         XCTAssertTrue(tabButton("Library", in: app).waitForExistence(timeout: 15))
         openLibrarySection("Songs", in: app)
         let tracks = app.descendants(matching: .any)["library.tracks"].firstMatch
-        let trackRow = tracks.buttons.containing(
+        let trackRow = tracks.cells.containing(
             .staticText,
             identifier: trackTitle
         ).firstMatch
@@ -642,6 +885,10 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
         }
         pauseButton.tap()
 
+        let queueButton = app.buttons["player.queue.footer"].firstMatch
+        XCTAssertTrue(queueButton.waitForExistence(timeout: 5))
+        queueButton.tap()
+
         let moreButton = app.buttons["More actions"].firstMatch
         XCTAssertTrue(moreButton.waitForExistence(timeout: 5))
         let queueScrollView = app.scrollViews["player.nowPlaying.upperScroll"].firstMatch
@@ -658,7 +905,6 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
             XCTAssertTrue(enqueueButton.waitForNonExistence(timeout: 5))
         }
 
-        let queueButton = app.buttons["player.queue.footer"].firstMatch
         XCTAssertTrue(queueButton.waitForExistence(timeout: 5))
         let originalMoreButtonY = moreButton.frame.minY
         let originalQueueButtonY = queueButton.frame.minY
@@ -686,8 +932,65 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
     @MainActor
     private func reviewApp() -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["--bvt-seed-audio", "-AppleInterfaceStyle", "Dark"]
+        app.launchArguments = [
+            "--bvt-seed-audio",
+            "-AppleInterfaceStyle",
+            "Dark",
+            "-musicfree.language",
+            "en"
+        ]
         return app
+    }
+
+    @MainActor
+    private func assertCollectionPage(
+        _ content: XCUIElement,
+        itemPrefix: String,
+        isGrid: Bool,
+        screenshotName: String,
+        in app: XCUIApplication
+    ) {
+        let items = content.cells.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", itemPrefix)
+        )
+        let first = items.element(boundBy: 0)
+        let second = items.element(boundBy: 1)
+        XCTAssertTrue(first.waitForExistence(timeout: 20))
+        XCTAssertTrue(second.waitForExistence(timeout: 20))
+
+        if isGrid {
+            XCTAssertLessThan(
+                first.frame.width,
+                content.frame.width * 0.72,
+                "Album cells must keep two columns instead of expanding to the full width."
+            )
+            XCTAssertEqual(
+                first.frame.midY,
+                second.frame.midY,
+                accuracy: 12,
+                "The first album row must contain two aligned cells."
+            )
+        }
+
+        attachScreenshot(named: "layout-\(screenshotName)-top")
+
+        for _ in 0..<12 {
+            content.swipeUp()
+        }
+
+        let last = items.element(boundBy: max(items.count - 1, 0))
+        XCTAssertTrue(last.waitForExistence(timeout: 10))
+        XCTAssertLessThanOrEqual(
+            last.frame.maxY,
+            content.frame.maxY + 2,
+            "The last (itemPrefix) item must not extend beyond its collection view."
+        )
+        XCTAssertGreaterThan(
+            last.frame.maxY,
+            content.frame.maxY - 180,
+            "The collection view must not leave a large blank tail after its last item."
+        )
+        attachScreenshot(named: "layout-\(screenshotName)-bottom")
     }
 
     @MainActor
@@ -817,14 +1120,14 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
                 back(in: app)
                 back(in: app)
             } else {
-                let trackMenu = app.buttons.matching(
-                    NSPredicate(format: "identifier BEGINSWITH 'library.collection.track.menu.'")
+                let trackRow = detail.cells.matching(
+                    NSPredicate(format: "identifier BEGINSWITH 'library.collection.track.play.'")
                 ).firstMatch
                 XCTAssertTrue(
-                    trackMenu.waitForExistence(timeout: 10),
-                    "The (title) detail should expose a trailing song options menu."
+                    trackRow.waitForExistence(timeout: 10),
+                    "The (title) detail should expose a native collection-view song row."
                 )
-                trackMenu.tap()
+                trackRow.press(forDuration: 1.0)
                 assertTrackQueueMenuActions(in: app)
                 let detailAction = app.buttons["View song details"].firstMatch
                 XCTAssertTrue(detailAction.waitForExistence(timeout: 5))
@@ -923,9 +1226,7 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
         let tracks = app.descendants(matching: .any)["library.tracks"].firstMatch
         let trackRow = tracks.cells.containing(.staticText, identifier: "BVT Tone").firstMatch
         XCTAssertTrue(trackRow.waitForExistence(timeout: 5))
-        let menu = trackRow.buttons["Song options"].firstMatch
-        XCTAssertTrue(menu.waitForExistence(timeout: 5))
-        menu.tap()
+        trackRow.press(forDuration: 1.0)
         assertTrackQueueMenuActions(in: app)
         let detail = app.buttons["View song details"].firstMatch
         XCTAssertTrue(detail.waitForExistence(timeout: 5))
@@ -934,15 +1235,80 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
     }
 
     @MainActor
+    private func ensureTimedLyrics(for trackTitle: String, in app: XCUIApplication) {
+        let tracks = app.descendants(matching: .any)["library.tracks"].firstMatch
+        let trackCell = tracks.cells.containing(
+            .staticText,
+            identifier: trackTitle
+        ).firstMatch
+        XCTAssertTrue(trackCell.waitForExistence(timeout: 10))
+
+        trackCell.press(forDuration: 1.0)
+
+        let details = app.buttons["View song details"].firstMatch
+        XCTAssertTrue(details.waitForExistence(timeout: 5))
+        details.tap()
+
+        let detail = app.descendants(matching: .any)["library.trackDetail"].firstMatch
+        XCTAssertTrue(detail.waitForExistence(timeout: 10))
+        let edit = app.buttons["library.trackDetail.edit"].firstMatch
+        XCTAssertTrue(edit.waitForExistence(timeout: 5))
+        edit.tap()
+
+        let editorForm = app.collectionViews.firstMatch
+        XCTAssertTrue(editorForm.waitForExistence(timeout: 5))
+        for _ in 0..<6 {
+            editorForm.swipeUp()
+        }
+
+        let lyricsEditor = app.descendants(matching: .any)[
+            "library.trackEditor.lyrics"
+        ].firstMatch
+        XCTAssertTrue(lyricsEditor.waitForExistence(timeout: 10))
+        lyricsEditor.tap()
+        lyricsEditor.typeText(
+            "[00:00.00]Now the night is moving on\n"
+                + "[00:04.00]Every sound becomes a light\n"
+                + "[00:08.00]\(trackTitle)\n"
+                + "[00:12.00]Keep the moment close to me\n"
+                + "[00:16.00]Let the rhythm carry through\n"
+                + "[00:20.00]We will find the way back home\n"
+                + "[00:24.00]Stay with me until the end"
+        )
+
+        let save = app.buttons["Save"].firstMatch
+        XCTAssertTrue(save.waitForExistence(timeout: 10))
+        XCTAssertTrue(save.isEnabled)
+        save.tap()
+        XCTAssertTrue(lyricsEditor.waitForNonExistence(timeout: 10))
+        XCTAssertTrue(detail.waitForExistence(timeout: 10))
+        backTo("Songs", in: app)
+        XCTAssertTrue(app.descendants(matching: .any)["library.tracks"].waitForExistence(timeout: 10))
+    }
+
+    @MainActor
     private func assertTrackQueueMenuActions(in app: XCUIApplication) {
         XCTAssertTrue(
-            app.buttons["Play next"].firstMatch.waitForExistence(timeout: 5),
+            nativeMenuActionExists("Play next", in: app),
             "Every song options menu should expose insertion after the current item."
         )
         XCTAssertTrue(
-            app.buttons["Add to queue"].firstMatch.waitForExistence(timeout: 5),
+            nativeMenuActionExists("Add to queue", in: app),
             "Every song options menu should expose append-to-queue."
         )
+    }
+
+    @MainActor
+    private func nativeMenuActionExists(_ label: String, in app: XCUIApplication) -> Bool {
+        let labeledElement = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label ==[c] %@", label)
+        ).firstMatch
+        if labeledElement.waitForExistence(timeout: 5) {
+            return true
+        }
+        return app.buttons.matching(
+            NSPredicate(format: "label ==[c] %@", label)
+        ).firstMatch.waitForExistence(timeout: 5)
     }
 
     @MainActor
@@ -990,9 +1356,7 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
     ) {
         let trackCell = tracks.cells.containing(.staticText, identifier: trackTitle).firstMatch
         XCTAssertTrue(trackCell.waitForExistence(timeout: 5))
-        let menu = trackCell.buttons["Song options"].firstMatch
-        XCTAssertTrue(menu.waitForExistence(timeout: 5))
-        menu.tap()
+        trackCell.press(forDuration: 1.0)
 
         let action = app.buttons[actionTitle].firstMatch
         XCTAssertTrue(action.waitForExistence(timeout: 5))

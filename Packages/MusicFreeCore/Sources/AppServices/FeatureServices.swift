@@ -130,6 +130,7 @@ public protocol LibraryServing: Sendable {
     ) async throws -> LibraryPage<Track>
     func setFavorite(_ isFavorite: Bool, for itemID: MediaItemID) async throws -> Track
     func updateMetadata(_ update: TrackMetadataUpdate) async throws -> Track
+    func updateAlbumMetadata(_ update: AlbumMetadataUpdate) async throws -> Album
     func supplementMetadata(_ supplement: TrackMetadataSupplement) async throws -> Track
     func delete(_ itemIDs: Set<MediaItemID>) async throws -> LibraryDeletionResult
     func recoverPendingRemovals() async throws -> LibraryRecoveryResult
@@ -189,6 +190,37 @@ public protocol ArtworkServing: Sendable {
     ) async throws -> ArtworkResource?
 }
 
+/// Loads online lyrics on demand and persists a successful result in the
+/// library without making the player depend on a concrete network adapter.
+public protocol LyricsServing: Sendable {
+    func fetchLyrics(
+        for query: LyricsQuery,
+        forceRefresh: Bool
+    ) async throws -> TrackLyrics?
+    func preloadSnapshot() async -> LyricsPreloadSnapshot
+    func makePreloadSnapshotStream() async -> AsyncStream<LyricsPreloadSnapshot>
+    func startPreload() async
+    func cancelPreload() async
+}
+
+public extension LyricsServing {
+    func preloadSnapshot() async -> LyricsPreloadSnapshot {
+        LyricsPreloadSnapshot()
+    }
+
+    func makePreloadSnapshotStream() async -> AsyncStream<LyricsPreloadSnapshot> {
+        let snapshot = await preloadSnapshot()
+        return AsyncStream { continuation in
+            continuation.yield(snapshot)
+            continuation.finish()
+        }
+    }
+
+    func startPreload() async {}
+
+    func cancelPreload() async {}
+}
+
 public extension LibraryServing {
     func browseTracks(page: LibraryPageRequest) async throws -> LibraryPage<Track> {
         try await browseTracks(matching: TrackQuery(), page: page)
@@ -203,6 +235,10 @@ public extension LibraryServing {
     }
 
     func updateMetadata(_ update: TrackMetadataUpdate) async throws -> Track {
+        throw AppServiceError.missingDependency("libraryMetadataEditor")
+    }
+
+    func updateAlbumMetadata(_ update: AlbumMetadataUpdate) async throws -> Album {
         throw AppServiceError.missingDependency("libraryMetadataEditor")
     }
 
@@ -248,10 +284,28 @@ public protocol MetadataEnrichmentServing: Sendable {
     func snapshot() async -> MetadataEnrichmentSnapshot
     func makeSnapshotStream() async -> AsyncStream<MetadataEnrichmentSnapshot>
     func requestAuthorization() async -> MetadataEnrichmentAuthorizationStatus
+    func requestAuthorization(
+        for provider: MetadataProviderID
+    ) async -> MetadataEnrichmentAuthorizationStatus
+    func setProviderPreferences(
+        _ preferences: [MetadataProviderPreference]
+    ) async
     func setEnabled(_ enabled: Bool) async
     func enqueue(itemID: MediaItemID) async
     func startScan() async
     func cancelScan() async
+}
+
+public extension MetadataEnrichmentServing {
+    func requestAuthorization(
+        for _: MetadataProviderID
+    ) async -> MetadataEnrichmentAuthorizationStatus {
+        await requestAuthorization()
+    }
+
+    func setProviderPreferences(
+        _: [MetadataProviderPreference]
+    ) async {}
 }
 
 public extension ImportServing {

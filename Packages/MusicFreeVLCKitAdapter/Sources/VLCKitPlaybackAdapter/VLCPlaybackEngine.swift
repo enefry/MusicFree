@@ -55,6 +55,8 @@ public final class VLCPlaybackEngine: PlaybackEngine, PlaybackAudioControlling {
   private var configuredRate: Float = 1
   private var configuredEqualizer: EqualizerConfiguration?
   private var stopWasRequested = false
+  private var playbackStarted = false
+  private var naturalEndGeneration: PlaybackGeneration?
   private var eventContinuation: AsyncStream<PlaybackEvent>.Continuation?
 
 #if canImport(VLCKit)
@@ -118,6 +120,8 @@ public final class VLCPlaybackEngine: PlaybackEngine, PlaybackAudioControlling {
     currentDuration = item.display.duration
     pendingStartAt = startAt
     stopWasRequested = false
+    playbackStarted = false
+    naturalEndGeneration = nil
     state = PlaybackState(
       phase: .preparing,
       generation: generation,
@@ -173,6 +177,7 @@ public final class VLCPlaybackEngine: PlaybackEngine, PlaybackAudioControlling {
       self.pendingStartAt = nil
     }
     player.play()
+    playbackStarted = true
     if let itemID = currentItem?.itemID {
       apply(
         .phaseChanged(
@@ -195,6 +200,8 @@ public final class VLCPlaybackEngine: PlaybackEngine, PlaybackAudioControlling {
 
   public func stop() {
     stopWasRequested = true
+    playbackStarted = false
+    naturalEndGeneration = nil
     let generation = state.generation
     let itemID = currentItem?.itemID
     teardownPlayer()
@@ -215,6 +222,8 @@ public final class VLCPlaybackEngine: PlaybackEngine, PlaybackAudioControlling {
 
   public func dispose() {
     stopWasRequested = true
+    playbackStarted = false
+    naturalEndGeneration = nil
     teardownPlayer()
     currentItem = nil
     currentDuration = nil
@@ -378,8 +387,15 @@ public final class VLCPlaybackEngine: PlaybackEngine, PlaybackAudioControlling {
 
     for mappedEvent in VLCPlaybackEventMapper.events(
       for: event,
-      stopWasRequested: stopWasRequested
+      stopWasRequested: stopWasRequested,
+      playbackStarted: playbackStarted
     ) {
+      if case .ended = mappedEvent {
+        // libVLC 4 can report EOF as both Stopping and Stopped. The queue
+        // coordinator must receive one completion for one player generation.
+        guard naturalEndGeneration != state.generation else { continue }
+        naturalEndGeneration = state.generation
+      }
       apply(mappedEvent)
     }
   }

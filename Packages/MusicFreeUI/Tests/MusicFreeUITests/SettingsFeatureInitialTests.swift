@@ -151,6 +151,9 @@ private actor SettingsMetadataEnrichmentTestService: MetadataEnrichmentServing {
     private let requestedAuthorization: MetadataEnrichmentAuthorizationStatus
     private var continuation: AsyncStream<MetadataEnrichmentSnapshot>.Continuation?
     private(set) var enabledValues: [Bool] = []
+    private(set) var providerPreferenceValues: [[MetadataProviderPreference]] = []
+    private(set) var startScanCount = 0
+    private(set) var cancelScanCount = 0
 
     init(
         authorization: MetadataEnrichmentAuthorizationStatus,
@@ -190,12 +193,54 @@ private actor SettingsMetadataEnrichmentTestService: MetadataEnrichmentServing {
         continuation?.yield(current)
     }
 
+    func setProviderPreferences(_ preferences: [MetadataProviderPreference]) async {
+        providerPreferenceValues.append(preferences)
+    }
+
     func enqueue(itemID: MediaItemID) async {}
-    func startScan() async {}
-    func cancelScan() async {}
+    func startScan() async {
+        startScanCount += 1
+        current = MetadataEnrichmentSnapshot(
+            isEnabled: current.isEnabled,
+            authorization: current.authorization,
+            scan: MetadataEnrichmentScanSnapshot(status: .scanning),
+            activeProvider: current.activeProvider,
+            providerStatuses: current.providerStatuses
+        )
+        continuation?.yield(current)
+    }
+
+    func cancelScan() async {
+        cancelScanCount += 1
+        let scan = current.scan
+        current = MetadataEnrichmentSnapshot(
+            isEnabled: current.isEnabled,
+            authorization: current.authorization,
+            scan: MetadataEnrichmentScanSnapshot(
+                status: .cancelled,
+                total: scan.total,
+                processed: scan.processed,
+                matched: scan.matched,
+                noMatch: scan.noMatch,
+                ambiguous: scan.ambiguous,
+                failed: scan.failed
+            ),
+            activeProvider: current.activeProvider,
+            providerStatuses: current.providerStatuses
+        )
+        continuation?.yield(current)
+    }
 
     func recordedEnabledValues() -> [Bool] {
         enabledValues
+    }
+
+    func recordedProviderPreferences() -> [[MetadataProviderPreference]] {
+        providerPreferenceValues
+    }
+
+    func recordedScanCounts() -> (start: Int, cancel: Int) {
+        (startScanCount, cancelScanCount)
     }
 }
 
@@ -261,6 +306,103 @@ func settingsFeatureDoesNotPersistUnauthorizedMusicKitMetadata() async {
     #expect(!viewModel.settings.importPreferences.useMusicKitMetadataEnrichment)
     #expect(store.savedValues.isEmpty)
     #expect(!(await service.snapshot()).isEnabled)
+}
+
+@MainActor
+@Test("Metadata snapshot observation resumes for nested settings pages")
+func settingsFeatureResumesMetadataObservationAfterNavigation() async throws {
+    let store = SettingsFeatureTestStore()
+    let service = SettingsMetadataEnrichmentTestService(authorization: .authorized)
+    let viewModel = SettingsViewModel(store: store, metadataEnrichment: service)
+
+    await viewModel.load()
+    viewModel.stopObservingChanges()
+    await service.setEnabled(true)
+
+    #expect(!viewModel.metadataEnrichmentSnapshot.isEnabled)
+
+    viewModel.resumeMetadataObservation()
+    for _ in 0..<50 {
+        if viewModel.metadataEnrichmentSnapshot.isEnabled { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+
+    #expect(viewModel.metadataEnrichmentSnapshot.isEnabled)
+}
+
+@MainActor
+@Test("Metadata scan actions refresh the settings UI immediately")
+func settingsFeatureMetadataScanActionsRefreshUI() async throws {
+    let store = SettingsFeatureTestStore()
+    let service = SettingsMetadataEnrichmentTestService(authorization: .authorized)
+    let viewModel = SettingsViewModel(store: store, metadataEnrichment: service)
+
+    await viewModel.load()
+    await service.setEnabled(true)
+    viewModel.resumeMetadataObservation()
+    for _ in 0..<50 {
+        if viewModel.metadataEnrichmentSnapshot.isEnabled { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(viewModel.metadataEnrichmentSnapshot.isEnabled)
+
+    viewModel.startMetadataScan()
+    #expect(viewModel.metadataEnrichmentSnapshot.scan.status == .scanning)
+    await viewModel.waitForMetadataScanWork()
+    #expect(await service.recordedScanCounts().start == 1)
+
+    viewModel.cancelMetadataScan()
+    #expect(viewModel.metadataEnrichmentSnapshot.scan.status == .cancelled)
+    await viewModel.waitForMetadataScanWork()
+    #expect(await service.recordedScanCounts().cancel == 1)
+    #expect(viewModel.metadataEnrichmentSnapshot.scan.status == .cancelled)
+}
+
+@MainActor
+@Test("Settings preserves metadata provider enablement and order")
+func settingsFeaturePreservesMetadataProviderPreferences() async {
+    let store = SettingsFeatureTestStore(
+        settings: AppSettings(
+            importPreferences: ImportPreferences(
+                metadataProviders: [
+                    MetadataProviderPreference(provider: .musicKit),
+                    MetadataProviderPreference(provider: .metadataServer)
+                ]
+            )
+        )
+    )
+    let service = SettingsMetadataEnrichmentTestService(authorization: .authorized)
+    let viewModel = SettingsViewModel(store: store, metadataEnrichment: service)
+
+    await viewModel.load()
+    viewModel.setMetadataProviderEnabled(.musicKit, true)
+    await viewModel.waitForMetadataWork()
+    await viewModel.waitForPendingWork()
+
+    viewModel.setMetadataProviderEnabled(.metadataServer, true)
+    await viewModel.waitForMetadataWork()
+    await viewModel.waitForPendingWork()
+
+    viewModel.moveMetadataProvider(at: 1, by: -1)
+    await viewModel.waitForMetadataWork()
+    await viewModel.waitForPendingWork()
+
+    #expect(viewModel.settings.importPreferences.metadataProviders.map(\.provider) == [
+        .metadataServer,
+        .musicKit
+    ])
+    #expect(viewModel.settings.importPreferences.metadataProviders.allSatisfy { $0.isEnabled })
+    #expect(await service.recordedProviderPreferences().contains {
+        $0.map(\.provider) == [.metadataServer, .musicKit]
+    })
+
+    viewModel.setDuplicateImportPolicy(.keepBoth)
+    await viewModel.waitForPendingWork()
+    #expect(viewModel.settings.importPreferences.duplicatePolicy == .keepBoth)
+    #expect(viewModel.settings.importPreferences.metadataProviders.map(\.provider) == [
+        .metadataServer,
+        .musicKit
+    ])
 }
 
 @MainActor

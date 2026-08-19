@@ -61,12 +61,16 @@ enum LibraryBatchDeletionScope: Sendable {
     case tracks
     case albums
     case artists
+    case genres
+    case folders
 
     var actionTitle: String {
         switch self {
         case .tracks: return L("删除所选歌曲")
         case .albums: return L("删除所选专辑")
         case .artists: return L("删除所选艺人")
+        case .genres: return L("删除所选流派")
+        case .folders: return L("删除所选文件夹")
         }
     }
 
@@ -75,6 +79,8 @@ enum LibraryBatchDeletionScope: Sendable {
         case .tracks: return L("删除所选歌曲？")
         case .albums: return L("删除所选专辑？")
         case .artists: return L("删除所选艺人？")
+        case .genres: return L("删除所选流派？")
+        case .folders: return L("删除所选文件夹？")
         }
     }
 
@@ -83,6 +89,8 @@ enum LibraryBatchDeletionScope: Sendable {
         case .tracks: return L("%d tracks", count)
         case .albums: return L("%d albums", count)
         case .artists: return L("%d artists", count)
+        case .genres: return L("%d genres", count)
+        case .folders: return L("%d folders", count)
         }
     }
 
@@ -101,6 +109,16 @@ enum LibraryBatchDeletionScope: Sendable {
         case .artists:
             return L(
                 "将删除所选的 %d 位艺人及其歌曲；Documents 中的原始文件不会被删除。",
+                count
+            )
+        case .genres:
+            return L(
+                "将删除所选的 %d 个流派及其中的歌曲；Documents 中的原始文件不会被删除。",
+                count
+            )
+        case .folders:
+            return L(
+                "将删除所选的 %d 个文件夹及其中的歌曲；Documents 中的原始文件不会被删除。",
                 count
             )
         }

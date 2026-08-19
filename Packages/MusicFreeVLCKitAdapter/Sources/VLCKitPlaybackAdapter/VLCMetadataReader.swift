@@ -47,6 +47,11 @@ public final class VLCMetadataReader: @unchecked Sendable, MetadataReading {
       try Task.checkCancellation()
 
       let metadata = media.metaData
+      let vlcDuration = duration(from: media.length)
+      let reliableDuration = await VLCMediaDurationReader.reliableDuration(
+        for: resource,
+        fallback: vlcDuration
+      )
       return RawMediaMetadata(
         title: metadata.title,
         artist: metadata.artist,
@@ -61,7 +66,7 @@ public final class VLCMetadataReader: @unchecked Sendable, MetadataReading {
         trackNumber: metadata.trackNumber == 0 ? nil : Int(metadata.trackNumber),
         discNumber: metadata.discNumber == 0 ? nil : Int(metadata.discNumber),
         year: parseYear(metadata.date),
-        duration: duration(from: media.length),
+        duration: reliableDuration,
         artworks: artworkValues(from: metadata)
       )
     } catch let error as MediaSourceError {

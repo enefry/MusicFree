@@ -3,6 +3,7 @@ import DesignSystem
 import Foundation
 import LibraryAPI
 import Observation
+import OSLog
 import PlaybackAPI
 import SettingsAPI
 import SystemIntegrationAPI
@@ -17,6 +18,7 @@ final class SettingsViewModel {
 
     let store: any SettingsFeatureStore
     private let metadataEnrichment: (any MetadataEnrichmentServing)?
+    private let lyricsServing: (any LyricsServing)?
 
     private(set) var settings: AppSettings = .defaults
     private(set) var playbackCapabilities: PlaybackCapabilities = []
@@ -29,6 +31,7 @@ final class SettingsViewModel {
     private(set) var lastFailure: SettingsFeatureFailure?
     private(set) var isRefreshingStorage = false
     private(set) var metadataEnrichmentSnapshot = MetadataEnrichmentSnapshot()
+    private(set) var lyricsPreloadSnapshot = LyricsPreloadSnapshot()
     private(set) var playbackRateDraft: Double?
     private(set) var equalizerPreampDraft: Double?
     var isResetConfirmationPresented = false
@@ -37,7 +40,10 @@ final class SettingsViewModel {
 
     private var changeObservationTask: Task<Void, Never>?
     private var metadataObservationTask: Task<Void, Never>?
+    private var lyricsPreloadObservationTask: Task<Void, Never>?
     private var metadataActionTask: Task<Void, Never>?
+    private var metadataScanActionTask: Task<Void, Never>?
+    private var lyricsPreloadActionTask: Task<Void, Never>?
     private var metadataRuntimeTask: Task<Void, Never>?
     private var operationTask: Task<Void, Never>?
     private var pendingOperation: SettingsOperation?
@@ -50,14 +56,23 @@ final class SettingsViewModel {
     private var storageRefreshTask: Task<Void, Never>?
     private var storageRefreshGeneration: UInt64 = 0
     private var metadataIntentGeneration: UInt64 = 0
+    private var metadataScanIntentGeneration: UInt64 = 0
     private var metadataRuntimeGeneration: UInt64 = 0
+    private var lyricsPreloadIntentGeneration: UInt64 = 0
+
+    private static let metadataLogger = Logger(
+        subsystem: "com.musicfree.app",
+        category: "metadata-enrichment-ui"
+    )
 
     init(
         store: any SettingsFeatureStore,
-        metadataEnrichment: (any MetadataEnrichmentServing)? = nil
+        metadataEnrichment: (any MetadataEnrichmentServing)? = nil,
+        lyricsServing: (any LyricsServing)? = nil
     ) {
         self.store = store
         self.metadataEnrichment = metadataEnrichment
+        self.lyricsServing = lyricsServing
     }
 
     var isLoading: Bool {
@@ -77,6 +92,10 @@ final class SettingsViewModel {
 
     var canRetryFailedSave: Bool {
         failedSaveSettings != nil && lastFailure?.isRetryable == true
+    }
+
+    var canPreloadLyrics: Bool {
+        lyricsServing != nil
     }
 
     var canEditPlayback: Bool {
@@ -138,6 +157,8 @@ final class SettingsViewModel {
         changeObservationTask = nil
         metadataObservationTask?.cancel()
         metadataObservationTask = nil
+        lyricsPreloadObservationTask?.cancel()
+        lyricsPreloadObservationTask = nil
         invalidateMetadataTasks()
         await cancelOperations()
         await waitForMetadataWork()
@@ -157,15 +178,16 @@ final class SettingsViewModel {
 
         if let metadataEnrichment {
             metadataEnrichmentSnapshot = await metadataEnrichment.snapshot()
-            let metadataStream = await metadataEnrichment.makeSnapshotStream()
-            metadataObservationTask = Task { @MainActor [weak self] in
-                for await value in metadataStream {
-                    guard !Task.isCancelled else { return }
-                    self?.metadataEnrichmentSnapshot = value
-                }
-            }
+            startMetadataObservation(using: metadataEnrichment)
         } else {
             metadataEnrichmentSnapshot = MetadataEnrichmentSnapshot()
+        }
+
+        if let lyricsServing {
+            lyricsPreloadSnapshot = await lyricsServing.preloadSnapshot()
+            startLyricsPreloadObservation(using: lyricsServing)
+        } else {
+            lyricsPreloadSnapshot = LyricsPreloadSnapshot()
         }
 
         do {
@@ -181,6 +203,7 @@ final class SettingsViewModel {
             systemCapabilities = effective.systemCapabilities
             loadState = .loaded
             syncMetadataRuntime(for: loaded)
+            await metadataRuntimeTask?.value
             await refreshStorageUsage()
         } catch is CancellationError {
             changeObservationTask?.cancel()
@@ -269,10 +292,13 @@ final class SettingsViewModel {
     }
 
     func stopObservingChanges() {
+        Self.metadataLogger.debug("stop observing settings and metadata snapshots")
         changeObservationTask?.cancel()
         changeObservationTask = nil
         metadataObservationTask?.cancel()
         metadataObservationTask = nil
+        lyricsPreloadObservationTask?.cancel()
+        lyricsPreloadObservationTask = nil
         invalidateMetadataTasks()
     }
 
@@ -288,6 +314,48 @@ final class SettingsViewModel {
     func waitForMetadataWork() async {
         await metadataActionTask?.value
         await metadataRuntimeTask?.value
+    }
+
+    /// Restarts the metadata snapshot listener when a nested settings page
+    /// becomes visible after an explicit observation stop. The metadata
+    /// service continues its scan independently of the settings UI.
+    func resumeMetadataObservation() {
+        guard let metadataEnrichment else { return }
+        Self.metadataLogger.debug("resume metadata snapshot observation")
+        startMetadataObservation(using: metadataEnrichment)
+    }
+
+    /// Restarts the lyrics preload snapshot listener when the nested page
+    /// becomes visible again. The preload operation itself is owned by the
+    /// service and continues while the page is off-screen.
+    func resumeLyricsPreloadObservation() {
+        guard let lyricsServing else { return }
+        startLyricsPreloadObservation(using: lyricsServing)
+    }
+
+    /// Gives a nested settings page its own stream subscription. The page can
+    /// keep rendering while the parent settings form is off-screen in a
+    /// NavigationStack.
+    func makeMetadataSnapshotStream() async -> AsyncStream<MetadataEnrichmentSnapshot> {
+        guard let metadataEnrichment else {
+            let snapshot = metadataEnrichmentSnapshot
+            return AsyncStream { continuation in
+                continuation.yield(snapshot)
+                continuation.finish()
+            }
+        }
+        return await metadataEnrichment.makeSnapshotStream()
+    }
+
+    func makeLyricsPreloadSnapshotStream() async -> AsyncStream<LyricsPreloadSnapshot> {
+        guard let lyricsServing else {
+            let snapshot = lyricsPreloadSnapshot
+            return AsyncStream { continuation in
+                continuation.yield(snapshot)
+                continuation.finish()
+            }
+        }
+        return await lyricsServing.makePreloadSnapshotStream()
     }
 
     /// Cancels pending work and restores the last value acknowledged by the
@@ -732,7 +800,7 @@ final class SettingsViewModel {
             AppSettings(
                 importPreferences: ImportPreferences(
                     duplicatePolicy: policy,
-                    useMusicKitMetadataEnrichment: current.importPreferences.useMusicKitMetadataEnrichment
+                    metadataProviders: current.importPreferences.metadataProviders
                 ),
                 playbackPreferences: current.playbackPreferences,
                 storagePreferences: current.storagePreferences
@@ -741,6 +809,13 @@ final class SettingsViewModel {
     }
 
     func setMusicKitMetadataEnrichmentEnabled(_ isEnabled: Bool) {
+        setMetadataProviderEnabled(.musicKit, isEnabled)
+    }
+
+    func setMetadataProviderEnabled(
+        _ provider: MetadataEnrichmentProvider,
+        _ isEnabled: Bool
+    ) {
         guard canEditPlayback else { return }
         metadataIntentGeneration = nextGeneration(after: metadataIntentGeneration)
         let generation = metadataIntentGeneration
@@ -749,78 +824,316 @@ final class SettingsViewModel {
         metadataRuntimeGeneration = nextGeneration(after: metadataRuntimeGeneration)
 
         guard let metadataEnrichment else {
+            applyMetadataProviderSetting(provider, enabled: isEnabled)
             return
         }
 
+        let previousPreferences = settings.importPreferences.metadataProviders
         if !isEnabled {
-            applyMusicKitMetadataSetting(false)
-            let service = metadataEnrichment
+            applyMetadataProviderSetting(provider, enabled: false)
             metadataActionTask = Task { @MainActor [weak self] in
-                await service.setEnabled(false)
-                guard let self,
-                      self.metadataIntentGeneration == generation
+                guard let self else { return }
+                await self.waitForPendingWork()
+                guard !Task.isCancelled,
+                      self.metadataIntentGeneration == generation,
+                      self.mutationState == .saved
                 else { return }
-                self.metadataEnrichmentSnapshot = await service.snapshot()
+                let preferences = self.settings.importPreferences.metadataProviders
+                await metadataEnrichment.setProviderPreferences(preferences)
+                await metadataEnrichment.setEnabled(preferences.contains(where: \.isEnabled))
+                self.metadataEnrichmentSnapshot = await metadataEnrichment.snapshot()
             }
             return
         }
 
         metadataActionTask = Task { @MainActor [weak self] in
-            let authorization = await metadataEnrichment.requestAuthorization()
+            let authorization = await metadataEnrichment.requestAuthorization(for: provider)
             guard !Task.isCancelled,
                   let self,
                   self.metadataIntentGeneration == generation
             else { return }
             guard authorization == .authorized else {
-                await metadataEnrichment.setEnabled(false)
+                await metadataEnrichment.setProviderPreferences(previousPreferences)
+                await metadataEnrichment.setEnabled(
+                    previousPreferences.contains(where: \.isEnabled)
+                )
+                self.metadataEnrichmentSnapshot = await metadataEnrichment.snapshot()
                 return
             }
 
-            self.applyMusicKitMetadataSetting(true)
+            self.applyMetadataProviderSetting(provider, enabled: true)
             await self.waitForPendingWork()
             guard !Task.isCancelled,
                   self.metadataIntentGeneration == generation,
-                  self.settings.importPreferences.useMusicKitMetadataEnrichment,
+                  self.settings.importPreferences.isMetadataProviderEnabled(provider),
                   self.mutationState == .saved
             else {
-                await metadataEnrichment.setEnabled(false)
+                await metadataEnrichment.setProviderPreferences(previousPreferences)
+                await metadataEnrichment.setEnabled(
+                    previousPreferences.contains(where: \.isEnabled)
+                )
                 return
             }
-            await metadataEnrichment.setEnabled(true)
+            let preferences = self.settings.importPreferences.metadataProviders
+            await metadataEnrichment.setProviderPreferences(preferences)
+            await metadataEnrichment.setEnabled(preferences.contains(where: \.isEnabled))
             self.metadataEnrichmentSnapshot = await metadataEnrichment.snapshot()
         }
     }
 
-    func startMusicKitMetadataScan() {
+    func moveMetadataProvider(at index: Int, by offset: Int) {
+        guard canEditPlayback else { return }
+        let providers = settings.importPreferences.metadataProviders
+        let destination = index + offset
+        guard providers.indices.contains(index), providers.indices.contains(destination) else {
+            return
+        }
+
+        var reordered = providers
+        let provider = reordered.remove(at: index)
+        reordered.insert(provider, at: destination)
+        applyEdit { current in
+            AppSettings(
+                importPreferences: current.importPreferences.settingMetadataProviders(reordered),
+                playbackPreferences: current.playbackPreferences,
+                storagePreferences: current.storagePreferences
+            )
+        }
+        syncMetadataRuntime(for: settings)
+    }
+
+    func startMetadataScan() {
         guard metadataEnrichmentSnapshot.isEnabled,
               metadataEnrichmentSnapshot.authorization == .authorized,
               metadataEnrichmentSnapshot.scan.status != .scanning
-        else { return }
-        Task { [metadataEnrichment] in
-            await metadataEnrichment?.startScan()
+        else {
+            Self.metadataLogger.debug(
+                "scan button ignored enabled=\(self.metadataEnrichmentSnapshot.isEnabled, privacy: .public) authorization=\(self.metadataEnrichmentSnapshot.authorization.rawValue, privacy: .public) status=\(self.metadataEnrichmentSnapshot.scan.status.rawValue, privacy: .public)"
+            )
+            return
+        }
+
+        let generation = nextGeneration(after: metadataScanIntentGeneration)
+        metadataScanIntentGeneration = generation
+        metadataScanActionTask?.cancel()
+        let actionID = String(generation)
+        guard let metadataEnrichment else {
+            Self.metadataLogger.error(
+                "scan button ignored because metadata service is unavailable"
+            )
+            return
+        }
+        Self.metadataLogger.info(
+            "scan button tapped action=\(actionID, privacy: .public)"
+        )
+
+        // Reflect the user action immediately. The service remains the source
+        // of truth and will replace this value as soon as it publishes.
+        metadataEnrichmentSnapshot = MetadataEnrichmentSnapshot(
+            isEnabled: metadataEnrichmentSnapshot.isEnabled,
+            authorization: metadataEnrichmentSnapshot.authorization,
+            scan: MetadataEnrichmentScanSnapshot(status: .scanning),
+            activeProvider: metadataEnrichmentSnapshot.activeProvider,
+            providerStatuses: metadataEnrichmentSnapshot.providerStatuses
+        )
+
+        metadataScanActionTask = Task { @MainActor [weak self] in
+            await metadataEnrichment.startScan()
+            guard !Task.isCancelled,
+                  let self,
+                  self.metadataScanIntentGeneration == generation
+            else {
+                Self.metadataLogger.debug(
+                    "scan action superseded action=\(actionID, privacy: .public)"
+                )
+                return
+            }
+            let snapshot = await metadataEnrichment.snapshot()
+            self.metadataEnrichmentSnapshot = snapshot
+            Self.metadataLogger.info(
+                "scan action accepted action=\(actionID, privacy: .public) status=\(snapshot.scan.status.rawValue, privacy: .public)"
+            )
         }
     }
 
-    func cancelMusicKitMetadataScan() {
-        Task { [metadataEnrichment] in
-            await metadataEnrichment?.cancelScan()
+    func cancelMetadataScan() {
+        let generation = nextGeneration(after: metadataScanIntentGeneration)
+        metadataScanIntentGeneration = generation
+        metadataScanActionTask?.cancel()
+        let actionID = String(generation)
+        guard let metadataEnrichment else {
+            Self.metadataLogger.error(
+                "cancel button ignored because metadata service is unavailable"
+            )
+            return
+        }
+        Self.metadataLogger.info(
+            "cancel button tapped action=\(actionID, privacy: .public)"
+        )
+
+        let currentScan = metadataEnrichmentSnapshot.scan
+        if currentScan.status == .scanning {
+            metadataEnrichmentSnapshot = MetadataEnrichmentSnapshot(
+                isEnabled: metadataEnrichmentSnapshot.isEnabled,
+                authorization: metadataEnrichmentSnapshot.authorization,
+                scan: MetadataEnrichmentScanSnapshot(
+                    status: .cancelled,
+                    total: currentScan.total,
+                    processed: currentScan.processed,
+                    matched: currentScan.matched,
+                    noMatch: currentScan.noMatch,
+                    ambiguous: currentScan.ambiguous,
+                    failed: currentScan.failed
+                ),
+                activeProvider: metadataEnrichmentSnapshot.activeProvider,
+                providerStatuses: metadataEnrichmentSnapshot.providerStatuses
+            )
+        }
+
+        metadataScanActionTask = Task { @MainActor [weak self] in
+            await metadataEnrichment.cancelScan()
+            guard !Task.isCancelled,
+                  let self,
+                  self.metadataScanIntentGeneration == generation
+            else {
+                Self.metadataLogger.debug(
+                    "cancel action superseded action=\(actionID, privacy: .public)"
+                )
+                return
+            }
+            let snapshot = await metadataEnrichment.snapshot()
+            self.metadataEnrichmentSnapshot = snapshot
+            Self.metadataLogger.info(
+                "cancel action completed action=\(actionID, privacy: .public) status=\(snapshot.scan.status.rawValue, privacy: .public) processed=\(snapshot.scan.processed, privacy: .public)"
+            )
         }
     }
 
-    func requestMusicKitAuthorization() {
+    func waitForMetadataScanWork() async {
+        await metadataScanActionTask?.value
+    }
+
+    func waitForLyricsPreloadWork() async {
+        await lyricsPreloadActionTask?.value
+    }
+
+    func startLyricsPreload() {
+        guard let lyricsServing,
+              lyricsPreloadSnapshot.status != .downloading
+        else {
+            Self.metadataLogger.debug(
+                "lyrics preload button ignored status=\(self.lyricsPreloadSnapshot.status.rawValue, privacy: .public)"
+            )
+            return
+        }
+
+        let generation = nextGeneration(after: lyricsPreloadIntentGeneration)
+        lyricsPreloadIntentGeneration = generation
+        lyricsPreloadActionTask?.cancel()
+        let actionID = String(generation)
+        Self.metadataLogger.info(
+            "lyrics preload button tapped action=\(actionID, privacy: .public)"
+        )
+
+        lyricsPreloadSnapshot = LyricsPreloadSnapshot(status: .downloading)
+        lyricsPreloadActionTask = Task { @MainActor [weak self] in
+            await lyricsServing.startPreload()
+            guard !Task.isCancelled,
+                  let self,
+                  self.lyricsPreloadIntentGeneration == generation
+            else {
+                Self.metadataLogger.debug(
+                    "lyrics preload action superseded action=\(actionID, privacy: .public)"
+                )
+                return
+            }
+            let snapshot = await lyricsServing.preloadSnapshot()
+            self.lyricsPreloadSnapshot = snapshot
+            Self.metadataLogger.info(
+                "lyrics preload action accepted action=\(actionID, privacy: .public) status=\(snapshot.status.rawValue, privacy: .public)"
+            )
+        }
+    }
+
+    func cancelLyricsPreload() {
+        let generation = nextGeneration(after: lyricsPreloadIntentGeneration)
+        lyricsPreloadIntentGeneration = generation
+        lyricsPreloadActionTask?.cancel()
+        let actionID = String(generation)
+        guard let lyricsServing else {
+            Self.metadataLogger.error(
+                "lyrics preload cancel ignored because lyrics service is unavailable"
+            )
+            return
+        }
+        Self.metadataLogger.info(
+            "lyrics preload cancel tapped action=\(actionID, privacy: .public)"
+        )
+
+        let current = lyricsPreloadSnapshot
+        if current.status == .downloading {
+            lyricsPreloadSnapshot = LyricsPreloadSnapshot(
+                status: .cancelled,
+                total: current.total,
+                processed: current.processed,
+                downloaded: current.downloaded,
+                cached: current.cached,
+                noLyrics: current.noLyrics,
+                failed: current.failed
+            )
+        }
+
+        lyricsPreloadActionTask = Task { @MainActor [weak self] in
+            await lyricsServing.cancelPreload()
+            guard !Task.isCancelled,
+                  let self,
+                  self.lyricsPreloadIntentGeneration == generation
+            else {
+                Self.metadataLogger.debug(
+                    "lyrics preload cancel superseded action=\(actionID, privacy: .public)"
+                )
+                return
+            }
+            let snapshot = await lyricsServing.preloadSnapshot()
+            self.lyricsPreloadSnapshot = snapshot
+            Self.metadataLogger.info(
+                "lyrics preload cancel completed action=\(actionID, privacy: .public) status=\(snapshot.status.rawValue, privacy: .public) processed=\(snapshot.processed, privacy: .public)"
+            )
+        }
+    }
+
+    func requestMetadataAuthorization(for provider: MetadataEnrichmentProvider) {
         metadataActionTask?.cancel()
         guard let metadataEnrichment else { return }
         metadataActionTask = Task { @MainActor [weak self] in
-            _ = await metadataEnrichment.requestAuthorization()
+            _ = await metadataEnrichment.requestAuthorization(for: provider)
             guard let self, !Task.isCancelled else { return }
             self.metadataEnrichmentSnapshot = await metadataEnrichment.snapshot()
         }
     }
 
-    private func applyMusicKitMetadataSetting(_ isEnabled: Bool) {
+    func startMusicKitMetadataScan() {
+        startMetadataScan()
+    }
+
+    func cancelMusicKitMetadataScan() {
+        cancelMetadataScan()
+    }
+
+    func requestMusicKitAuthorization() {
+        requestMetadataAuthorization(for: .musicKit)
+    }
+
+    private func applyMetadataProviderSetting(
+        _ provider: MetadataEnrichmentProvider,
+        enabled: Bool
+    ) {
         applyEdit { current in
             AppSettings(
-                importPreferences: current.importPreferences.settingMusicKitMetadataEnrichment(isEnabled),
+                importPreferences: current.importPreferences.settingMetadataProvider(
+                    provider,
+                    enabled: enabled
+                ),
                 playbackPreferences: current.playbackPreferences,
                 storagePreferences: current.storagePreferences
             )
@@ -833,12 +1146,14 @@ final class SettingsViewModel {
         metadataRuntimeTask?.cancel()
         metadataRuntimeGeneration = nextGeneration(after: metadataRuntimeGeneration)
         let generation = metadataRuntimeGeneration
-        let requestedValue = settings.importPreferences.useMusicKitMetadataEnrichment
+        let preferences = settings.importPreferences.metadataProviders
+        let requestedValue = preferences.contains(where: \.isEnabled)
         guard let metadataEnrichment else { return }
         let previousTask = metadataRuntimeTask
         metadataRuntimeTask = Task { @MainActor [weak self] in
             await previousTask?.value
             guard !Task.isCancelled else { return }
+            await metadataEnrichment.setProviderPreferences(preferences)
             await metadataEnrichment.setEnabled(requestedValue)
             guard !Task.isCancelled,
                   let self,
@@ -848,9 +1163,19 @@ final class SettingsViewModel {
             self.metadataEnrichmentSnapshot = snapshot
             if requestedValue,
                !snapshot.isEnabled,
-               self.settings.importPreferences.useMusicKitMetadataEnrichment
+               self.settings.importPreferences.metadataProviders == preferences
             {
-                self.applyMusicKitMetadataSetting(false)
+                self.applyEdit { current in
+                    AppSettings(
+                        importPreferences: current.importPreferences.settingMetadataProviders(
+                            current.importPreferences.metadataProviders.map {
+                                $0.settingEnabled(false)
+                            }
+                        ),
+                        playbackPreferences: current.playbackPreferences,
+                        storagePreferences: current.storagePreferences
+                    )
+                }
             }
         }
     }
@@ -860,6 +1185,46 @@ final class SettingsViewModel {
         metadataRuntimeGeneration = nextGeneration(after: metadataRuntimeGeneration)
         metadataActionTask?.cancel()
         metadataRuntimeTask?.cancel()
+    }
+
+    private func startMetadataObservation(
+        using metadataEnrichment: any MetadataEnrichmentServing
+    ) {
+        metadataObservationTask?.cancel()
+        Self.metadataLogger.debug("starting metadata snapshot stream")
+        metadataObservationTask = Task { @MainActor [weak self] in
+            let metadataStream = await metadataEnrichment.makeSnapshotStream()
+            Self.metadataLogger.debug("metadata snapshot stream connected")
+            for await value in metadataStream {
+                guard !Task.isCancelled else { return }
+                guard let self else { return }
+                self.metadataEnrichmentSnapshot = value
+                Self.metadataLogger.debug(
+                    "metadata snapshot received status=\(value.scan.status.rawValue, privacy: .public) processed=\(value.scan.processed, privacy: .public)/\(value.scan.total, privacy: .public) current=\(value.scan.currentTitle ?? "-", privacy: .public)"
+                )
+            }
+            Self.metadataLogger.debug("metadata snapshot stream ended")
+        }
+    }
+
+    private func startLyricsPreloadObservation(
+        using lyricsServing: any LyricsServing
+    ) {
+        lyricsPreloadObservationTask?.cancel()
+        Self.metadataLogger.debug("starting lyrics preload snapshot stream")
+        lyricsPreloadObservationTask = Task { @MainActor [weak self] in
+            let stream = await lyricsServing.makePreloadSnapshotStream()
+            Self.metadataLogger.debug("lyrics preload snapshot stream connected")
+            for await value in stream {
+                guard !Task.isCancelled else { return }
+                guard let self else { return }
+                self.lyricsPreloadSnapshot = value
+                Self.metadataLogger.debug(
+                    "lyrics preload snapshot received status=\(value.status.rawValue, privacy: .public) processed=\(value.processed, privacy: .public)/\(value.total, privacy: .public) current=\(value.currentTitle ?? "-", privacy: .public)"
+                )
+            }
+            Self.metadataLogger.debug("lyrics preload snapshot stream ended")
+        }
     }
 
     func setAutomaticallyPruneCache(_ isEnabled: Bool) {

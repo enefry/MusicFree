@@ -5742,6 +5742,17 @@
         }
       }
     },
+    "已暂停" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Paused" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已暂停" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "En pause" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Pausiert" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "En pausa" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "一時停止中" } }
+      }
+    },
     "已关闭" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -15219,7 +15230,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Continue playing"
+            "value" : "Continue Playing"
           }
         },
         "zh-Hans" : {
@@ -15252,6 +15263,28 @@
             "value" : "再生を続ける"
           }
         }
+      }
+    },
+    "管理完整队列" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Manage full queue" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "管理完整队列" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Manage full queue" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Manage full queue" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Manage full queue" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "完全なキューを管理" } }
+      }
+    },
+    "淡入淡出" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Crossfade" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "淡入淡出" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Fondu enchaîné" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Überblenden" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Fundido cruzado" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "クロスフェード" } }
       }
     },
     "缓存上限" : {
@@ -19234,6 +19267,17 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "保存後に現在のアートワークを削除" } }
       }
     },
+    "返回播放器" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Back to player" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "返回播放器" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Retour au lecteur" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Zurück zum Player" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Volver al reproductor" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "プレーヤーに戻る" } }
+      }
+    },
     "可用" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -19364,6 +19408,17 @@
         "de" : { "stringUnit" : { "state" : "translated", "value" : "Dateigröße" } },
         "es" : { "stringUnit" : { "state" : "translated", "value" : "Tamaño del archivo" } },
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "ファイルサイズ" } }
+      }
+    },
+    "在线获取" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Fetch online" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "在线获取" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Obtenir en ligne" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Online abrufen" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Obtener en línea" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "オンライン取得" } }
       }
     },
     "无歌词" : {
@@ -19672,6 +19727,182 @@
         "de" : { "stringUnit" : { "state" : "translated", "value" : "%d Titel verarbeitet: %d Treffer, %d nicht gefunden, %d mehrdeutig, %d fehlgeschlagen." } },
         "es" : { "stringUnit" : { "state" : "translated", "value" : "%d pistas procesadas: %d coincidencias, %d no encontradas, %d ambiguas, %d fallidas." } },
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "%d曲を処理：一致 %d曲、未検出 %d曲、候補不明 %d曲、失敗 %d曲。" } }
+      }
+    },
+    "元数据" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Metadata" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "元数据" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Métadonnées" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Metadaten" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Metadatos" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "メタデータ" } }
+      }
+    },
+    "优先使用 Metadata Server，未匹配时回退到 LRCLIB。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Try Metadata Server first, then fall back to LRCLIB when no lyrics are found." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "优先使用 Metadata Server，未匹配时回退到 LRCLIB。" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Utilise d’abord Metadata Server, puis LRCLIB si aucune parole n’est trouvée." } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Zuerst Metadata Server verwenden und bei fehlenden Liedtexten auf LRCLIB zurückgreifen." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Usa primero Metadata Server y recurre a LRCLIB si no se encuentran letras." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "まず Metadata Server を使い、歌詞が見つからない場合は LRCLIB に切り替えます。" } }
+      }
+    },
+    "打开播放页歌词时按需在线获取，成功后保存到本地资料库。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Fetch lyrics on demand from LRCLIB when the player lyrics page opens. Successful results are saved to the local library." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "打开播放页歌词时按需在线获取，成功后保存到本地资料库。" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Récupère les paroles à la demande depuis LRCLIB à l’ouverture de la page des paroles du lecteur. Les résultats obtenus sont enregistrés dans la bibliothèque locale." } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Liedtexte werden beim Öffnen der Liedtextseite des Players bei Bedarf von LRCLIB abgerufen. Erfolgreiche Ergebnisse werden in der lokalen Mediathek gespeichert." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Obtén letras bajo demanda desde LRCLIB al abrir la página de letras del reproductor. Los resultados obtenidos se guardan en la biblioteca local." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "プレーヤーの歌詞ページを開いたときに、LRCLIBから必要に応じて歌詞を取得します。取得に成功した歌詞はローカルライブラリに保存されます。" } }
+      }
+    },
+    "取消预下载" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Cancel pre-download" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "取消预下载" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Annuler le pré-téléchargement" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Vorab-Download abbrechen" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Cancelar la predescarga" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "先行ダウンロードをキャンセル" } }
+      }
+    },
+    "只处理没有本地歌词的歌曲，成功后保存到 App 资料库。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Only songs without local lyrics are processed. Successful results are saved to the App library." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "只处理没有本地歌词的歌曲，成功后保存到 App 资料库。" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Seuls les titres sans paroles locales sont traités. Les résultats obtenus sont enregistrés dans la bibliothèque de l’app." } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Es werden nur Titel ohne lokale Liedtexte verarbeitet. Erfolgreiche Ergebnisse werden in der App-Mediathek gespeichert." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Solo se procesan las canciones sin letras locales. Los resultados obtenidos se guardan en la biblioteca de la app." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ローカル歌詞がない曲だけを処理します。取得に成功した歌詞はアプリのライブラリに保存されます。" } }
+      }
+    },
+    "正在预下载 %d/%d" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Pre-downloading %d/%d" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在预下载 %d/%d" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Pré-téléchargement %d/%d" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Vorab-Download %d/%d" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Predescargando %d/%d" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "先行ダウンロード中 %d/%d" } }
+      }
+    },
+    "已处理 %d 首，下载 %d 首，已有 %d 首，无歌词 %d 首，失败 %d 首。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Processed %d tracks: %d downloaded, %d already cached, %d without lyrics, %d failed." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已处理 %d 首，下载 %d 首，已有 %d 首，无歌词 %d 首，失败 %d 首。" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "%d titres traités : %d téléchargés, %d déjà en cache, %d sans paroles, %d échecs." } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "%d Titel verarbeitet: %d heruntergeladen, %d bereits im Cache, %d ohne Liedtext, %d fehlgeschlagen." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "%d pistas procesadas: %d descargadas, %d ya en caché, %d sin letras, %d fallidas." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%d曲を処理：ダウンロード %d曲、キャッシュ済み %d曲、歌詞なし %d曲、失敗 %d曲。" } }
+      }
+    },
+    "歌词服务不可用。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Lyrics services are unavailable." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "歌词服务不可用。" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Les services de paroles sont indisponibles." } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Liedtextdienste sind nicht verfügbar." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Los servicios de letras no están disponibles." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "歌詞サービスを利用できません。" } }
+      }
+    },
+    "歌词预下载未完成，请稍后重试。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Lyrics pre-download did not finish. Try again later." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "歌词预下载未完成，请稍后重试。" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Le pré-téléchargement des paroles n’est pas terminé. Réessayez plus tard." } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Der Vorab-Download der Liedtexte wurde nicht abgeschlossen. Versuchen Sie es später erneut." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "La predescarga de letras no terminó. Inténtalo de nuevo más tarde." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "歌詞の先行ダウンロードが完了しませんでした。後でもう一度お試しください。" } }
+      }
+    },
+    "预下载歌词" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Pre-download lyrics" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "预下载歌词" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Pré-télécharger les paroles" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Liedtexte vorab laden" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Predescargar letras" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "歌詞を先行ダウンロード" } }
+      }
+    },
+    "发行信息" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Release information" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "发行信息" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Informations de sortie" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Veröffentlichungsinformationen" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Información de lanzamiento" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "リリース情報" } }
+      }
+    },
+    "修改将应用到该专辑下的全部歌曲，仅覆盖 App 资料库，不会改写原始音频标签。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Changes apply to every song in this album. They affect only the App library and do not rewrite the original audio tags." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "修改将应用到该专辑下的全部歌曲，仅覆盖 App 资料库，不会改写原始音频标签。" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Les modifications s’appliquent à tous les titres de cet album. Elles concernent uniquement la bibliothèque de l’app et ne réécrivent pas les balises audio originales." } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Die Änderungen gelten für alle Titel dieses Albums. Sie betreffen nur die App-Mediathek und schreiben die ursprünglichen Audio-Tags nicht um." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Los cambios se aplican a todas las canciones de este álbum. Solo afectan a la biblioteca de la app y no reescriben las etiquetas de audio originales." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "変更はこのアルバムのすべての曲に適用されます。アプリのライブラリだけを更新し、元の音声タグは書き換えません。" } }
+      }
+    },
+    "无法保存专辑" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Unable to save album" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法保存专辑" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Impossible d’enregistrer l’album" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Album konnte nicht gespeichert werden" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "No se puede guardar el álbum" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "アルバムを保存できません" } }
+      }
+    },
+    "无法读取专辑艺人信息，未保存任何修改。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Album artist information could not be read. No changes were saved." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法读取专辑艺人信息，未保存任何修改。" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Les informations sur l’artiste de l’album sont illisibles. Aucune modification n’a été enregistrée." } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Die Informationen zum Album-Interpret konnten nicht gelesen werden. Es wurden keine Änderungen gespeichert." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "No se pudo leer la información del artista del álbum. No se guardaron cambios." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "アルバムアーティスト情報を読み取れませんでした。変更は保存されていません。" } }
+      }
+    },
+    "专辑名称不能为空。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Album name cannot be empty." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "专辑名称不能为空。" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Le nom de l’album ne peut pas être vide." } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Der Albumname darf nicht leer sein." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "El nombre del álbum no puede estar vacío." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "アルバム名を空にすることはできません。" } }
+      }
+    },
+    "年份必须是有效数字。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Year must be a valid number." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "年份必须是有效数字。" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "L’année doit être un nombre valide." } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Das Jahr muss eine gültige Zahl sein." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "El año debe ser un número válido." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "年は有効な数字で入力してください。" } }
       }
     }
   },

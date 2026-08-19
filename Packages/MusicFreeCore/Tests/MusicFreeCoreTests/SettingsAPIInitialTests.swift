@@ -1,4 +1,5 @@
 import Foundation
+import MusicDomain
 import SettingsAPI
 import Testing
 
@@ -8,6 +9,12 @@ func settingsDefaultsAreSafe() {
 
     #expect(settings.schemaVersion == AppSettings.currentSchemaVersion)
     #expect(settings.importPreferences.duplicatePolicy == .skipExisting)
+    #expect(settings.importPreferences.metadataProviders.map(\.provider) == [
+        .musicKit,
+        .metadataServer,
+        .discogs
+    ])
+    #expect(settings.importPreferences.metadataProviders.allSatisfy { !$0.isEnabled })
     #expect(settings.playbackPreferences.rate == .normal)
     #expect(!settings.playbackPreferences.equalizer.isEnabled)
     #expect(settings.playbackPreferences.equalizer.preamp == .zero)
@@ -18,6 +25,73 @@ func settingsDefaultsAreSafe() {
     #expect(settings.storagePreferences.cacheLimit == .fiveGiB)
     #expect(settings.storagePreferences.automaticallyPruneCache)
     #expect(settings.storagePreferences.stagingRetention == .seconds(7 * 24 * 60 * 60))
+}
+
+@Test("Import preferences migrate the legacy MusicKit flag and preserve provider order")
+func importPreferencesMigrateMetadataProviders() throws {
+    let legacyPayload = #"{"duplicatePolicy":"keepBoth","useMusicKitMetadataEnrichment":true}"#
+        .data(using: .utf8)!
+    let migrated = try JSONDecoder().decode(ImportPreferences.self, from: legacyPayload)
+    #expect(migrated.duplicatePolicy == .keepBoth)
+    #expect(migrated.metadataProviders.map(\.provider) == [
+        .musicKit,
+        .metadataServer,
+        .discogs
+    ])
+    #expect(migrated.isMetadataProviderEnabled(.musicKit))
+    #expect(!migrated.isMetadataProviderEnabled(.metadataServer))
+    #expect(!migrated.isMetadataProviderEnabled(.discogs))
+
+    let customProvider = MetadataProviderID(rawValue: "customProvider")
+    let configured = ImportPreferences(
+        metadataProviders: [
+            MetadataProviderPreference(provider: .metadataServer, isEnabled: true),
+            MetadataProviderPreference(provider: .musicKit, isEnabled: false),
+            MetadataProviderPreference(provider: customProvider, isEnabled: true)
+        ]
+    )
+    let roundTripped = try JSONDecoder().decode(
+        ImportPreferences.self,
+        from: JSONEncoder().encode(configured)
+    )
+    #expect(roundTripped.metadataProviders.map(\.provider) == [
+        .metadataServer,
+        .musicKit,
+        customProvider,
+        .discogs
+    ])
+    #expect(Array(roundTripped.metadataProviders.prefix(3)) == configured.metadataProviders)
+    #expect(!roundTripped.isMetadataProviderEnabled(.discogs))
+}
+
+@Test("Import preferences append Discogs to previously saved provider orders")
+func importPreferencesMigratePreviouslySavedProviderOrder() throws {
+    let previousPayload = #"{"metadataProviders":[{"provider":"metadataServer","isEnabled":true},{"provider":"musicKit","isEnabled":false}]}"#
+        .data(using: .utf8)!
+
+    let migrated = try JSONDecoder().decode(
+        ImportPreferences.self,
+        from: previousPayload
+    )
+
+    #expect(migrated.metadataProviders.map(\.provider) == [
+        .metadataServer,
+        .musicKit,
+        .discogs
+    ])
+    #expect(migrated.isMetadataProviderEnabled(.metadataServer))
+    #expect(!migrated.isMetadataProviderEnabled(.musicKit))
+    #expect(!migrated.isMetadataProviderEnabled(.discogs))
+}
+
+@Test("Import preferences reject empty metadata provider IDs")
+func importPreferencesRejectEmptyMetadataProviderID() {
+    let payload = #"{"metadataProviders":[{"provider":"","isEnabled":true}]}"#
+        .data(using: .utf8)!
+
+    #expect(throws: DecodingError.self) {
+        try JSONDecoder().decode(ImportPreferences.self, from: payload)
+    }
 }
 
 @Test("Sleep timer schedules handle daytime, overnight, and overlapping windows")

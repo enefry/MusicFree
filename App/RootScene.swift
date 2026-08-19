@@ -26,7 +26,9 @@ struct RootScene: View {
     var body: some View {
         startupAwareContent
             .tint(MusicFreeColorTokens.accent)
-            .preferredColorScheme(appearance.colorScheme)
+            .preferredColorScheme(
+                router.presented == .player ? .dark : appearance.colorScheme
+            )
             .environment(\.locale, language.locale)
             .task {
                 await startServices()
@@ -115,15 +117,18 @@ struct RootScene: View {
                 compactContent(services: services)
             }
         }
-        .background(MusicFreeColorTokens.backgroundPrimary.ignoresSafeArea())
-        .sheet(item: $router.presented) { presentation in
+        .background {
+            if router.presented == .player {
+                playerFallbackBackground
+                    .ignoresSafeArea()
+            } else {
+                MusicFreeColorTokens.backgroundPrimary.ignoresSafeArea()
+            }
+        }
+        .fullScreenCover(item: $router.presented) { presentation in
             presentedView(for: presentation)
-                .presentationDetents([.large])
-                .presentationDragIndicator(.visible)
-                .presentationContentInteraction(.scrolls)
-                // Keep the edge-to-edge player canvas opaque around the status bar.
-                .presentationCornerRadius(0)
-                .presentationBackground(MusicFreeColorTokens.backgroundPrimary)
+                .presentationBackground(.clear)
+                .presentationDragIndicator(.hidden)
         }
     }
 
@@ -208,6 +213,7 @@ struct RootScene: View {
                     appIconProvider: AppAlternateIconProvider(),
                     sleepTimerServing: services.sleepTimerServing,
                     metadataEnrichment: services.metadataEnrichmentServing,
+                    lyricsServing: services.lyrics,
                     additionContent: additionSettingsContent
                 )
             }
@@ -313,6 +319,7 @@ struct RootScene: View {
                 appIconProvider: AppAlternateIconProvider(),
                 sleepTimerServing: services.sleepTimerServing,
                 metadataEnrichment: services.metadataEnrichmentServing,
+                lyricsServing: services.lyrics,
                 additionContent: additionSettingsContent
             )
         }
@@ -322,18 +329,31 @@ struct RootScene: View {
     private func presentedView(for presentation: AppRouter.Presentation) -> some View {
         switch presentation {
         case .player:
-            NavigationStack {
-                if let services = container.serviceContainer {
-                    PlayerScene(
-                        serving: services.playbackServing,
-                        audioServing: services.playbackAudioServing,
-                        artworkServing: services.artworkServing,
-                        library: services.libraryServing
-                    )
-                } else {
-                    PlayerScene(serving: PlayerStore())
+            ZStack {
+                playerFallbackBackground
+                    .ignoresSafeArea()
+
+                Group {
+                    if let services = container.serviceContainer {
+                        PlayerScene(
+                            serving: services.playbackServing,
+                            audioServing: services.playbackAudioServing,
+                            artworkServing: services.artworkServing,
+                            library: services.libraryServing,
+                            lyricsServing: services.lyrics
+                        )
+                    } else {
+                        PlayerScene(serving: PlayerStore())
+                    }
                 }
             }
+            .overlay(alignment: .top) {
+                PlayerDismissHandle {
+                    router.dismissPresentation()
+                }
+            }
+            .toolbarBackground(.hidden, for: .navigationBar)
+            .preferredColorScheme(.dark)
         }
     }
 
@@ -488,6 +508,45 @@ struct RootScene: View {
                 message: String(describing: error)
             )
         }
+    }
+
+    private var playerFallbackBackground: some View {
+        LinearGradient(
+            colors: [
+                Color(red: 0.48, green: 0.24, blue: 0.13),
+                Color(red: 0.18, green: 0.10, blue: 0.07)
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+    }
+}
+
+private struct PlayerDismissHandle: View {
+    let dismiss: () -> Void
+
+    var body: some View {
+        Capsule(style: .continuous)
+            .fill(.white.opacity(0.42))
+            .frame(width: 60, height: 5)
+            .frame(maxWidth: .infinity)
+            .padding(.top, 8)
+            // Keep the drag hit area above the player header so header actions
+            // remain tappable while the handle stays easy to grab.
+            .frame(height: 36, alignment: .top)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 12)
+                    .onEnded { value in
+                        guard value.translation.height > 80,
+                              abs(value.translation.height) > abs(value.translation.width)
+                        else {
+                            return
+                        }
+                        dismiss()
+                    }
+            )
+            .accessibilityHidden(true)
     }
 }
 

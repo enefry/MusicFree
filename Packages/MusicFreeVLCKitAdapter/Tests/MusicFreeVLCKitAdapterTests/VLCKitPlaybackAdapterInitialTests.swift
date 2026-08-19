@@ -23,11 +23,13 @@ struct VLCKitPlaybackAdapterInitialTests {
 
     let bufferingEvents = VLCPlaybackEventMapper.events(
       for: .buffering(generation: generation, itemID: itemID, progress: 0.5),
-      stopWasRequested: false
+      stopWasRequested: false,
+      playbackStarted: false
     )
     let completedEvents = VLCPlaybackEventMapper.events(
       for: .buffering(generation: generation, itemID: itemID, progress: 1),
-      stopWasRequested: false
+      stopWasRequested: false,
+      playbackStarted: true
     )
 
     #expect(
@@ -42,19 +44,46 @@ struct VLCKitPlaybackAdapterInitialTests {
     )
   }
 
-  @Test("Natural stop and requested stop have distinct terminal mapping")
+  @Test("Natural stopping and stopped states have terminal mapping")
   func terminalMapping() {
     let itemID = MediaItemID(sourceID: .local, externalID: "track-1")
+    for code in [VLCPlaybackStateCode.stopping, VLCPlaybackStateCode.stopped] {
+      let event = VLCPlaybackDelegateEvent.state(
+        generation: PlaybackGeneration(4),
+        itemID: itemID,
+        code: code
+      )
+      let naturalEvents = VLCPlaybackEventMapper.events(
+        for: event,
+        stopWasRequested: false,
+        playbackStarted: true
+      )
+      let requestedEvents = VLCPlaybackEventMapper.events(
+        for: event,
+        stopWasRequested: true,
+        playbackStarted: true
+      )
+      #expect(naturalEvents.contains { $0.isTerminal })
+      #expect(requestedEvents.allSatisfy { !$0.isTerminal })
+    }
+  }
+
+  @Test("Preparation-time stopped states do not complete a track")
+  func preparationStoppedStateIsNotNaturalCompletion() {
+    let itemID = MediaItemID(sourceID: .local, externalID: "track-1")
     let event = VLCPlaybackDelegateEvent.state(
-      generation: PlaybackGeneration(4),
+      generation: PlaybackGeneration(5),
       itemID: itemID,
       code: VLCPlaybackStateCode.stopped
     )
 
-    let naturalEvents = VLCPlaybackEventMapper.events(for: event, stopWasRequested: false)
-    let requestedEvents = VLCPlaybackEventMapper.events(for: event, stopWasRequested: true)
-    #expect(naturalEvents.contains { $0.isTerminal })
-    #expect(requestedEvents.allSatisfy { !$0.isTerminal })
+    let events = VLCPlaybackEventMapper.events(
+      for: event,
+      stopWasRequested: false,
+      playbackStarted: false
+    )
+
+    #expect(events.allSatisfy { !$0.isTerminal })
   }
 
   @Test("Late delegate events are rejected by generation and item identity")
@@ -264,5 +293,130 @@ struct VLCKitPlaybackAdapterInitialTests {
 
     #expect(engine.volume == 0.5)
     #expect(engine.isMuted)
+  }
+
+  @MainActor
+  @Test("A local WAV natural EOF emits one completion before the next item")
+  func naturalEOFPreparesTheFollowingItem() async throws {
+    let configuration = try VLCKitAdapterConfiguration(
+      applicationIdentifier: "com.example.musicfree",
+      applicationVersion: "1.0",
+      applicationName: "MusicFree"
+    )
+    let engine = try VLCPlaybackEngine(configuration: configuration)
+    let firstURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("musicfree-natural-end-first-\(UUID().uuidString)")
+      .appendingPathExtension("wav")
+    let secondURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("musicfree-natural-end-second-\(UUID().uuidString)")
+      .appendingPathExtension("wav")
+    try makePlaybackTestWaveData().write(to: firstURL, options: .atomic)
+    try makePlaybackTestWaveData(frequency: 660).write(to: secondURL, options: .atomic)
+    defer {
+      engine.dispose()
+      try? FileManager.default.removeItem(at: firstURL)
+      try? FileManager.default.removeItem(at: secondURL)
+    }
+
+    let firstID = MediaItemID(sourceID: .local, externalID: "natural-end-first")
+    let secondID = MediaItemID(sourceID: .local, externalID: "natural-end-second")
+    let stream = engine.makeEventStream()
+    let recorder = PlaybackEventRecorder()
+    let eventTask = Task { @MainActor in
+      for await event in stream {
+        recorder.events.append(event)
+      }
+    }
+
+    try await engine.prepare(
+      PlaybackItem(
+        itemID: firstID,
+        resource: .local(firstURL),
+        displaySnapshot: PlaybackDisplaySnapshot(title: "First")
+      ),
+      startAt: nil
+    )
+    try engine.play()
+    for _ in 0..<100 {
+      if engine.state.phase == .stopped {
+        break
+      }
+      try await Task.sleep(for: .milliseconds(50))
+    }
+    for _ in 0..<10 {
+      await Task.yield()
+    }
+    eventTask.cancel()
+    await eventTask.value
+
+    let firstEndedEvents = recorder.events.filter { event in
+      if case .ended(_, let itemID, _) = event {
+        return itemID == firstID
+      }
+      return false
+    }
+    #expect(firstEndedEvents.count == 1)
+    #expect(engine.state.phase == .stopped)
+
+    try await engine.prepare(
+      PlaybackItem(
+        itemID: secondID,
+        resource: .local(secondURL),
+        displaySnapshot: PlaybackDisplaySnapshot(title: "Second")
+      ),
+      startAt: nil
+    )
+    try engine.play()
+    #expect(engine.state.phase == .playing)
+  }
+}
+
+@MainActor
+private final class PlaybackEventRecorder {
+  var events: [PlaybackEvent] = []
+}
+
+private func makePlaybackTestWaveData(
+  frequency: Double = 440,
+  duration: Double = 0.35
+) -> Data {
+  let sampleRate: UInt32 = 8_000
+  let channelCount: UInt16 = 1
+  let bitsPerSample: UInt16 = 16
+  let bytesPerSample = Int(bitsPerSample / 8)
+  let sampleCount = Int(Double(sampleRate) * duration)
+  let dataSize = UInt32(sampleCount * bytesPerSample)
+  let byteRate = sampleRate * UInt32(channelCount) * UInt32(bytesPerSample)
+  let blockAlign = channelCount * UInt16(bytesPerSample)
+
+  var data = Data()
+  data.append(contentsOf: "RIFF".utf8)
+  data.appendPlaybackTestLittleEndian(UInt32(36) + dataSize)
+  data.append(contentsOf: "WAVE".utf8)
+  data.append(contentsOf: "fmt ".utf8)
+  data.appendPlaybackTestLittleEndian(UInt32(16))
+  data.appendPlaybackTestLittleEndian(UInt16(1))
+  data.appendPlaybackTestLittleEndian(channelCount)
+  data.appendPlaybackTestLittleEndian(sampleRate)
+  data.appendPlaybackTestLittleEndian(byteRate)
+  data.appendPlaybackTestLittleEndian(blockAlign)
+  data.appendPlaybackTestLittleEndian(bitsPerSample)
+  data.append(contentsOf: "data".utf8)
+  data.appendPlaybackTestLittleEndian(dataSize)
+
+  for index in 0..<sampleCount {
+    let phase = 2 * Double.pi * frequency * Double(index) / Double(sampleRate)
+    let sample = Int16((sin(phase) * Double(Int16.max) * 0.08).rounded())
+    data.appendPlaybackTestLittleEndian(sample)
+  }
+  return data
+}
+
+private extension Data {
+  mutating func appendPlaybackTestLittleEndian<T: FixedWidthInteger>(_ value: T) {
+    var littleEndianValue = value.littleEndian
+    Swift.withUnsafeBytes(of: &littleEndianValue) { bytes in
+      append(contentsOf: bytes)
+    }
   }
 }

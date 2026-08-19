@@ -3,9 +3,9 @@ import DesignSystem
 import LibraryAPI
 import MusicDomain
 import SwiftUI
+import UIKit
 
 struct ArtistsView: View {
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @ObservedObject var viewModel: LibraryViewModel
     let navigate: (LibraryDestination) -> Void
     let artworkServing: (any ArtworkServing)?
@@ -14,7 +14,7 @@ struct ArtistsView: View {
     let isCollectionQueueActionPending: (LibraryCollectionQueueTarget) -> Bool
     let compactRoute: ((LibraryDestination) -> LibraryCompactRoute)?
 
-    @State private var editMode: EditMode = .inactive
+    @State private var isEditing = false
     @State private var selectedArtistIDs: Set<ArtistID> = []
     @State private var pendingArtistDeletionIDs: Set<ArtistID> = []
     @State private var isDeleting = false
@@ -67,53 +67,65 @@ struct ArtistsView: View {
             emptySystemImage: "person.2",
             retry: { viewModel.retry(section: .artists) }
         ) {
-            List {
-                ForEach(groupedArtistKeys, id: \.self) { key in
-                    Section {
-                        ForEach(artists(for: key)) { artist in
-                            ArtistRow(
-                                artist: artist,
-                                artworkServing: artworkServing,
-                                action: { navigate(.artist(artist.id)) },
-                                selectionAction: { toggleSelection(for: artist.id) },
-                                isSelected: selectedArtistIDs.contains(artist.id),
-                                isEditing: isEditing,
-                                destination: compactRoute.map {
-                                    $0(.artist(artist.id))
-                                }
+            NativeLibraryCollectionView(
+                sections: groupedArtistKeys.map { key in
+                    NativeLibraryCollectionSection(
+                        id: "library.artists.\(key)",
+                        headerTitle: key,
+                        items: artists(for: key).map { artist in
+                            NativeLibraryCollectionItem(
+                                id: artist.id.rawValue,
+                                accessibilityLabel: artist.name,
+                                accessibilityHint: L("打开艺人，按住显示更多操作")
                             )
-                            .listRowInsets(EdgeInsets())
-                            .onAppear {
-                                if artist.id == orderedArtists.last?.id {
-                                    viewModel.loadNextPage(for: .artists)
-                                }
-                            }
-                            .contextMenu {
-                                if !isEditing {
-                                    let target = LibraryCollectionQueueTarget.artist(artist.id)
-                                    LibraryCollectionQueueMenuActions(
-                                        target: target,
-                                        accessibilityPrefix: "library.artist.menu",
-                                        enqueueNext: enqueueNextCollection,
-                                        enqueue: enqueueCollection,
-                                        isPending: isCollectionQueueActionPending(target)
-                                    )
-                                }
-                            }
                         }
-                    } header: {
-                        Text(key)
-                            .font(.title3.weight(.bold))
-                            .foregroundStyle(MusicFreeColorTokens.foregroundPrimary)
-                            .textCase(nil)
+                    )
+                },
+                layout: .list,
+                header: nil,
+            footer: viewModel.shouldShowPageFooter(for: .artists)
+                ? AnyView(LibraryPageFooter(section: .artists, viewModel: viewModel))
+                : nil,
+                optionsAccessibilityPrefix: "library.artist",
+                isEditing: isEditing,
+                selectedIDs: Set(selectedArtistIDs.map(\.rawValue)),
+                isDisabled: isDeleting,
+                rowContent: { item, editing, selected in
+                    guard let artist = artist(for: item.id) else {
+                        return AnyView(EmptyView())
                     }
-                    .sectionIndexLabel(key)
+                    return AnyView(
+                        ArtistCollectionRow(
+                            artist: artist,
+                            artworkServing: artworkServing,
+                            isSelected: selected,
+                            isEditing: editing
+                        )
+                    )
+                },
+                activateAction: { item in
+                    navigate(.artist(ArtistID(item.id)))
+                },
+                contextMenu: { item in
+                    guard let artist = artist(for: item.id) else { return nil }
+                    return contextMenu(for: artist)
+                },
+                shareText: { item in artist(for: item.id)?.name },
+                onSelectionChanged: { ids in
+                    selectedArtistIDs = Set(ids.map { ArtistID($0) })
+                },
+                onEditingChanged: { editing in
+                    if editing {
+                        isEditing = true
+                    } else {
+                        finishEditing()
+                    }
+                },
+                onLastItemDisplayed: { itemID in
+                    guard itemID == orderedArtists.last?.id.rawValue else { return }
+                    viewModel.loadNextPage(for: .artists)
                 }
-                LibraryPageFooter(section: .artists, viewModel: viewModel)
-            }
-            .listStyle(.plain)
-            .listSectionIndexVisibility(groupedArtistKeys.isEmpty ? .hidden : .visible)
-            .scrollContentBackground(.hidden)
+            )
             .background(MusicFreeColorTokens.backgroundPrimary)
             .accessibilityIdentifier("library.artists")
         }
@@ -127,24 +139,19 @@ struct ArtistsView: View {
                     action: requestDeleteSelected
                 )
             }
-            if horizontalSizeClass == .compact {
-                Color.clear
-                    .frame(height: MusicFreeLayoutMetrics.compactTabAccessoryClearance)
-                    .accessibilityHidden(true)
-            }
         }
-        .environment(\.editMode, $editMode)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    toggleEditing()
-                } label: {
-                    Image(systemName: isEditing ? "checkmark" : "pencil")
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                if isEditing {
+                    Button {
+                        finishEditing()
+                    } label: {
+                        Image(systemName: "checkmark")
+                    }
+                    .accessibilityLabel(Text(L("完成选择艺人")))
+                    .accessibilityIdentifier("library.artists.finishSelection")
+                    .disabled(isDeleting)
                 }
-                .accessibilityLabel(Text(isEditing ? L("完成编辑") : L("编辑艺人")))
-                .help(isEditing ? L("完成编辑") : L("编辑艺人"))
-                .accessibilityIdentifier("library.artists.edit")
-                .disabled(viewModel.isLoading(.artists) || isDeleting)
             }
         }
         .batchDeletionPresentation(
@@ -161,10 +168,6 @@ struct ArtistsView: View {
         .libraryDeletionErrorPresentation(errorMessage: $deletionErrorMessage)
     }
 
-    private var isEditing: Bool {
-        editMode.isEditing
-    }
-
     private var pendingArtistDeletionPresentation: Binding<Bool> {
         Binding(
             get: { !pendingArtistDeletionIDs.isEmpty },
@@ -174,25 +177,18 @@ struct ArtistsView: View {
         )
     }
 
-    private func toggleEditing() {
-        guard !viewModel.isLoading(.artists), !isDeleting else { return }
-        if isEditing {
-            editMode = .inactive
-            selectedArtistIDs.removeAll()
-        } else {
-            editMode = .active
-        }
+    private func finishEditing() {
+        guard !isDeleting else { return }
+        isEditing = false
+        selectedArtistIDs.removeAll()
     }
 
-    private func toggleSelection(for artistID: ArtistID) {
-        guard isEditing, !isDeleting else { return }
-        if !selectedArtistIDs.insert(artistID).inserted {
-            selectedArtistIDs.remove(artistID)
-        }
+    private func artist(for rawID: String) -> Artist? {
+        viewModel.artists.first { $0.id.rawValue == rawID }
     }
 
     private func requestDeleteSelected() {
-        guard isEditing, !isDeleting, !selectedArtistIDs.isEmpty else { return }
+        guard !isDeleting, !selectedArtistIDs.isEmpty else { return }
         pendingArtistDeletionIDs = selectedArtistIDs
     }
 
@@ -211,8 +207,7 @@ struct ArtistsView: View {
                     _ = try await viewModel.library.delete(itemIDs)
                     viewModel.removeDeletedTracks(itemIDs)
                 }
-                editMode = .inactive
-                selectedArtistIDs.removeAll()
+                finishEditing()
                 viewModel.load(section: .artists, reset: true)
             } catch is CancellationError {
                 return
@@ -221,42 +216,56 @@ struct ArtistsView: View {
             }
         }
     }
+
+    private func contextMenu(for artist: Artist) -> NativeLibraryContextMenuContents {
+        let target = LibraryCollectionQueueTarget.artist(artist.id)
+        let delete = UIAction(
+            title: L("删除"),
+            image: UIImage(systemName: "trash"),
+            attributes: isDeleting ? [.disabled, .destructive] : [.destructive]
+        ) { _ in
+            guard !isDeleting else { return }
+            pendingArtistDeletionIDs = [artist.id]
+        }
+
+        let secondaryActions: [UIMenuElement] = [
+            UIAction(
+                title: L("下一首播放"),
+                image: UIImage(systemName: "text.line.first.and.arrowtriangle.forward"),
+                attributes: enqueueNextCollection == nil
+                    || isCollectionQueueActionPending(target)
+                    ? [.disabled]
+                    : []
+            ) { _ in enqueueNextCollection?(target) },
+            UIAction(
+                title: L("加入队列"),
+                image: UIImage(systemName: "text.append"),
+                attributes: enqueueCollection == nil
+                    || isCollectionQueueActionPending(target)
+                    ? [.disabled]
+                    : []
+            ) { _ in enqueueCollection?(target) }
+        ]
+
+        return NativeLibraryContextMenuContents(
+            primaryActions: [delete],
+            secondaryActions: secondaryActions
+        )
+    }
 }
 
-private struct ArtistRow: View {
+private struct ArtistCollectionRow: View {
     let artist: Artist
     let artworkServing: (any ArtworkServing)?
-    let action: () -> Void
-    let selectionAction: () -> Void
     let isSelected: Bool
     let isEditing: Bool
-    let destination: LibraryCompactRoute?
 
     @StateObject private var artworkLoader = ArtworkImageLoader()
 
     var body: some View {
-        Group {
-            if !isEditing, let destination {
-                NavigationLink(value: destination) {
-                    rowContent
-                }
-            } else {
-                Button(action: isEditing ? selectionAction : action) {
-                    rowContent
-                }
-            }
-        }
-        .buttonStyle(.plain)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
-        .accessibilityLabel(Text(artist.name))
-        .accessibilityValue(Text(isEditing ? (isSelected ? L("已选择") : L("未选择")) : L("艺人")))
-        .accessibilityIdentifier(
-            "library.artist.\(isEditing ? "select" : "open").\(artist.id.rawValue)"
-        )
-        .accessibilityHint(
-            L(isEditing ? "选择艺人" : "打开艺人，按住显示播放队列操作")
-        )
+        rowContent
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
         .task(id: artworkKey) {
             await artworkLoader.load(
                 artworkID: artist.artworkID,

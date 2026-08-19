@@ -56,7 +56,9 @@ struct MetadataNormalizer: Sendable {
       ArtworkReference(id: $0, variants: [.original], preferredVariant: .original)
     }
 
-    let duration = Self.nonNegative(metadata.duration ?? probe.duration)
+    // Probe duration is the canonical media value. Metadata readers may
+    // expose a stale tag/parser duration that is not the playable length.
+    let duration = Self.nonNegative(probe.duration ?? metadata.duration)
     let streams = probe.decodableAudioTracks.compactMap(Self.audioStreamInfo)
     let technicalInfo = MediaTechnicalInfo(
       container: Self.clean(probe.container),

@@ -11,7 +11,20 @@ enum PlayerFormatting {
       return "--:--"
     }
 
-    let totalSeconds = max(0, Int(seconds(duration).rounded(.down)))
+    return clock(seconds(duration))
+  }
+
+  static func remaining(position: Duration?, duration: Duration?) -> String {
+    guard let duration else {
+      return "--:--"
+    }
+
+    let remainingSeconds = max(0, seconds(duration) - seconds(position ?? .zero))
+    return "-\(clock(remainingSeconds))"
+  }
+
+  private static func clock(_ duration: Double) -> String {
+    let totalSeconds = max(0, Int(duration.rounded(.down)))
     let hours = totalSeconds / 3_600
     let minutes = (totalSeconds % 3_600) / 60
     let seconds = totalSeconds % 60

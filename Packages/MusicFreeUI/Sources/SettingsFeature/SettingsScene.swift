@@ -26,6 +26,7 @@ public struct SettingsScene<AdditionsContent: View>: View {
         appIconProvider: any SettingsAppIconProviding = EmptySettingsAppIconProvider(),
         sleepTimerServing: (any SleepTimerServing)? = nil,
         metadataEnrichment: (any MetadataEnrichmentServing)? = nil,
+        lyricsServing: (any LyricsServing)? = nil,
         @ViewBuilder additionContent: () -> AdditionsContent? = { nil }
     ) {
         self.releaseInfoProvider = releaseInfoProvider
@@ -37,7 +38,8 @@ public struct SettingsScene<AdditionsContent: View>: View {
         _language = language
         _viewModel = State(initialValue: SettingsViewModel(
             store: store,
-            metadataEnrichment: metadataEnrichment
+            metadataEnrichment: metadataEnrichment,
+            lyricsServing: lyricsServing
         ))
         self.additionContent = additionContent()
     }
@@ -55,6 +57,7 @@ public struct SettingsScene<AdditionsContent: View>: View {
         appIconProvider: any SettingsAppIconProviding = EmptySettingsAppIconProvider(),
         sleepTimerServing: (any SleepTimerServing)? = nil,
         metadataEnrichment: (any MetadataEnrichmentServing)? = nil,
+        lyricsServing: (any LyricsServing)? = nil,
         @ViewBuilder additionContent: () -> AdditionsContent? = { nil }
     ) {
         self.releaseInfoProvider = releaseInfoProvider
@@ -69,7 +72,8 @@ public struct SettingsScene<AdditionsContent: View>: View {
                 serving: settingsServing,
                 storageMaintenance: storageMaintenance
             ),
-            metadataEnrichment: metadataEnrichment
+            metadataEnrichment: metadataEnrichment,
+            lyricsServing: lyricsServing
         ))
         self.additionContent = additionContent()
     }
@@ -86,7 +90,8 @@ public struct SettingsScene<AdditionsContent: View>: View {
             appIconOptions: [],
             appIconProvider: EmptySettingsAppIconProvider(),
             sleepTimerServing: nil,
-            metadataEnrichment: nil
+            metadataEnrichment: nil,
+            lyricsServing: nil
         )
     }
 
@@ -164,9 +169,6 @@ public struct SettingsScene<AdditionsContent: View>: View {
         }
         .task {
             await viewModel.load()
-        }
-        .onDisappear {
-            viewModel.stopObservingChanges()
         }
     }
 

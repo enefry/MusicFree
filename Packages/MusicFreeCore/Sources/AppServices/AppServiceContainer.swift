@@ -34,6 +34,7 @@ public final class AppServiceContainer {
     public let artwork: any ArtworkServing
     public let importer: any ImportServing
     public let metadataEnrichment: any MetadataEnrichmentServing
+    public let lyrics: any LyricsServing
     public let playlists: any PlaylistServing
     public let playback: any PlaybackServing
     public let sleepTimer: any SleepTimerServing
@@ -44,6 +45,7 @@ public final class AppServiceContainer {
     private let artworkCoordinator: ArtworkCoordinator
     private let importCoordinator: ImportCoordinator
     private let metadataEnrichmentCoordinator: MetadataEnrichmentCoordinator
+    private let lyricsCoordinator: LyricsCoordinator
     private let playlistCoordinator: PlaylistCoordinator
     private let playbackCoordinator: PlaybackCoordinator
     private let sleepTimerCoordinator: SleepTimerCoordinator
@@ -98,11 +100,15 @@ public final class AppServiceContainer {
             calendar: dependencies.calendar
         )
         let metadataEnrichmentService = MetadataEnrichmentCoordinator(
-            provider: dependencies.metadataEnrichmentProvider,
+            providers: dependencies.metadataEnrichmentProviders,
             recordRepository: dependencies.metadataEnrichmentRecordRepository,
             libraryRepository: dependencies.libraryRepository,
             library: libraryService,
             clock: dependencies.clock
+        )
+        let lyricsService = LyricsCoordinator(
+            providers: dependencies.lyricsProviders,
+            library: libraryService
         )
 
         self.playbackCoordinator = playbackService
@@ -110,6 +116,7 @@ public final class AppServiceContainer {
         self.libraryCoordinator = libraryService
         self.artworkCoordinator = ArtworkCoordinator(sourceResolver: sourceRegistry)
         self.metadataEnrichmentCoordinator = metadataEnrichmentService
+        self.lyricsCoordinator = lyricsService
         self.importCoordinator = ImportCoordinator(
             importer: dependencies.mediaImporter,
             metadataEnrichment: metadataEnrichmentService
@@ -130,6 +137,7 @@ public final class AppServiceContainer {
         artwork = artworkCoordinator
         importer = importCoordinator
         metadataEnrichment = metadataEnrichmentCoordinator
+        lyrics = lyricsCoordinator
         playlists = playlistCoordinator
         playback = playbackCoordinator
         sleepTimer = sleepTimerCoordinator
@@ -175,9 +183,13 @@ public final class AppServiceContainer {
                 try Task.checkCancellation()
                 let settingsResult = try await self.effectiveSettingsOrDefault()
                 try Task.checkCancellation()
+                let metadataProviders = settingsResult.effective.settings.importPreferences
+                    .metadataProviders
+                await self.metadataEnrichmentCoordinator.setProviderPreferences(
+                    metadataProviders
+                )
                 await self.metadataEnrichmentCoordinator.setEnabled(
-                    settingsResult.effective.settings.importPreferences
-                        .useMusicKitMetadataEnrichment
+                    metadataProviders.contains(where: \.isEnabled)
                 )
                 try Task.checkCancellation()
                 var fallbacks = settingsResult.fallbacks
@@ -332,8 +344,11 @@ public final class AppServiceContainer {
                 await self.sleepTimerCoordinator.update(
                     preferences: effective.settings.playbackPreferences.sleepTimer
                 )
+                await self.metadataEnrichmentCoordinator.setProviderPreferences(
+                    effective.settings.importPreferences.metadataProviders
+                )
                 await self.metadataEnrichmentCoordinator.setEnabled(
-                    effective.settings.importPreferences.useMusicKitMetadataEnrichment
+                    effective.settings.importPreferences.metadataProviders.contains(where: \.isEnabled)
                 )
             }
         }

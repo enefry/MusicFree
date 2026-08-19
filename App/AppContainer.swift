@@ -3,6 +3,7 @@ import AppleSystemAdapter
 import Combine
 import Foundation
 import LibraryPersistenceAdapter
+import LibraryAPI
 import LocalMediaAdapter
 import MediaSourceAPI
 import MusicDomain
@@ -421,7 +422,9 @@ final class AppContainer: ObservableObject {
                 .appendingPathComponent("Library", isDirectory: true)
                 .appendingPathComponent("metadata-enrichment.json", isDirectory: false)
         )
-        let metadataEnrichmentProvider = MusicKitMetadataProvider()
+        let metadataServerConfiguration = MetadataServerConfiguration.from()
+        let discogsAPIConfiguration = DiscogsAPIConfiguration.from()
+        let lrclibAPIConfiguration = LRCLIBAPIConfiguration.from()
 
         let localMediaConfiguration = try LocalMediaConfiguration(
             managedRoot: appSupportRoot.appendingPathComponent("Media", isDirectory: true),
@@ -502,6 +505,48 @@ final class AppContainer: ObservableObject {
             }
             startupIssues.append(.dependencyUnavailable)
         }
+        let metadataEnrichmentProvider = MusicKitMetadataProvider()
+        var metadataEnrichmentProviders: [any MetadataEnrichmentProviding] = [
+            metadataEnrichmentProvider
+        ]
+        if let metadataServerConfiguration {
+            let durationProvider: MetadataServerMetadataProvider.DurationProvider?
+            if let localSource {
+                durationProvider = { [localSource] itemID in
+                    guard let duration = try? await localSource.probe(itemID).duration else {
+                        return nil
+                    }
+                    let components = duration.components
+                    return Double(components.seconds)
+                        + Double(components.attoseconds) / 1_000_000_000_000_000_000
+                }
+            } else {
+                durationProvider = nil
+            }
+            metadataEnrichmentProviders.append(
+                MetadataServerMetadataProvider(
+                    configuration: metadataServerConfiguration,
+                    durationProvider: durationProvider
+                )
+            )
+        }
+        if let discogsAPIConfiguration {
+            metadataEnrichmentProviders.append(
+                DiscogsMetadataProvider(configuration: discogsAPIConfiguration)
+            )
+        }
+        var lyricsProviders: [any LyricsProviding] = []
+        if let metadataServerConfiguration,
+           let lyricsConfiguration = MetadataServerLyricsConfiguration(
+               metadataServerConfiguration: metadataServerConfiguration
+           ) {
+            lyricsProviders.append(
+                MetadataServerLyricsProvider(configuration: lyricsConfiguration)
+            )
+        }
+        if let lrclibAPIConfiguration {
+            lyricsProviders.append(LRCLIBLyricsProvider(configuration: lrclibAPIConfiguration))
+        }
         let remover = try ManagedMediaRemover(configuration: localMediaConfiguration)
         let storageMaintenance = try LocalMediaStorageMaintenance(
             configuration: localMediaConfiguration,
@@ -538,7 +583,8 @@ final class AppContainer: ObservableObject {
             playbackQueueRepository: queueRepository,
             playbackHistoryRepository: historyRepository,
             settingsRepository: settingsRepository,
-            metadataEnrichmentProvider: metadataEnrichmentProvider,
+            metadataEnrichmentProviders: metadataEnrichmentProviders,
+            lyricsProviders: lyricsProviders,
             metadataEnrichmentRecordRepository: metadataEnrichmentRecordRepository,
             storageMaintenance: storageMaintenance,
             playbackEngine: playbackEngine,

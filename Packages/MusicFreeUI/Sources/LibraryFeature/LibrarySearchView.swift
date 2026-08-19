@@ -218,4 +218,10 @@ extension LibraryViewModel {
         case .folders: return folders.count
         }
     }
+
+    func shouldShowPageFooter(for section: LibrarySection) -> Bool {
+        (isLoading(section) && itemsCountForView(section) > 0)
+            || paginationError(for: section) != nil
+            || hasNextPage(for: section)
+    }
 }

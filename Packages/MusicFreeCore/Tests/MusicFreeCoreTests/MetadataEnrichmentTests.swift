@@ -8,16 +8,24 @@ import SettingsAPI
 import Testing
 
 private actor TestMetadataProvider: MetadataEnrichmentProviding {
-    let provider: MetadataEnrichmentProvider = .musicKit
+    let provider: MetadataEnrichmentProvider
     private(set) var searchCount = 0
     var authorization: MetadataEnrichmentAuthorizationStatus = .authorized
     private var searchResults: [[MetadataEnrichmentCandidate]]
 
-    init(candidate: MetadataEnrichmentCandidate) {
+    init(
+        provider: MetadataEnrichmentProvider = .musicKit,
+        candidate: MetadataEnrichmentCandidate
+    ) {
+        self.provider = provider
         self.searchResults = [[candidate]]
     }
 
-    init(searchResults: [[MetadataEnrichmentCandidate]]) {
+    init(
+        provider: MetadataEnrichmentProvider = .musicKit,
+        searchResults: [[MetadataEnrichmentCandidate]]
+    ) {
+        self.provider = provider
         self.searchResults = searchResults
     }
 
@@ -27,6 +35,10 @@ private actor TestMetadataProvider: MetadataEnrichmentProviding {
 
     func requestAuthorization() async -> MetadataEnrichmentAuthorizationStatus {
         authorization
+    }
+
+    func setAuthorization(_ status: MetadataEnrichmentAuthorizationStatus) {
+        authorization = status
     }
 
     func search(
@@ -45,22 +57,51 @@ private actor TestMetadataProvider: MetadataEnrichmentProviding {
 }
 
 private actor TestMetadataRecordRepository: MetadataEnrichmentRecordRepository {
-    private var values: [MediaItemID: MetadataEnrichmentRecord] = [:]
+    private struct Key: Hashable {
+        let itemID: MediaItemID
+        let provider: MetadataProviderID
+    }
+
+    private var values: [Key: MetadataEnrichmentRecord] = [:]
 
     func record(for itemID: MediaItemID) async throws -> MetadataEnrichmentRecord? {
-        values[itemID]
+        values.values
+            .filter { $0.itemID == itemID }
+            .sorted { $0.provider < $1.provider }
+            .first
+    }
+
+    func record(
+        for itemID: MediaItemID,
+        provider: MetadataProviderID
+    ) async throws -> MetadataEnrichmentRecord? {
+        values[Key(itemID: itemID, provider: provider)]
     }
 
     func records() async throws -> [MetadataEnrichmentRecord] {
-        values.values.sorted { $0.itemID < $1.itemID }
+        values.values.sorted {
+            if $0.itemID != $1.itemID { return $0.itemID < $1.itemID }
+            return $0.provider < $1.provider
+        }
+    }
+
+    func records(for provider: MetadataProviderID) async throws -> [MetadataEnrichmentRecord] {
+        values.values.filter { $0.provider == provider }
     }
 
     func save(_ record: MetadataEnrichmentRecord) async throws {
-        values[record.itemID] = record
+        values[Key(itemID: record.itemID, provider: record.provider)] = record
     }
 
     func remove(itemID: MediaItemID) async throws {
-        values.removeValue(forKey: itemID)
+        values = values.filter { $0.value.itemID != itemID }
+    }
+
+    func remove(
+        itemID: MediaItemID,
+        provider: MetadataProviderID
+    ) async throws {
+        values.removeValue(forKey: Key(itemID: itemID, provider: provider))
     }
 }
 
@@ -69,6 +110,23 @@ private actor TestArtworkWriter {
 
     func write(_ data: Data) {
         values.append(data)
+    }
+}
+
+@MainActor
+@Test("App dependencies reject duplicate metadata provider IDs")
+func appDependenciesRejectDuplicateMetadataProviders() {
+    let first = TestMetadataProvider(candidate: MetadataEnrichmentCandidate(
+        catalogID: "first",
+        title: "Song"
+    ))
+    let second = TestMetadataProvider(candidate: MetadataEnrichmentCandidate(
+        catalogID: "second",
+        title: "Song"
+    ))
+
+    #expect(throws: AppServiceError.self) {
+        try AppDependencies(metadataEnrichmentProviders: [first, second])
     }
 }
 
@@ -90,6 +148,24 @@ func metadataEnrichmentFilenameFallbackMatchesTitleOnly() {
     #expect(query.filenameTitle == "Song")
     #expect(query.filenameArtist == "Artist")
     #expect(MetadataEnrichmentMatcher.match(query: query, candidates: [candidate]) == .matched(candidate))
+}
+
+@Test("Metadata search terms are ordered from specific to tolerant")
+func metadataEnrichmentSearchTermsAreOrdered() {
+    let query = MetadataEnrichmentQuery(
+        itemID: MediaItemID(sourceID: .local, externalID: "search-terms"),
+        title: "千古一爱(电视剧《康熙大帝》片尾曲)",
+        artistName: "毛阿敏",
+        albumName: "康熙大帝 电视剧原声带"
+    )
+
+    #expect(query.searchTerms == [
+        "千古一爱(电视剧《康熙大帝》片尾曲) 毛阿敏",
+        "千古一爱 毛阿敏",
+        "千古一爱(电视剧《康熙大帝》片尾曲) 康熙大帝 电视剧原声带",
+        "千古一爱(电视剧《康熙大帝》片尾曲)",
+        "千古一爱"
+    ])
 }
 
 @Test("Filename terms do not override an explicit local title")
@@ -148,6 +224,29 @@ func metadataEnrichmentMatchesCatalogVersionWithTransliteratedArtist() {
         discNumber: 1,
         year: 1994,
         durationSeconds: 345.834
+    )
+
+    #expect(
+        MetadataEnrichmentMatcher.match(query: query, candidates: [candidate])
+            == .matched(candidate)
+    )
+}
+
+@Test("Metadata matching tolerates a transliterated catalog title")
+func metadataEnrichmentMatchesTransliteratedTitleAndArtist() {
+    let itemID = MediaItemID(sourceID: .local, externalID: "transliterated-title")
+    let query = MetadataEnrichmentQuery(
+        itemID: itemID,
+        title: "梦驼铃",
+        artistName: "费玉清",
+        durationSeconds: 182,
+        missingFields: [.albumArtist, .genre]
+    )
+    let candidate = MetadataEnrichmentCandidate(
+        catalogID: "transliterated-song",
+        title: "Meng Tuo Ling",
+        artistName: "Fei Yuqing",
+        durationSeconds: 181.8
     )
 
     #expect(
@@ -314,4 +413,239 @@ func metadataEnrichmentManualScanRetriesNoMatch() async throws {
     #expect(await provider.searchCount == 2)
     #expect((try await repository.track(id: itemID))?.artistIDs.count == 1)
     #expect((try await records.record(for: itemID))?.status == .matched)
+}
+
+@MainActor
+@Test("A manual scan retries a previously exhausted provider failure")
+func metadataEnrichmentManualScanRetriesExhaustedFailure() async throws {
+    let itemID = MediaItemID(sourceID: .local, externalID: "retry-failed")
+    let track = Track(
+        id: itemID,
+        title: "Retry Failed Song",
+        fileName: "Retry Failed Song.mp3",
+        duration: .seconds(180)
+    )
+    let repository = InMemoryLibraryRepository(tracks: [track])
+    let candidate = MetadataEnrichmentCandidate(
+        catalogID: "retry-failed-catalog-song",
+        title: "Retry Failed Song",
+        artistName: "Artist",
+        albumArtistName: "Artist",
+        albumName: "Album"
+    )
+    let provider = TestMetadataProvider(candidate: candidate)
+    let records = TestMetadataRecordRepository()
+    let query = MetadataEnrichmentQuery(
+        itemID: itemID,
+        title: track.title,
+        fileName: track.fileName,
+        durationSeconds: 180,
+        missingFields: Set(MetadataEnrichmentField.allCases),
+        isFilenameFallback: true
+    )
+    try await records.save(
+        MetadataEnrichmentRecord(
+            itemID: itemID,
+            queryFingerprint: query.fingerprint,
+            status: .failed,
+            attemptCount: 3,
+            nextRetryAt: Date().addingTimeInterval(3_600),
+            lastErrorCode: "metadata_track_http_503",
+            lastHTTPStatus: 503
+        )
+    )
+    let container = try AppServiceContainer(dependencies: AppDependencies(
+        libraryRepository: repository,
+        metadataEnrichmentProvider: provider,
+        metadataEnrichmentRecordRepository: records
+    ))
+
+    await container.metadataEnrichmentServing.setEnabled(true)
+    await container.metadataEnrichmentServing.startScan()
+    for _ in 0..<50 {
+        if (await container.metadataEnrichmentServing.snapshot()).scan.status == .completed {
+            break
+        }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+
+    #expect(await provider.searchCount == 1)
+    let record = try #require(try await records.record(for: itemID))
+    #expect(record.status == .matched)
+    #expect(record.attemptCount == 1)
+}
+
+@MainActor
+@Test("Metadata enrichment falls back through enabled providers in order")
+func metadataEnrichmentFallsBackThroughProviderOrder() async throws {
+    let itemID = MediaItemID(sourceID: .local, externalID: "provider-fallback")
+    let track = Track(
+        id: itemID,
+        title: "Fallback Song",
+        fileName: "Fallback Song.mp3",
+        duration: .seconds(180)
+    )
+    let repository = InMemoryLibraryRepository(tracks: [track])
+    let first = TestMetadataProvider(
+        provider: .musicKit,
+        searchResults: [[]]
+    )
+    let candidate = MetadataEnrichmentCandidate(
+        catalogID: "server-fallback-song",
+        title: "Fallback Song",
+        artistName: "Fallback Artist",
+        albumName: "Fallback Album"
+    )
+    let second = TestMetadataProvider(
+        provider: .metadataServer,
+        candidate: candidate
+    )
+    let records = TestMetadataRecordRepository()
+    let container = try AppServiceContainer(dependencies: AppDependencies(
+        libraryRepository: repository,
+        metadataEnrichmentProviders: [first, second],
+        metadataEnrichmentRecordRepository: records
+    ))
+
+    await container.metadataEnrichmentServing.setProviderPreferences([
+        MetadataProviderPreference(provider: .musicKit, isEnabled: true),
+        MetadataProviderPreference(provider: .metadataServer, isEnabled: true)
+    ])
+    await container.metadataEnrichmentServing.setEnabled(true)
+    await container.metadataEnrichmentServing.enqueue(itemID: itemID)
+
+    for _ in 0..<50 {
+        if (try await repository.track(id: itemID))?.artistIDs.count == 1 { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+
+    #expect(await first.searchCount == 1)
+    #expect(await second.searchCount == 1)
+    #expect((try await records.record(
+        for: itemID,
+        provider: .musicKit
+    ))?.status == .noMatch)
+    #expect((try await records.record(
+        for: itemID,
+        provider: .metadataServer
+    ))?.status == .matched)
+}
+
+@MainActor
+@Test("Metadata enrichment stops after the first provider matches")
+func metadataEnrichmentStopsAfterProviderMatch() async throws {
+    let itemID = MediaItemID(sourceID: .local, externalID: "provider-stop")
+    let track = Track(
+        id: itemID,
+        title: "Primary Song",
+        fileName: "Primary Song.mp3",
+        duration: .seconds(180)
+    )
+    let repository = InMemoryLibraryRepository(tracks: [track])
+    let first = TestMetadataProvider(
+        provider: .musicKit,
+        candidate: MetadataEnrichmentCandidate(
+            catalogID: "primary-song",
+            title: "Primary Song",
+            artistName: "Primary Artist"
+        )
+    )
+    let second = TestMetadataProvider(
+        provider: .metadataServer,
+        candidate: MetadataEnrichmentCandidate(
+            catalogID: "secondary-song",
+            title: "Primary Song",
+            artistName: "Secondary Artist"
+        )
+    )
+    let container = try AppServiceContainer(dependencies: AppDependencies(
+        libraryRepository: repository,
+        metadataEnrichmentProviders: [first, second]
+    ))
+
+    await container.metadataEnrichmentServing.setProviderPreferences([
+        MetadataProviderPreference(provider: .musicKit, isEnabled: true),
+        MetadataProviderPreference(provider: .metadataServer, isEnabled: true)
+    ])
+    await container.metadataEnrichmentServing.setEnabled(true)
+    await container.metadataEnrichmentServing.enqueue(itemID: itemID)
+
+    for _ in 0..<50 {
+        if await first.searchCount == 1 { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+
+    #expect(await first.searchCount == 1)
+    #expect(await second.searchCount == 0)
+}
+
+@MainActor
+@Test("An unregistered enabled provider does not block a registered provider")
+func metadataEnrichmentIgnoresUnregisteredProvider() async throws {
+    let itemID = MediaItemID(sourceID: .local, externalID: "provider-unregistered")
+    let track = Track(
+        id: itemID,
+        title: "Registered Song",
+        fileName: "Registered Song.mp3",
+        duration: .seconds(180)
+    )
+    let repository = InMemoryLibraryRepository(tracks: [track])
+    let provider = TestMetadataProvider(candidate: MetadataEnrichmentCandidate(
+        catalogID: "registered-song",
+        title: "Registered Song",
+        artistName: "Artist"
+    ))
+    let container = try AppServiceContainer(dependencies: AppDependencies(
+        libraryRepository: repository,
+        metadataEnrichmentProvider: provider
+    ))
+
+    await container.metadataEnrichmentServing.setProviderPreferences([
+        MetadataProviderPreference(provider: .metadataServer, isEnabled: true),
+        MetadataProviderPreference(provider: .musicKit, isEnabled: true)
+    ])
+    await container.metadataEnrichmentServing.setEnabled(true)
+    let snapshot = await container.metadataEnrichmentServing.snapshot()
+    #expect(snapshot.isEnabled)
+    #expect(snapshot.status(for: .metadataServer)?.isRegistered == false)
+    await container.metadataEnrichmentServing.enqueue(itemID: itemID)
+
+    for _ in 0..<50 {
+        if (try await repository.track(id: itemID))?.artistIDs.count == 1 { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(await provider.searchCount == 1)
+}
+
+@MainActor
+@Test("Authorizing one provider does not hide another active provider")
+func metadataEnrichmentKeepsActiveAuthorizationWhenAnotherProviderIsDenied() async throws {
+    let primary = TestMetadataProvider(
+        provider: .musicKit,
+        candidate: MetadataEnrichmentCandidate(catalogID: "primary", title: "Song")
+    )
+    let secondary = TestMetadataProvider(
+        provider: .metadataServer,
+        candidate: MetadataEnrichmentCandidate(catalogID: "secondary", title: "Song")
+    )
+    await secondary.setAuthorization(.denied)
+    let container = try AppServiceContainer(dependencies: AppDependencies(
+        metadataEnrichmentProviders: [primary, secondary]
+    ))
+
+    await container.metadataEnrichmentServing.setProviderPreferences([
+        MetadataProviderPreference(provider: .musicKit, isEnabled: true),
+        MetadataProviderPreference(provider: .metadataServer, isEnabled: true)
+    ])
+    await container.metadataEnrichmentServing.setEnabled(true)
+
+    let requested = await container.metadataEnrichmentServing.requestAuthorization(
+        for: .metadataServer
+    )
+    let snapshot = await container.metadataEnrichmentServing.snapshot()
+
+    #expect(requested == .denied)
+    #expect(snapshot.activeProvider == .musicKit)
+    #expect(snapshot.authorization == .authorized)
+    #expect(snapshot.isEnabled)
 }

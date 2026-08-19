@@ -178,7 +178,7 @@ final class MusicFreeBVTUITests: XCTestCase {
         )
         let tracks = app.descendants(matching: .any)["library.tracks"].firstMatch
         XCTAssertTrue(tracks.waitForExistence(timeout: 5))
-        let trackRow = tracks.buttons.containing(.staticText, identifier: trackTitle).firstMatch
+        let trackRow = tracks.cells.containing(.staticText, identifier: trackTitle).firstMatch
         XCTAssertTrue(trackRow.waitForExistence(timeout: 5))
         trackRow.tap()
 

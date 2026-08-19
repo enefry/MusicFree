@@ -504,6 +504,48 @@ func albumTrackOrderingUsesSourcePositions() {
     #expect(LibraryAlbumTrackOrdering.displayNumber(for: tracks[0]) == "2-1")
     #expect(LibraryAlbumTrackOrdering.displayNumber(for: tracks[2]) == "1")
     #expect(LibraryAlbumTrackOrdering.displayNumber(for: tracks[3]) == nil)
+
+    let partiallyNumberedSingleDisc = [
+        Track(
+            id: MediaItemID(sourceID: .local, externalID: "single-disc-track-3"),
+            title: "Third",
+            trackNumber: 3,
+            discNumber: 2
+        ),
+        Track(
+            id: MediaItemID(sourceID: .local, externalID: "single-disc-track-1"),
+            title: "First",
+            trackNumber: 1
+        ),
+        Track(
+            id: MediaItemID(sourceID: .local, externalID: "single-disc-track-2"),
+            title: "Second",
+            trackNumber: 2,
+            discNumber: 2
+        )
+    ]
+    #expect(LibraryAlbumTrackOrdering.ordered(partiallyNumberedSingleDisc).map(\.id.externalID) == [
+        "single-disc-track-1",
+        "single-disc-track-2",
+        "single-disc-track-3"
+    ])
+    #expect(LibraryAlbumTrackOrdering.displayNumber(for: partiallyNumberedSingleDisc[1]) == "1")
+
+    let sparseDiscMetadata = Array(1...20).map { number in
+        Track(
+            id: MediaItemID(sourceID: .local, externalID: "sparse-\(number)"),
+            title: "Track \(number)",
+            trackNumber: number,
+            discNumber: number == 10 ? 1 : (number == 20 ? 4 : nil)
+        )
+    }
+    #expect(LibraryAlbumTrackOrdering.ordered(sparseDiscMetadata).map(\.trackNumber) == Array(1...20))
+    #expect(
+        LibraryAlbumTrackOrdering.displayNumber(
+            for: sparseDiscMetadata[19],
+            in: sparseDiscMetadata
+        ) == "20"
+    )
 }
 
 @Test("Track sections use Latin initials for Chinese and English titles")

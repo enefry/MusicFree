@@ -6,6 +6,12 @@ import MusicDomain
 import PlaybackAPI
 import SwiftUI
 
+enum NowPlayingSurface: Equatable {
+    case artwork
+    case lyrics
+    case queue
+}
+
 enum NowPlayingVerticalLayoutMode: Equatable {
     case pinnedQueue
     case scrolling
@@ -28,7 +34,60 @@ enum NowPlayingVerticalLayoutPolicy {
     }
 }
 
+private enum NowPlayingLayoutMetrics {
+    static let horizontalInset: CGFloat = 32
+    static let topChromeInset: CGFloat = 31
+    static let pinnedControlsHeight: CGFloat = 308
+    // Compact-height presentations need a little more room for the fixed
+    // transport footer to settle fully inside the scroll viewport.
+    static let scrollingSurfaceHeight: CGFloat = 408
+    static let compactHeaderHeight: CGFloat = 72
+    static let footerHeight: CGFloat = 56
+    static let headerArtworkSize: CGFloat = 72
+    static let headerActionSize: CGFloat = 40
+    static let headerActionSpacing: CGFloat = 8
+    static let headerContentSpacing: CGFloat = 12
+    static let queueRowArtworkSize: CGFloat = 48
+    static let queueRowHeight: CGFloat = 60
+    static let queueRowActionWidth: CGFloat = 40
+
+    static var headerActionsWidth: CGFloat {
+        (headerActionSize * 2) + headerActionSpacing
+    }
+
+    static func headerTextWidth(
+        contentWidth: CGFloat,
+        leadingWidth: CGFloat = 0
+    ) -> CGFloat {
+        max(
+            0,
+            contentWidth
+                - leadingWidth
+                - (leadingWidth > 0 ? headerContentSpacing : 0)
+                - headerActionsWidth
+                - headerContentSpacing
+        )
+    }
+
+    static func queueRowTextWidth(contentWidth: CGFloat) -> CGFloat {
+        max(
+            0,
+            contentWidth
+                - queueRowArtworkSize
+                - headerContentSpacing
+                - queueRowActionWidth
+                - headerContentSpacing
+        )
+    }
+}
+
 enum NowPlayingHeaderMetadata {
+    static func title(_ title: String?) -> String? {
+        guard let title else { return nil }
+        let normalized = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalized.isEmpty ? nil : normalized
+    }
+
     static func artistSubtitle(_ artist: String?) -> String? {
         guard let artist else { return nil }
         let normalized = artist.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -54,7 +113,7 @@ enum NowPlayingHeaderMetadata {
         fallback: String?
     ) -> String? {
         guard let track else {
-            return fallback
+            return artistSubtitle(fallback)
         }
         guard let albumID = track.albumID else {
             return nil
@@ -64,32 +123,35 @@ enum NowPlayingHeaderMetadata {
 }
 
 struct NowPlayingView: View {
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.verticalSizeClass) private var verticalSizeClass
-
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ObservedObject private var viewModel: PlayerViewModel
     private let onShowQueue: () -> Void
     private let artworkServing: (any ArtworkServing)?
     private let library: (any LibraryServing)?
+    private let lyricsServing: (any LyricsServing)?
 
     @StateObject private var artworkLoader = ArtworkImageLoader()
+    @StateObject private var favoriteController: PlayerFavoriteController
     @State private var queueTracks: [MediaItemID: Track] = [:]
     @State private var queueArtistNames: [ArtistID: String] = [:]
     @State private var queueAlbumNames: [AlbumID: String] = [:]
-    @State private var isLyricsPresented = false
-    @StateObject private var favoriteController: PlayerFavoriteController
+    @State private var surface: NowPlayingSurface = .artwork
+    @State private var isMoreActionsPresented = false
+    @State private var shouldPresentFullQueue = false
 
     init(
         viewModel: PlayerViewModel,
         onShowQueue: @escaping () -> Void,
         artworkServing: (any ArtworkServing)? = nil,
-        library: (any LibraryServing)? = nil
+        library: (any LibraryServing)? = nil,
+        lyricsServing: (any LyricsServing)? = nil
     ) {
         self.viewModel = viewModel
         self.onShowQueue = onShowQueue
         self.artworkServing = artworkServing
         self.library = library
+        self.lyricsServing = lyricsServing
         _favoriteController = StateObject(
             wrappedValue: PlayerFavoriteController(library: library)
         )
@@ -148,382 +210,591 @@ struct NowPlayingView: View {
         .task(id: viewModel.snapshot.currentItemID) {
             favoriteController.load(itemID: viewModel.snapshot.currentItemID)
         }
-        .sheet(isPresented: $isLyricsPresented) {
-            if let currentTrack, let lyrics = currentTrack.lyrics {
-                NavigationStack {
-                    LyricsView(
-                        title: currentTrack.title,
-                        lyrics: lyrics,
-                        player: viewModel
-                    )
-                }
+        .onChange(of: viewModel.snapshot.currentItemID) { _, _ in
+            surface = .artwork
+        }
+        .onChange(of: isMoreActionsPresented) { _, isPresented in
+            guard !isPresented, shouldPresentFullQueue else { return }
+            shouldPresentFullQueue = false
+            DispatchQueue.main.async {
+                onShowQueue()
             }
         }
     }
 
-    @ViewBuilder
     private var playbackContent: some View {
         GeometryReader { geometry in
-            let horizontalInset = MusicFreeSpacingTokens.large
-            let contentWidth = max(0, geometry.size.width - (horizontalInset * 2))
-            let topInset = MusicFreeSpacingTokens.xxLarge
-            let bottomInset = MusicFreeSpacingTokens.large
-            let contentHeight = max(0, geometry.size.height - topInset - bottomInset)
+            let contentWidth = max(
+                0,
+                geometry.size.width - (NowPlayingLayoutMetrics.horizontalInset * 2)
+            )
             let layoutMode = NowPlayingVerticalLayoutPolicy.mode(
                 availableHeight: geometry.size.height,
                 verticalSizeClass: verticalSizeClass,
                 dynamicTypeSize: dynamicTypeSize
             )
+            // GeometryReader is already laid out inside the safe-area content
+            // region. Only reserve the gap below the root drag handle here.
+            let topChromeInset = NowPlayingLayoutMetrics.topChromeInset
+            let pinnedSurfaceHeight = max(
+                0,
+                geometry.size.height
+                    - topChromeInset
+                    - NowPlayingLayoutMetrics.pinnedControlsHeight
+            )
 
             ZStack {
                 playerBackdrop
+                    .ignoresSafeArea()
 
-                playbackLayout(
-                    layoutMode,
-                    contentWidth: contentWidth,
-                    contentHeight: contentHeight,
-                    viewportHeight: geometry.size.height,
-                    topInset: topInset,
-                    bottomInset: bottomInset
-                )
+                if layoutMode == .scrolling {
+                    ScrollView(.vertical) {
+                        playerColumn(
+                            viewportWidth: geometry.size.width,
+                            contentWidth: contentWidth,
+                            surfaceHeight: NowPlayingLayoutMetrics.scrollingSurfaceHeight,
+                            topChromeInset: topChromeInset,
+                            isPinned: false
+                        )
+                    }
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                    .contentMargins(.bottom, 0, for: .scrollContent)
+                    .scrollIndicators(.hidden)
+                    .accessibilityIdentifier("player.nowPlaying.scroll")
+                } else {
+                    playerColumn(
+                        viewportWidth: geometry.size.width,
+                        contentWidth: contentWidth,
+                        surfaceHeight: pinnedSurfaceHeight,
+                        topChromeInset: topChromeInset,
+                        isPinned: true
+                    )
+                }
+
+                if isMoreActionsPresented {
+                    moreActionsOverlay
+                }
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
             .clipped()
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("player.nowPlaying")
+    }
+
+    private var moreActionsOverlay: some View {
+        ZStack(alignment: .bottom) {
+            Color.black.opacity(0.42)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    isMoreActionsPresented = false
+                }
+
+            NowPlayingActionsPanel(
+                shareText: shareText,
+                canEnqueue: viewModel.snapshot.currentItemID != nil,
+                onEnqueue: {
+                    guard let itemID = viewModel.snapshot.currentItemID else {
+                        isMoreActionsPresented = false
+                        return
+                    }
+                    viewModel.send(.enqueue(itemID: itemID, at: nil))
+                    isMoreActionsPresented = false
+                },
+                onManageQueue: {
+                    shouldPresentFullQueue = true
+                    isMoreActionsPresented = false
+                }
+            )
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .transition(.opacity)
+        .zIndex(2)
+    }
+
+    private func playerColumn(
+        viewportWidth: CGFloat,
+        contentWidth: CGFloat,
+        surfaceHeight: CGFloat,
+        topChromeInset: CGFloat,
+        isPinned: Bool
+    ) -> some View {
+        VStack(spacing: 0) {
+            surfaceContent(
+                contentWidth: contentWidth,
+                surfaceHeight: surfaceHeight
+            )
+            .frame(width: contentWidth, height: surfaceHeight)
+
+            bottomControls
+                .frame(
+                    width: contentWidth,
+                    height: isPinned ? NowPlayingLayoutMetrics.pinnedControlsHeight : nil,
+                    alignment: .top
+                )
+        }
+        .frame(width: viewportWidth, alignment: .top)
+        // The root player overlay owns the visible drag indicator. Keep the
+        // content below that safe-area chrome.
+        .padding(.top, topChromeInset)
     }
 
     @ViewBuilder
-    private func playbackLayout(
-        _ mode: NowPlayingVerticalLayoutMode,
+    private func surfaceContent(
         contentWidth: CGFloat,
-        contentHeight: CGFloat,
-        viewportHeight: CGFloat,
-        topInset: CGFloat,
-        bottomInset: CGFloat
+        surfaceHeight: CGFloat
     ) -> some View {
-        switch mode {
-        case .pinnedQueue:
-            pinnedPlaybackContent(
-                contentWidth: contentWidth,
-                contentHeight: contentHeight,
-                topInset: topInset,
-                bottomInset: bottomInset
-            )
-        case .scrolling:
-            scrollingPlaybackContent(
-                contentWidth: contentWidth,
-                viewportHeight: viewportHeight,
-                topInset: topInset,
-                bottomInset: bottomInset
-            )
+        switch surface {
+        case .artwork:
+            artworkSurface(contentWidth: contentWidth, surfaceHeight: surfaceHeight)
+        case .lyrics:
+            lyricsSurface(contentWidth: contentWidth, surfaceHeight: surfaceHeight)
+        case .queue:
+            queueSurface(contentWidth: contentWidth, surfaceHeight: surfaceHeight)
         }
     }
 
-    private func pinnedPlaybackContent(
-        contentWidth: CGFloat,
-        contentHeight: CGFloat,
-        topInset: CGFloat,
-        bottomInset: CGFloat
-    ) -> some View {
-        VStack(spacing: 0) {
-            ScrollView(.vertical) {
-                VStack(spacing: 0) {
-                    header
+    private func artworkSurface(contentWidth: CGFloat, surfaceHeight: CGFloat) -> some View {
+        let dimension = min(260, max(180, contentWidth - 64))
+        let usesPortraitSpacing = verticalSizeClass != .compact
+        let metadataBottomSpacing = usesPortraitSpacing ? 24.0 : 16.0
 
-                    modeControls
-                        .padding(.top, MusicFreeSpacingTokens.xLarge)
-
-                    continuePlayingContent(width: contentWidth)
-                }
-                .frame(width: contentWidth)
-                .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(width: contentWidth)
-            .frame(maxHeight: .infinity)
-            .scrollIndicators(.hidden)
-            .scrollBounceBehavior(.always)
-            .scrollEdgeEffectStyle(.soft, for: .bottom)
-            .accessibilityElement(children: .contain)
-            .accessibilityIdentifier("player.nowPlaying.upperScroll")
-
-            bottomControls
-        }
-        .frame(width: contentWidth, height: contentHeight)
-        .padding(.top, topInset)
-        .padding(.bottom, bottomInset)
-        .clipped()
-    }
-
-    private func scrollingPlaybackContent(
-        contentWidth: CGFloat,
-        viewportHeight: CGFloat,
-        topInset: CGFloat,
-        bottomInset: CGFloat
-    ) -> some View {
-        ScrollView(.vertical) {
-            VStack(spacing: 0) {
-                header
-
-                modeControls
-                    .padding(.top, MusicFreeSpacingTokens.xLarge)
-
-                bottomControls
-                    .padding(.top, MusicFreeSpacingTokens.xLarge)
-
-                continuePlayingContent(width: contentWidth)
-            }
-            .frame(width: contentWidth)
-            .padding(.top, topInset)
-            .padding(.bottom, bottomInset)
-            .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(width: contentWidth, height: viewportHeight)
-        .clipped()
-        .scrollIndicators(.hidden)
-        .scrollBounceBehavior(.basedOnSize)
-        .scrollEdgeEffectStyle(.soft, for: .bottom)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("player.nowPlaying.scroll")
-    }
-
-    private var playerBackdrop: some View {
-        ZStack {
-            LinearGradient(
-                colors: playerBackdropColors,
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-
-            if let image = artworkLoader.image {
-                image
-                    .resizable()
-                    .scaledToFill()
-                    .blur(radius: 54)
-                    .opacity(colorScheme == .dark ? 0.52 : 0.24)
-                    .scaleEffect(1.18)
-
-                LinearGradient(
-                    colors: playerArtworkOverlayColors,
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            }
-        }
-        .ignoresSafeArea()
-        .accessibilityHidden(true)
-    }
-
-    private var header: some View {
-        HStack(alignment: .center, spacing: MusicFreeSpacingTokens.medium) {
+        return VStack(spacing: 0) {
             ArtworkView(
                 image: artworkLoader.image,
                 accessibilityLabel: currentArtworkID == nil ? L("暂无封面") : L("封面"),
-                fillsAvailableWidth: true
+                fillsAvailableWidth: true,
+                cornerRadius: 0
             )
-            .frame(width: 72, height: 72)
-            .shadow(color: .black.opacity(colorScheme == .dark ? 0.28 : 0.16), radius: 12, y: 6)
+            .frame(width: dimension, height: dimension)
+            .shadow(color: .black.opacity(0.28), radius: 22, y: 12)
+            .padding(.top, 14)
 
-            VStack(alignment: .leading, spacing: MusicFreeSpacingTokens.xSmall) {
+            Spacer(minLength: 0)
+
+            artworkMetadata(contentWidth: contentWidth)
+                .padding(.bottom, metadataBottomSpacing)
+        }
+        .frame(width: contentWidth, height: surfaceHeight, alignment: .top)
+        .accessibilityIdentifier("player.nowPlaying.artwork")
+        .accessibilityElement(children: .contain)
+    }
+
+    private func artworkMetadata(contentWidth: CGFloat) -> some View {
+        let textWidth = NowPlayingLayoutMetrics.headerTextWidth(
+            contentWidth: contentWidth
+        )
+
+        return HStack(
+            alignment: .center,
+            spacing: NowPlayingLayoutMetrics.headerContentSpacing
+        ) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(currentTitle ?? L("正在播放"))
                     .font(.title2.weight(.bold))
                     .foregroundStyle(playerForegroundPrimary)
-                    .lineLimit(2)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+
+                if let artist = NowPlayingHeaderMetadata.artistSubtitle(currentArtist) {
+                    Text(artist)
+                        .font(.title3)
+                        .foregroundStyle(playerForegroundSecondary)
+                        .lineLimit(1)
+                }
+            }
+            .frame(width: textWidth, alignment: .leading)
+            .clipped()
+
+            headerActions
+        }
+        .frame(width: contentWidth, alignment: .leading)
+        .clipped()
+    }
+
+    private func compactHeader(contentWidth: CGFloat) -> some View {
+        let textWidth = NowPlayingLayoutMetrics.headerTextWidth(
+            contentWidth: contentWidth,
+            leadingWidth: NowPlayingLayoutMetrics.headerArtworkSize
+        )
+
+        return HStack(
+            alignment: .center,
+            spacing: NowPlayingLayoutMetrics.headerContentSpacing
+        ) {
+            ArtworkView(
+                image: artworkLoader.image,
+                accessibilityLabel: currentArtworkID == nil ? L("暂无封面") : L("封面"),
+                fillsAvailableWidth: true,
+                cornerRadius: 12
+            )
+            .frame(
+                width: NowPlayingLayoutMetrics.headerArtworkSize,
+                height: NowPlayingLayoutMetrics.headerArtworkSize
+            )
+            .shadow(color: .black.opacity(0.24), radius: 12, y: 6)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(currentTitle ?? L("正在播放"))
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(playerForegroundPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
 
                 if let artist = NowPlayingHeaderMetadata.artistSubtitle(currentArtist) {
                     Text(artist)
                         .font(.body)
                         .foregroundStyle(playerForegroundSecondary)
-                        .lineLimit(1)
-                }
-
-                if let album = currentAlbum {
-                    Text(album)
-                        .font(MusicFreeTypographyTokens.secondary)
-                        .foregroundStyle(playerForegroundTertiary)
-                        .lineLimit(1)
+                    .lineLimit(1)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .layoutPriority(1)
+            .frame(width: textWidth, alignment: .leading)
+            .clipped()
 
+            headerActions
+        }
+        .frame(
+            width: contentWidth,
+            height: NowPlayingLayoutMetrics.compactHeaderHeight,
+            alignment: .leading
+        )
+        .clipped()
+    }
+
+    private var headerActions: some View {
+        HStack(spacing: 8) {
             Button {
                 favoriteController.toggle()
             } label: {
                 Image(systemName: favoriteController.isFavorite ? "star.fill" : "star")
-                    .font(.title2.weight(.semibold))
-                    .frame(width: 44, height: 44)
+                    .font(.body.weight(.semibold))
+                    .frame(width: 32, height: 32)
                     .background(playerControlFill, in: Circle())
             }
+            .frame(width: 40, height: 40)
             .foregroundStyle(playerForegroundPrimary)
             .accessibilityLabel(Text(favoriteController.isFavorite ? L("取消收藏") : L("收藏")))
 
-            Menu {
-                ShareLink(item: shareText) {
-                    Label(L("分享"), systemImage: "square.and.arrow.up")
-                }
-                if let itemID = viewModel.snapshot.currentItemID {
-                    Button {
-                        viewModel.send(.enqueue(itemID: itemID, at: nil))
-                    } label: {
-                        Label(L("加入播放队列"), systemImage: "text.append")
-                    }
-                }
+            Button {
+                isMoreActionsPresented = true
             } label: {
                 Image(systemName: "ellipsis")
-                    .font(.title2.weight(.bold))
-                    .frame(width: 44, height: 44)
+                    .font(.body.weight(.bold))
+                    .frame(width: 32, height: 32)
                     .background(playerControlFill, in: Circle())
             }
+            .frame(width: 40, height: 40)
             .foregroundStyle(playerForegroundPrimary)
             .accessibilityLabel(Text(L("更多操作")))
         }
+        .fixedSize()
     }
 
-    private var modeControls: some View {
-        HStack(spacing: MusicFreeSpacingTokens.small) {
-            Button {
+    private func queueSurface(contentWidth: CGFloat, surfaceHeight: CGFloat) -> some View {
+        ZStack(alignment: .bottom) {
+            ScrollView(.vertical) {
+                VStack(spacing: 0) {
+                    compactHeader(contentWidth: contentWidth)
+                    .padding(.top, 0)
+
+                    queueModeControls(contentWidth: contentWidth)
+                    .padding(.top, 16)
+
+                    continuePlayingContent(contentWidth: contentWidth)
+                    .padding(.top, 16)
+                }
+                .frame(width: contentWidth, alignment: .top)
+                .padding(.bottom, 24)
+            }
+            .scrollIndicators(.hidden)
+            .scrollBounceBehavior(.basedOnSize)
+            .accessibilityIdentifier("player.nowPlaying.upperScroll")
+
+            LinearGradient(
+                colors: [.clear, .black.opacity(0.16)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: 28)
+            .allowsHitTesting(false)
+        }
+        .frame(width: contentWidth, height: surfaceHeight, alignment: .top)
+    }
+
+    private func lyricsSurface(contentWidth: CGFloat, surfaceHeight: CGFloat) -> some View {
+        let lyricsContentHeight = max(
+            0,
+            surfaceHeight
+                - NowPlayingLayoutMetrics.compactHeaderHeight
+                - 12
+                - 4
+                - NowPlayingLayoutMetrics.footerHeight
+        )
+
+        return VStack(spacing: 0) {
+            compactHeader(contentWidth: contentWidth)
+
+            lyricsView
+                .frame(width: contentWidth, height: lyricsContentHeight)
+                .padding(.top, 12)
+
+            lyricsActionBar
+                .frame(width: contentWidth, height: NowPlayingLayoutMetrics.footerHeight)
+                .padding(.top, 4)
+        }
+        .frame(width: contentWidth, height: surfaceHeight, alignment: .top)
+        .accessibilityElement(children: .contain)
+    }
+
+    private var lyricsActionBar: some View {
+        HStack {
+            Menu {
+                Button(L("重置歌词偏移")) {
+                    NotificationCenter.default.post(
+                        name: .musicFreeResetLyricsOffset,
+                        object: nil
+                    )
+                }
+            } label: {
+                Image(systemName: "character.bubble")
+                    .font(.title3.weight(.semibold))
+                    .frame(width: 56, height: 56)
+                    .background(playerControlFill, in: Circle())
+            }
+            .foregroundStyle(playerForegroundPrimary)
+            .accessibilityLabel(Text(L("歌词设置")))
+
+            Spacer()
+
+            Image(systemName: "wand.and.stars")
+                .font(.title3.weight(.semibold))
+                .frame(width: 56, height: 56)
+                .background(playerControlFill.opacity(0.46), in: Circle())
+                .foregroundStyle(playerForegroundTertiary)
+                .accessibilityLabel(Text(L("歌词增强不可用")))
+        }
+    }
+
+    private var lyricsView: some View {
+        LyricsView(
+            title: currentTitle ?? L("正在播放"),
+            lyrics: currentTrack?.lyrics,
+            query: currentLyricsQuery,
+            lyricsServing: lyricsServing,
+            player: viewModel,
+            presentation: .embedded
+        )
+    }
+
+    private func queueModeControls(contentWidth: CGFloat) -> some View {
+        let buttonWidth = max(0, (contentWidth - (12 * 3)) / 4)
+
+        return HStack(spacing: 12) {
+            modeButton(
+                systemImage: "shuffle",
+                title: L("随机播放"),
+                isSelected: viewModel.snapshot.queue.shuffleMode == .on,
+                isEnabled: true,
+                width: buttonWidth
+            ) {
                 viewModel.setShuffle(
                     viewModel.snapshot.queue.shuffleMode == .on ? .off : .on
                 )
-            } label: {
-                Image(systemName: "shuffle")
-                    .font(.title3.weight(.semibold))
-                    .frame(maxWidth: .infinity, minHeight: 48)
-                    .background(
-                        viewModel.snapshot.queue.shuffleMode == .on
-                            ? MusicFreeColorTokens.accent.opacity(0.82)
-                            : playerControlFill,
-                        in: Capsule()
-                    )
             }
-            .accessibilityLabel(Text(L("随机播放")))
-            .accessibilityValue(
-                Text(viewModel.snapshot.queue.shuffleMode == .on ? L("已开启") : L("已关闭"))
-            )
-            .accessibilityAddTraits(
-                viewModel.snapshot.queue.shuffleMode == .on ? .isSelected : []
-            )
 
-            Menu {
-                ForEach(PlaybackRepeatMode.allCases, id: \.self) { mode in
-                    Button {
-                        viewModel.setRepeatMode(mode)
-                    } label: {
-                        Label(repeatTitle(mode), systemImage: repeatIcon(mode))
-                    }
-                }
-            } label: {
-                Image(systemName: repeatIcon(viewModel.snapshot.queue.repeatMode))
-                    .font(.title3.weight(.semibold))
-                    .frame(maxWidth: .infinity, minHeight: 48)
-                    .background(
-                        viewModel.snapshot.queue.repeatMode == .off
-                            ? playerControlFill
-                            : MusicFreeColorTokens.accent.opacity(0.82),
-                        in: Capsule()
-                    )
+            modeButton(
+                systemImage: "repeat.1",
+                title: L("重复单曲"),
+                isSelected: viewModel.snapshot.queue.repeatMode == .one,
+                isEnabled: true,
+                width: buttonWidth
+            ) {
+                viewModel.setRepeatMode(
+                    viewModel.snapshot.queue.repeatMode == .one ? .off : .one
+                )
             }
-            .accessibilityLabel(Text(L("重复模式")))
-            .accessibilityValue(Text(repeatTitle(viewModel.snapshot.queue.repeatMode)))
-            .accessibilityAddTraits(
-                viewModel.snapshot.queue.repeatMode == .off ? [] : .isSelected
-            )
 
-            Button {
+            modeButton(
+                systemImage: "infinity",
+                title: L("重复队列"),
+                isSelected: viewModel.snapshot.queue.repeatMode == .all,
+                isEnabled: true,
+                width: buttonWidth
+            ) {
                 viewModel.setRepeatMode(
                     viewModel.snapshot.queue.repeatMode == .all ? .off : .all
                 )
-            } label: {
-                Image(systemName: "infinity")
-                    .font(.title3.weight(.semibold))
-                    .frame(maxWidth: .infinity, minHeight: 48)
-                    .background(
-                        viewModel.snapshot.queue.repeatMode == .all
-                            ? MusicFreeColorTokens.accent.opacity(0.82)
-                            : playerControlFill,
-                        in: Capsule()
-                    )
             }
-            .accessibilityLabel(Text(L("连续播放")))
-            .accessibilityValue(
-                Text(viewModel.snapshot.queue.repeatMode == .all ? L("已开启") : L("已关闭"))
-            )
-            .accessibilityAddTraits(
-                viewModel.snapshot.queue.repeatMode == .all ? .isSelected : []
-            )
 
-            Button(action: onShowQueue) {
-                Image(systemName: "list.bullet")
-                    .font(.title3.weight(.semibold))
-                    .frame(maxWidth: .infinity, minHeight: 48)
-                    .background(playerControlFill, in: Capsule())
-            }
-            .accessibilityLabel(Text(L("打开播放队列")))
-            .accessibilityIdentifier("player.queue")
+            modeButton(
+                systemImage: "waveform.path.ecg",
+                title: L("淡入淡出"),
+                isSelected: viewModel.snapshot.effectiveEffects.transition.mode == .crossfade,
+                isEnabled: viewModel.snapshot.capabilities.contains(.crossfade),
+                width: buttonWidth
+            ) {}
         }
+        .frame(width: contentWidth)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Text(L("播放模式")))
+        .accessibilityIdentifier("player.nowPlaying.modeControls")
+    }
+
+    private func modeButton(
+        systemImage: String,
+        title: String,
+        isSelected: Bool,
+        isEnabled: Bool,
+        width: CGFloat,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+                Image(systemName: systemImage)
+                    .font(.title3.weight(.semibold))
+                    .frame(width: width, height: 40)
+                .background(
+                    isSelected ? playerSelectedControlFill : playerControlFill,
+                    in: Capsule(style: .continuous)
+                )
+        }
+        .buttonStyle(.plain)
         .foregroundStyle(playerForegroundPrimary)
+        .opacity(isEnabled ? 1 : 0.36)
+        .disabled(!isEnabled)
+        .accessibilityLabel(Text(title))
+        .accessibilityValue(Text(isEnabled ? (isSelected ? L("已开启") : L("已关闭")) : L("不可用")))
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
-    private var shareText: String {
-        let title = currentTitle ?? L("正在播放")
-        guard let artist = currentArtist, !artist.isEmpty else { return title }
-        return "\(title) - \(artist)"
-    }
-
-    @ViewBuilder
-    private func continuePlayingContent(width: CGFloat) -> some View {
+    private func continuePlayingContent(contentWidth: CGFloat) -> some View {
         let entries = viewModel.upcomingQueueEntries()
 
-        if !entries.isEmpty {
-            VStack(alignment: .leading, spacing: MusicFreeSpacingTokens.small) {
-                Text(L("继续播放"))
-                    .font(.title3.weight(.bold))
-                    .foregroundStyle(playerForegroundPrimary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+        return VStack(alignment: .leading, spacing: 0) {
+            Text(L("继续播放"))
+                .font(.title2.weight(.bold))
+                .foregroundStyle(playerForegroundPrimary)
 
-                ForEach(entries) { entry in
-                    ContinuePlayingRow(
-                        entry: entry,
-                        track: queueTracks[entry.itemID],
-                        subtitle: QueueArtistNameLoader.subtitle(
-                            for: queueTracks[entry.itemID],
-                            artistNames: queueArtistNames
-                        ),
-                        artworkServing: artworkServing,
-                        onSelect: { viewModel.send(.play(itemID: entry.itemID)) }
-                    )
-                }
+            if let album = currentAlbum {
+                Text(L("From %@", album))
+                    .font(.title3)
+                    .foregroundStyle(playerForegroundSecondary)
+                    .lineLimit(1)
+                    .padding(.top, 2)
             }
-            .padding(.top, MusicFreeSpacingTokens.xLarge)
-            .frame(width: width, alignment: .leading)
-            .accessibilityElement(children: .contain)
-            .accessibilityIdentifier("player.continuePlaying.list")
+
+            if entries.isEmpty {
+                Text(L("队列末尾"))
+                    .font(.body)
+                    .foregroundStyle(playerForegroundSecondary)
+                    .padding(.top, 24)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(entries) { entry in
+                        ContinuePlayingRow(
+                            entry: entry,
+                            track: queueTracks[entry.itemID],
+                            subtitle: QueueArtistNameLoader.subtitle(
+                                for: queueTracks[entry.itemID],
+                                artistNames: queueArtistNames
+                            ),
+                            artworkServing: artworkServing,
+                            onSelect: { viewModel.send(.play(itemID: entry.itemID)) },
+                            foregroundPrimary: playerForegroundPrimary,
+                            foregroundSecondary: playerForegroundSecondary,
+                            foregroundTertiary: playerForegroundTertiary,
+                            contentWidth: contentWidth
+                        )
+                    }
+                }
+                .padding(.top, 16)
+            }
         }
+        .frame(width: contentWidth, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("player.continuePlaying.list")
     }
 
     private var bottomControls: some View {
         VStack(spacing: 0) {
-            progress
+            playerProgress
 
             transportControls
-                .padding(.top, MusicFreeSpacingTokens.large)
+                .padding(.top, 26)
 
             volumeControl
-                .padding(.top, MusicFreeSpacingTokens.large)
+                .padding(.top, 28)
 
             footerControls
-                .padding(.top, MusicFreeSpacingTokens.xLarge)
+                .padding(.top, 18)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var playerProgress: some View {
+        VStack(spacing: 8) {
+            CompactPlayerSlider(
+                value: Binding(
+                    get: { PlayerFormatting.seconds(viewModel.displayedPosition) },
+                    set: { viewModel.updateSeeking(to: .seconds($0)) }
+                ),
+                in: 0...max(PlayerFormatting.seconds(viewModel.duration ?? .zero), 1),
+                accessibilityLabel: L("播放进度"),
+                accessibilityValue: {
+                    "\(PlayerFormatting.duration(viewModel.displayedPosition)) / "
+                        + PlayerFormatting.remaining(
+                            position: viewModel.displayedPosition,
+                            duration: viewModel.duration
+                        )
+                },
+                minimumTrackColor: .white.withAlphaComponent(0.96),
+                maximumTrackColor: .white.withAlphaComponent(0.24),
+                thumbColor: .white.withAlphaComponent(0.96),
+                onEditingChanged: { isEditing in
+                    if isEditing {
+                        viewModel.beginSeeking()
+                    } else {
+                        viewModel.finishSeeking()
+                    }
+                }
+            )
+            .disabled(!viewModel.canSeek)
+            .frame(minWidth: 0, maxWidth: .infinity, minHeight: 20, maxHeight: 20)
+
+            HStack {
+                Text(PlayerFormatting.duration(viewModel.displayedPosition))
+
+                Spacer(minLength: 8)
+
+                if viewModel.snapshot.phase == .paused {
+                    Label(L("已暂停"), systemImage: "speaker.slash.fill")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 7)
+                        .background(playerControlFill, in: Capsule(style: .continuous))
+                }
+
+                Spacer(minLength: 8)
+
+                Text(
+                    PlayerFormatting.remaining(
+                        position: viewModel.displayedPosition,
+                        duration: viewModel.duration
+                    )
+                )
+            }
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(playerForegroundSecondary)
+            .accessibilityHidden(true)
         }
     }
 
-    private var progress: some View {
-        PlaybackProgressControl(viewModel: viewModel)
-            .tint(playerForegroundPrimary)
-            .foregroundStyle(playerForegroundSecondary)
-    }
-
     private var transportControls: some View {
-        HStack {
+        HStack(spacing: 22) {
             PlaybackControlButton(
                 systemImage: "backward.fill",
                 accessibilityLabel: L("上一首"),
@@ -531,8 +802,8 @@ struct NowPlayingView: View {
                 foregroundColor: playerForegroundPrimary,
                 backgroundColor: .clear,
                 showsBackground: false,
-                controlSize: 64,
-                symbolFont: .system(size: 30, weight: .semibold),
+                controlSize: 72,
+                symbolFont: .system(size: 34, weight: .semibold),
                 action: viewModel.previous
             )
 
@@ -543,8 +814,8 @@ struct NowPlayingView: View {
                 foregroundColor: playerForegroundPrimary,
                 backgroundColor: .clear,
                 showsBackground: false,
-                controlSize: 72,
-                symbolFont: .system(size: 36, weight: .semibold),
+                controlSize: 88,
+                symbolFont: .system(size: 42, weight: .semibold),
                 action: viewModel.togglePlayback
             )
 
@@ -555,8 +826,8 @@ struct NowPlayingView: View {
                 foregroundColor: playerForegroundPrimary,
                 backgroundColor: .clear,
                 showsBackground: false,
-                controlSize: 64,
-                symbolFont: .system(size: 30, weight: .semibold),
+                controlSize: 72,
+                symbolFont: .system(size: 34, weight: .semibold),
                 action: viewModel.next
             )
         }
@@ -564,71 +835,155 @@ struct NowPlayingView: View {
     }
 
     private var volumeControl: some View {
-        HStack(spacing: MusicFreeSpacingTokens.small) {
+        HStack(spacing: 10) {
             Button {
                 viewModel.setMuted(!viewModel.isMuted)
             } label: {
                 Image(systemName: viewModel.isMuted ? "speaker.slash.fill" : "speaker.fill")
-                    .font(.caption)
-                    .frame(width: MusicFreeLayoutMetrics.minimumHitTarget,
-                           height: MusicFreeLayoutMetrics.minimumHitTarget)
+                    .font(.body.weight(.semibold))
+                    .frame(width: 44, height: 44)
             }
             .buttonStyle(.plain)
             .foregroundStyle(playerForegroundSecondary)
             .accessibilityLabel(Text(viewModel.isMuted ? L("取消静音") : L("静音")))
 
-            Slider(
+            CompactPlayerSlider(
                 value: Binding(
                     get: { Double(viewModel.displayedVolume) },
                     set: { viewModel.updateVolume(Float($0)) }
                 ),
                 in: 0...1,
+                accessibilityLabel: L("音量"),
+                accessibilityValue: {
+                    "\(Int((viewModel.displayedVolume * 100).rounded()))%"
+                },
+                minimumTrackColor: .white.withAlphaComponent(0.64),
+                maximumTrackColor: .white.withAlphaComponent(0.24),
+                thumbColor: .white.withAlphaComponent(0.64),
                 onEditingChanged: { isEditing in
                     if !isEditing { viewModel.finishVolumeChange() }
                 }
             )
-            .tint(playerForegroundPrimary)
+            .frame(minWidth: 0, maxWidth: .infinity, minHeight: 20, maxHeight: 20)
 
             Image(systemName: "speaker.wave.2.fill")
-                .font(.caption)
+                .font(.body.weight(.semibold))
                 .foregroundStyle(playerForegroundSecondary)
+                .frame(width: 44, height: 44)
+                .accessibilityHidden(true)
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text(L("音量")))
     }
 
     private var footerControls: some View {
-        HStack {
-            Button {
-                isLyricsPresented = true
-            } label: {
-                Image(systemName: "quote.bubble")
-                    .font(.title3)
+        HStack(spacing: 60) {
+            footerButton(
+                systemImage: surface == .lyrics ? "quote.bubble.fill" : "quote.bubble",
+                title: surface == .lyrics ? L("返回播放器") : L("歌词"),
+                isSelected: surface == .lyrics,
+                isEnabled: currentTrack != nil && (currentTrack?.lyrics != nil || lyricsServing != nil)
+            ) {
+                surface = surface == .lyrics ? .artwork : .lyrics
             }
-            .disabled(currentTrack?.lyrics == nil)
-            .accessibilityLabel(Text(L("歌词")))
-            .accessibilityValue(Text(currentTrack?.lyrics == nil ? L("无歌词") : L("可用")))
-
-            Spacer()
+            .accessibilityIdentifier("player.lyrics.footer")
 
             SystemAudioRoutePicker(
-                accessibilityLabel: L("AirPlay")
+                accessibilityLabel: L("AirPlay"),
+                tintColor: .white
             )
-            .frame(
-                width: MusicFreeLayoutMetrics.minimumHitTarget,
-                height: MusicFreeLayoutMetrics.minimumHitTarget
-            )
+            .frame(width: 56, height: 56)
 
-            Spacer()
-
-            Button(action: onShowQueue) {
-                Image(systemName: "list.bullet.circle.fill")
-                    .font(.title2)
+            footerButton(
+                systemImage: "list.bullet",
+                title: surface == .queue ? L("返回播放器") : L("播放队列"),
+                isSelected: surface == .queue,
+                isEnabled: true
+            ) {
+                surface = surface == .queue ? .artwork : .queue
             }
-            .accessibilityLabel(Text(L("播放队列")))
             .accessibilityIdentifier("player.queue.footer")
         }
+        .frame(minWidth: 0, maxWidth: .infinity, minHeight: 56, maxHeight: 56)
         .foregroundStyle(playerForegroundSecondary)
+    }
+
+    private func footerButton(
+        systemImage: String,
+        title: String,
+        isSelected: Bool,
+        isEnabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.title3.weight(.semibold))
+                .frame(width: 56, height: 56)
+                .background(
+                    isSelected ? playerSelectedControlFill : .clear,
+                    in: Circle()
+                )
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(playerForegroundSecondary)
+        .opacity(isEnabled ? 1 : 0.34)
+        .disabled(!isEnabled)
+        .accessibilityLabel(Text(title))
+    }
+
+    private var playerBackdrop: some View {
+        ZStack {
+            Color(red: 0.18, green: 0.10, blue: 0.07)
+
+            if let image = artworkLoader.image {
+                image
+                    .resizable()
+                    .scaledToFill()
+                    .blur(radius: 46)
+                    .scaleEffect(1.28)
+                    .opacity(0.78)
+
+                LinearGradient(
+                    colors: [
+                        .black.opacity(0.08),
+                        .black.opacity(0.20),
+                        .black.opacity(0.56)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            } else {
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.48, green: 0.24, blue: 0.13),
+                        Color(red: 0.15, green: 0.09, blue: 0.06)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            }
+        }
+        .accessibilityHidden(true)
+    }
+
+    private var playerForegroundPrimary: Color {
+        .white.opacity(0.96)
+    }
+
+    private var playerForegroundSecondary: Color {
+        .white.opacity(0.64)
+    }
+
+    private var playerForegroundTertiary: Color {
+        .white.opacity(0.38)
+    }
+
+    private var playerControlFill: Color {
+        .white.opacity(0.13)
+    }
+
+    private var playerSelectedControlFill: Color {
+        .white.opacity(0.42)
     }
 
     private var artworkKey: String {
@@ -641,14 +996,11 @@ struct NowPlayingView: View {
     }
 
     private var currentArtworkID: ArtworkID? {
-        guard currentTrack != nil else {
-            return viewModel.snapshot.currentItem?.artworkID
-        }
-        return currentTrack?.artworkID
+        currentTrack?.artworkID ?? viewModel.snapshot.currentItem?.artworkID
     }
 
     private var currentTitle: String? {
-        currentTrack?.title ?? viewModel.currentTitle
+        NowPlayingHeaderMetadata.title(currentTrack?.title ?? viewModel.currentTitle)
     }
 
     private var currentArtist: String? {
@@ -667,39 +1019,34 @@ struct NowPlayingView: View {
         )
     }
 
-    private var playerBackdropColors: [Color] {
-        if colorScheme == .dark {
-            return [
-                Color(red: 0.30, green: 0.25, blue: 0.26),
-                Color(red: 0.08, green: 0.07, blue: 0.08)
-            ]
+    private var currentLyricsQuery: LyricsQuery? {
+        guard let currentTrack,
+              let title = currentTitle,
+              !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return nil
         }
-        return [
-            Color(red: 0.98, green: 0.93, blue: 0.94),
-            Color(red: 0.91, green: 0.94, blue: 0.96)
-        ]
+        let durationSeconds: TimeInterval?
+        if let duration = currentTrack.duration ?? viewModel.snapshot.duration {
+            let components = duration.components
+            durationSeconds = Double(components.seconds)
+                + Double(components.attoseconds) / 1_000_000_000_000_000_000
+        } else {
+            durationSeconds = nil
+        }
+        return LyricsQuery(
+            itemID: currentTrack.id,
+            title: title,
+            artistName: currentArtist,
+            albumName: currentAlbum,
+            durationSeconds: durationSeconds
+        )
     }
 
-    private var playerArtworkOverlayColors: [Color] {
-        colorScheme == .dark
-            ? [.black.opacity(0.16), .black.opacity(0.78)]
-            : [.white.opacity(0.18), .white.opacity(0.76)]
-    }
-
-    private var playerForegroundPrimary: Color {
-        MusicFreeColorTokens.foregroundPrimary
-    }
-
-    private var playerForegroundSecondary: Color {
-        MusicFreeColorTokens.foregroundSecondary
-    }
-
-    private var playerForegroundTertiary: Color {
-        MusicFreeColorTokens.foregroundTertiary
-    }
-
-    private var playerControlFill: Color {
-        Color(.secondarySystemFill)
+    private var shareText: String {
+        let title = currentTitle ?? L("正在播放")
+        guard let artist = currentArtist, !artist.isEmpty else { return title }
+        return "\(title) - \(artist)"
     }
 
     private var queueKey: String {
@@ -758,7 +1105,7 @@ struct NowPlayingView: View {
             } catch is CancellationError {
                 return
             } catch {
-                // Album names are supplementary; keep the track and artist data usable.
+                // Album metadata is supplementary; keep the player usable.
             }
         }
         guard !Task.isCancelled, queueKey == expectedQueueKey else { return }
@@ -798,18 +1145,6 @@ struct NowPlayingView: View {
         return !artistIDs.isDisjoint(with: change.affectedIDs.artistIDs)
     }
 
-    private func repeatIcon(_ mode: PlaybackRepeatMode) -> String {
-        mode == .one ? "repeat.1" : "repeat"
-    }
-
-    private func repeatTitle(_ mode: PlaybackRepeatMode) -> String {
-        switch mode {
-        case .off: return L("关闭重复")
-        case .one: return L("重复单曲")
-        case .all: return L("重复队列")
-        }
-    }
-
     private func playerErrorMessage(_ error: PlaybackError) -> String {
         switch error {
         case .resourceUnavailable:
@@ -828,43 +1163,118 @@ private struct ContinuePlayingRow: View {
     let subtitle: String?
     let artworkServing: (any ArtworkServing)?
     let onSelect: () -> Void
+    let foregroundPrimary: Color
+    let foregroundSecondary: Color
+    let foregroundTertiary: Color
+    let contentWidth: CGFloat
 
     var body: some View {
+        let textWidth = NowPlayingLayoutMetrics.queueRowTextWidth(
+            contentWidth: contentWidth
+        )
+
         Button(action: onSelect) {
-            HStack(spacing: MusicFreeSpacingTokens.medium) {
+            HStack(spacing: NowPlayingLayoutMetrics.headerContentSpacing) {
                 ArtworkResourceView(
                     artworkID: track?.artworkID,
                     sourceID: entry.itemID.sourceID,
                     serving: artworkServing,
                     accessibilityLabel: track?.artworkID == nil ? L("暂无封面") : L("封面"),
-                    placeholderTitle: track?.title
+                    placeholderTitle: track?.title,
+                    fillsAvailableWidth: true,
+                    cornerRadius: 6
+                )
+                .frame(
+                    width: NowPlayingLayoutMetrics.queueRowArtworkSize,
+                    height: NowPlayingLayoutMetrics.queueRowArtworkSize
                 )
 
-                VStack(alignment: .leading, spacing: MusicFreeSpacingTokens.xSmall) {
+                VStack(alignment: .leading, spacing: 3) {
                     Text(track?.title ?? L("正在载入歌曲"))
-                        .font(MusicFreeTypographyTokens.rowTitle)
-                        .foregroundStyle(MusicFreeColorTokens.foregroundPrimary)
+                        .font(.body)
+                        .foregroundStyle(foregroundPrimary)
                         .lineLimit(1)
 
                     if let subtitle {
                         Text(subtitle)
-                            .font(MusicFreeTypographyTokens.rowSubtitle)
-                            .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
+                            .font(.subheadline)
+                            .foregroundStyle(foregroundSecondary)
                             .lineLimit(1)
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(width: textWidth, alignment: .leading)
+                .clipped()
 
                 Image(systemName: "line.3.horizontal")
                     .font(.title3)
-                    .foregroundStyle(MusicFreeColorTokens.foregroundTertiary)
+                    .foregroundStyle(foregroundTertiary)
+                    .frame(
+                        width: NowPlayingLayoutMetrics.queueRowActionWidth,
+                        height: NowPlayingLayoutMetrics.queueRowArtworkSize,
+                        alignment: .trailing
+                    )
             }
-            .frame(maxWidth: .infinity)
+            .frame(
+                width: contentWidth,
+                height: NowPlayingLayoutMetrics.queueRowHeight,
+                alignment: .leading
+            )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .padding(.vertical, MusicFreeSpacingTokens.small)
-        .frame(minHeight: MusicFreeLayoutMetrics.compactRowMinimumHeight)
         .accessibilityLabel(Text(track?.title ?? L("播放队列歌曲")))
     }
+}
+
+private struct NowPlayingActionsPanel: View {
+    let shareText: String
+    let canEnqueue: Bool
+    let onEnqueue: () -> Void
+    let onManageQueue: () -> Void
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Text(L("更多操作"))
+                .font(.headline)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            VStack(spacing: 8) {
+                ShareLink(item: shareText) {
+                    actionRow(title: L("分享"), systemImage: "square.and.arrow.up")
+                }
+
+                if canEnqueue {
+                    Button(action: onEnqueue) {
+                        actionRow(title: L("加入播放队列"), systemImage: "text.append")
+                    }
+                }
+
+                Button(action: onManageQueue) {
+                    actionRow(title: L("管理完整队列"), systemImage: "rectangle.stack")
+                }
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 12)
+        .padding(.bottom, 20)
+        .frame(maxWidth: 430)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .strokeBorder(.white.opacity(0.12), lineWidth: 1)
+        }
+        .accessibilityIdentifier("player.nowPlaying.actions")
+    }
+
+    private func actionRow(title: String, systemImage: String) -> some View {
+        Label(title, systemImage: systemImage)
+            .font(.body.weight(.medium))
+            .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+            .padding(.horizontal, 16)
+            .background(.secondary.opacity(0.14), in: RoundedRectangle(cornerRadius: 14))
+    }
+}
+
+extension Notification.Name {
+    static let musicFreeResetLyricsOffset = Notification.Name("MusicFreeResetLyricsOffset")
 }

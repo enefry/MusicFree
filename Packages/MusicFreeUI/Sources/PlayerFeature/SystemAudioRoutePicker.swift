@@ -6,13 +6,16 @@ import UIKit
 struct SystemAudioRoutePicker: UIViewRepresentable {
     let accessibilityLabel: String
     let accessibilityIdentifier: String
+    let tintColor: UIColor
 
     init(
         accessibilityLabel: String,
-        accessibilityIdentifier: String = "player.routePicker"
+        accessibilityIdentifier: String = "player.routePicker",
+        tintColor: UIColor = .secondaryLabel
     ) {
         self.accessibilityLabel = accessibilityLabel
         self.accessibilityIdentifier = accessibilityIdentifier
+        self.tintColor = tintColor
     }
 
     func makeUIView(context: Context) -> AVRoutePickerView {
@@ -26,8 +29,8 @@ struct SystemAudioRoutePicker: UIViewRepresentable {
     }
 
     private func update(_ view: AVRoutePickerView) {
-        view.tintColor = .secondaryLabel
-        view.activeTintColor = .systemBlue
+        view.tintColor = tintColor
+        view.activeTintColor = tintColor
         view.prioritizesVideoDevices = false
         view.backgroundColor = .clear
         view.accessibilityLabel = accessibilityLabel

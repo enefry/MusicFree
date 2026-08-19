@@ -10,9 +10,14 @@ public actor FileMetadataEnrichmentRecordRepository: MetadataEnrichmentRecordRep
         let records: [MetadataEnrichmentRecord]
     }
 
+    private struct RecordKey: Hashable {
+        let itemID: MediaItemID
+        let provider: MetadataProviderID
+    }
+
     private let fileURL: URL?
     private var loaded = false
-    private var values: [MediaItemID: MetadataEnrichmentRecord] = [:]
+    private var values: [RecordKey: MetadataEnrichmentRecord] = [:]
 
     /// Pass nil for an in-memory repository, which is useful for previews and
     /// unit tests.
@@ -20,25 +25,69 @@ public actor FileMetadataEnrichmentRecordRepository: MetadataEnrichmentRecordRep
         self.fileURL = fileURL
     }
 
-    public func record(for itemID: MediaItemID) throws -> MetadataEnrichmentRecord? {
+    public func record(for itemID: MediaItemID) async throws -> MetadataEnrichmentRecord? {
         try loadIfNeeded()
-        return values[itemID]
+        return values.values
+            .filter { $0.itemID == itemID }
+            .sorted { $0.provider < $1.provider }
+            .first
     }
 
-    public func records() throws -> [MetadataEnrichmentRecord] {
+    public func record(
+        for itemID: MediaItemID,
+        provider: MetadataProviderID
+    ) async throws -> MetadataEnrichmentRecord? {
         try loadIfNeeded()
-        return values.values.sorted { $0.itemID < $1.itemID }
+        return values.values.first {
+            $0.itemID == itemID && $0.provider == provider
+        }
     }
 
-    public func save(_ record: MetadataEnrichmentRecord) throws {
+    public func records() async throws -> [MetadataEnrichmentRecord] {
         try loadIfNeeded()
-        values[record.itemID] = record
+        return values.values.sorted {
+            if $0.itemID != $1.itemID { return $0.itemID < $1.itemID }
+            return $0.provider < $1.provider
+        }
+    }
+
+    public func records(
+        for provider: MetadataProviderID
+    ) async throws -> [MetadataEnrichmentRecord] {
+        try loadIfNeeded()
+        return values.values
+            .filter { $0.provider == provider }
+            .sorted { $0.itemID < $1.itemID }
+    }
+
+    public func save(_ record: MetadataEnrichmentRecord) async throws {
+        try loadIfNeeded()
+        values[RecordKey(itemID: record.itemID, provider: record.provider)] = record
         try persist()
     }
 
-    public func remove(itemID: MediaItemID) throws {
+    public func remove(itemID: MediaItemID) async throws {
         try loadIfNeeded()
-        guard values.removeValue(forKey: itemID) != nil else { return }
+        let keys = values.keys.filter { $0.itemID == itemID }
+        guard !keys.isEmpty else { return }
+        for key in keys {
+            values.removeValue(forKey: key)
+        }
+        try persist()
+    }
+
+    public func remove(
+        itemID: MediaItemID,
+        provider: MetadataProviderID
+    ) async throws {
+        try loadIfNeeded()
+        let keys = values.keys.filter {
+            $0.itemID == itemID && $0.provider == provider
+        }
+        guard !keys.isEmpty else { return }
+        for key in keys {
+            values.removeValue(forKey: key)
+        }
         try persist()
     }
 
@@ -58,13 +107,14 @@ public actor FileMetadataEnrichmentRecordRepository: MetadataEnrichmentRecordRep
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
             let envelope = try decoder.decode(Envelope.self, from: data)
-            guard envelope.version == 1 else {
+            guard (1...2).contains(envelope.version) else {
                 throw LibraryPersistenceError.migrationFailed(version: envelope.version)
             }
-            var decodedValues: [MediaItemID: MetadataEnrichmentRecord] = [:]
+            var decodedValues: [RecordKey: MetadataEnrichmentRecord] = [:]
             decodedValues.reserveCapacity(envelope.records.count)
             for record in envelope.records {
-                guard decodedValues.updateValue(record, forKey: record.itemID) == nil else {
+                let key = RecordKey(itemID: record.itemID, provider: record.provider)
+                guard decodedValues.updateValue(record, forKey: key) == nil else {
                     throw LibraryPersistenceError.corruptedRecord
                 }
             }
@@ -87,8 +137,11 @@ public actor FileMetadataEnrichmentRecordRepository: MetadataEnrichmentRecordRep
             let encoder = JSONEncoder()
             encoder.dateEncodingStrategy = .iso8601
             let data = try encoder.encode(Envelope(
-                version: 1,
-                records: values.values.sorted { $0.itemID < $1.itemID }
+                version: 2,
+                records: values.values.sorted {
+                    if $0.itemID != $1.itemID { return $0.itemID < $1.itemID }
+                    return $0.provider < $1.provider
+                }
             ))
             try data.write(to: fileURL, options: .atomic)
         } catch let error as LibraryPersistenceError {

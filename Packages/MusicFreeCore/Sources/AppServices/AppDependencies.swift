@@ -20,7 +20,8 @@ public struct AppDependencies {
     public let playbackQueueRepository: (any PlaybackQueueRepository)?
     public let playbackHistoryRepository: (any PlaybackHistoryRepository)?
     public let settingsRepository: (any SettingsRepository)?
-    public let metadataEnrichmentProvider: (any MetadataEnrichmentProviding)?
+    public let metadataEnrichmentProviders: [any MetadataEnrichmentProviding]
+    public let lyricsProviders: [any LyricsProviding]
     public let metadataEnrichmentRecordRepository: (any MetadataEnrichmentRecordRepository)?
     public let storageMaintenance: (any StorageMaintenanceServing)?
     public let playbackEngine: (any PlaybackEngine)?
@@ -48,7 +49,10 @@ public struct AppDependencies {
         playbackQueueRepository: (any PlaybackQueueRepository)? = nil,
         playbackHistoryRepository: (any PlaybackHistoryRepository)? = nil,
         settingsRepository: (any SettingsRepository)? = nil,
+        metadataEnrichmentProviders: [any MetadataEnrichmentProviding] = [],
+        /// Compatibility injection for the original single-provider graph.
         metadataEnrichmentProvider: (any MetadataEnrichmentProviding)? = nil,
+        lyricsProviders: [any LyricsProviding] = [],
         metadataEnrichmentRecordRepository: (any MetadataEnrichmentRecordRepository)? = nil,
         storageMaintenance: (any StorageMaintenanceServing)? = nil,
         playbackEngine: (any PlaybackEngine)? = nil,
@@ -88,7 +92,35 @@ public struct AppDependencies {
         self.playbackQueueRepository = playbackQueueRepository
         self.playbackHistoryRepository = playbackHistoryRepository
         self.settingsRepository = settingsRepository
-        self.metadataEnrichmentProvider = metadataEnrichmentProvider
+        var resolvedMetadataProviders = metadataEnrichmentProviders
+        if let metadataEnrichmentProvider {
+            guard !resolvedMetadataProviders.contains(where: {
+                $0.provider == metadataEnrichmentProvider.provider
+            }) else {
+                throw AppServiceError.incompatibleDependency(
+                    "metadataEnrichmentProviders.\(metadataEnrichmentProvider.provider.rawValue)"
+                )
+            }
+            resolvedMetadataProviders.insert(metadataEnrichmentProvider, at: 0)
+        }
+        var seenMetadataProviders = Set<MetadataProviderID>()
+        for provider in resolvedMetadataProviders {
+            guard seenMetadataProviders.insert(provider.provider).inserted else {
+                throw AppServiceError.incompatibleDependency(
+                    "metadataEnrichmentProviders.\(provider.provider.rawValue)"
+                )
+            }
+        }
+        self.metadataEnrichmentProviders = resolvedMetadataProviders
+        var seenLyricsProviders = Set<LyricsProviderID>()
+        for provider in lyricsProviders {
+            guard seenLyricsProviders.insert(provider.provider).inserted else {
+                throw AppServiceError.incompatibleDependency(
+                    "lyricsProviders.\(provider.provider.rawValue)"
+                )
+            }
+        }
+        self.lyricsProviders = lyricsProviders
         self.metadataEnrichmentRecordRepository = metadataEnrichmentRecordRepository
         self.storageMaintenance = storageMaintenance
         self.playbackEngine = playbackEngine
@@ -121,5 +153,10 @@ public struct AppDependencies {
 
     public var historyRepository: (any PlaybackHistoryRepository)? {
         playbackHistoryRepository
+    }
+
+    /// Compatibility view for the original single-provider graph.
+    public var metadataEnrichmentProvider: (any MetadataEnrichmentProviding)? {
+        metadataEnrichmentProviders.first
     }
 }
