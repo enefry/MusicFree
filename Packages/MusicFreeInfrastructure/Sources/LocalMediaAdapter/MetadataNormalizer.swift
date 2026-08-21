@@ -21,6 +21,15 @@ struct MetadataNormalizer: Sendable {
     contentHash: String,
     probe: MediaProbeResult,
     metadata: RawMediaMetadata,
+    fallbackArtwork: RawArtwork? = nil,
+    itemID explicitItemID: MediaItemID? = nil,
+    logicalTrackID: LogicalTrackID? = nil,
+    assetID explicitAssetID: MediaAssetID? = nil,
+    albumID explicitAlbumID: AlbumID? = nil,
+    playbackSelection: PlaybackSelection = .wholeFile,
+    trackTotal: Int? = nil,
+    discTotal: Int? = nil,
+    albumType: AlbumType? = nil,
     idempotencyKey: String? = nil
   ) throws -> NormalizedMedia {
     let hash = contentHash.lowercased()
@@ -28,7 +37,12 @@ struct MetadataNormalizer: Sendable {
       throw LocalMediaError.hashingFailed
     }
 
-    let itemID = MediaItemID(sourceID: .local, externalID: "sha256-\(hash)")
+    let defaultItemID = MediaItemID(sourceID: .local, externalID: "sha256-\(hash)")
+    let itemID = explicitItemID ?? defaultItemID
+    let assetID = explicitAssetID ?? MediaAssetID(legacyVariantID: defaultItemID)
+    guard itemID.sourceID == .local, assetID.sourceID == .local else {
+      throw LocalMediaError.invalidItemID
+    }
     let title = Self.clean(metadata.title)
       ?? Self.clean(fileURL.deletingPathExtension().lastPathComponent)
       ?? "Untitled"
@@ -42,12 +56,13 @@ struct MetadataNormalizer: Sendable {
     let artistID = artistName.map { Self.artistID(for: $0) }
     let albumArtistIDs = albumArtistNames.map(Self.artistID)
     let genreID = genreName.map { Self.genreID(for: $0) }
-    let albumID = albumTitle.map {
+    let albumID = explicitAlbumID ?? albumTitle.map {
       Self.albumID(for: $0, artistNames: albumArtistNames)
     }
 
     let artworkID: ArtworkID?
-    if let artwork = metadata.firstArtwork, !artwork.data.isEmpty {
+    let selectedArtwork = metadata.firstArtwork ?? fallbackArtwork
+    if let artwork = selectedArtwork, !artwork.data.isEmpty {
       artworkID = ArtworkID(rawValue: "sha256-\(MusicContentIdentity.sha256Hex(artwork.data))")
     } else {
       artworkID = nil
@@ -58,12 +73,28 @@ struct MetadataNormalizer: Sendable {
 
     // Probe duration is the canonical media value. Metadata readers may
     // expose a stale tag/parser duration that is not the playable length.
-    let duration = Self.nonNegative(probe.duration ?? metadata.duration)
-    let streams = probe.decodableAudioTracks.compactMap(Self.audioStreamInfo)
+    let resolvedPlaybackSelection: PlaybackSelection
+    if playbackSelection.audioStream == nil,
+       let preferredAudioStream = ProbedAudioStreamSelector.preferred(in: probe)
+    {
+      resolvedPlaybackSelection = PlaybackSelection(
+        range: playbackSelection.range,
+        audioStream: preferredAudioStream
+      )
+    } else {
+      resolvedPlaybackSelection = playbackSelection
+    }
+    let assetDuration = Self.nonNegative(probe.duration ?? metadata.duration)
+    let duration = resolvedPlaybackSelection.logicalDuration ?? assetDuration
+    var seenStreamIDs = Set<String>()
+    let streams = probe.decodableAudioTracks.compactMap { track in
+      let stableID = Self.uniqueStableID(track.stableID, seen: &seenStreamIDs)
+      return Self.audioStreamInfo(track, stableID: stableID)
+    }
     let technicalInfo = MediaTechnicalInfo(
       container: Self.clean(probe.container),
       codec: streams.first?.codec,
-      duration: duration,
+      duration: assetDuration,
       audioStreams: streams,
       bitRate: Self.aggregateBitRate(streams),
       fileSizeBytes: Self.fileSize(stagedFileURL ?? fileURL)
@@ -71,13 +102,18 @@ struct MetadataNormalizer: Sendable {
 
     let track = Track(
       id: itemID,
+      logicalTrackID: logicalTrackID,
+      assetID: assetID,
+      playbackSelection: resolvedPlaybackSelection,
       title: title,
       sortTitle: title,
       albumID: albumID,
       artistIDs: artistID.map { [$0] } ?? [],
       genreIDs: genreID.map { [$0] } ?? [],
       trackNumber: Self.positive(metadata.trackNumber),
+      trackTotal: Self.positive(trackTotal),
       discNumber: Self.positive(metadata.discNumber),
+      discTotal: Self.positive(discTotal),
       fileName: fileURL.lastPathComponent,
       folderPath: folderPath,
       duration: duration,
@@ -114,7 +150,7 @@ struct MetadataNormalizer: Sendable {
               artwork: artworkReference,
               releaseYear: Self.validYear(metadata.year),
               trackCount: nil,
-              albumType: nil
+              albumType: albumType
             )
           )
         )
@@ -140,7 +176,7 @@ struct MetadataNormalizer: Sendable {
       track: track,
       transaction: transaction,
       artworkID: artworkID,
-      artworkData: metadata.firstArtwork?.data
+      artworkData: selectedArtwork?.data
     )
   }
 
@@ -173,15 +209,25 @@ struct MetadataNormalizer: Sendable {
     return Int64(fileSize)
   }
 
-  private static func audioStreamInfo(_ track: ProbedAudioTrack) -> AudioStreamInfo? {
+  private static func audioStreamInfo(
+    _ track: ProbedAudioTrack,
+    stableID: String?
+  ) -> AudioStreamInfo? {
     let channels = track.channelCount.flatMap { $0 > 0 ? $0 : nil }
     let channelLayout = channels.map { ChannelLayout(channelCount: $0) }
     let sampleRate = track.sampleRate.flatMap { value -> Int? in
-      guard value.isFinite, value > 0, value <= Double(Int.max) else { return nil }
-      return Int(value.rounded())
+      guard value.isFinite, value > 0 else { return nil }
+      let rounded = value.rounded()
+      guard rounded >= 1, rounded < Double(Int.max) else { return nil }
+      return Int(rounded)
     }
     let bitDepth = track.bitDepth.flatMap { $0 > 0 ? $0 : nil }
     return AudioStreamInfo(
+      streamID: stableID.map { AudioStreamID($0) },
+      indexHint: track.index >= 0 ? track.index : nil,
+      language: clean(track.language),
+      title: clean(track.title),
+      isDefault: track.isDefault,
       codec: clean(track.codec),
       sampleRate: sampleRate,
       bitDepth: bitDepth,
@@ -189,6 +235,16 @@ struct MetadataNormalizer: Sendable {
       channelLayout: channelLayout,
       bitRate: track.bitRate.flatMap { $0 > 0 ? $0 : nil }
     )
+  }
+
+  private static func uniqueStableID(
+    _ value: String?,
+    seen: inout Set<String>
+  ) -> String? {
+    guard let value else { return nil }
+    let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !normalized.isEmpty, seen.insert(normalized).inserted else { return nil }
+    return normalized
   }
 
   private static func aggregateBitRate(_ streams: [AudioStreamInfo]) -> Int? {

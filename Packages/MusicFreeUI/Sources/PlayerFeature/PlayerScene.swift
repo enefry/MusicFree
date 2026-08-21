@@ -5,6 +5,7 @@ import SwiftUI
 public struct PlayerScene: View {
   @StateObject private var viewModel: PlayerViewModel
   @State private var isQueuePresented = false
+  @State private var isMoreActionsPresented = false
   private let artworkServing: (any ArtworkServing)?
   private let library: (any LibraryServing)?
   private let lyricsServing: (any LyricsServing)?
@@ -44,6 +45,7 @@ public struct PlayerScene: View {
     NowPlayingView(
       viewModel: viewModel,
       onShowQueue: { isQueuePresented = true },
+      isMoreActionsPresented: $isMoreActionsPresented,
       artworkServing: artworkServing,
       library: library,
       lyricsServing: lyricsServing

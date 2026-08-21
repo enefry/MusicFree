@@ -38,9 +38,9 @@ private enum NowPlayingLayoutMetrics {
     static let horizontalInset: CGFloat = 32
     static let topChromeInset: CGFloat = 31
     static let pinnedControlsHeight: CGFloat = 308
-    // Compact-height presentations need a little more room for the fixed
-    // transport footer to settle fully inside the scroll viewport.
-    static let scrollingSurfaceHeight: CGFloat = 408
+    // Compact-height presentations keep transport controls pinned below a
+    // smaller, independently scrolling upper surface.
+    static let compactControlsHeight: CGFloat = 216
     static let compactHeaderHeight: CGFloat = 72
     static let footerHeight: CGFloat = 56
     static let headerArtworkSize: CGFloat = 72
@@ -127,6 +127,7 @@ struct NowPlayingView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ObservedObject private var viewModel: PlayerViewModel
     private let onShowQueue: () -> Void
+    @Binding private var isMoreActionsPresented: Bool
     private let artworkServing: (any ArtworkServing)?
     private let library: (any LibraryServing)?
     private let lyricsServing: (any LyricsServing)?
@@ -137,18 +138,19 @@ struct NowPlayingView: View {
     @State private var queueArtistNames: [ArtistID: String] = [:]
     @State private var queueAlbumNames: [AlbumID: String] = [:]
     @State private var surface: NowPlayingSurface = .artwork
-    @State private var isMoreActionsPresented = false
-    @State private var shouldPresentFullQueue = false
+    @State private var isMoreActionsDismissEnabled = false
 
     init(
         viewModel: PlayerViewModel,
-        onShowQueue: @escaping () -> Void,
+        onShowQueue: @escaping () -> Void = {},
+        isMoreActionsPresented: Binding<Bool> = .constant(false),
         artworkServing: (any ArtworkServing)? = nil,
         library: (any LibraryServing)? = nil,
         lyricsServing: (any LyricsServing)? = nil
     ) {
         self.viewModel = viewModel
         self.onShowQueue = onShowQueue
+        self._isMoreActionsPresented = isMoreActionsPresented
         self.artworkServing = artworkServing
         self.library = library
         self.lyricsServing = lyricsServing
@@ -158,40 +160,60 @@ struct NowPlayingView: View {
     }
 
     var body: some View {
-        Group {
-            switch viewModel.presentationState {
-            case .empty:
-                EmptyStateView(
-                    title: L("当前没有播放内容"),
-                    message: L("从资料库选择一首歌曲开始播放。"),
-                    systemImage: "play.circle"
-                )
-            case .loading:
-                LoadingStateView(isLoading: true, label: L("正在准备播放")) {
+        ZStack {
+            playerBackdrop
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .ignoresSafeArea()
+
+            Group {
+                switch viewModel.presentationState {
+                case .empty:
+                    EmptyStateView(
+                        title: L("当前没有播放内容"),
+                        message: L("从资料库选择一首歌曲开始播放。"),
+                        systemImage: "play.circle"
+                    )
+                case .loading:
+                    LoadingStateView(isLoading: true, label: L("正在准备播放")) {
+                        playbackContent
+                    }
+                case .buffering:
+                    LoadingStateView(isLoading: true, label: L("正在缓冲")) {
+                        playbackContent
+                    }
+                case .playing, .paused, .stopped:
                     playbackContent
+                case .failed(let error):
+                    ErrorStateView(
+                        title: L("播放失败"),
+                        message: playerErrorMessage(error),
+                        retryTitle: L("重试"),
+                        retry: viewModel.play
+                    )
+                case .unsupported:
+                    EmptyStateView(
+                        title: L("暂不支持"),
+                        message: L("当前播放引擎不支持此操作。"),
+                        systemImage: "nosign"
+                    )
                 }
-            case .buffering:
-                LoadingStateView(isLoading: true, label: L("正在缓冲")) {
-                    playbackContent
-                }
-            case .playing, .paused, .stopped:
-                playbackContent
-            case .failed(let error):
-                ErrorStateView(
-                    title: L("播放失败"),
-                    message: playerErrorMessage(error),
-                    retryTitle: L("重试"),
-                    retry: viewModel.play
-                )
-            case .unsupported:
-                EmptyStateView(
-                    title: L("暂不支持"),
-                    message: L("当前播放引擎不支持此操作。"),
-                    systemImage: "nosign"
-                )
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.black.ignoresSafeArea())
+        .overlay {
+            if isMoreActionsPresented {
+                moreActionsOverlay
+            }
+        }
+        .overlay(alignment: .topLeading) {
+            Color.clear
+                .frame(width: 1, height: 1)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(Text(L("正在播放")))
+                .accessibilityIdentifier("player.nowPlaying")
+                .allowsHitTesting(false)
+        }
         .onAppear { viewModel.start() }
         .onDisappear { viewModel.stop() }
         .task(id: artworkKey) {
@@ -213,13 +235,49 @@ struct NowPlayingView: View {
         .onChange(of: viewModel.snapshot.currentItemID) { _, _ in
             surface = .artwork
         }
-        .onChange(of: isMoreActionsPresented) { _, isPresented in
-            guard !isPresented, shouldPresentFullQueue else { return }
-            shouldPresentFullQueue = false
-            DispatchQueue.main.async {
-                onShowQueue()
-            }
+    }
+
+    private var moreActionsOverlay: some View {
+        ZStack(alignment: .bottom) {
+            Color.black.opacity(0.42)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .accessibilityHidden(true)
+                .onTapGesture {
+                    guard isMoreActionsDismissEnabled else { return }
+                    isMoreActionsPresented = false
+                    isMoreActionsDismissEnabled = false
+                }
+
+            NowPlayingActionsPanel(
+                shareText: shareText,
+                canEnqueue: viewModel.snapshot.currentItemID != nil,
+                onEnqueue: {
+                    guard let itemID = viewModel.snapshot.currentItemID else {
+                        isMoreActionsPresented = false
+                        isMoreActionsDismissEnabled = false
+                        return
+                    }
+                    viewModel.send(.enqueue(itemID: itemID, at: nil))
+                    isMoreActionsPresented = false
+                    isMoreActionsDismissEnabled = false
+                },
+                onManageQueue: {
+                    isMoreActionsPresented = false
+                    isMoreActionsDismissEnabled = false
+                    // Let the overlay leave the hit-test tree before opening
+                    // the queue sheet from the same presentation host.
+                    DispatchQueue.main.async {
+                        onShowQueue()
+                    }
+                }
+            )
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .transition(.opacity)
+        .zIndex(2)
     }
 
     private var playbackContent: some View {
@@ -243,23 +301,41 @@ struct NowPlayingView: View {
                     - NowPlayingLayoutMetrics.pinnedControlsHeight
             )
 
-            ZStack {
-                playerBackdrop
-                    .ignoresSafeArea()
-
+            ZStack(alignment: .top) {
                 if layoutMode == .scrolling {
+                    let compactSurfaceHeight = max(
+                        0,
+                        geometry.size.height
+                            - topChromeInset
+                            - NowPlayingLayoutMetrics.compactControlsHeight
+                    )
+
                     ScrollView(.vertical) {
-                        playerColumn(
-                            viewportWidth: geometry.size.width,
-                            contentWidth: contentWidth,
-                            surfaceHeight: NowPlayingLayoutMetrics.scrollingSurfaceHeight,
-                            topChromeInset: topChromeInset,
-                            isPinned: false
-                        )
+                        VStack(spacing: 0) {
+                            surfaceContent(
+                                contentWidth: contentWidth,
+                                surfaceHeight: compactSurfaceHeight
+                            )
+                            .frame(
+                                width: contentWidth,
+                                height: compactSurfaceHeight,
+                                alignment: .top
+                            )
+
+                            compactBottomControls
+                                .frame(
+                                    width: contentWidth,
+                                    height: NowPlayingLayoutMetrics.compactControlsHeight,
+                                    alignment: .top
+                                )
+                        }
+                        .frame(width: geometry.size.width, alignment: .top)
                     }
                     .frame(width: geometry.size.width, height: geometry.size.height)
+                    .contentMargins(.top, topChromeInset, for: .scrollContent)
                     .contentMargins(.bottom, 0, for: .scrollContent)
                     .scrollIndicators(.hidden)
+                    .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("player.nowPlaying.scroll")
                 } else {
                     playerColumn(
@@ -271,49 +347,11 @@ struct NowPlayingView: View {
                     )
                 }
 
-                if isMoreActionsPresented {
-                    moreActionsOverlay
-                }
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
             .clipped()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("player.nowPlaying")
-    }
-
-    private var moreActionsOverlay: some View {
-        ZStack(alignment: .bottom) {
-            Color.black.opacity(0.42)
-                .ignoresSafeArea()
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    isMoreActionsPresented = false
-                }
-
-            NowPlayingActionsPanel(
-                shareText: shareText,
-                canEnqueue: viewModel.snapshot.currentItemID != nil,
-                onEnqueue: {
-                    guard let itemID = viewModel.snapshot.currentItemID else {
-                        isMoreActionsPresented = false
-                        return
-                    }
-                    viewModel.send(.enqueue(itemID: itemID, at: nil))
-                    isMoreActionsPresented = false
-                },
-                onManageQueue: {
-                    shouldPresentFullQueue = true
-                    isMoreActionsPresented = false
-                }
-            )
-            .padding(.horizontal, 16)
-            .padding(.bottom, 16)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .transition(.opacity)
-        .zIndex(2)
     }
 
     private func playerColumn(
@@ -480,7 +518,12 @@ struct NowPlayingView: View {
             .accessibilityLabel(Text(favoriteController.isFavorite ? L("取消收藏") : L("收藏")))
 
             Button {
+                isMoreActionsDismissEnabled = false
                 isMoreActionsPresented = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    guard isMoreActionsPresented else { return }
+                    isMoreActionsDismissEnabled = true
+                }
             } label: {
                 Image(systemName: "ellipsis")
                     .font(.body.weight(.bold))
@@ -735,6 +778,142 @@ struct NowPlayingView: View {
         .frame(maxWidth: .infinity)
     }
 
+    private var compactBottomControls: some View {
+        VStack(spacing: 0) {
+            playerProgress
+
+            compactTransportControls
+                .padding(.top, 8)
+
+            compactVolumeControl
+                .padding(.top, 6)
+
+            compactFooterControls
+                .padding(.top, 6)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var compactTransportControls: some View {
+        HStack(spacing: 14) {
+            PlaybackControlButton(
+                systemImage: "backward.fill",
+                accessibilityLabel: L("上一首"),
+                isEnabled: viewModel.canGoPrevious,
+                foregroundColor: playerForegroundPrimary,
+                backgroundColor: .clear,
+                showsBackground: false,
+                controlSize: 56,
+                symbolFont: .system(size: 24, weight: .semibold),
+                action: viewModel.previous
+            )
+
+            PlaybackControlButton(
+                systemImage: viewModel.snapshot.phase == .playing ? "pause.fill" : "play.fill",
+                accessibilityLabel: viewModel.snapshot.phase == .playing ? L("暂停") : L("播放"),
+                isLoading: viewModel.presentationState == .loading || viewModel.presentationState == .buffering,
+                foregroundColor: playerForegroundPrimary,
+                backgroundColor: .clear,
+                showsBackground: false,
+                controlSize: 64,
+                symbolFont: .system(size: 30, weight: .semibold),
+                action: viewModel.togglePlayback
+            )
+
+            PlaybackControlButton(
+                systemImage: "forward.fill",
+                accessibilityLabel: L("下一首"),
+                isEnabled: viewModel.canGoNext,
+                foregroundColor: playerForegroundPrimary,
+                backgroundColor: .clear,
+                showsBackground: false,
+                controlSize: 56,
+                symbolFont: .system(size: 24, weight: .semibold),
+                action: viewModel.next
+            )
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 64)
+    }
+
+    private var compactVolumeControl: some View {
+        HStack(spacing: 8) {
+            Button {
+                viewModel.setMuted(!viewModel.isMuted)
+            } label: {
+                Image(systemName: viewModel.isMuted ? "speaker.slash.fill" : "speaker.fill")
+                    .font(.caption.weight(.semibold))
+                    .frame(width: 32, height: 32)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(playerForegroundSecondary)
+            .accessibilityLabel(Text(viewModel.isMuted ? L("取消静音") : L("静音")))
+
+            CompactPlayerSlider(
+                value: Binding(
+                    get: { Double(viewModel.displayedVolume) },
+                    set: { viewModel.updateVolume(Float($0)) }
+                ),
+                in: 0...1,
+                accessibilityLabel: L("音量"),
+                accessibilityValue: {
+                    "\(Int((viewModel.displayedVolume * 100).rounded()))%"
+                },
+                minimumTrackColor: .white.withAlphaComponent(0.64),
+                maximumTrackColor: .white.withAlphaComponent(0.24),
+                thumbColor: .white.withAlphaComponent(0.64),
+                onEditingChanged: { isEditing in
+                    if !isEditing { viewModel.finishVolumeChange() }
+                }
+            )
+            .frame(minWidth: 0, maxWidth: .infinity, minHeight: 16, maxHeight: 16)
+
+            Image(systemName: "speaker.wave.2.fill")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(playerForegroundSecondary)
+                .frame(width: 32, height: 32)
+                .accessibilityHidden(true)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Text(L("音量")))
+        .frame(maxWidth: .infinity)
+        .frame(height: 40)
+    }
+
+    private var compactFooterControls: some View {
+        HStack(spacing: 24) {
+            footerButton(
+                systemImage: surface == .lyrics ? "quote.bubble.fill" : "quote.bubble",
+                title: surface == .lyrics ? L("返回播放器") : L("歌词"),
+                isSelected: surface == .lyrics,
+                isEnabled: currentTrack != nil && (currentTrack?.lyrics != nil || lyricsServing != nil),
+                controlSize: 44
+            ) {
+                surface = surface == .lyrics ? .artwork : .lyrics
+            }
+            .accessibilityIdentifier("player.lyrics.footer")
+
+            SystemAudioRoutePicker(
+                accessibilityLabel: L("AirPlay"),
+                tintColor: .white
+            )
+            .frame(width: 44, height: 44)
+
+            footerButton(
+                systemImage: "list.bullet",
+                title: surface == .queue ? L("返回播放器") : L("播放队列"),
+                isSelected: surface == .queue,
+                isEnabled: true,
+                controlSize: 44
+            ) {
+                surface = surface == .queue ? .artwork : .queue
+            }
+            .accessibilityIdentifier("player.queue.footer")
+        }
+        .frame(maxWidth: .infinity, minHeight: 44, maxHeight: 44)
+        .foregroundStyle(playerForegroundSecondary)
+    }
+
     private var playerProgress: some View {
         VStack(spacing: 8) {
             CompactPlayerSlider(
@@ -913,12 +1092,13 @@ struct NowPlayingView: View {
         title: String,
         isSelected: Bool,
         isEnabled: Bool,
+        controlSize: CGFloat = 56,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
             Image(systemName: systemImage)
                 .font(.title3.weight(.semibold))
-                .frame(width: 56, height: 56)
+                .frame(width: controlSize, height: controlSize)
                 .background(
                     isSelected ? playerSelectedControlFill : .clear,
                     in: Circle()
@@ -932,37 +1112,37 @@ struct NowPlayingView: View {
     }
 
     private var playerBackdrop: some View {
-        ZStack {
-            Color(red: 0.18, green: 0.10, blue: 0.07)
+        GeometryReader { geometry in
+            ZStack {
+                Color.black
 
-            if let image = artworkLoader.image {
-                image
-                    .resizable()
-                    .scaledToFill()
-                    .blur(radius: 46)
-                    .scaleEffect(1.28)
-                    .opacity(0.78)
+                if let image = artworkLoader.image {
+                    image
+                        .resizable()
+                        .scaledToFill()
+                        .frame(
+                            width: geometry.size.width,
+                            height: geometry.size.height
+                        )
+                        .blur(radius: 42)
+                        .scaleEffect(1.24)
+                        .opacity(0.9)
 
-                LinearGradient(
-                    colors: [
-                        .black.opacity(0.08),
-                        .black.opacity(0.20),
-                        .black.opacity(0.56)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            } else {
-                LinearGradient(
-                    colors: [
-                        Color(red: 0.48, green: 0.24, blue: 0.13),
-                        Color(red: 0.15, green: 0.09, blue: 0.06)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
+                    LinearGradient(
+                        colors: [
+                            .black.opacity(0.16),
+                            .black.opacity(0.28),
+                            .black.opacity(0.68)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                }
             }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+            .clipped()
         }
+        .allowsHitTesting(false)
         .accessibilityHidden(true)
     }
 
@@ -1226,7 +1406,7 @@ private struct ContinuePlayingRow: View {
     }
 }
 
-private struct NowPlayingActionsPanel: View {
+struct NowPlayingActionsPanel: View {
     let shareText: String
     let canEnqueue: Bool
     let onEnqueue: () -> Void
@@ -1242,16 +1422,22 @@ private struct NowPlayingActionsPanel: View {
                 ShareLink(item: shareText) {
                     actionRow(title: L("分享"), systemImage: "square.and.arrow.up")
                 }
+                .accessibilityLabel(Text(L("分享")))
+                .accessibilityIdentifier("player.nowPlaying.actions.share")
 
                 if canEnqueue {
                     Button(action: onEnqueue) {
                         actionRow(title: L("加入播放队列"), systemImage: "text.append")
                     }
+                    .accessibilityLabel(Text(L("加入播放队列")))
+                    .accessibilityIdentifier("player.nowPlaying.actions.enqueue")
                 }
 
                 Button(action: onManageQueue) {
                     actionRow(title: L("管理完整队列"), systemImage: "rectangle.stack")
                 }
+                .accessibilityLabel(Text(L("管理完整队列")))
+                .accessibilityIdentifier("player.nowPlaying.actions.manageQueue")
             }
         }
         .padding(.horizontal, 20)
@@ -1263,6 +1449,7 @@ private struct NowPlayingActionsPanel: View {
             RoundedRectangle(cornerRadius: 28, style: .continuous)
                 .strokeBorder(.white.opacity(0.12), lineWidth: 1)
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("player.nowPlaying.actions")
     }
 

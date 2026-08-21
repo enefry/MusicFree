@@ -73,8 +73,12 @@ struct MusicTestSupportInitialTests {
 
     @Test
     func libraryTransactionsAreAtomicAndPublishOnlyOnCommit() async throws {
-        let repository = InMemoryLibraryRepository()
         let track = FixtureFactory.track(0)
+        let repository = InMemoryLibraryRepository(
+            albums: [FixtureFactory.album(0)],
+            artists: [FixtureFactory.artist(0)],
+            genres: [FixtureFactory.genre(0)]
+        )
         let transaction = try LibraryTransaction(
             idempotencyKey: "insert-track",
             mutations: [.upsert(.track(track))]
@@ -102,6 +106,178 @@ struct MusicTestSupportInitialTests {
 
         await repository.close()
         _ = await task.value
+    }
+
+    @Test
+    func inMemoryArtworkReferencesIncludeLocalGraphOwners() async throws {
+        let artworkID = ArtworkID("graph-owner-artwork")
+        let releaseID = AlbumReleaseID("graph-owner-release")
+        let discID = DiscID(releaseID: releaseID, number: 1)
+        let logicalID = LogicalTrackID("graph-owner-logical")
+        let collectionID = LibraryCollectionID("graph-owner-collection")
+        let artwork = ArtworkReference(id: artworkID)
+        let repository = InMemoryLibraryRepository()
+
+        try await repository.apply(try LibraryTransaction(
+            idempotencyKey: "graph-owner-artwork",
+            mutations: [
+                .upsert(.artwork(artwork)),
+                .upsert(.albumRelease(AlbumRelease(
+                    id: releaseID,
+                    title: "Release",
+                    artwork: artwork
+                ))),
+                .upsert(.disc(Disc(id: discID, releaseID: releaseID, number: 1))),
+                .upsert(.logicalTrack(LogicalTrack(
+                    id: logicalID,
+                    releaseID: releaseID,
+                    discID: discID,
+                    title: "Track",
+                    discNumber: 1,
+                    artwork: artwork
+                ))),
+                .upsert(.collection(LibraryCollection(
+                    id: collectionID,
+                    kind: .boxSet,
+                    title: "Collection",
+                    artwork: artwork
+                )))
+            ]
+        ))
+
+        #expect(try await repository.isArtworkReferenced(artworkID))
+    }
+
+    @Test
+    func inMemoryLocalGraphValidationRejectsMissingArtistAndGenreReferences() async throws {
+        let artistID = ArtistID("missing-graph-artist")
+        let genreID = GenreID("missing-graph-genre")
+        let assetID = MediaAssetID(sourceID: .local, externalID: "missing-graph-asset")
+
+        let artistRepository = InMemoryLibraryRepository()
+        await #expect(throws: LibraryError.constraint(.danglingReference)) {
+            try await artistRepository.apply(try LibraryTransaction(
+                idempotencyKey: "missing-graph-artist",
+                mutations: [
+                    .upsert(.logicalTrack(LogicalTrack(
+                        id: LogicalTrackID("missing-artist-logical"),
+                        title: "Missing Artist",
+                        artistIDs: [artistID]
+                    ))),
+                    .upsert(.mediaAsset(MediaAsset(id: assetID))),
+                    .upsert(.trackVariant(TrackVariant(
+                        id: MediaItemID(sourceID: .local, externalID: "missing-artist-variant"),
+                        logicalTrackID: LogicalTrackID("missing-artist-logical"),
+                        assetID: assetID
+                    )))
+                ]
+            ))
+        }
+        #expect(try await artistRepository.logicalTrack(id: LogicalTrackID("missing-artist-logical")) == nil)
+
+        let genreRepository = InMemoryLibraryRepository()
+        await #expect(throws: LibraryError.constraint(.danglingReference)) {
+            try await genreRepository.apply(try LibraryTransaction(
+                idempotencyKey: "missing-graph-genre",
+                mutations: [
+                    .upsert(.logicalTrack(LogicalTrack(
+                        id: LogicalTrackID("missing-genre-logical"),
+                        title: "Missing Genre",
+                        genreIDs: [genreID]
+                    ))),
+                    .upsert(.mediaAsset(MediaAsset(
+                        id: MediaAssetID(sourceID: .local, externalID: "missing-genre-asset")
+                    ))),
+                    .upsert(.trackVariant(TrackVariant(
+                        id: MediaItemID(sourceID: .local, externalID: "missing-genre-variant"),
+                        logicalTrackID: LogicalTrackID("missing-genre-logical"),
+                        assetID: MediaAssetID(sourceID: .local, externalID: "missing-genre-asset")
+                    )))
+                ]
+            ))
+        }
+        #expect(try await genreRepository.logicalTrack(id: LogicalTrackID("missing-genre-logical")) == nil)
+    }
+
+    @Test("in-memory graph replacement prunes old release members and groups")
+    func inMemoryGraphReplacementPrunesOldCollectionReferences() async throws {
+        let itemID = MediaItemID(sourceID: .local, externalID: "in-memory-graph-replacement")
+        let oldAssetID = MediaAssetID(sourceID: .local, externalID: "in-memory-old-asset")
+        let newAssetID = MediaAssetID(sourceID: .local, externalID: "in-memory-new-asset")
+        let oldLogicalID = LogicalTrackID("in-memory-old-logical")
+        let newLogicalID = LogicalTrackID("in-memory-new-logical")
+        let oldReleaseID = AlbumReleaseID("in-memory-old-release")
+        let newReleaseID = AlbumReleaseID("in-memory-new-release")
+        let oldDiscID = DiscID(releaseID: oldReleaseID, number: 1)
+        let newDiscID = DiscID(releaseID: newReleaseID, number: 1)
+        let oldGroupID = AlbumGroupID("in-memory-old-group")
+        let collectionID = LibraryCollectionID("in-memory-box-set")
+        let repository = InMemoryLibraryRepository()
+
+        try await repository.apply(try LibraryTransaction(
+            idempotencyKey: "in-memory-graph-replacement-initial",
+            mutations: [
+                .upsert(.albumGroup(AlbumGroup(id: oldGroupID, title: "Old Group"))),
+                .upsert(.albumRelease(AlbumRelease(
+                    id: oldReleaseID,
+                    groupID: oldGroupID,
+                    title: "Old Release"
+                ))),
+                .upsert(.disc(Disc(id: oldDiscID, releaseID: oldReleaseID, number: 1))),
+                .upsert(.collection(LibraryCollection(
+                    id: collectionID,
+                    kind: .boxSet,
+                    title: "Old Box Set"
+                ))),
+                .upsert(.collectionMember(LibraryCollectionMember(
+                    collectionID: collectionID,
+                    releaseID: oldReleaseID,
+                    position: 0
+                ))),
+                .upsert(.logicalTrack(LogicalTrack(
+                    id: oldLogicalID,
+                    releaseID: oldReleaseID,
+                    discID: oldDiscID,
+                    title: "Old Track"
+                ))),
+                .upsert(.mediaAsset(MediaAsset(id: oldAssetID))),
+                .upsert(.trackVariant(TrackVariant(
+                    id: itemID,
+                    logicalTrackID: oldLogicalID,
+                    assetID: oldAssetID
+                )))
+            ]
+        ))
+
+        try await repository.apply(try LibraryTransaction(
+            idempotencyKey: "in-memory-graph-replacement-update",
+            mutations: [
+                .upsert(.albumRelease(AlbumRelease(id: newReleaseID, title: "New Release"))),
+                .upsert(.disc(Disc(id: newDiscID, releaseID: newReleaseID, number: 1))),
+                .upsert(.logicalTrack(LogicalTrack(
+                    id: newLogicalID,
+                    releaseID: newReleaseID,
+                    discID: newDiscID,
+                    title: "New Track"
+                ))),
+                .upsert(.mediaAsset(MediaAsset(id: newAssetID))),
+                .upsert(.trackVariant(TrackVariant(
+                    id: itemID,
+                    logicalTrackID: newLogicalID,
+                    assetID: newAssetID
+                )))
+            ]
+        ))
+
+        #expect(try await repository.logicalTrack(id: oldLogicalID) == nil)
+        #expect(try await repository.mediaAsset(id: oldAssetID) == nil)
+        #expect(try await repository.release(id: oldReleaseID) == nil)
+        #expect(try await repository.discs(for: oldReleaseID).isEmpty)
+        #expect(try await repository.members(in: collectionID).isEmpty)
+        #expect(try await repository.collections().isEmpty)
+        #expect(try await repository.release(id: newReleaseID) != nil)
+        #expect(try await repository.logicalTrack(id: newLogicalID) != nil)
+        #expect(try await repository.mediaAsset(id: newAssetID) != nil)
     }
 
     @Test

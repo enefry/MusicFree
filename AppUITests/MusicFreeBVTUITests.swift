@@ -190,8 +190,13 @@ final class MusicFreeBVTUITests: XCTestCase {
         )
         miniPlayer.tap()
 
-        let continuePlaying = app.scrollViews["player.nowPlaying.upperScroll"].firstMatch
-        XCTAssertTrue(continuePlaying.waitForExistence(timeout: 10))
+        let artworkSurface = app.descendants(matching: .any)[
+            "player.nowPlaying.artwork"
+        ].firstMatch
+        XCTAssertTrue(
+            artworkSurface.waitForExistence(timeout: 10),
+            "Opening the Mini Player must start in the artwork surface."
+        )
         XCTAssertTrue(app.staticTexts[trackTitle].firstMatch.waitForExistence(timeout: 10))
         let favoriteButton = app.buttons["Favorite"].firstMatch
         let unfavoriteButton = app.buttons["Remove from favorites"].firstMatch

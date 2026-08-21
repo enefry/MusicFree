@@ -63,6 +63,22 @@ func playbackQueueSnapshotContract() throws {
   #expect(!(PlaybackItem.self is any Encodable.Type))
 }
 
+@Test("Legacy queue entries decode to logical identity with the old item preferred")
+func legacyPlaybackQueueEntryDecoding() throws {
+  let payload = #"{"id":"00000000-0000-0000-0000-000000000099","itemID":{"sourceID":"local","externalID":"legacy-queue-track"}}"#.data(using: .utf8)!
+  let entry = try JSONDecoder().decode(PlaybackQueueEntry.self, from: payload)
+  let expectedItemID = MediaItemID(sourceID: .local, externalID: "legacy-queue-track")
+
+  #expect(entry.itemID == expectedItemID)
+  #expect(entry.preferredVariantID == expectedItemID)
+  #expect(entry.logicalTrackID == LogicalTrackID(legacyVariantID: expectedItemID))
+
+  let encoded = try JSONEncoder().encode(entry)
+  let roundTrip = try JSONDecoder().decode(PlaybackQueueEntry.self, from: encoded)
+  #expect(roundTrip == entry)
+  #expect(!String(decoding: encoded, as: UTF8.self).contains("itemID"))
+}
+
 @Test("Queue edits are deterministic value transformations")
 func playbackQueueEdits() throws {
   let first = PlaybackQueueEntry(

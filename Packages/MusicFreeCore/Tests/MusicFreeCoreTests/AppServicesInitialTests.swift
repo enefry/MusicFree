@@ -1441,6 +1441,121 @@ func appServicesNaturalCompletionStartsNextTrackFromTheBeginning() async throws 
 }
 
 @MainActor
+@Test("Single-track repeat restarts from the beginning after natural completion")
+func appServicesSingleRepeatRestartsFromTheBeginning() async throws {
+    let itemID = MediaItemID(sourceID: .local, externalID: "repeat-one")
+    let entry = PlaybackQueueEntry(
+        id: UUID(uuidString: "00000000-0000-0000-0000-000000000470")!,
+        itemID: itemID
+    )
+    let queue = TestQueueRepository(
+        value: PlaybackQueueSnapshot(
+            entries: [entry],
+            currentEntryID: entry.id,
+            repeatMode: .one,
+            resumePosition: .seconds(4)
+        )
+    )
+    let engine = FakePlaybackEngine(capabilities: [.seeking])
+    let container = try AppServiceContainer(
+        dependencies: AppDependencies(
+            mediaSources: [TestSource()],
+            libraryRepository: TestLibraryRepository(
+                tracks: [Track(id: itemID, title: "Repeat One", duration: .seconds(20))]
+            ),
+            playbackQueueRepository: queue,
+            playbackEngine: engine
+        )
+    )
+    _ = try await container.start()
+
+    try await container.playback.execute(.resume)
+    #expect(engine.prepareCalls[0].startAt == .seconds(4))
+
+    let generation = engine.state.generation
+    engine.emit(.positionChanged(
+        generation: generation,
+        itemID: itemID,
+        position: .seconds(20),
+        duration: .seconds(20)
+    ))
+    engine.emit(.phaseChanged(
+        generation: generation,
+        itemID: itemID,
+        phase: .stopped
+    ))
+    engine.emit(.ended(
+        generation: generation,
+        itemID: itemID,
+        reason: .ended
+    ))
+
+    await waitForPreparedItemCount(2, on: engine)
+
+    #expect(engine.prepareCalls.count >= 2)
+    guard engine.prepareCalls.count >= 2 else { return }
+    #expect(engine.prepareCalls[1].startAt == .zero)
+    #expect(container.playback.snapshot.currentItemID == itemID)
+    #expect(container.playback.snapshot.phase == .playing)
+    #expect(container.playback.snapshot.queue.resumePosition == nil)
+}
+
+@MainActor
+@Test("New playback queue entries preserve logical track and variant identity")
+func appServicesQueueEntriesUseCanonicalTrackIdentity() async throws {
+    let variantIDs = ["canonical-a", "canonical-b", "canonical-c"].map {
+        MediaItemID(sourceID: .local, externalID: $0)
+    }
+    let logicalIDs = [
+        LogicalTrackID("release:canonical:track:1"),
+        LogicalTrackID("release:canonical:track:2"),
+        LogicalTrackID("release:canonical:track:3"),
+    ]
+    let assetIDs = [
+        MediaAssetID(sourceID: .local, externalID: "canonical-disc.flac"),
+        MediaAssetID(sourceID: .local, externalID: "canonical-disc.flac"),
+        MediaAssetID(sourceID: .local, externalID: "canonical-disc.flac"),
+    ]
+    let tracks = zip(variantIDs.indices, variantIDs).map { index, variantID in
+        Track(
+            id: variantID,
+            logicalTrackID: logicalIDs[index],
+            assetID: assetIDs[index],
+            playbackSelection: PlaybackSelection(
+                range: PlaybackRange(
+                    start: .seconds(Double(index) * 60),
+                    end: .seconds(Double(index + 1) * 60)
+                )
+            ),
+            title: "Canonical " + String(index + 1),
+            duration: .seconds(60)
+        )
+    }
+    let queue = TestQueueRepository()
+    let engine = TestPlaybackEngine(capabilities: [])
+    let container = try AppServiceContainer(
+        dependencies: AppDependencies(
+            mediaSources: [TestSource()],
+            libraryRepository: TestLibraryRepository(tracks: tracks),
+            playbackQueueRepository: queue,
+            playbackEngine: engine
+        )
+    )
+    _ = try await container.start()
+
+    try await container.playback.execute(.play(itemID: variantIDs[0]))
+    try await container.playback.execute(.enqueue(itemID: variantIDs[1], at: nil))
+    try await container.playback.execute(.enqueueItems(itemIDs: [variantIDs[2]]))
+
+    let persisted = try await queue.load()
+    #expect(persisted.entries.map(\.logicalTrackID) == logicalIDs)
+    #expect(persisted.entries.map(\.preferredVariantID) == variantIDs.map(Optional.some))
+    #expect(persisted.itemIDs == variantIDs)
+    #expect(engine.preparedItems.first?.itemID == variantIDs[0])
+    #expect(engine.preparedItems.first?.selection == tracks[0].playbackSelection)
+}
+
+@MainActor
 @Test("Playback queue restores as a paused session after service recreation")
 func playbackQueueRestoresAfterServiceRecreation() async throws {
     let firstID = MediaItemID(sourceID: .local, externalID: "cold-start-first")
@@ -1489,6 +1604,62 @@ func playbackQueueRestoresAfterServiceRecreation() async throws {
     #expect(restored.position == .zero)
     #expect(restoredEngine.preparedItems.isEmpty)
     await restoredContainer.stop()
+}
+
+@MainActor
+@Test("Playback startup canonicalizes legacy queue identity without dropping unavailable entries")
+func playbackStartupCanonicalizesLegacyQueueIdentity() async throws {
+    let availableID = MediaItemID(sourceID: .local, externalID: "legacy-available")
+    let unavailableID = MediaItemID(sourceID: .local, externalID: "legacy-unavailable")
+    let availableLogicalID = LogicalTrackID("release:legacy:track:1")
+    let availableTrack = Track(
+        id: availableID,
+        logicalTrackID: availableLogicalID,
+        title: "Legacy Available",
+        duration: .seconds(30)
+    )
+    let availableEntryID = UUID(uuidString: "00000000-0000-0000-0000-000000000601")!
+    let unavailableEntryID = UUID(uuidString: "00000000-0000-0000-0000-000000000602")!
+    let legacyQueue = PlaybackQueueSnapshot(
+        entries: [
+            PlaybackQueueEntry(id: availableEntryID, itemID: availableID),
+            PlaybackQueueEntry(id: unavailableEntryID, itemID: unavailableID)
+        ],
+        currentEntryID: availableEntryID,
+        repeatMode: .one,
+        shuffleMode: .on,
+        shuffleSeed: 42,
+        shuffleOrder: [unavailableEntryID, availableEntryID],
+        resumePosition: .seconds(8)
+    )
+    let queue = TestQueueRepository(value: legacyQueue)
+    let container = try AppServiceContainer(
+        dependencies: AppDependencies(
+            mediaSources: [TestSource()],
+            libraryRepository: TestLibraryRepository(tracks: [availableTrack]),
+            playbackQueueRepository: queue,
+            playbackEngine: TestPlaybackEngine(capabilities: [.seeking])
+        )
+    )
+
+    _ = try await container.start()
+
+    let persisted = try await queue.load()
+    #expect(queue.saveCount == 1)
+    #expect(persisted.entries.map(\.id) == [availableEntryID, unavailableEntryID])
+    #expect(persisted.entries[0].logicalTrackID == availableLogicalID)
+    #expect(persisted.entries[0].preferredVariantID == availableID)
+    #expect(persisted.entries[1] == legacyQueue.entries[1])
+    #expect(persisted.currentEntryID == legacyQueue.currentEntryID)
+    #expect(persisted.repeatMode == legacyQueue.repeatMode)
+    #expect(persisted.shuffleMode == legacyQueue.shuffleMode)
+    #expect(persisted.shuffleSeed == legacyQueue.shuffleSeed)
+    #expect(persisted.shuffleOrder == legacyQueue.shuffleOrder)
+    #expect(persisted.resumePosition == legacyQueue.resumePosition)
+    #expect(container.playback.snapshot.currentItemID == availableID)
+    #expect(container.playback.snapshot.position == .seconds(8))
+
+    await container.stop()
 }
 
 @MainActor
@@ -2784,6 +2955,8 @@ private final class TestLibraryRepository: LibraryRepository, @unchecked Sendabl
                     break
                 case .artwork(let artwork):
                     artworkValues[artwork.id] = artwork
+                default:
+                    break
                 }
             }
         }

@@ -108,7 +108,7 @@ actor ManagedMediaStore {
   }
 
   func mediaURL(forExternalID externalID: String) throws -> URL {
-    guard Self.isValidContentIdentifier(externalID) else {
+    guard Self.isValidAssetIdentifier(externalID) else {
       throw LocalMediaError.invalidItemID
     }
     guard let url = try findItemURL(forExternalID: externalID) else {
@@ -119,7 +119,7 @@ actor ManagedMediaStore {
 
   func artworkURL(for artworkID: ArtworkID) throws -> URL? {
     let rawValue = artworkID.rawValue
-    guard Self.isValidContentIdentifier(rawValue) else {
+    guard Self.isValidAssetIdentifier(rawValue) else {
       throw LocalMediaError.invalidItemID
     }
     for candidate in try artworkCandidates(forRawValue: rawValue) {
@@ -134,14 +134,14 @@ actor ManagedMediaStore {
   }
 
   func existingMediaURL(forExternalID externalID: String) throws -> URL? {
-    guard Self.isValidContentIdentifier(externalID) else {
+    guard Self.isValidAssetIdentifier(externalID) else {
       throw LocalMediaError.invalidItemID
     }
     return try findItemURL(forExternalID: externalID)
   }
 
   func moveToManaged(stagedURL: URL, externalID: String) throws -> ManagedMediaLocation {
-    guard Self.isValidContentIdentifier(externalID),
+    guard Self.isValidAssetIdentifier(externalID),
           Self.isContained(stagedURL, in: configuration.stagingRoot),
           try isSafeRegularFile(stagedURL, inside: configuration.stagingRoot)
     else {
@@ -198,7 +198,7 @@ actor ManagedMediaStore {
   }
 
   func writeArtwork(_ data: Data, artworkID: ArtworkID) throws -> ManagedArtworkLocation {
-    guard !data.isEmpty, Self.isValidContentIdentifier(artworkID.rawValue) else {
+    guard !data.isEmpty, Self.isValidAssetIdentifier(artworkID.rawValue) else {
       throw LocalMediaError.invalidItemID
     }
     guard data.count <= ArtworkDataLimits.maximumByteCount else {
@@ -260,7 +260,7 @@ actor ManagedMediaStore {
   }
 
   func removeArtwork(_ artworkID: ArtworkID) {
-    guard Self.isValidContentIdentifier(artworkID.rawValue) else { return }
+    guard Self.isValidAssetIdentifier(artworkID.rawValue) else { return }
     guard let candidates = try? artworkCandidates(forRawValue: artworkID.rawValue) else {
       return
     }
@@ -272,40 +272,70 @@ actor ManagedMediaStore {
   }
 
   func prepareRemoval(of itemIDs: Set<MediaItemID>) throws -> MediaRemovalTransaction {
+    try prepareRemoval(of: itemIDs, assetIDs: nil)
+  }
+
+  func prepareRemoval(
+    of itemIDs: Set<MediaItemID>,
+    assetIDs requestedAssetIDs: Set<MediaAssetID>?
+  ) throws -> MediaRemovalTransaction {
     guard !itemIDs.isEmpty else {
       throw LocalMediaError.invalidRemovalState
     }
     let sortedIDs = itemIDs.sorted()
     guard sortedIDs.allSatisfy({
-      $0.sourceID == .local && Self.isValidContentIdentifier($0.externalID)
+      $0.sourceID == .local && Self.isValidItemIdentifier($0.externalID)
     }) else {
       throw LocalMediaError.invalidItemID
     }
 
-    var sourceLocations: [(MediaItemID, URL, String)] = []
-    for itemID in sortedIDs {
-      guard let url = try findItemURL(forExternalID: itemID.externalID) else {
+    let assetIDs = requestedAssetIDs ?? Set(itemIDs.map(MediaAssetID.init(legacyVariantID:)))
+    guard assetIDs.allSatisfy({
+      $0.sourceID == .local && Self.isValidAssetIdentifier($0.externalID)
+    }) else {
+      throw LocalMediaError.invalidItemID
+    }
+
+    // A resolved logical-track removal may have no physical work when every
+    // referenced asset is still owned by another track. There is no durable
+    // quarantine state to recover in that case, so keep the transaction as a
+    // valid no-op instead of creating an empty removal manifest.
+    if requestedAssetIDs?.isEmpty == true {
+      return MediaRemovalTransaction(
+        transactionID: UUID(),
+        itemIDs: itemIDs,
+        assetIDs: requestedAssetIDs
+      )
+    }
+
+    var sourceLocations: [(MediaAssetID, URL, String)] = []
+    for assetID in assetIDs.sorted() {
+      guard let url = try findItemURL(forExternalID: assetID.externalID) else {
         throw LocalMediaError.itemNotFound
       }
       sourceLocations.append(
         (
-          itemID,
+          assetID,
           url,
           try relativePath(for: url, inside: configuration.managedRoot)
         )
       )
     }
 
-    let transaction = MediaRemovalTransaction(transactionID: UUID(), itemIDs: itemIDs)
+    let transaction = MediaRemovalTransaction(
+      transactionID: UUID(),
+      itemIDs: itemIDs,
+      assetIDs: requestedAssetIDs
+    )
     let transactionName = transaction.transactionID.uuidString
     let transactionRoot = pendingRoot.appendingPathComponent(transactionName, isDirectory: true)
     let preparingRoot = pendingRoot.appendingPathComponent(
       ".preparing-\(transactionName)",
       isDirectory: true
     )
-    let locations = sourceLocations.map { itemID, sourceURL, originalRelativePath in
+    let locations = sourceLocations.map { assetID, sourceURL, originalRelativePath in
       RemovalLocation(
-        itemID: itemID,
+        itemID: assetID.mediaItemID,
         originalRelativePath: originalRelativePath,
         quarantineFileName: sourceURL.lastPathComponent
       )
@@ -398,6 +428,9 @@ actor ManagedMediaStore {
 
   func commitRemoval(_ transaction: MediaRemovalTransaction) throws {
     try validateTransaction(transaction)
+    if transaction.assetIDs?.isEmpty == true {
+      return
+    }
     if markerExists(transactionID: transaction.transactionID, in: committedRoot) {
       // A crash can occur after the committed marker is durable but before
       // the quarantine directory is removed. Finish that cleanup on retry;
@@ -451,6 +484,9 @@ actor ManagedMediaStore {
 
   func rollbackRemoval(_ transaction: MediaRemovalTransaction) throws {
     try validateTransaction(transaction)
+    if transaction.assetIDs?.isEmpty == true {
+      return
+    }
     if markerExists(transactionID: transaction.transactionID, in: committedRoot) {
       throw LocalMediaError.alreadyCommitted
     }
@@ -524,8 +560,11 @@ actor ManagedMediaStore {
   private func validateTransaction(_ transaction: MediaRemovalTransaction) throws {
     guard !transaction.itemIDs.isEmpty,
           transaction.itemIDs.allSatisfy({
-            $0.sourceID == .local && Self.isValidContentIdentifier($0.externalID)
-          })
+          $0.sourceID == .local && Self.isValidItemIdentifier($0.externalID)
+          }),
+          transaction.assetIDs?.allSatisfy({
+            $0.sourceID == .local && Self.isValidAssetIdentifier($0.externalID)
+          }) ?? true
     else {
       throw LocalMediaError.invalidRemovalState
     }
@@ -685,9 +724,10 @@ actor ManagedMediaStore {
     transactionRoot: URL
   ) throws {
     try validateTransaction(manifest.transaction)
+    let expectedLocationIDs = expectedLocationIDs(for: manifest.transaction)
     guard transactionRoot.lastPathComponent == manifest.transaction.transactionID.uuidString,
-          manifest.locations.count == manifest.transaction.itemIDs.count,
-          Set(manifest.locations.map(\.itemID)) == manifest.transaction.itemIDs
+          manifest.locations.count == expectedLocationIDs.count,
+          Set(manifest.locations.map(\.itemID)) == expectedLocationIDs
     else {
       throw LocalMediaError.invalidRemovalState
     }
@@ -712,9 +752,10 @@ actor ManagedMediaStore {
     _ manifest: RemovalManifest,
     transactionRoot: URL
   ) throws {
+    let expectedLocationIDs = expectedLocationIDs(for: manifest.transaction)
     let locationItemIDs = Set(manifest.locations.map(\.itemID))
-    guard manifest.locations.count == manifest.transaction.itemIDs.count,
-          locationItemIDs == manifest.transaction.itemIDs
+    guard manifest.locations.count == expectedLocationIDs.count,
+          locationItemIDs == expectedLocationIDs
     else {
       throw LocalMediaError.invalidRemovalState
     }
@@ -737,6 +778,17 @@ actor ManagedMediaStore {
         throw LocalMediaError.recoveryFailed
       }
     }
+  }
+
+  private func expectedLocationIDs(
+    for transaction: MediaRemovalTransaction
+  ) -> Set<MediaItemID> {
+    if let assetIDs = transaction.assetIDs {
+      return Set(assetIDs.map(\.mediaItemID))
+    }
+    // A nil assetIDs field is the legacy manifest shape, where every logical
+    // item also identified its managed file.
+    return transaction.itemIDs
   }
 
   private func interruptPreparationIfNeeded(
@@ -872,10 +924,18 @@ actor ManagedMediaStore {
     return fileManager.fileExists(atPath: marker.path)
   }
 
-  private static func isValidContentIdentifier(_ value: String) -> Bool {
+  private static func isValidAssetIdentifier(_ value: String) -> Bool {
     guard value.hasPrefix("sha256-") else { return false }
     let hash = value.dropFirst("sha256-".count)
     return hash.count == 64 && hash.allSatisfy { $0.isHexDigit }
+  }
+
+  private static func isValidItemIdentifier(_ value: String) -> Bool {
+    if isValidAssetIdentifier(value) { return true }
+    return value.range(
+      of: #"^cue-[0-9a-f]{64}-f[1-9][0-9]*-t[1-9][0-9]*$"#,
+      options: .regularExpression
+    ) != nil
   }
 
   private static func contentIdentifier(fromManagedFileName fileName: String) -> String? {
@@ -890,7 +950,7 @@ actor ManagedMediaStore {
             $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_")
           }),
           fileName == "\(contentID).\(fileExtension)",
-          isValidContentIdentifier(contentID)
+          isValidAssetIdentifier(contentID)
     else {
       return nil
     }

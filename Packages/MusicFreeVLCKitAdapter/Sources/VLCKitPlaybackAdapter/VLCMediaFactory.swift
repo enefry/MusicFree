@@ -1,5 +1,6 @@
 import Foundation
 import MediaSourceAPI
+import MusicDomain
 
 #if canImport(VLCKit)
 import VLCKit
@@ -94,7 +95,9 @@ internal enum VLCMediaFactory {
 #if canImport(VLCKit)
   static func makeMedia(
     for resource: PlaybackResource,
-    configuration: VLCKitAdapterConfiguration
+    configuration: VLCKitAdapterConfiguration,
+    selection: PlaybackSelection = .wholeFile,
+    initialPosition: Duration? = nil
   ) throws -> VLCMedia {
     let optionSet = try makeOptions(for: resource, configuration: configuration)
     let media: VLCMedia?
@@ -111,12 +114,23 @@ internal enum VLCMediaFactory {
     for argument in optionSet.arguments {
       media.addOption(argument)
     }
+    if let range = selection.range {
+      media.addOption(":start-time=\(secondsString(initialPosition ?? range.start))")
+      media.addOption(":stop-time=\(secondsString(range.end))")
+    }
     for cookie in optionSet.cookies {
       guard media.storeCookie(cookie.setCookieValue, forHost: cookie.host, path: cookie.path) == 0 else {
         throw VLCKitAdapterError.engineFailure(code: "cookie_injection_failed")
       }
     }
     return media
+  }
+
+  private static func secondsString(_ duration: Duration) -> String {
+    let components = duration.components
+    let seconds = Double(components.seconds)
+      + Double(components.attoseconds) / 1_000_000_000_000_000_000
+    return String(format: "%.6f", seconds)
   }
 #endif
 

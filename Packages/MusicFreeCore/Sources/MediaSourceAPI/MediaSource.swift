@@ -116,12 +116,14 @@ public struct MediaSourceChange: Codable, Equatable, Hashable, Sendable {
   }
 }
 
-/// Resolves stable domain IDs into short-lived playback and artwork resources.
+/// Resolves stable physical-asset IDs into short-lived playback and artwork
+/// resources. A logical track's range and audio-stream selection stay outside
+/// this protocol in `PlaybackSelection`.
 public protocol MediaSource: Sendable {
   var descriptor: MediaSourceDescriptor { get }
   var capabilities: MediaSourceCapabilities { get }
 
-  func resolve(_ itemID: MediaItemID) async throws -> PlaybackResource
+  func resolve(_ assetID: MediaItemID) async throws -> PlaybackResource
   func artwork(for artworkID: ArtworkID) async throws -> ArtworkResource?
 }
 

@@ -44,12 +44,12 @@ public final class LocalMediaSource: MediaSource, @unchecked Sendable {
     self.metadataReader = metadataReader
   }
 
-  public func resolve(_ itemID: MediaItemID) async throws -> PlaybackResource {
-    guard itemID.sourceID == Self.sourceID else {
-      throw MediaSourceError.sourceNotFound(itemID.sourceID)
+  public func resolve(_ assetID: MediaItemID) async throws -> PlaybackResource {
+    guard assetID.sourceID == Self.sourceID else {
+      throw MediaSourceError.sourceNotFound(assetID.sourceID)
     }
     do {
-      return .localFile(try await store.mediaURL(forExternalID: itemID.externalID))
+      return .localFile(try await store.mediaURL(forExternalID: assetID.externalID))
     } catch {
       throw Self.mapSourceError(error)
     }

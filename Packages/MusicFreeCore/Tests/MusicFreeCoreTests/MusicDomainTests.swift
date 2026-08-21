@@ -214,7 +214,12 @@ func olderModelPayloadsRemainDecodable() throws {
     #expect(track.artistIDs.isEmpty)
     #expect(track.statistics == .empty)
     #expect(track.trackNumber == nil)
+    #expect(track.trackTotal == nil)
     #expect(track.discNumber == nil)
+    #expect(track.discTotal == nil)
+    #expect(track.logicalTrackID == LogicalTrackID(legacyVariantID: track.id))
+    #expect(track.assetID == MediaAssetID(legacyVariantID: track.id))
+    #expect(track.playbackSelection == .wholeFile)
 
     let oldAlbum = #"{"id":"legacy-album","title":"Legacy Album"}"#.data(using: .utf8)!
     let album = try JSONDecoder().decode(Album.self, from: oldAlbum)
@@ -227,6 +232,66 @@ func olderModelPayloadsRemainDecodable() throws {
     let oldArtwork = #"{"id":"artwork-legacy"}"#.data(using: .utf8)!
     let artwork = try JSONDecoder().decode(ArtworkReference.self, from: oldArtwork)
     #expect(artwork.variants.isEmpty)
+}
+
+@Test("Local media graph keeps logical, variant, asset, and segment identities separate")
+func localMediaGraphIdentityAndRangeMapping() throws {
+    let variantID = MediaItemID(sourceID: .local, externalID: "cue-variant-02")
+    let assetID = MediaAssetID(sourceID: .local, externalID: "sha256-shared-image")
+    let logicalTrackID = LogicalTrackID("cue-logical-02")
+    let range = PlaybackRange(start: .seconds(125), end: .seconds(245))
+    let track = Track(
+        id: variantID,
+        logicalTrackID: logicalTrackID,
+        assetID: assetID,
+        playbackSelection: PlaybackSelection(
+            range: range,
+            audioStream: AudioStreamSelection(index: 1)
+        ),
+        title: "Second Movement",
+        trackNumber: 2,
+        trackTotal: 8,
+        discNumber: 1,
+        discTotal: 2,
+        duration: range.duration
+    )
+
+    #expect(track.id != assetID.mediaItemID)
+    #expect(track.logicalTrackProjection.id == logicalTrackID)
+    #expect(track.trackVariantProjection.assetID == assetID)
+    #expect(track.trackVariantProjection.selection.range == range)
+    #expect(range.absolutePosition(forLogicalPosition: .seconds(10)) == .seconds(135))
+    #expect(range.logicalPosition(forAbsolutePosition: .seconds(250)) == .seconds(120))
+    #expect(try JSONDecoder().decode(Track.self, from: JSONEncoder().encode(track)) == track)
+}
+
+@Test("Audio stream selections decode legacy indexes and round trip stable identities")
+func audioStreamSelectionCodableCompatibility() throws {
+    let current = AudioStreamSelection(
+        streamID: AudioStreamID("vlc-media-id:42"),
+        fallbackSignature: AudioStreamSignature(
+            language: "eng",
+            title: "Stereo Mix",
+            codec: "aac",
+            channelCount: 2,
+            indexHint: 3
+        )
+    )
+
+    let currentData = try JSONEncoder().encode(current)
+    #expect(try JSONDecoder().decode(AudioStreamSelection.self, from: currentData) == current)
+
+    let legacy = try JSONDecoder().decode(
+        AudioStreamSelection.self,
+        from: Data("3".utf8)
+    )
+    #expect(legacy.streamID == nil)
+    #expect(legacy.fallbackSignature == AudioStreamSignature(indexHint: 3))
+    #expect(legacy.index == 3)
+
+    #expect(throws: DecodingError.self) {
+        try JSONDecoder().decode(AudioStreamSelection.self, from: Data("-1".utf8))
+    }
 }
 
 @Test("Decoding rejects values that violate domain ranges")

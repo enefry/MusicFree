@@ -29,8 +29,9 @@ struct ImportSettingsView: View {
                         .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
                         .multilineTextAlignment(.trailing)
                 }
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("settings.import.metadataEnrichment.entry")
             }
-            .accessibilityIdentifier("settings.import.metadataEnrichment.entry")
         }
     }
 

@@ -58,6 +58,14 @@ public enum LibraryUpsertMutation: Codable, Sendable {
     case artist(Artist)
     case genre(Genre)
     case artwork(ArtworkReference)
+    case logicalTrack(LogicalTrack)
+    case trackVariant(TrackVariant)
+    case mediaAsset(MediaAsset)
+    case albumGroup(AlbumGroup)
+    case albumRelease(AlbumRelease)
+    case disc(Disc)
+    case collection(LibraryCollection)
+    case collectionMember(LibraryCollectionMember)
 }
 
 /// A relationship replacement applied atomically with related library values.

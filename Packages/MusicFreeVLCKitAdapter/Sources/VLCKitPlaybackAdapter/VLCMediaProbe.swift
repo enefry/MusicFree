@@ -46,6 +46,7 @@ public final class VLCMediaProbe: @unchecked Sendable, MediaProbing {
       let tracks = media.audioTracks.enumerated().map { index, track in
         ProbedAudioTrack(
           index: index,
+          stableID: "vlc-media-id:\(track.identifier)",
           codec: normalized(track.codecName()),
           sampleRate: track.audio.map { Double($0.rate) },
           channelCount: track.audio.map { Int($0.channelsNumber) },

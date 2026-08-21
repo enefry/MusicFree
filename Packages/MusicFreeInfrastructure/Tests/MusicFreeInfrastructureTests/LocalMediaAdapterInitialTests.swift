@@ -1,13 +1,833 @@
+import CoreFoundation
 import Foundation
 import LibraryAPI
 import LibraryPersistenceAdapter
 import MediaSourceAPI
 import MusicDomain
+import MusicTestSupport
 import SettingsAPI
 import Testing
 @testable import LocalMediaAdapter
 
 struct LocalMediaAdapterInitialTests {
+  @Test("CUE parser supports BOM, multi-file tracks, INDEX boundaries, and gap metadata")
+  func cueParserSupportsRequiredCommandsAndSegments() throws {
+    let text = """
+    \u{FEFF}REM GENRE Classical
+    TITLE "中文专辑"
+    PERFORMER "Album Artist"
+    FILE "Disc 1\\image one.flac" WAVE
+      TRACK 01 AUDIO
+        TITLE "Opening"
+        SONGWRITER "Composer"
+        INDEX 01 00:00:00
+      TRACK 02 AUDIO
+        TITLE "Second"
+        PERFORMER "Guest"
+        INDEX 00 01:59:00
+        INDEX 01 02:00:00
+        PREGAP 00:02:00
+    FILE "Disc 2.flac" WAVE
+      TRACK 03 AUDIO
+        TITLE "Finale"
+        INDEX 01 00:00:00
+        POSTGAP 00:01:00
+    """
+    let sheet = try CUESheetParser().parse(data: try #require(text.data(using: .utf8)))
+
+    #expect(sheet.title == "中文专辑")
+    #expect(sheet.performer == "Album Artist")
+    #expect(sheet.files.map(\.path) == ["Disc 1/image one.flac", "Disc 2.flac"])
+    #expect(sheet.tracks.map(\.number) == [1, 2, 3])
+    #expect(sheet.tracks[1].performer == "Guest")
+    #expect(sheet.tracks[1].index00?.duration == .seconds(119))
+    #expect(sheet.tracks[1].pregap?.duration == .seconds(2))
+    #expect(sheet.tracks[2].postgap?.duration == .seconds(1))
+
+    let segments = try sheet.segments(assetDurations: [
+      "disc 1/image one.flac": .seconds(300),
+      "disc 2.flac": .seconds(240),
+    ])
+    #expect(segments.map(\.start) == [.zero, .seconds(120), .zero])
+    #expect(segments.map(\.end) == [.seconds(119), .seconds(300), .seconds(239)])
+  }
+
+  @Test("CUE parser decodes legacy Chinese GB18030 text")
+  func cueParserDecodesGB18030() throws {
+    let encoding = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(
+      CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue)
+    ))
+    let text = """
+    TITLE "中文专辑"
+    FILE "音乐.flac" WAVE
+      TRACK 01 AUDIO
+        TITLE "第一轨"
+        INDEX 01 00:00:00
+    """
+    let data = try #require(text.data(using: encoding))
+    let sheet = try CUESheetParser().parse(data: data)
+    #expect(sheet.title == "中文专辑")
+    #expect(sheet.files.first?.path == "音乐.flac")
+    #expect(sheet.tracks.first?.title == "第一轨")
+  }
+
+  @Test("CUE parser decodes UTF-16 little and big endian BOM text")
+  func cueParserDecodesUTF16BOM() throws {
+    let text = """
+    TITLE "UTF-16 Album"
+    FILE "music.flac" WAVE
+      TRACK 01 AUDIO
+        TITLE "Opening"
+        INDEX 01 00:00:00
+    """
+
+    let littleEndian = try #require(text.data(using: .utf16LittleEndian))
+    let bigEndian = try #require(text.data(using: .utf16BigEndian))
+    let littleSheet = try CUESheetParser().parse(
+      data: Data([0xFF, 0xFE]) + littleEndian
+    )
+    let bigSheet = try CUESheetParser().parse(
+      data: Data([0xFE, 0xFF]) + bigEndian
+    )
+
+    #expect(littleSheet.title == "UTF-16 Album")
+    #expect(littleSheet.tracks.first?.title == "Opening")
+    #expect(bigSheet.title == littleSheet.title)
+    #expect(bigSheet.files.first?.path == "music.flac")
+  }
+
+  @Test("CUE parser derives a pregap boundary when INDEX 00 is absent")
+  func cueParserUsesDeclaredPregapWithoutIndex00() throws {
+    let sheet = try CUESheetParser().parse(text: """
+    FILE "music.flac" WAVE
+      TRACK 01 AUDIO
+        INDEX 01 00:00:00
+      TRACK 02 AUDIO
+        PREGAP 00:02:00
+        INDEX 01 02:00:00
+      TRACK 03 AUDIO
+        INDEX 01 03:00:00
+    """)
+
+    let segments = try sheet.segments(assetDurations: ["MUSIC.FLAC": .seconds(240)])
+    #expect(segments.map(\.start) == [.zero, .seconds(120), .seconds(180)])
+    #expect(segments.map(\.end) == [.seconds(118), .seconds(180), .seconds(240)])
+  }
+
+  @Test("CUE FILE references preserve consecutive spaces through resolution")
+  func cueFileReferencePreservesConsecutiveSpaces() throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let cueURL = fixture.inputRoot.appendingPathComponent("album.cue")
+    let audioURL = fixture.inputRoot.appendingPathComponent("My  File.flac")
+    try Data("cue".utf8).write(to: cueURL)
+    try Data("audio".utf8).write(to: audioURL)
+
+    let sheet = try CUESheetParser().parse(text: """
+    FILE "My  File.flac" WAVE
+      TRACK 01 AUDIO
+        INDEX 01 00:00:00
+    """)
+    let file = try #require(sheet.files.first)
+
+    #expect(file.path == "My  File.flac")
+    #expect(try CUEReferencedFileResolver().resolve(
+      file,
+      cueURL: cueURL,
+      candidates: [audioURL]
+    ) == audioURL)
+  }
+
+  @Test("CUE parser rejects path traversal and non-monotonic indexes")
+  func cueParserRejectsUnsafeOrInvalidStructures() {
+    #expect(throws: CUESheetError.unsafeFileReference(line: 1)) {
+      try CUESheetParser().parse(text: "FILE \"../outside.flac\" WAVE")
+    }
+    #expect(throws: CUESheetError.nonMonotonicIndex(track: 2)) {
+      try CUESheetParser().parse(text: """
+      FILE "image.flac" WAVE
+        TRACK 01 AUDIO
+          INDEX 01 01:00:00
+        TRACK 02 AUDIO
+          INDEX 01 00:30:00
+      """)
+    }
+  }
+
+  @Test("Folder bundles classify sidecars and select the highest-priority valid cover")
+  func folderBundleClassificationAndArtworkSelection() throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let albumRoot = fixture.inputRoot.appendingPathComponent("Bundle Album", isDirectory: true)
+    try FileManager.default.createDirectory(at: albumRoot, withIntermediateDirectories: true)
+    let audioURL = albumRoot.appendingPathComponent("01 Song.flac")
+    let cueURL = albumRoot.appendingPathComponent("album.cue")
+    let lyricsURL = albumRoot.appendingPathComponent("01 Song.lrc")
+    let coverURL = albumRoot.appendingPathComponent("cover.jpg")
+    let frontURL = albumRoot.appendingPathComponent("front.png")
+    let notesURL = albumRoot.appendingPathComponent("notes.nfo")
+    try Data("audio".utf8).write(to: audioURL)
+    try Data("FILE \"01 Song.flac\" WAVE".utf8).write(to: cueURL)
+    try Data("[00:01]line".utf8).write(to: lyricsURL)
+    try Data("damaged".utf8).write(to: coverURL)
+    try validPNGData().write(to: frontURL)
+    try Data("notes".utf8).write(to: notesURL)
+
+    let files = try ImportFileEnumerator(configuration: fixture.configuration).enumerate(albumRoot)
+    let bundle = try FolderImportBundleAnalyzer().analyze(inputURL: albumRoot, files: files)
+
+    #expect(bundle.mediaCandidates.map(\.url) == [audioURL])
+    #expect(bundle.cueFiles.map(\.url) == [cueURL])
+    #expect(bundle.lyricsFiles.map(\.url) == [lyricsURL])
+    #expect(bundle.artworkFiles.map(\.url) == [coverURL, frontURL])
+    #expect(bundle.resources.first(where: { $0.file.url == notesURL })?.kind == .sidecar)
+
+    let artwork = try #require(FolderArtworkResolver().selection(
+      for: audioURL,
+      in: bundle,
+      allowRootArtwork: true
+    ))
+    #expect(artwork.url == frontURL)
+    #expect(artwork.reason == .frontFile)
+    #expect(artwork.pixelWidth > 0)
+    #expect(artwork.pixelHeight > 0)
+  }
+
+  @Test("A root musicfree.collection.json manifest creates an ordered Box Set")
+  func collectionManifestCreatesOrderedBoxSet() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let root = fixture.inputRoot.appendingPathComponent("Box Set", isDirectory: true)
+    let firstAlbum = root.appendingPathComponent("Album B", isDirectory: true)
+    let secondAlbum = root.appendingPathComponent("Album A", isDirectory: true)
+    try FileManager.default.createDirectory(at: firstAlbum, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: secondAlbum, withIntermediateDirectories: true)
+    try Data("b-track".utf8).write(to: firstAlbum.appendingPathComponent("01.flac"))
+    try Data("a-track".utf8).write(to: secondAlbum.appendingPathComponent("01.flac"))
+    try Data("""
+    {
+      "kind": "boxSet",
+      "title": "Ordered Box",
+      "albums": [
+        { "path": "Album A", "title": "Album A", "position": 0 },
+        { "path": "Album B", "title": "Album B", "position": 1 }
+      ]
+    }
+    """.utf8).write(to: root.appendingPathComponent(LocalMediaCollectionManifest.fileName))
+
+    let files = try ImportFileEnumerator(configuration: fixture.configuration).enumerate(root)
+    let bundle = try FolderImportBundleAnalyzer().analyze(inputURL: root, files: files)
+    #expect(bundle.collectionManifest?.title == "Ordered Box")
+    #expect(bundle.collectionManifest?.albums.map(\.folderPath) == ["Album A", "Album B"])
+
+    let repository = InMemoryLibraryRepository()
+    let importer = try fixture.makeImporter(repository: repository)
+    let events = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [root]
+    )))
+    #expect(try completedResult(in: events).imported == 2)
+
+    let mutations = await repository.appliedTransactions.flatMap(\.mutations)
+    let collection = try #require(mutations.compactMap { mutation -> LibraryCollection? in
+      guard case .upsert(.collection(let value)) = mutation else { return nil }
+      return value
+    }.first)
+    #expect(collection.kind == .boxSet)
+    #expect(collection.title == "Ordered Box")
+    let members = mutations.compactMap { mutation -> LibraryCollectionMember? in
+      guard case .upsert(.collectionMember(let value)) = mutation else { return nil }
+      return value
+    }.sorted { $0.position < $1.position }
+    #expect(members.map(\.position) == [0, 1])
+    #expect(members.allSatisfy { $0.collectionID == collection.id })
+    await repository.assertDistinctAlbumReleaseCount(expected: 2)
+  }
+
+  @Test("Folder artwork does not leak from a multi-album root")
+  func folderArtworkDoesNotLeakAcrossAlbums() throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let root = fixture.inputRoot.appendingPathComponent("Collection", isDirectory: true)
+    let album = root.appendingPathComponent("Album A", isDirectory: true)
+    try FileManager.default.createDirectory(at: album, withIntermediateDirectories: true)
+    let audioURL = album.appendingPathComponent("song.flac")
+    let rootCover = root.appendingPathComponent("cover.png")
+    try Data("audio".utf8).write(to: audioURL)
+    try validPNGData().write(to: rootCover)
+
+    let files = try ImportFileEnumerator(configuration: fixture.configuration).enumerate(root)
+    let bundle = try FolderImportBundleAnalyzer().analyze(inputURL: root, files: files)
+    #expect(FolderArtworkResolver().selection(
+      for: audioURL,
+      in: bundle,
+      allowRootArtwork: false
+    ) == nil)
+  }
+
+  @Test("Root artwork stays isolated when root and nested releases coexist")
+  func rootArtworkStaysIsolatedWhenRootAndNestedReleasesCoexist() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let root = fixture.inputRoot.appendingPathComponent("Mixed Releases", isDirectory: true)
+    let nestedRelease = root.appendingPathComponent("Album A", isDirectory: true)
+    try FileManager.default.createDirectory(at: nestedRelease, withIntermediateDirectories: true)
+    try Data("root-audio".utf8).write(to: root.appendingPathComponent("root.flac"))
+    try Data("nested-audio".utf8).write(to: nestedRelease.appendingPathComponent("nested.flac"))
+    try validPNGData().write(to: root.appendingPathComponent("cover.png"))
+
+    let repository = InMemoryLibraryRepository()
+    let importer = try LocalMediaImporter(
+      configuration: fixture.configuration,
+      probe: FixedProbe(),
+      metadataReader: NoArtworkMetadataReader(),
+      libraryRepository: repository
+    )
+    let events = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [root]
+    )))
+
+    #expect(try completedResult(in: events).imported == 2)
+    let tracks = await repository.appliedTransactions
+      .flatMap(\.mutations)
+      .compactMap { mutation -> Track? in
+        guard case .upsert(.track(let value)) = mutation else { return nil }
+        return value
+      }
+    #expect(tracks.count == 2)
+    #expect(tracks.allSatisfy { $0.artwork == nil })
+  }
+
+  @Test("Release grouping keys avoid separator collisions")
+  func releaseGroupingKeysAvoidSeparatorCollisions() throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let root = fixture.inputRoot.appendingPathComponent("Same Name Releases", isDirectory: true)
+    let firstFolder = root.appendingPathComponent("Original|Edition", isDirectory: true)
+    let secondFolder = root.appendingPathComponent("Original", isDirectory: true)
+    try FileManager.default.createDirectory(at: firstFolder, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: secondFolder, withIntermediateDirectories: true)
+
+    let firstURL = firstFolder.appendingPathComponent("01.flac")
+    let secondURL = secondFolder.appendingPathComponent("01.flac")
+    let firstFile = ImportFile(url: firstURL, folderPath: "Original|Edition")
+    let secondFile = ImportFile(url: secondURL, folderPath: "Original")
+    let bundle = FolderImportBundle(
+      rootURL: root,
+      resources: [
+        FolderImportResource(file: firstFile, kind: .mediaCandidate),
+        FolderImportResource(file: secondFile, kind: .mediaCandidate)
+      ]
+    )
+    let firstMetadata = RawMediaMetadata(
+      title: "Same Song",
+      artist: "Same Artist",
+      album: "Same Album",
+      albumArtist: "Same Artist"
+    )
+    let secondMetadata = RawMediaMetadata(
+      title: "Same Song",
+      artist: "Same Artist",
+      album: "Edition|Same Album",
+      albumArtist: "Same Artist"
+    )
+    let probe = MediaProbeResult(
+      audioTracks: [ProbedAudioTrack(index: 0, codec: "flac")],
+      duration: .seconds(180)
+    )
+    let assets = [
+      PreparedLocalMediaAsset(
+        file: firstFile,
+        stagedURL: firstURL,
+        contentHash: String(repeating: "a", count: 64),
+        assetID: MediaAssetID(sourceID: .local, externalID: "sha256-" + String(repeating: "a", count: 64)),
+        probe: probe,
+        metadata: firstMetadata,
+        folderArtwork: nil
+      ),
+      PreparedLocalMediaAsset(
+        file: secondFile,
+        stagedURL: secondURL,
+        contentHash: String(repeating: "b", count: 64),
+        assetID: MediaAssetID(sourceID: .local, externalID: "sha256-" + String(repeating: "b", count: 64)),
+        probe: probe,
+        metadata: secondMetadata,
+        folderArtwork: nil
+      )
+    ]
+
+    let plan = try LocalMediaBundlePlanner().plan(
+      bundle: bundle,
+      assets: assets,
+      importID: UUID()
+    )
+    let albumIDs = Set(plan.normalizedTracks.compactMap(\.track.albumID))
+    #expect(plan.normalizedTracks.count == 2)
+    #expect(albumIDs.count == 2)
+    #expect(plan.normalizedTracks.compactMap(\.track.trackTotal).sorted() == [1, 1])
+
+    let first = try #require(plan.normalizedTracks.first)
+    let transaction = try #require(try plan.transaction(
+      including: [first.itemID],
+      idempotencyKey: "same-name-release-subset"
+    ))
+    let discs = transaction.mutations.compactMap { mutation -> Disc? in
+      guard case .upsert(.disc(let value)) = mutation else { return nil }
+      return value
+    }
+    #expect(discs.map(\.id) == [try #require(first.track.discProjection?.id)])
+  }
+
+  @Test("Directory bundles commit all tracks atomically and reimport idempotently")
+  func directoryBundleIsAtomicAndIdempotent() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let albumRoot = fixture.inputRoot.appendingPathComponent("Atomic Album", isDirectory: true)
+    try FileManager.default.createDirectory(at: albumRoot, withIntermediateDirectories: true)
+    try Data("first-audio".utf8).write(to: albumRoot.appendingPathComponent("01.flac"))
+    try Data("second-audio".utf8).write(to: albumRoot.appendingPathComponent("02.flac"))
+
+    let repository = InMemoryLibraryRepository()
+    let importer = try fixture.makeImporter(repository: repository)
+    let firstEvents = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [albumRoot]
+    )))
+    let firstResult = try completedResult(in: firstEvents)
+    #expect(firstResult.imported == 2)
+    #expect(firstResult.failed == 0)
+    #expect(persistedItemIDs(in: firstEvents).count == 2)
+    #expect(await repository.applyAttemptCount() == 1)
+
+    let secondEvents = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [albumRoot]
+    )))
+    let secondResult = try completedResult(in: secondEvents)
+    #expect(secondResult.imported == 0)
+    #expect(secondResult.skipped == 2)
+    #expect(secondResult.failed == 0)
+    #expect(await repository.applyAttemptCount() == 1)
+  }
+
+  @Test("Directory re-import repairs a missing managed asset")
+  func directoryBundleRepairsMissingManagedAsset() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let albumRoot = fixture.inputRoot.appendingPathComponent("Repair Album", isDirectory: true)
+    try FileManager.default.createDirectory(at: albumRoot, withIntermediateDirectories: true)
+    try Data("repair-first".utf8).write(to: albumRoot.appendingPathComponent("01.flac"))
+    try Data("repair-second".utf8).write(to: albumRoot.appendingPathComponent("02.flac"))
+
+    let repository = InMemoryLibraryRepository()
+    let importer = try fixture.makeImporter(repository: repository)
+    let firstEvents = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [albumRoot]
+    )))
+    #expect(try completedResult(in: firstEvents).imported == 2)
+    let itemID = try #require(persistedItemID(in: firstEvents))
+    let track = try #require(await repository.track(id: itemID))
+    let preservedStatistics = PlaybackStatistics(
+      playCount: 7,
+      completionCount: 3,
+      skipCount: 1,
+      lastPlayedAt: Date(timeIntervalSince1970: 1234),
+      lastCompletionReason: .ended,
+      totalListeningDuration: .seconds(42)
+    )
+    await repository.replaceTrack(trackReplacingUserState(
+      track,
+      isFavorite: true,
+      statistics: preservedStatistics
+    ))
+    let source = try fixture.makeSource()
+    let resource = try await source.resolve(itemID)
+    guard case .localFile(let managedURL) = resource else {
+      Issue.record("Imported media must resolve to a managed local file")
+      return
+    }
+    try FileManager.default.removeItem(at: managedURL)
+
+    let recoveryEvents = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [albumRoot]
+    )))
+    let result = try completedResult(in: recoveryEvents)
+
+    #expect(result.imported == 1)
+    #expect(result.skipped == 1)
+    #expect(result.failed == 0)
+    #expect(persistedItemIDs(in: recoveryEvents) == [itemID])
+    #expect(await repository.applyAttemptCount() == 2)
+    #expect(FileManager.default.fileExists(atPath: managedURL.path))
+    let restored = try Data(contentsOf: managedURL)
+    #expect(restored == Data((track.fileName == "01.flac" ? "repair-first" : "repair-second").utf8))
+    let restoredTrack = try #require(await repository.track(id: itemID))
+    #expect(restoredTrack.isFavorite)
+    #expect(restoredTrack.statistics == preservedStatistics)
+  }
+
+  @Test("Restoring a local asset preserves playlist membership and logical playback state")
+  func retryRestoresPlaylistAndLogicalPlaybackState() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let input = fixture.inputRoot.appendingPathComponent("stateful-recovery.mp3")
+    try Data("stateful-recovery-content".utf8).write(to: input)
+
+    let store = try LibraryPersistenceStore(configuration: .inMemory)
+    let library = SwiftDataLibraryRepository(store: store)
+    let playlists = SwiftDataPlaylistRepository(store: store)
+    let importer = try fixture.makeImporter(repository: library)
+    let initialEvents = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [input]
+    )))
+    let itemID = try #require(persistedItemID(in: initialEvents))
+    let initialTrack = try #require(await library.track(id: itemID))
+    let preservedStatistics = PlaybackStatistics(
+      playCount: 11,
+      completionCount: 4,
+      skipCount: 2,
+      lastPlayedAt: Date(timeIntervalSince1970: 5678),
+      lastCompletionReason: .skipped,
+      totalListeningDuration: .seconds(91)
+    )
+    let statefulTrack = trackReplacingUserState(
+      initialTrack,
+      isFavorite: true,
+      statistics: preservedStatistics
+    )
+    try await library.apply(try LibraryTransaction(
+      idempotencyKey: "seed-local-recovery-user-state",
+      mutations: [.upsert(.track(statefulTrack))]
+    ))
+
+    let playlist = try await playlists.create(PlaylistDraft(name: "Recovery Favorites"))
+    try await playlists.apply(PlaylistEntriesMutation(
+      playlistID: playlist.id,
+      operation: .insert([
+        PlaylistEntryInsertion(itemID: itemID, position: 0)
+      ])
+    ))
+
+    let source = try fixture.makeSource()
+    guard case .localFile(let managedURL) = try await source.resolve(itemID) else {
+      Issue.record("Imported media must resolve to a managed local file")
+      await store.close()
+      return
+    }
+    try FileManager.default.removeItem(at: managedURL)
+
+    let recoveryEvents = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [input]
+    )))
+    let result = try completedResult(in: recoveryEvents)
+    let restoredTrack = try #require(await library.track(id: itemID))
+    let restoredLogicalTrack = try #require(
+      await library.logicalTrack(id: restoredTrack.logicalTrackID)
+    )
+
+    #expect(result.imported == 1)
+    #expect(result.skipped == 0)
+    #expect(result.failed == 0)
+    #expect(restoredTrack.isFavorite)
+    #expect(restoredTrack.statistics == preservedStatistics)
+    #expect(restoredLogicalTrack.isFavorite)
+    #expect(restoredLogicalTrack.statistics == preservedStatistics)
+    #expect(try await playlists.entries(in: playlist.id).map(\.trackID) == [itemID])
+    #expect(FileManager.default.fileExists(atPath: managedURL.path))
+    await store.close()
+  }
+
+  @Test("Partial box-set imports do not retain excluded release structure")
+  func partialBundleImportPrunesExcludedReleaseStructure() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let root = fixture.inputRoot.appendingPathComponent("Partial Box", isDirectory: true)
+    let firstAlbum = root.appendingPathComponent("Album A", isDirectory: true)
+    let secondAlbum = root.appendingPathComponent("Album B", isDirectory: true)
+    try FileManager.default.createDirectory(at: firstAlbum, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: secondAlbum, withIntermediateDirectories: true)
+    let firstData = Data("partial-existing-audio".utf8)
+    try firstData.write(to: firstAlbum.appendingPathComponent("01.flac"))
+    try Data("partial-new-audio".utf8).write(to: secondAlbum.appendingPathComponent("01.flac"))
+    try Data("""
+    {
+      "kind": "boxSet",
+      "title": "Partial Box",
+      "albums": [
+        { "path": "Album A", "title": "Album A", "position": 0 },
+        { "path": "Album B", "title": "Album B", "position": 1 }
+      ]
+    }
+    """.utf8).write(to: root.appendingPathComponent(LocalMediaCollectionManifest.fileName))
+
+    let files = try ImportFileEnumerator(configuration: fixture.configuration).enumerate(root)
+    let bundle = try FolderImportBundleAnalyzer().analyze(inputURL: root, files: files)
+    let manifest = try #require(bundle.collectionManifest)
+    let firstAlbumID = try #require(manifest.albumID(for: "Album A"))
+    let firstReleaseID = AlbumReleaseID(legacyAlbumID: firstAlbumID)
+    let firstDiscID = DiscID(releaseID: firstReleaseID, number: 1)
+    let firstItemID = MediaItemID(
+      sourceID: .local,
+      externalID: "sha256-\(MusicContentIdentity.sha256Hex(firstData))"
+    )
+    let firstAssetID = MediaAssetID(
+      sourceID: .local,
+      externalID: firstItemID.externalID
+    )
+    let repository = MusicTestSupport.InMemoryLibraryRepository()
+    try await repository.apply(try LibraryTransaction(
+      idempotencyKey: "partial-existing-graph",
+      mutations: [
+        .upsert(.album(Album(id: firstAlbumID, title: "Album A"))),
+        .upsert(.albumRelease(AlbumRelease(
+          id: firstReleaseID,
+          legacyAlbumID: firstAlbumID,
+          title: "Album A"
+        ))),
+        .upsert(.disc(Disc(
+          id: firstDiscID,
+          releaseID: firstReleaseID,
+          number: 1,
+          trackCount: 1
+        ))),
+        .upsert(.logicalTrack(LogicalTrack(
+          id: LogicalTrackID("partial-existing-logical"),
+          releaseID: firstReleaseID,
+          discID: firstDiscID,
+          title: "Existing"
+        ))),
+        .upsert(.mediaAsset(MediaAsset(
+          id: firstAssetID,
+          contentRevision: firstAssetID.externalID,
+          fileName: "01.flac"
+        ))),
+        .upsert(.trackVariant(TrackVariant(
+          id: firstItemID,
+          logicalTrackID: LogicalTrackID("partial-existing-logical"),
+          assetID: firstAssetID
+        )))
+      ]
+    ))
+
+    let managedItemsRoot = fixture.configuration.managedRoot
+      .appendingPathComponent("items", isDirectory: true)
+    try FileManager.default.createDirectory(at: managedItemsRoot, withIntermediateDirectories: true)
+    try firstData.write(
+      to: managedItemsRoot.appendingPathComponent(firstItemID.externalID + ".flac")
+    )
+
+    let importer = try fixture.makeImporter(repository: repository)
+    let events = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [root]
+    )))
+    #expect(try completedResult(in: events).imported == 1)
+    #expect(try completedResult(in: events).skipped == 1)
+
+    let transaction = try #require(await repository.appliedTransactions.last)
+    let releaseIDs = Set(transaction.mutations.compactMap { mutation -> AlbumReleaseID? in
+      guard case .upsert(.albumRelease(let value)) = mutation else { return nil }
+      return value.id
+    })
+    let memberReleaseIDs = Set(transaction.mutations.compactMap { mutation -> AlbumReleaseID? in
+      guard case .upsert(.collectionMember(let value)) = mutation else { return nil }
+      return value.releaseID
+    })
+    let albumIDs = Set(transaction.mutations.compactMap { mutation -> AlbumID? in
+      guard case .upsert(.album(let value)) = mutation else { return nil }
+      return value.id
+    })
+    #expect(releaseIDs.count == 1)
+    #expect(!releaseIDs.contains(firstReleaseID))
+    #expect(memberReleaseIDs == releaseIDs)
+    #expect(!albumIDs.contains(firstAlbumID))
+  }
+
+  @Test("A failed directory transaction rolls every managed file and artwork back")
+  func directoryBundleRollbackRemovesAllNewFiles() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let albumRoot = fixture.inputRoot.appendingPathComponent("Rollback Album", isDirectory: true)
+    try FileManager.default.createDirectory(at: albumRoot, withIntermediateDirectories: true)
+    try Data("rollback-first".utf8).write(to: albumRoot.appendingPathComponent("01.flac"))
+    try Data("rollback-second".utf8).write(to: albumRoot.appendingPathComponent("02.flac"))
+
+    let repository = InMemoryLibraryRepository(failsWrites: true)
+    let importer = try fixture.makeImporter(repository: repository)
+    let events = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [albumRoot]
+    )))
+    let result = try completedResult(in: events)
+    #expect(result.imported == 0)
+    #expect(result.failed == 1)
+    #expect(await repository.applyAttemptCount() == 1)
+
+    let managedItems = try FileManager.default.contentsOfDirectory(
+      at: fixture.configuration.managedRoot.appendingPathComponent("items", isDirectory: true),
+      includingPropertiesForKeys: nil
+    )
+    let managedArtwork = try FileManager.default.contentsOfDirectory(
+      at: fixture.configuration.managedRoot.appendingPathComponent("artwork", isDirectory: true),
+      includingPropertiesForKeys: nil
+    )
+    #expect(managedItems.isEmpty)
+    #expect(managedArtwork.isEmpty)
+  }
+
+  @Test("Selecting a single-file CUE creates logical segments over one shared asset")
+  func selectedSingleFileCUECreatesSharedSegments() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let albumRoot = fixture.inputRoot.appendingPathComponent("CUE Album", isDirectory: true)
+    try FileManager.default.createDirectory(at: albumRoot, withIntermediateDirectories: true)
+    let audioURL = albumRoot.appendingPathComponent("image.flac")
+    let cueURL = albumRoot.appendingPathComponent("album.cue")
+    try Data("cue-shared-audio".utf8).write(to: audioURL)
+    try Data("""
+    TITLE "CUE Album"
+    PERFORMER "CUE Artist"
+    FILE "image.flac" WAVE
+      TRACK 01 AUDIO
+        TITLE "First"
+        INDEX 01 00:00:00
+      TRACK 02 AUDIO
+        TITLE "Second"
+        INDEX 01 00:01:00
+    """.utf8).write(to: cueURL)
+
+    let repository = InMemoryLibraryRepository()
+    let importer = try fixture.makeImporter(repository: repository)
+    let events = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [cueURL]
+    )))
+    let result = try completedResult(in: events)
+    let itemIDs = persistedItemIDs(in: events).sorted()
+    #expect(result.imported == 2)
+    #expect(itemIDs.count == 2)
+    #expect(itemIDs.allSatisfy { $0.externalID.hasPrefix("cue-") })
+
+    let first = try #require(await repository.track(id: itemIDs[0]))
+    let second = try #require(await repository.track(id: itemIDs[1]))
+    #expect(first.assetID == second.assetID)
+    #expect(first.playbackSelection.range?.start == .zero)
+    #expect(first.playbackSelection.range?.end == .seconds(1))
+    #expect(second.playbackSelection.range?.start == .seconds(1))
+    #expect(second.playbackSelection.range?.end == .seconds(3))
+    #expect(first.duration == .seconds(1))
+    #expect(second.duration == .seconds(2))
+    #expect(try await repository.track(id: first.assetID.mediaItemID) == nil)
+
+    let source = try fixture.makeSource()
+    let firstResource = try await source.resolve(first.assetID.mediaItemID)
+    let secondResource = try await source.resolve(second.assetID.mediaItemID)
+    guard case let .localFile(firstURL) = firstResource,
+          case let .localFile(secondURL) = secondResource
+    else {
+      Issue.record("CUE variants must resolve through their shared physical asset")
+      return
+    }
+    #expect(firstURL == secondURL)
+    #expect(try Data(contentsOf: firstURL) == Data("cue-shared-audio".utf8))
+  }
+
+  @Test("CUE removal keeps a shared asset until its last logical track is removed")
+  func cueRemovalUsesSharedAssetReferenceCount() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let albumRoot = fixture.inputRoot.appendingPathComponent("CUE Removal", isDirectory: true)
+    try FileManager.default.createDirectory(at: albumRoot, withIntermediateDirectories: true)
+    let audioURL = albumRoot.appendingPathComponent("image.flac")
+    let cueURL = albumRoot.appendingPathComponent("album.cue")
+    try Data("cue-removal-audio".utf8).write(to: audioURL)
+    try Data("""
+    TITLE "CUE Removal"
+    FILE "image.flac" WAVE
+      TRACK 01 AUDIO
+        TITLE "First"
+        INDEX 01 00:00:00
+      TRACK 02 AUDIO
+        TITLE "Second"
+        INDEX 01 00:01:00
+    """.utf8).write(to: cueURL)
+
+    let store = try LibraryPersistenceStore(configuration: .inMemory)
+    let library = SwiftDataLibraryRepository(store: store)
+    let importer = try fixture.makeImporter(repository: library)
+    let events = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [albumRoot]
+    )))
+    #expect(try completedResult(in: events).imported == 2)
+    let itemIDs = persistedItemIDs(in: events).sorted()
+    let first = try #require(await library.track(id: itemIDs[0]))
+    let second = try #require(await library.track(id: itemIDs[1]))
+    #expect(first.assetID == second.assetID)
+
+    let remover = try ManagedMediaRemover(
+      configuration: fixture.configuration,
+      libraryRepository: library
+    )
+    let firstRemoval = try await remover.prepareRemoval(of: [first.id])
+    #expect(firstRemoval.assetIDs?.isEmpty == true)
+    try await library.remove([first.id])
+    try await remover.commitRemoval(firstRemoval)
+    #expect(try managedMediaItemCount(in: fixture) == 1)
+
+    let secondRemoval = try await remover.prepareRemoval(of: [second.id])
+    #expect(secondRemoval.assetIDs == Set([second.assetID]))
+    try await library.remove([second.id])
+    try await remover.commitRemoval(secondRemoval)
+    #expect(try managedMediaItemCount(in: fixture) == 0)
+    await store.close()
+  }
+
+  @Test("Multi-file CUE maps each segment to its referenced asset without whole-file tracks")
+  func multiFileCUEUsesReferencedAssetsOnly() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let albumRoot = fixture.inputRoot.appendingPathComponent("Multi CUE", isDirectory: true)
+    try FileManager.default.createDirectory(at: albumRoot, withIntermediateDirectories: true)
+    try Data("disc-one-audio".utf8).write(to: albumRoot.appendingPathComponent("disc1.flac"))
+    try Data("disc-two-audio".utf8).write(to: albumRoot.appendingPathComponent("disc2.flac"))
+    try Data("""
+    TITLE "Multi CUE"
+    FILE "disc1.flac" WAVE
+      TRACK 01 AUDIO
+        TITLE "One"
+        INDEX 01 00:00:00
+    FILE "disc2.flac" WAVE
+      TRACK 02 AUDIO
+        TITLE "Two"
+        INDEX 01 00:00:00
+    """.utf8).write(to: albumRoot.appendingPathComponent("album.cue"))
+
+    let repository = InMemoryLibraryRepository()
+    let importer = try fixture.makeImporter(repository: repository)
+    let events = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [albumRoot]
+    )))
+    let itemIDs = persistedItemIDs(in: events).sorted()
+    #expect(try completedResult(in: events).imported == 2)
+    #expect(itemIDs.count == 2)
+    var tracks: [Track] = []
+    for itemID in itemIDs {
+      if let track = try await repository.track(id: itemID) {
+        tracks.append(track)
+      }
+    }
+    #expect(Set(tracks.map(\.assetID)).count == 2)
+    #expect(tracks.allSatisfy { $0.playbackSelection.range != nil })
+    #expect(tracks.allSatisfy { $0.id.externalID.hasPrefix("cue-") })
+  }
+
   @Test("Metadata normalization prefers the probed media duration")
   func metadataNormalizationPrefersProbedDuration() throws {
     let normalized = try MetadataNormalizer().normalize(
@@ -85,6 +905,89 @@ struct LocalMediaAdapterInitialTests {
 
     #expect(normalized.track.technicalInfo?.primaryAudioStream?.bitRate == 768_000)
     #expect(normalized.track.technicalInfo?.bitRate == 768_000)
+  }
+
+  @Test("Multi-stream imports persist decodable streams and select the default stream")
+  func multiStreamImportPersistsAndSelectsDefaultStream() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let input = fixture.inputRoot.appendingPathComponent("multi-stream.mka")
+    try Data("multi-stream-audio".utf8).write(to: input)
+    let repository = InMemoryLibraryRepository()
+    let importer = try fixture.makeImporter(
+      repository: repository,
+      probe: MultipleAudioStreamProbe()
+    )
+
+    let events = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [input]
+    )))
+    let itemID = try #require(persistedItemID(in: events))
+    let track = try #require(try await repository.track(id: itemID))
+    let streams = try #require(track.technicalInfo?.audioStreams)
+    let selection = try #require(track.playbackSelection.audioStream)
+
+    #expect(streams.count == 2)
+    #expect(streams.map(\.streamID) == [AudioStreamID("stream-commentary"), AudioStreamID("stream-main")])
+    #expect(streams.map(\.indexHint) == [0, 2])
+    #expect(streams[1].isDefault)
+    #expect(streams[1].language == "eng")
+    #expect(streams[1].title == "Main Mix")
+    #expect(selection.streamID == AudioStreamID("stream-main"))
+    #expect(selection.fallbackSignature == AudioStreamSignature(
+      language: "eng",
+      title: "Main Mix",
+      codec: "aac",
+      channelCount: 2,
+      indexHint: 2
+    ))
+  }
+
+  @Test("Malformed probed stream values are normalized without domain precondition failures")
+  func malformedAudioStreamValuesAreNormalizedSafely() throws {
+    let normalized = try MetadataNormalizer().normalize(
+      fileURL: URL(fileURLWithPath: "/fixture/malformed-streams.mka"),
+      contentHash: String(repeating: "e", count: 64),
+      probe: MediaProbeResult(
+        audioTracks: [
+          ProbedAudioTrack(
+            index: 0,
+            stableID: "   ",
+            sampleRate: 0.25,
+            channelCount: 0,
+            bitDepth: 0,
+            bitRate: 0
+          ),
+          ProbedAudioTrack(
+            index: 1,
+            stableID: "duplicate-stream",
+            sampleRate: 44_100,
+            channelCount: 2
+          ),
+          ProbedAudioTrack(
+            index: 2,
+            stableID: " duplicate-stream ",
+            sampleRate: 0.6,
+            channelCount: 2,
+            isDefault: true
+          )
+        ],
+        duration: .seconds(30)
+      ),
+      metadata: RawMediaMetadata(title: "Malformed Streams")
+    )
+
+    let streams = try #require(normalized.track.technicalInfo?.audioStreams)
+    #expect(streams.count == 3)
+    #expect(streams[0].streamID == nil)
+    #expect(streams[0].sampleRate == nil)
+    #expect(streams[0].channels == nil)
+    #expect(streams[1].streamID == AudioStreamID("duplicate-stream"))
+    #expect(streams[2].streamID == nil)
+    #expect(streams[2].sampleRate == 1)
+    #expect(normalized.track.playbackSelection.audioStream?.streamID == nil)
+    #expect(normalized.track.playbackSelection.audioStream?.fallbackSignature.indexHint == 2)
   }
 
   @Test
@@ -644,6 +1547,45 @@ struct LocalMediaAdapterInitialTests {
     #expect(result.failed == 0)
     #expect(try await repository.track(id: itemID) != nil)
     #expect(await repository.applyAttemptCount() == 2)
+    #expect(try Data(contentsOf: managedURL) == content)
+  }
+
+  @Test("A missing managed file is restored while its library record remains")
+  func retryRestoresManagedFileMissingFromExistingLibraryRecord() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let input = fixture.inputRoot.appendingPathComponent("missing-managed-file.mp3")
+    let content = Data("missing-managed-content".utf8)
+    try content.write(to: input)
+
+    let repository = InMemoryLibraryRepository()
+    let importer = try fixture.makeImporter(repository: repository)
+    let initialEvents = try await collect(
+      importer.importMedia(MediaImportRequest(importID: UUID(), urls: [input]))
+    )
+    let itemID = try #require(persistedItemID(in: initialEvents))
+    let source = try fixture.makeSource()
+    let resource = try await source.resolve(itemID)
+    guard case .localFile(let managedURL) = resource else {
+      Issue.record("Imported media must resolve to a managed local file")
+      return
+    }
+    try FileManager.default.removeItem(at: managedURL)
+
+    let recoveryEvents = try await collect(
+      importer.importMedia(MediaImportRequest(
+        importID: UUID(),
+        urls: [input],
+        duplicatePolicy: .skip
+      ))
+    )
+    let result = try completedResult(in: recoveryEvents)
+
+    #expect(result.imported == 1)
+    #expect(result.skipped == 0)
+    #expect(result.failed == 0)
+    #expect(await repository.applyAttemptCount() == 2)
+    #expect(FileManager.default.fileExists(atPath: managedURL.path))
     #expect(try Data(contentsOf: managedURL) == content)
   }
 
@@ -1821,6 +2763,44 @@ struct LocalMediaAdapterInitialTests {
   }
 }
 
+private func validPNGData() throws -> Data {
+  try #require(Data(base64Encoded:
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+  ))
+}
+
+private func trackReplacingUserState(
+  _ track: Track,
+  isFavorite: Bool,
+  statistics: PlaybackStatistics
+) -> Track {
+  Track(
+    id: track.id,
+    logicalTrackID: track.logicalTrackID,
+    assetID: track.assetID,
+    playbackSelection: track.playbackSelection,
+    title: track.title,
+    sortTitle: track.sortTitle,
+    albumID: track.albumID,
+    artistIDs: track.artistIDs,
+    genreIDs: track.genreIDs,
+    trackNumber: track.trackNumber,
+    trackTotal: track.trackTotal,
+    discNumber: track.discNumber,
+    discTotal: track.discTotal,
+    fileName: track.fileName,
+    folderPath: track.folderPath,
+    duration: track.duration,
+    technicalInfo: track.technicalInfo,
+    year: track.year,
+    comment: track.comment,
+    lyrics: track.lyrics,
+    artwork: track.artwork,
+    isFavorite: isFavorite,
+    statistics: statistics
+  )
+}
+
 private actor AsyncCompletionState {
   private(set) var isFinished = false
 
@@ -1891,6 +2871,43 @@ private struct FixedProbe: MediaProbing {
       audioTracks: [ProbedAudioTrack(index: 0, codec: "fixture", sampleRate: 44_100, channelCount: 2)],
       container: "fixture",
       duration: .seconds(3)
+    )
+  }
+}
+
+private struct MultipleAudioStreamProbe: MediaProbing {
+  func probe(_ resource: PlaybackResource) async throws -> MediaProbeResult {
+    _ = resource
+    return MediaProbeResult(
+      audioTracks: [
+        ProbedAudioTrack(
+          index: 0,
+          stableID: "stream-commentary",
+          codec: "aac",
+          sampleRate: 48_000,
+          channelCount: 2,
+          language: "eng",
+          title: "Commentary"
+        ),
+        ProbedAudioTrack(
+          index: 1,
+          stableID: "stream-undecodable",
+          codec: "unsupported",
+          isDecodable: false
+        ),
+        ProbedAudioTrack(
+          index: 2,
+          stableID: "stream-main",
+          codec: "aac",
+          sampleRate: 48_000,
+          channelCount: 2,
+          language: "eng",
+          title: "Main Mix",
+          isDefault: true
+        )
+      ],
+      container: "matroska",
+      duration: .seconds(180)
     )
   }
 }
@@ -1973,10 +2990,22 @@ private struct FixedMetadataReader: MetadataReading {
   }
 }
 
+private struct NoArtworkMetadataReader: MetadataReading {
+  func readMetadata(from resource: PlaybackResource) async throws -> RawMediaMetadata {
+    _ = resource
+    return RawMediaMetadata(
+      title: "Fixture song",
+      artist: "Fixture artist",
+      album: "Fixture album"
+    )
+  }
+}
+
 private final actor InMemoryLibraryRepository: LibraryRepository {
   private var tracks: [MediaItemID: Track] = [:]
   private var artworks: [ArtworkID: ArtworkReference] = [:]
   private var applyAttempts = 0
+  private(set) var appliedTransactions: [LibraryTransaction] = []
   private let failsWrites: Bool
   private let failFirstWriteAfterRelease: Bool
   private var firstWriteIsBlocked = false
@@ -2048,6 +3077,7 @@ private final actor InMemoryLibraryRepository: LibraryRepository {
     if failsWrites {
       throw LibraryError.capacity(.storageUnavailable)
     }
+    appliedTransactions.append(transaction)
     for mutation in transaction.mutations {
       guard case .upsert(let upsert) = mutation else { continue }
       switch upsert {
@@ -2059,6 +3089,20 @@ private final actor InMemoryLibraryRepository: LibraryRepository {
         continue
       }
     }
+  }
+
+  func assertDistinctAlbumReleaseCount(expected: Int) {
+    let releaseIDs = appliedTransactions
+      .flatMap(\.mutations)
+      .compactMap { mutation -> AlbumReleaseID? in
+        guard case .upsert(.albumRelease(let value)) = mutation else { return nil }
+        return value.id
+      }
+    #expect(Set(releaseIDs).count == expected)
+  }
+
+  func replaceTrack(_ track: Track) {
+    tracks[track.id] = track
   }
 
   func applyAttemptCount() -> Int {
@@ -2148,6 +3192,14 @@ private func manifestLocationCount(in transactionRoot: URL) throws -> Int {
     throw TestError.invalidManifest
   }
   return locations.count
+}
+
+private func managedMediaItemCount(in fixture: Fixture) throws -> Int {
+  try FileManager.default.contentsOfDirectory(
+    at: fixture.configuration.managedRoot.appendingPathComponent("items", isDirectory: true),
+    includingPropertiesForKeys: nil,
+    options: [.skipsHiddenFiles]
+  ).count
 }
 
 private func onlyElement<Element>(in elements: [Element]) -> Element? {

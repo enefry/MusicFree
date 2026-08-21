@@ -37,14 +37,16 @@ struct StorageSettingsView: View {
                 Label(L("刷新存储状态"), systemImage: "arrow.clockwise")
             }
             .accessibilityIdentifier("settings.storage.refresh")
-            .disabled(storageActionsDisabled)
+            // A refresh already in flight is coalesced by the view model, so
+            // keep this action reachable while the initial usage query runs.
+            .disabled(viewModel.isMaintainingStorage)
 
             Button {
                 viewModel.requestStorageMaintenance(.clearImportStaging)
             } label: {
                 Label(L("清理导入暂存"), systemImage: "trash")
             }
-            .disabled(storageActionsDisabled)
+            .disabled(maintenanceActionsDisabled)
             .accessibilityIdentifier("settings.storage.clearStaging")
 
             Button {
@@ -52,7 +54,7 @@ struct StorageSettingsView: View {
             } label: {
                 Label(L("修复待删除项目"), systemImage: "checkmark.circle")
             }
-            .disabled(storageActionsDisabled)
+            .disabled(maintenanceActionsDisabled)
             .accessibilityIdentifier("settings.storage.repairRemovals")
 
             Button {
@@ -60,7 +62,7 @@ struct StorageSettingsView: View {
             } label: {
                 Label(L("清理已完成隔离"), systemImage: "archivebox")
             }
-            .disabled(storageActionsDisabled)
+            .disabled(maintenanceActionsDisabled)
             .accessibilityIdentifier("settings.storage.clearQuarantine")
 
             maintenanceStatus
@@ -104,7 +106,7 @@ struct StorageSettingsView: View {
         }
     }
 
-    private var storageActionsDisabled: Bool {
+    private var maintenanceActionsDisabled: Bool {
         viewModel.isRefreshingStorage || viewModel.isMaintainingStorage
     }
 

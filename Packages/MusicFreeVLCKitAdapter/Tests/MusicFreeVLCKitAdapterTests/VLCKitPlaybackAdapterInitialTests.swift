@@ -112,6 +112,74 @@ struct VLCKitPlaybackAdapterInitialTests {
     #expect(!VLCPlaybackEventMapper.accepts(otherItemEvent, currentGeneration: currentGeneration, currentItemID: itemID))
   }
 
+  @Test("Stable audio stream IDs win over a conflicting fallback signature")
+  func stableAudioStreamIDMatchWins() {
+    let selection = AudioStreamSelection(
+      streamID: AudioStreamID("vlc-media-id:42"),
+      fallbackSignature: AudioStreamSignature(
+        language: "jpn",
+        title: "Original",
+        codec: "flac",
+        channelCount: 2,
+        indexHint: 0
+      )
+    )
+    let candidates = [
+      VLCAudioStreamCandidate(
+        stableIDs: ["vlc-media-id:42"],
+        index: 1,
+        language: "eng",
+        title: "Commentary",
+        codec: "aac",
+        channelCount: 2
+      ),
+      VLCAudioStreamCandidate(
+        stableIDs: ["vlc-media-id:7"],
+        index: 0,
+        language: "jpn",
+        title: "Original",
+        codec: "flac",
+        channelCount: 2
+      )
+    ]
+
+    #expect(VLCAudioStreamMatcher.index(for: selection, candidates: candidates) == 1)
+  }
+
+  @Test("Audio stream selection falls back deterministically when a stable ID disappears")
+  func audioStreamSelectionFallbackIsDeterministic() {
+    let selection = AudioStreamSelection(
+      streamID: AudioStreamID("old-vlc-id"),
+      fallbackSignature: AudioStreamSignature(
+        language: "eng",
+        title: "Main Mix",
+        codec: "aac",
+        channelCount: 2,
+        indexHint: 2
+      )
+    )
+    let candidates = [
+      VLCAudioStreamCandidate(
+        stableIDs: ["new-vlc-id-a"],
+        index: 0,
+        language: "eng",
+        title: "Main Mix",
+        codec: "aac",
+        channelCount: 2
+      ),
+      VLCAudioStreamCandidate(
+        stableIDs: ["new-vlc-id-b"],
+        index: 2,
+        language: "eng",
+        title: "Main Mix",
+        codec: "aac",
+        channelCount: 2
+      )
+    ]
+
+    #expect(VLCAudioStreamMatcher.index(for: selection, candidates: candidates) == 2)
+  }
+
   @Test("Only public VLCKit options and supported resource headers are injected")
   func safeOptionInjection() throws {
     let configuration = try VLCKitAdapterConfiguration(
@@ -368,6 +436,75 @@ struct VLCKitPlaybackAdapterInitialTests {
     )
     try engine.play()
     #expect(engine.state.phase == .playing)
+  }
+
+  @MainActor
+  @Test("A CUE-style playback range maps seek and ends once at the logical boundary")
+  func playbackRangeStopsAtLogicalBoundary() async throws {
+    let configuration = try VLCKitAdapterConfiguration(
+      applicationIdentifier: "com.example.musicfree",
+      applicationVersion: "1.0",
+      applicationName: "MusicFree",
+      capabilityPolicy: VLCKitCapabilityPolicy(enabledCapabilities: [.seeking])
+    )
+    let engine = try VLCPlaybackEngine(configuration: configuration)
+    let mediaURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("musicfree-cue-range-(UUID().uuidString)")
+      .appendingPathExtension("wav")
+    try makePlaybackTestWaveData(duration: 0.35).write(to: mediaURL, options: .atomic)
+    defer {
+      engine.dispose()
+      try? FileManager.default.removeItem(at: mediaURL)
+    }
+
+    let itemID = MediaItemID(sourceID: .local, externalID: "cue-range")
+    let range = PlaybackRange(start: .milliseconds(50), end: .milliseconds(150))
+    let recorder = PlaybackEventRecorder()
+    let stream = engine.makeEventStream()
+    let eventTask = Task { @MainActor in
+      for await event in stream {
+        recorder.events.append(event)
+      }
+    }
+
+    try await engine.prepare(
+      PlaybackItem(
+        itemID: itemID,
+        resource: .local(mediaURL),
+        selection: PlaybackSelection(range: range),
+        displaySnapshot: PlaybackDisplaySnapshot(title: "CUE Range")
+      ),
+      startAt: nil
+    )
+    try await engine.seek(to: .milliseconds(20))
+    #expect(engine.state.position == .milliseconds(20))
+    try engine.play()
+
+    for _ in 0..<100 {
+      if engine.state.phase == .stopped { break }
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    for _ in 0..<10 { await Task.yield() }
+    eventTask.cancel()
+    await eventTask.value
+
+    let endedEvents = recorder.events.filter { event in
+      if case .ended(_, let endedItemID, _) = event { return endedItemID == itemID }
+      return false
+    }
+    let finalPositions = recorder.events.compactMap { event -> Duration? in
+      if case .positionChanged(_, let positionItemID, let position, _) = event,
+         positionItemID == itemID
+      {
+        return position
+      }
+      return nil
+    }
+
+    #expect(endedEvents.count == 1)
+    #expect(finalPositions.contains(range.duration))
+    #expect(engine.state.position == range.duration)
+    #expect(engine.state.duration == range.duration)
   }
 }
 

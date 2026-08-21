@@ -394,6 +394,8 @@ struct LibraryCollectionDetailView: View {
                     isEditing: isEditing,
                     selectedIDs: selectedTrackIDs,
                     isDisabled: isLoading || isDeleting,
+                    contentRevision: "",
+                    accessibilityValue: nil,
                     rowContent: { track, editing, selected in
                         AnyView(
                             LibraryDetailTrackRow(
@@ -937,6 +939,8 @@ struct LibraryFolderDetailView: View {
                     isEditing: isEditing,
                     selectedIDs: selectedTrackIDs,
                     isDisabled: isLoading || isDeleting,
+                    contentRevision: "",
+                    accessibilityValue: nil,
                     rowContent: { track, editing, selected in
                         AnyView(
                             LibraryDetailTrackRow(

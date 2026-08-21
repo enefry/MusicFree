@@ -183,3 +183,17 @@ func removalTransactionContainsStableIDs() throws {
   #expect(decoded.itemIDs == [itemID])
   #expect(!transaction.description.contains("/"))
 }
+
+@Test("legacy removal transactions decode without physical asset IDs")
+func legacyRemovalTransactionDecodesWithoutAssetIDs() throws {
+  let itemID = MediaItemID(sourceID: .local, externalID: "legacy-track")
+  let current = MediaRemovalTransaction(transactionID: UUID(), itemIDs: [itemID])
+  let encoded = try JSONEncoder().encode(current)
+  var object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+  object.removeValue(forKey: "assetIDs")
+  let legacyData = try JSONSerialization.data(withJSONObject: object)
+
+  let decoded = try JSONDecoder().decode(MediaRemovalTransaction.self, from: legacyData)
+  #expect(decoded.itemIDs == [itemID])
+  #expect(decoded.assetIDs == nil)
+}

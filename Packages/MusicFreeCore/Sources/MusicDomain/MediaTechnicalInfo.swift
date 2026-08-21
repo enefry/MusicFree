@@ -36,6 +36,11 @@ public struct ChannelLayout: Codable, Equatable, Hashable, Sendable {
 
 /// Technical information reported for one audio stream.
 public struct AudioStreamInfo: Codable, Equatable, Hashable, Sendable {
+    public let streamID: AudioStreamID?
+    public let indexHint: Int?
+    public let language: String?
+    public let title: String?
+    public let isDefault: Bool
     public let codec: String?
     /// Sample rate in hertz. `nil` means the source did not report it.
     public let sampleRate: Int?
@@ -49,6 +54,11 @@ public struct AudioStreamInfo: Codable, Equatable, Hashable, Sendable {
 
     /// Creates a stream description without inferring values from a file extension.
     public init(
+        streamID: AudioStreamID? = nil,
+        indexHint: Int? = nil,
+        language: String? = nil,
+        title: String? = nil,
+        isDefault: Bool = false,
         codec: String? = nil,
         sampleRate: Int? = nil,
         bitDepth: Int? = nil,
@@ -56,6 +66,7 @@ public struct AudioStreamInfo: Codable, Equatable, Hashable, Sendable {
         channelLayout: ChannelLayout? = nil,
         bitRate: Int? = nil
     ) {
+        if let indexHint { precondition(indexHint >= 0, "indexHint cannot be negative") }
         if let sampleRate {
             _ = musicDomainPositive(sampleRate, field: "sampleRate")
         }
@@ -75,6 +86,11 @@ public struct AudioStreamInfo: Codable, Equatable, Hashable, Sendable {
             )
         }
 
+        self.streamID = streamID
+        self.indexHint = indexHint
+        self.language = musicDomainOptionalText(language)
+        self.title = musicDomainOptionalText(title)
+        self.isDefault = isDefault
         self.codec = musicDomainOptionalText(codec)
         self.sampleRate = sampleRate
         self.bitDepth = bitDepth
@@ -96,6 +112,11 @@ public struct AudioStreamInfo: Codable, Equatable, Hashable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
+        case streamID
+        case indexHint
+        case language
+        case title
+        case isDefault
         case codec
         case sampleRate
         case bitDepth
@@ -111,8 +132,10 @@ public struct AudioStreamInfo: Codable, Equatable, Hashable, Sendable {
         let channels = try container.decodeIfPresent(Int.self, forKey: .channels)
         let channelLayout = try container.decodeIfPresent(ChannelLayout.self, forKey: .channelLayout)
         let bitRate = try container.decodeIfPresent(Int.self, forKey: .bitRate)
+        let indexHint = try container.decodeIfPresent(Int.self, forKey: .indexHint)
 
-        guard sampleRate == nil || sampleRate! > 0,
+        guard indexHint == nil || indexHint! >= 0,
+              sampleRate == nil || sampleRate! > 0,
               bitDepth == nil || bitDepth! > 0,
               channels == nil || channels! > 0,
               bitRate == nil || bitRate! > 0
@@ -124,6 +147,11 @@ public struct AudioStreamInfo: Codable, Equatable, Hashable, Sendable {
         }
 
         self.init(
+            streamID: try container.decodeIfPresent(AudioStreamID.self, forKey: .streamID),
+            indexHint: indexHint,
+            language: try container.decodeIfPresent(String.self, forKey: .language),
+            title: try container.decodeIfPresent(String.self, forKey: .title),
+            isDefault: try container.decodeIfPresent(Bool.self, forKey: .isDefault) ?? false,
             codec: try container.decodeIfPresent(String.self, forKey: .codec),
             sampleRate: sampleRate,
             bitDepth: bitDepth,

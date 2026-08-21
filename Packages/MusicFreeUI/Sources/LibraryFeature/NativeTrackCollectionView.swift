@@ -19,6 +19,8 @@ struct NativeTrackCollectionView: UIViewRepresentable {
     let isEditing: Bool
     let selectedIDs: Set<MediaItemID>
     let isDisabled: Bool
+    let contentRevision: String
+    let accessibilityValue: ((Track) -> String?)?
     let rowContent: (Track, Bool, Bool) -> AnyView
     let playAction: (Track) -> Void
     let detailAction: (Track) -> Void
@@ -65,6 +67,7 @@ struct NativeTrackCollectionView: UIViewRepresentable {
         private var isNativeMultipleSelectionActive = false
         private var isNativeMultipleSelectionGestureActive = false
         private var hasDeferredSnapshot = false
+        private var hasDeferredCellReconfigure = false
         private var deferredLastTrackID: MediaItemID?
         private var lastPublishedSelectionIDs: Set<MediaItemID>
         private var nativeGestureSelectionIDs: Set<MediaItemID> = []
@@ -119,6 +122,7 @@ struct NativeTrackCollectionView: UIViewRepresentable {
 
         func update(parent: NativeTrackCollectionView, collectionView: UICollectionView) {
             let didReceiveSelectionUpdate = parent.selectedIDs != self.parent.selectedIDs
+            let didReceiveContentUpdate = parent.contentRevision != self.parent.contentRevision
             let didExitEditing = self.parent.isEditing && !parent.isEditing
             self.parent = parent
             self.collectionView = collectionView
@@ -126,6 +130,7 @@ struct NativeTrackCollectionView: UIViewRepresentable {
                 isNativeMultipleSelectionActive = false
                 isNativeMultipleSelectionGestureActive = false
                 hasDeferredSnapshot = false
+                hasDeferredCellReconfigure = false
                 deferredLastTrackID = nil
                 hasScheduledMultipleSelectionEnd = false
                 lastPublishedSelectionIDs = parent.selectedIDs
@@ -150,10 +155,15 @@ struct NativeTrackCollectionView: UIViewRepresentable {
                     // gesture ends. Reconfiguring a visible hosting cell here
                     // can make UIKit skip cells in the drag path as well.
                     hasDeferredSnapshot = true
+                    hasDeferredCellReconfigure = true
                 } else {
                     applySnapshot(to: collectionView, force: true)
                 }
-            } else if !isNativeMultipleSelectionGestureActive {
+            } else if isNativeMultipleSelectionGestureActive {
+                if didReceiveContentUpdate {
+                    hasDeferredCellReconfigure = true
+                }
+            } else {
                 reconfigureVisibleCells(in: collectionView)
             }
             synchronizeSelection(in: collectionView)
@@ -251,7 +261,7 @@ struct NativeTrackCollectionView: UIViewRepresentable {
             )
             cell.accessibilityValue = isSelectionModeActive
                 ? (isSelected ? L("已选择") : L("未选择"))
-                : nil
+                : parent.accessibilityValue?(track)
             var accessibilityTraits: UIAccessibilityTraits = [.button]
             if isSelectionModeActive, isSelected {
                 accessibilityTraits.insert(.selected)
@@ -282,6 +292,8 @@ struct NativeTrackCollectionView: UIViewRepresentable {
                     guard let self, let collectionView else { return }
                     guard !self.isNativeMultipleSelectionGestureActive else { return }
                     self.lastPublishedSelectionIDs = preservedSelectionIDs
+                    self.reconfigureVisibleCells(in: collectionView)
+                    self.hasDeferredCellReconfigure = false
                     self.synchronizeSelection(in: collectionView)
                     self.flushDeferredLastTrack()
                 }
@@ -410,6 +422,7 @@ struct NativeTrackCollectionView: UIViewRepresentable {
             isNativeMultipleSelectionActive = true
             isNativeMultipleSelectionGestureActive = true
             hasDeferredSnapshot = false
+            hasDeferredCellReconfigure = false
             hasScheduledMultipleSelectionEnd = false
             nativeGestureSelectionIDs = selectedItemIDs(in: collectionView)
             lastPublishedSelectionIDs = nativeGestureSelectionIDs
@@ -452,6 +465,10 @@ struct NativeTrackCollectionView: UIViewRepresentable {
                         self.hasDeferredSnapshot = false
                         self.applySnapshot(to: collectionView, force: true)
                     } else {
+                        if self.hasDeferredCellReconfigure {
+                            self.hasDeferredCellReconfigure = false
+                            self.reconfigureVisibleCells(in: collectionView)
+                        }
                         self.flushDeferredLastTrack()
                     }
                 }

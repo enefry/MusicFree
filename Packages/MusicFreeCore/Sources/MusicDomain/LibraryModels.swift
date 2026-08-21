@@ -4,6 +4,9 @@ import Foundation
 @available(macOS 13.0, *)
 public struct Track: Codable, Equatable, Hashable, Identifiable, Sendable {
     public let id: MediaItemID
+    public let logicalTrackID: LogicalTrackID
+    public let assetID: MediaAssetID
+    public let playbackSelection: PlaybackSelection
     public let title: String
     public let sortTitle: String?
     public let albumID: AlbumID?
@@ -11,8 +14,10 @@ public struct Track: Codable, Equatable, Hashable, Identifiable, Sendable {
     public let genreIDs: [GenreID]
     /// The one-based position within a disc, when supplied by the media source.
     public let trackNumber: Int?
+    public let trackTotal: Int?
     /// The one-based disc position within a multi-disc release.
     public let discNumber: Int?
+    public let discTotal: Int?
     /// The source file name without exposing an absolute path.
     public let fileName: String?
     /// A source-provided logical folder, never an absolute filesystem path.
@@ -30,13 +35,18 @@ public struct Track: Codable, Equatable, Hashable, Identifiable, Sendable {
     /// Creates a track. Missing metadata is represented by `nil` or an empty relationship list.
     public init(
         id: MediaItemID,
+        logicalTrackID: LogicalTrackID? = nil,
+        assetID: MediaAssetID? = nil,
+        playbackSelection: PlaybackSelection = .wholeFile,
         title: String,
         sortTitle: String? = nil,
         albumID: AlbumID? = nil,
         artistIDs: [ArtistID] = [],
         genreIDs: [GenreID] = [],
         trackNumber: Int? = nil,
+        trackTotal: Int? = nil,
         discNumber: Int? = nil,
+        discTotal: Int? = nil,
         fileName: String? = nil,
         folderPath: String? = nil,
         duration: Duration? = nil,
@@ -54,21 +64,33 @@ public struct Track: Codable, Equatable, Hashable, Identifiable, Sendable {
         if let trackNumber {
             precondition(trackNumber > 0, "Track.trackNumber must be positive")
         }
+        if let trackTotal {
+            precondition(trackTotal > 0, "Track.trackTotal must be positive")
+        }
         if let discNumber {
             precondition(discNumber > 0, "Track.discNumber must be positive")
+        }
+        if let discTotal {
+            precondition(discTotal > 0, "Track.discTotal must be positive")
         }
         if let year {
             precondition((1...9_999).contains(year), "Track.year is out of range")
         }
 
         self.id = id
+        self.logicalTrackID = logicalTrackID ?? LogicalTrackID(legacyVariantID: id)
+        self.assetID = assetID ?? MediaAssetID(legacyVariantID: id)
+        precondition(self.assetID.sourceID == id.sourceID, "Track and MediaAsset must share a source")
+        self.playbackSelection = playbackSelection
         self.title = musicDomainRequiredText(title, field: "Track.title")
         self.sortTitle = musicDomainOptionalText(sortTitle)
         self.albumID = albumID
         self.artistIDs = musicDomainUnique(artistIDs)
         self.genreIDs = musicDomainUnique(genreIDs)
         self.trackNumber = trackNumber
+        self.trackTotal = trackTotal
         self.discNumber = discNumber
+        self.discTotal = discTotal
         self.fileName = Self.normalizedFileName(fileName)
         self.folderPath = Self.normalizedFolderPath(folderPath)
         self.duration = duration
@@ -95,13 +117,18 @@ public struct Track: Codable, Equatable, Hashable, Identifiable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case id
+        case logicalTrackID
+        case assetID
+        case playbackSelection
         case title
         case sortTitle
         case albumID
         case artistIDs
         case genreIDs
         case trackNumber
+        case trackTotal
         case discNumber
+        case discTotal
         case fileName
         case folderPath
         case duration
@@ -116,28 +143,40 @@ public struct Track: Codable, Equatable, Hashable, Identifiable, Sendable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        let id = try container.decode(MediaItemID.self, forKey: .id)
+        let assetID = try container.decodeIfPresent(MediaAssetID.self, forKey: .assetID)
         let title = try container.decode(String.self, forKey: .title)
         let duration = try container.decodeIfPresent(Duration.self, forKey: .duration)
         let trackNumber = try container.decodeIfPresent(Int.self, forKey: .trackNumber)
+        let trackTotal = try container.decodeIfPresent(Int.self, forKey: .trackTotal)
         let discNumber = try container.decodeIfPresent(Int.self, forKey: .discNumber)
+        let discTotal = try container.decodeIfPresent(Int.self, forKey: .discTotal)
         let year = try container.decodeIfPresent(Int.self, forKey: .year)
         guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              assetID == nil || assetID!.sourceID == id.sourceID,
               duration == nil || duration! >= .zero,
               trackNumber == nil || trackNumber! > 0,
+              trackTotal == nil || trackTotal! > 0,
               discNumber == nil || discNumber! > 0,
+              discTotal == nil || discTotal! > 0,
               year == nil || (1...9_999).contains(year!)
         else {
             throw musicDomainDecodingFailure(decoder, field: "Track")
         }
         self.init(
-            id: try container.decode(MediaItemID.self, forKey: .id),
+            id: id,
+            logicalTrackID: try container.decodeIfPresent(LogicalTrackID.self, forKey: .logicalTrackID),
+            assetID: assetID,
+            playbackSelection: try container.decodeIfPresent(PlaybackSelection.self, forKey: .playbackSelection) ?? .wholeFile,
             title: title,
             sortTitle: try container.decodeIfPresent(String.self, forKey: .sortTitle),
             albumID: try container.decodeIfPresent(AlbumID.self, forKey: .albumID),
             artistIDs: try container.decodeIfPresent([ArtistID].self, forKey: .artistIDs) ?? [],
             genreIDs: try container.decodeIfPresent([GenreID].self, forKey: .genreIDs) ?? [],
             trackNumber: trackNumber,
+            trackTotal: trackTotal,
             discNumber: discNumber,
+            discTotal: discTotal,
             fileName: try container.decodeIfPresent(String.self, forKey: .fileName),
             folderPath: try container.decodeIfPresent(String.self, forKey: .folderPath),
             duration: duration,
@@ -154,13 +193,18 @@ public struct Track: Codable, Equatable, Hashable, Identifiable, Sendable {
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(id, forKey: .id)
+        try container.encode(logicalTrackID, forKey: .logicalTrackID)
+        try container.encode(assetID, forKey: .assetID)
+        try container.encode(playbackSelection, forKey: .playbackSelection)
         try container.encode(title, forKey: .title)
         try container.encodeIfPresent(sortTitle, forKey: .sortTitle)
         try container.encodeIfPresent(albumID, forKey: .albumID)
         try container.encode(artistIDs, forKey: .artistIDs)
         try container.encode(genreIDs, forKey: .genreIDs)
         try container.encodeIfPresent(trackNumber, forKey: .trackNumber)
+        try container.encodeIfPresent(trackTotal, forKey: .trackTotal)
         try container.encodeIfPresent(discNumber, forKey: .discNumber)
+        try container.encodeIfPresent(discTotal, forKey: .discTotal)
         try container.encodeIfPresent(fileName, forKey: .fileName)
         try container.encodeIfPresent(folderPath, forKey: .folderPath)
         try container.encodeIfPresent(duration, forKey: .duration)

@@ -16,6 +16,7 @@ public struct LibraryScene: View {
     private let playlistServing: (any PlaylistServing)?
     @State private var isImportPickerPresented = false
     @State private var compactPath: [LibraryCompactRoute] = []
+    @State private var compactHomeRevision = 0
     @State private var resolvedAlbums: [AlbumID: Album] = [:]
     @State private var pendingCollectionQueueTargets: Set<LibraryCollectionQueueTarget> = []
     @State private var pendingCollectionPlaylistTargets: Set<LibraryCollectionQueueTarget> = []
@@ -157,9 +158,17 @@ public struct LibraryScene: View {
                 importAction: { isImportPickerPresented = true },
                 artworkServing: artworkServing
             )
+            .id(compactHomeRevision)
             .navigationDestination(for: LibraryCompactRoute.self) { route in
                 compactDestination(route)
             }
+        }
+        .onChange(of: compactPath) { _, path in
+            guard path.isEmpty else { return }
+            // The compact home list is a navigation hub. Recreate it after a
+            // child page returns so a previous child scroll cannot leave the
+            // section links stranded off-screen.
+            compactHomeRevision &+= 1
         }
     }
 
@@ -286,6 +295,7 @@ public struct LibraryScene: View {
                 isCollectionPlaylistActionPending: isCollectionPlaylistActionPending,
                 compactRoute: { .destination($0) }
             )
+            .id(section)
             .navigationTitle(section.title)
             .searchable(text: searchBinding, prompt: L("搜索%@", section.title))
         case .destination(let destination):

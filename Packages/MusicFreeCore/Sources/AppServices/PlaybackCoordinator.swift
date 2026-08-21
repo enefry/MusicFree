@@ -131,7 +131,12 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
 
                 if let queueRepository = self.queueRepository {
                     do {
-                        self.queue = try await queueRepository.load()
+                        let loadedQueue = try await queueRepository.load()
+                        let canonicalQueue = try await self.canonicalizeQueue(loadedQueue)
+                        if canonicalQueue != loadedQueue {
+                            try await self.saveQueue(canonicalQueue)
+                        }
+                        self.queue = canonicalQueue
                     } catch {
                         throw AppServiceError.mapped(
                             error,
@@ -261,7 +266,9 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
         } catch is CancellationError {
             return
         } catch {
-            await record(error: AppServiceError.mapped(error, operation: "playback.command"))
+            await record(
+                error: AppServiceError.mapped(error, operation: "playback.command")
+            )
         }
     }
 
@@ -433,7 +440,11 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
                 let entryID = try await valueForCurrentIntent(intent) {
                     await self.idGenerator.nextUUID()
                 }
-                entry = PlaybackQueueEntry(id: entryID, itemID: itemID)
+                entry = try await makeQueueEntry(
+                    id: entryID,
+                    itemID: itemID,
+                    intent: intent
+                )
                 try await persistQueue(
                     try queue.applying(.append(entry)),
                     intent: intent
@@ -644,7 +655,10 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
     }
 
     private func enqueue(itemID: MediaItemID, at position: Int?) async throws {
-        let entry = PlaybackQueueEntry(id: await idGenerator.nextUUID(), itemID: itemID)
+        let entry = try await makeQueueEntry(
+            id: await idGenerator.nextUUID(),
+            itemID: itemID
+        )
         try await withQueueMutation {
             var updated = try queue.applying(.enqueue(entry, at: position))
             if queue.isEmpty {
@@ -668,8 +682,9 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
         newEntries.reserveCapacity(itemIDs.count)
         for itemID in itemIDs {
             try Task.checkCancellation()
+            let entryID = await idGenerator.nextUUID()
             newEntries.append(
-                PlaybackQueueEntry(id: await idGenerator.nextUUID(), itemID: itemID)
+                try await makeQueueEntry(id: entryID, itemID: itemID)
             )
         }
 
@@ -732,7 +747,11 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
             let entryID = try await valueForCurrentIntent(intent) {
                 await self.idGenerator.nextUUID()
             }
-            entries.append(PlaybackQueueEntry(id: entryID, itemID: itemID))
+            entries.append(try await makeQueueEntry(
+                id: entryID,
+                itemID: itemID,
+                intent: intent
+            ))
         }
         guard let firstEntry = entries.first else {
             throw AppServiceError.invalidRequest(operation: "playback.playItems")
@@ -856,14 +875,15 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
 
     private func prepareAndPlay(
         entry: PlaybackQueueEntry,
-        intent: UInt64
+        intent: UInt64,
+        startAt overrideStartAt: Duration? = nil
     ) async throws {
         try requireCurrentIntent(intent)
         guard let engine else {
             throw AppServiceError.missingDependency("playbackEngine")
         }
 
-        let startAt = queue.resumePosition
+        let startAt = overrideStartAt ?? queue.resumePosition
         // Publish the new intent before asynchronous lookup so a failed
         // resolve/probe is associated with the selected item, not the prior
         // song left in the mini-player.
@@ -903,7 +923,7 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
         let source: any MediaSource
         source = try await valueForCurrentIntent(intent) {
             do {
-                return try await self.sourceResolver.source(for: entry.itemID.sourceID)
+                return try await self.sourceResolver.source(for: track.assetID.sourceID)
             } catch {
                 throw AppServiceError.mapped(error, operation: "playback.source")
             }
@@ -912,7 +932,7 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
         let resource: PlaybackResource
         resource = try await valueForCurrentIntent(intent) {
             do {
-                return try await source.resolve(entry.itemID)
+                return try await source.resolve(track.assetID.mediaItemID)
             } catch {
                 throw AppServiceError.mapped(error, operation: "playback.resolve")
             }
@@ -923,6 +943,7 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
             item: PlaybackItem(
                 itemID: entry.itemID,
                 resource: resource,
+                selection: track.playbackSelection,
                 displaySnapshot: display
             ),
             startAt: startAt,
@@ -1010,7 +1031,20 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
         switch queue.repeatMode {
         case .one:
             guard let currentEntry = queue.currentEntry else { return }
-            try? await prepareAndPlay(entry: currentEntry, intent: intent)
+            // A completed item may have just persisted its final position. A
+            // repeat is a new playback pass and must not resume from EOF.
+            do {
+                try await prepareAndPlay(
+                    entry: currentEntry,
+                    intent: intent,
+                    startAt: .zero
+                )
+            } catch {
+                guard playbackIntentVersion == intent else { return }
+                await record(
+                    error: AppServiceError.mapped(error, operation: "playback.repeat")
+                )
+            }
         case .off, .all:
             do {
                 try await advance(direction: 1, intent: intent)
@@ -1169,6 +1203,70 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
         } catch {
             throw AppServiceError.mapped(error, operation: "playback.track")
         }
+    }
+
+    /// Upgrades legacy queue entries while preserving queue intent and entry
+    /// identity. Missing variants remain readable so a transiently unavailable
+    /// library record cannot silently remove a user's queue item.
+    private func canonicalizeQueue(
+        _ snapshot: PlaybackQueueSnapshot
+    ) async throws -> PlaybackQueueSnapshot {
+        guard libraryRepository != nil else { return snapshot }
+
+        var entries: [PlaybackQueueEntry] = []
+        entries.reserveCapacity(snapshot.entries.count)
+        var didChange = false
+
+        for entry in snapshot.entries {
+            guard let preferredVariantID = entry.preferredVariantID,
+                  let track = try await loadTrack(preferredVariantID)
+            else {
+                entries.append(entry)
+                continue
+            }
+
+            let canonicalEntry = PlaybackQueueEntry(id: entry.id, track: track)
+            didChange = didChange || canonicalEntry != entry
+            entries.append(canonicalEntry)
+        }
+
+        guard didChange else { return snapshot }
+        return PlaybackQueueSnapshot(
+            entries: entries,
+            currentEntryID: snapshot.currentEntryID,
+            repeatMode: snapshot.repeatMode,
+            shuffleMode: snapshot.shuffleMode,
+            shuffleSeed: snapshot.shuffleSeed,
+            shuffleOrder: snapshot.shuffleOrder,
+            resumePosition: snapshot.resumePosition
+        )
+    }
+
+    /// Builds queue identity from the current library model. The legacy
+    /// fallback keeps queue-only callers and old unavailable items readable;
+    /// every track that can be resolved is persisted with its real logical
+    /// identity and selected variant.
+    private func makeQueueEntry(
+        id: UUID,
+        itemID: MediaItemID,
+        intent: UInt64? = nil
+    ) async throws -> PlaybackQueueEntry {
+        guard libraryRepository != nil else {
+            return PlaybackQueueEntry(id: id, itemID: itemID)
+        }
+
+        let track: Track?
+        if let intent {
+            track = try await valueForCurrentIntent(intent) {
+                try await self.loadTrack(itemID)
+            }
+        } else {
+            track = try await loadTrack(itemID)
+        }
+        guard let track else {
+            return PlaybackQueueEntry(id: id, itemID: itemID)
+        }
+        return PlaybackQueueEntry(id: id, track: track)
     }
 
     private func persistQueue(_ updated: PlaybackQueueSnapshot) async throws {

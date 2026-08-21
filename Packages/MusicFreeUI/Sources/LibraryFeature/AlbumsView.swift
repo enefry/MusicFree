@@ -134,7 +134,8 @@ struct AlbumsView: View {
                         NativeLibraryCollectionItem(
                             id: album.id.rawValue,
                             accessibilityLabel: album.title,
-                            accessibilityHint: L("打开专辑，按住显示更多操作")
+                            accessibilityHint: L("打开专辑，按住显示更多操作"),
+                            accessibilityValue: albumSubtitle(album)
                         )
                     }
                 )

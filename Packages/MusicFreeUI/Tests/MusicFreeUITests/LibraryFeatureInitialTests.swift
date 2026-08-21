@@ -93,6 +93,40 @@ func libraryPaginationDeduplicatesItems() async throws {
 }
 
 @MainActor
+@Test("Library refresh replaces a stale item with richer relationships")
+func libraryRefreshReplacesStaleTrackMetadata() async {
+    let artistID = ArtistID("artist-enriched")
+    let stale = Track(
+        id: MediaItemID(sourceID: .local, externalID: "same-track"),
+        title: "Tone"
+    )
+    let enriched = Track(
+        id: stale.id,
+        title: "Tone",
+        artistIDs: [artistID]
+    )
+    let service = FakeLibraryService()
+    service.trackResponses = [
+        .success(
+            LibraryPage(
+                elements: [stale],
+                nextCursor: LibraryCursor("page-2")
+            )
+        ),
+        .success(LibraryPage(elements: [enriched]))
+    ]
+    let viewModel = LibraryViewModel(library: service, pageSize: 1)
+
+    viewModel.load(section: .tracks, reset: true)
+    await settle()
+    viewModel.loadNextPage(for: .tracks)
+    await settle()
+
+    #expect(viewModel.tracks.count == 1)
+    #expect(viewModel.tracks.first?.artistIDs == [artistID])
+}
+
+@MainActor
 @Test("Album lookup follows opaque continuation pages")
 func libraryAlbumLookupFollowsPagination() async throws {
     let targetID = AlbumID("target-album")

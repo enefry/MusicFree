@@ -794,6 +794,12 @@ public final class LibraryViewModel: ObservableObject {
         loadTasks[section] = nil
         loadSequences[section] = (loadSequences[section] ?? 0) &+ 1
         activeLoadTokens[section] = nil
+        // A cancelled request must not leave a section permanently marked as
+        // loading. The next navigation into that section should be able to
+        // issue a fresh first-page request.
+        if states[section] == .loading {
+            states[section] = .idle
+        }
     }
 
     private func clearResults(for section: LibrarySection) {
@@ -936,13 +942,18 @@ public final class LibraryViewModel: ObservableObject {
     private func replacingFavorite(in track: Track, with isFavorite: Bool) -> Track {
         Track(
             id: track.id,
+            logicalTrackID: track.logicalTrackID,
+            assetID: track.assetID,
+            playbackSelection: track.playbackSelection,
             title: track.title,
             sortTitle: track.sortTitle,
             albumID: track.albumID,
             artistIDs: track.artistIDs,
             genreIDs: track.genreIDs,
             trackNumber: track.trackNumber,
+            trackTotal: track.trackTotal,
             discNumber: track.discNumber,
+            discTotal: track.discTotal,
             fileName: track.fileName,
             folderPath: track.folderPath,
             duration: track.duration,
@@ -985,9 +996,22 @@ private func mergeUnique<Element, ID: Hashable>(
     by id: (Element) -> ID
 ) -> [Element] {
     var result = existing
-    var identifiers = Set(existing.map(id))
-    for element in newElements where identifiers.insert(id(element)).inserted {
-        result.append(element)
+    var indices: [ID: Int] = [:]
+    for index in result.indices {
+        indices[id(result[index])] = index
+    }
+
+    for element in newElements {
+        let identifier = id(element)
+        if let index = indices[identifier] {
+            // A later page or a change-triggered refresh may carry richer
+            // relationships for an already visible item. Keep its position,
+            // but replace the stale value.
+            result[index] = element
+        } else {
+            indices[identifier] = result.count
+            result.append(element)
+        }
     }
     return result
 }

@@ -30,8 +30,47 @@ public final class SwiftDataLibraryRepository: LibraryRepository, Sendable {
         try await store.artwork(id: id)
     }
 
+    public func logicalTrack(id: LogicalTrackID) async throws -> LogicalTrack? {
+        try await store.logicalTrack(id: id)
+    }
+
+    public func trackVariant(id: MediaItemID) async throws -> TrackVariant? {
+        try await store.trackVariant(id: id)
+    }
+
+    public func variants(for logicalTrackID: LogicalTrackID) async throws -> [TrackVariant] {
+        try await store.variants(for: logicalTrackID)
+    }
+
+    public func mediaAsset(id: MediaAssetID) async throws -> MediaAsset? {
+        try await store.mediaAsset(id: id)
+    }
+
+    public func release(id: AlbumReleaseID) async throws -> AlbumRelease? {
+        try await store.release(id: id)
+    }
+
+    public func discs(for releaseID: AlbumReleaseID) async throws -> [Disc] {
+        try await store.discs(for: releaseID)
+    }
+
+    public func collections() async throws -> [LibraryCollection] {
+        try await store.collections()
+    }
+
+    public func members(in collectionID: LibraryCollectionID) async throws -> [LibraryCollectionMember] {
+        try await store.members(in: collectionID)
+    }
+
     public func isArtworkReferenced(_ artworkID: ArtworkID) async throws -> Bool {
         try await store.isArtworkReferenced(artworkID)
+    }
+
+    public func isMediaAssetReferenced(
+        _ assetID: MediaAssetID,
+        excluding itemIDs: Set<MediaItemID>
+    ) async throws -> Bool {
+        try await store.isMediaAssetReferenced(assetID, excluding: itemIDs)
     }
 
     public func tracks(

@@ -46,15 +46,18 @@ public struct PlaybackDisplaySnapshot: Codable, Equatable, Hashable, Sendable {
 public struct PlaybackItem: Sendable {
   public let itemID: MediaItemID
   public let resource: PlaybackResource
+  public let selection: PlaybackSelection
   public let displaySnapshot: PlaybackDisplaySnapshot
 
   public init(
     itemID: MediaItemID,
     resource: PlaybackResource,
+    selection: PlaybackSelection = .wholeFile,
     displaySnapshot: PlaybackDisplaySnapshot
   ) {
     self.itemID = itemID
     self.resource = resource
+    self.selection = selection
     self.displaySnapshot = displaySnapshot
   }
 

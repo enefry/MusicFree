@@ -547,7 +547,10 @@ final class AppContainer: ObservableObject {
         if let lrclibAPIConfiguration {
             lyricsProviders.append(LRCLIBLyricsProvider(configuration: lrclibAPIConfiguration))
         }
-        let remover = try ManagedMediaRemover(configuration: localMediaConfiguration)
+        let remover = try ManagedMediaRemover(
+            configuration: localMediaConfiguration,
+            libraryRepository: libraryRepository
+        )
         let storageMaintenance = try LocalMediaStorageMaintenance(
             configuration: localMediaConfiguration,
             libraryRepository: libraryRepository

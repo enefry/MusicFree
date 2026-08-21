@@ -1,4 +1,5 @@
 import Foundation
+import LibraryAPI
 import MediaSourceAPI
 import MusicDomain
 
@@ -8,12 +9,17 @@ public final class ManagedMediaRemover: ManagedMediaRemoving, @unchecked Sendabl
   private let coordinator: ImportCoordinator
   private let store: ManagedMediaStore
   private let maintenanceGate: ImportMaintenanceGate
+  private let libraryRepository: (any LibraryRepository)?
 
-  public init(configuration: LocalMediaConfiguration) throws {
+  public init(
+    configuration: LocalMediaConfiguration,
+    libraryRepository: (any LibraryRepository)? = nil
+  ) throws {
     let coordinator = try ImportCoordinatorRegistry.shared.coordinator(for: configuration)
     self.coordinator = coordinator
     self.store = coordinator.store
     self.maintenanceGate = coordinator.maintenanceGate
+    self.libraryRepository = libraryRepository
   }
 
   public func pendingRemovals() async throws -> [MediaRemovalTransaction] {
@@ -31,11 +37,52 @@ public final class ManagedMediaRemover: ManagedMediaRemoving, @unchecked Sendabl
   ) async throws -> MediaRemovalTransaction {
     do {
       return try await withMaintenance {
-        try await store.prepareRemoval(of: itemIDs)
+        guard let libraryRepository else {
+          return try await store.prepareRemoval(of: itemIDs)
+        }
+        let assetIDs = try await self.assetIDsToRemove(
+          for: itemIDs,
+          from: libraryRepository
+        )
+        return try await store.prepareRemoval(of: itemIDs, assetIDs: assetIDs)
       }
     } catch {
       throw Self.mapRemovalError(error)
     }
+  }
+
+  private func assetIDsToRemove(
+    for itemIDs: Set<MediaItemID>,
+    from libraryRepository: any LibraryRepository
+  ) async throws -> Set<MediaAssetID> {
+    guard !itemIDs.isEmpty,
+          itemIDs.allSatisfy({
+            $0.sourceID == .local && !$0.externalID.isEmpty
+          })
+    else {
+      throw LocalMediaError.invalidItemID
+    }
+
+    var requestedAssetIDs = Set<MediaAssetID>()
+    for itemID in itemIDs.sorted() {
+        if let track = try await libraryRepository.track(id: itemID) {
+            requestedAssetIDs.insert(track.assetID)
+        } else if let variant = try await libraryRepository.trackVariant(id: itemID) {
+            requestedAssetIDs.insert(variant.assetID)
+        } else {
+            // Keep deletion compatible with old library rows that predate the
+            // explicit Track.assetID field.
+            requestedAssetIDs.insert(MediaAssetID(legacyVariantID: itemID))
+        }
+    }
+
+    var removableAssetIDs = Set<MediaAssetID>()
+    for assetID in requestedAssetIDs.sorted() {
+      if try await !libraryRepository.isMediaAssetReferenced(assetID, excluding: itemIDs) {
+        removableAssetIDs.insert(assetID)
+      }
+    }
+    return removableAssetIDs
   }
 
   public func commitRemoval(_ transaction: MediaRemovalTransaction) async throws {

@@ -4,6 +4,8 @@
 > 适用版本：首版 iOS/iPadOS 26  
 > 文档范围：模块依赖、public API、并发、错误和持久化边界
 
+当前 live 基线：`Local Media vNext` 工作包 A 的本地模型和播放链路已实现；Core/Infrastructure/VLCKit/App 的 iOS 测试构建已通过，但本轮模拟器执行在测试 worker 安装/启动阶段阻塞，不能宣称模拟器回归完成。DS Audio、OAuth/DSM Session、远程 Catalog、下载缓存和网盘 Provider 仍未实现。真实设备媒体矩阵、后台/锁屏和发布验收不由模拟器测试替代。
+
 ## 1. 目的与阶段边界
 
 本文档把产品级边界落实为可创建、可编译、可测试的 Swift 模块契约。具体实现、测试和发布状态以源码、测试和许可材料为准。
@@ -156,7 +158,10 @@ public protocol MediaSource: Sendable {
   var descriptor: MediaSourceDescriptor { get }
   var capabilities: MediaSourceCapabilities { get }
 
-  func resolve(_ itemID: MediaItemID) async throws -> PlaybackResource
+  /// Resolves the source-local physical asset identity. For a logical CUE
+  /// track, callers pass `track.assetID.mediaItemID`; the logical range and
+  /// audio-stream choice remain in `PlaybackItem.selection`.
+  func resolve(_ assetID: MediaItemID) async throws -> PlaybackResource
   func artwork(for artworkID: ArtworkID) async throws -> ArtworkResource?
 }
 
@@ -539,7 +544,7 @@ sequenceDiagram
   participant SYS as System APIs
   UI->>C: play(itemID)
   C->>L: track(id)
-  C->>S: resolve(itemID)
+  C->>S: resolve(track.assetID.mediaItemID)
   S-->>C: ephemeral PlaybackResource
   C->>SYS: configure and activate
   C->>E: prepare PlaybackItem

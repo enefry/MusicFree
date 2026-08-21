@@ -19,11 +19,33 @@ public enum PlaybackShuffleMode: String, Codable, CaseIterable, Hashable, Sendab
 /// more than once without conflating resume or edit operations.
 public struct PlaybackQueueEntry: Codable, Equatable, Hashable, Identifiable, Sendable {
   public let id: UUID
-  public let itemID: MediaItemID
+  public let logicalTrackID: LogicalTrackID
+  public let preferredVariantID: MediaItemID?
 
   public init(id: UUID, itemID: MediaItemID) {
     self.id = id
-    self.itemID = itemID
+    self.logicalTrackID = LogicalTrackID(legacyVariantID: itemID)
+    self.preferredVariantID = itemID
+  }
+
+  /// Creates a queue entry from the library's canonical track identity.
+  /// `itemID` is the selected variant while `logicalTrackID` remains stable
+  /// when another provider or representation is selected later.
+  @available(macOS 13.0, iOS 16.0, *)
+  public init(id: UUID, track: Track) {
+    self.id = id
+    self.logicalTrackID = track.logicalTrackID
+    self.preferredVariantID = track.id
+  }
+
+  public init(
+    id: UUID,
+    logicalTrackID: LogicalTrackID,
+    preferredVariantID: MediaItemID?
+  ) {
+    self.id = id
+    self.logicalTrackID = logicalTrackID
+    self.preferredVariantID = preferredVariantID
   }
 
   public init(entryID: UUID, itemID: MediaItemID) {
@@ -32,6 +54,42 @@ public struct PlaybackQueueEntry: Codable, Equatable, Hashable, Identifiable, Se
 
   public var entryID: UUID {
     id
+  }
+
+  public var itemID: MediaItemID {
+    guard let preferredVariantID else {
+      preconditionFailure("A local playback queue entry requires a preferred variant")
+    }
+    return preferredVariantID
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case id
+    case itemID
+    case logicalTrackID
+    case preferredVariantID
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    let id = try container.decode(UUID.self, forKey: .id)
+    if let logicalTrackID = try container.decodeIfPresent(LogicalTrackID.self, forKey: .logicalTrackID) {
+      self.init(
+        id: id,
+        logicalTrackID: logicalTrackID,
+        preferredVariantID: try container.decodeIfPresent(MediaItemID.self, forKey: .preferredVariantID)
+          ?? container.decodeIfPresent(MediaItemID.self, forKey: .itemID)
+      )
+    } else {
+      self.init(id: id, itemID: try container.decode(MediaItemID.self, forKey: .itemID))
+    }
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(id, forKey: .id)
+    try container.encode(logicalTrackID, forKey: .logicalTrackID)
+    try container.encodeIfPresent(preferredVariantID, forKey: .preferredVariantID)
   }
 }
 

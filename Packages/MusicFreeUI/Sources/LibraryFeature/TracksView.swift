@@ -19,6 +19,7 @@ struct TracksView: View {
     @State private var sortMode: TrackSortMode = .title
     @State private var artistNames: [ArtistID: String] = [:]
     @State private var albumTitles: [AlbumID: String] = [:]
+    @State private var albumArtistIDs: [AlbumID: [ArtistID]] = [:]
     @State private var pendingDeletionTrack: Track?
     @State private var pendingDeletionTrackIDs: Set<MediaItemID> = []
     @State private var deletionErrorMessage: String?
@@ -194,6 +195,8 @@ struct TracksView: View {
             isEditing: isEditing,
             selectedIDs: selectedTrackIDs,
             isDisabled: isDeleting,
+            contentRevision: metadataRevision,
+            accessibilityValue: { subtitle(for: $0) },
             rowContent: { track, editing, selected in
                 AnyView(
                     TrackRow(
@@ -301,36 +304,86 @@ struct TracksView: View {
     }
 
     private var metadataKey: String {
-        visibleTracks.map(\.id.externalID).joined(separator: "|")
+        visibleTracks.map { track in
+            let artistKey = track.artistIDs.map(\.rawValue).joined(separator: ",")
+            return [
+                track.id.externalID,
+                track.albumID?.rawValue ?? "",
+                artistKey
+            ].joined(separator: ":")
+        }.joined(separator: "|")
+    }
+
+    private var metadataRevision: String {
+        let artists = artistNames
+            .sorted { $0.key.rawValue < $1.key.rawValue }
+            .map { "\($0.key.rawValue)=\($0.value)" }
+            .joined(separator: "|")
+        let albumArtists = albumArtistIDs
+            .sorted { $0.key.rawValue < $1.key.rawValue }
+            .map { albumID, artistIDs in
+                "\(albumID.rawValue)=\(artistIDs.map(\.rawValue).joined(separator: ","))"
+            }
+            .joined(separator: "|")
+        return "\(metadataKey)#\(artists)#\(albumArtists)"
     }
 
     private func loadMetadata() async {
         guard !visibleTracks.isEmpty else {
             artistNames = [:]
             albumTitles = [:]
+            albumArtistIDs = [:]
             return
         }
 
+        let service = viewModel.library
+        var knownAlbumArtistIDs = albumArtistIDs
         do {
             let request = try LibraryPageRequest(limit: LibraryPageRequest.maximumLimit)
-            let service = viewModel.library
-            async let artistNameTask = LibraryArtistNameLoader.load(
-                artistIDs: Set(visibleTracks.flatMap(\.artistIDs)),
-                sourceID: .local,
-                from: service
-            )
-            async let albumsPage = service.browseAlbums(
+            let albums = try await service.browseAlbums(
                 matching: AlbumQuery(sourceID: .local),
                 page: request
-            )
-            let (loadedArtistNames, albums) = try await (artistNameTask, albumsPage.elements)
+            ).elements
             guard !Task.isCancelled else { return }
-            artistNames = loadedArtistNames
             albumTitles = Dictionary(uniqueKeysWithValues: albums.map { ($0.id, $0.title) })
+            knownAlbumArtistIDs = Dictionary(uniqueKeysWithValues: albums.map { ($0.id, $0.artistIDs) })
+            albumArtistIDs = knownAlbumArtistIDs
         } catch {
-            // Metadata is supplementary. The song list remains usable when a
-            // source cannot resolve its related artist or album records.
+            // Album names only affect sorting; keep any previously loaded
+            // values when this supplementary query is unavailable.
         }
+
+        var artistIDs = Set(visibleTracks.flatMap(\.artistIDs))
+        for track in visibleTracks {
+            guard let albumID = track.albumID else { continue }
+            artistIDs.formUnion(knownAlbumArtistIDs[albumID] ?? [])
+        }
+
+        var loadedArtistNames: [ArtistID: String] = [:]
+        // Artist and album metadata are independent supplements. A transient
+        // failure in one query must not hide the other from the track list.
+        if !artistIDs.isEmpty {
+            for attempt in 0..<3 {
+                do {
+                    loadedArtistNames = try await LibraryArtistNameLoader.load(
+                        artistIDs: artistIDs,
+                        sourceID: .local,
+                        from: service
+                    )
+                    if loadedArtistNames.count == artistIDs.count || attempt == 2 {
+                        break
+                    }
+                } catch {
+                    if attempt == 2 { break }
+                }
+
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                guard !Task.isCancelled else { return }
+            }
+        }
+
+        guard !Task.isCancelled else { return }
+        artistNames = loadedArtistNames
     }
 
     private func sortValue(for track: Track) -> String {
@@ -338,14 +391,19 @@ struct TracksView: View {
         case .title:
             return track.sortTitle ?? track.title
         case .artist:
-            return track.artistIDs.compactMap { artistNames[$0] }.first ?? track.title
+            return subtitle(for: track)?.components(separatedBy: "、").first ?? track.title
         case .album:
             return track.albumID.flatMap { albumTitles[$0] } ?? track.title
         }
     }
 
     private func subtitle(for track: Track) -> String? {
-        let names = track.artistIDs.compactMap { artistNames[$0] }
+        let albumIDs = track.albumID.flatMap { albumArtistIDs[$0] } ?? []
+        let primaryIDs = track.artistIDs.isEmpty ? albumIDs : track.artistIDs
+        var names = primaryIDs.compactMap { artistNames[$0] }
+        if names.isEmpty, !track.artistIDs.isEmpty {
+            names = albumIDs.compactMap { artistNames[$0] }
+        }
         return names.isEmpty ? nil : names.joined(separator: "、")
     }
 
@@ -458,7 +516,7 @@ private struct TrackRow: View {
         .accessibilityValue(
             isEditing
                 ? Text(isSelected ? L("已选择") : L("未选择"))
-                : Text("")
+                : Text(subtitle ?? "")
         )
         .task(id: artworkKey) {
             await artworkLoader.load(

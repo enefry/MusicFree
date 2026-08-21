@@ -63,6 +63,21 @@ enum PersistenceKey {
         return "\(source.utf8.count):\(source)\(itemID.externalID)"
     }
 
+    static func asset(_ assetID: MediaAssetID) -> String {
+        item(assetID.mediaItemID)
+    }
+
+    static func collectionMember(_ value: LibraryCollectionMember) -> String {
+        composite(
+            namespace: "collection-member",
+            components: [value.collectionID.rawValue, value.releaseID.rawValue]
+        )
+    }
+
+    static func legacyCollectionMember(_ value: LibraryCollectionMember) -> String {
+        "\(value.collectionID.rawValue)|\(value.releaseID.rawValue)"
+    }
+
     static func playlist(_ playlistID: PlaylistID) -> String {
         playlistID.rawValue
     }
@@ -76,6 +91,21 @@ enum PersistenceKey {
     }
 
     static func entry(playlistID: PlaylistID, itemID: MediaItemID) -> String {
+        composite(
+            namespace: "playlist-entry",
+            components: [playlistID.rawValue, item(itemID)]
+        )
+    }
+
+    static func legacyEntry(playlistID: PlaylistID, itemID: MediaItemID) -> String {
         "\(playlistID.rawValue)|\(item(itemID))"
+    }
+
+    private static func composite(namespace: String, components: [String]) -> String {
+        let encodedComponents = components.map { component in
+            let encoded = Data(component.utf8).base64EncodedString()
+            return "\(encoded.utf8.count):\(encoded)"
+        }
+        return "v2:\(namespace):\(encodedComponents.joined())"
     }
 }

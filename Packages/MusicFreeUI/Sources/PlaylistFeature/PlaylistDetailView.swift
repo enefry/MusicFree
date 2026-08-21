@@ -10,6 +10,7 @@ struct PlaylistDetailView: View {
     let onRoute: PlaylistRouteAction?
 
     @State private var viewModel: PlaylistDetailViewModel
+    @State private var candidateCache: [MediaItemID: PlaylistTrackCandidate]
     @State private var isAddSheetPresented = false
     @State private var editMode: EditMode = .inactive
     @State private var loadTask: Task<Void, Never>?
@@ -31,6 +32,11 @@ struct PlaylistDetailView: View {
         self.retryTrackCandidates = retryTrackCandidates
         self.onPlaylistChanged = onPlaylistChanged
         self.onRoute = onRoute
+        _candidateCache = State(
+            initialValue: Dictionary(
+                uniqueKeysWithValues: trackCandidates.map { ($0.id, $0) }
+            )
+        )
         _viewModel = State(
             initialValue: viewModel
                 ?? PlaylistDetailViewModel(
@@ -71,12 +77,22 @@ struct PlaylistDetailView: View {
         .onChange(of: viewModel.playlist) { _, playlist in
             onPlaylistChanged(playlist)
         }
+        .onChange(of: trackCandidates) { _, candidates in
+            for candidate in candidates {
+                candidateCache[candidate.id] = candidate
+            }
+        }
         .sheet(isPresented: $isAddSheetPresented) {
             AddToPlaylistSheet(
                 candidates: trackCandidates,
                 existingIDs: Set(viewModel.itemIDs),
                 onSubmit: { itemIDs in
-                    await viewModel.addTracks(itemIDs)
+                    for itemID in itemIDs {
+                        if let candidate = trackCandidates.first(where: { $0.id == itemID }) {
+                            candidateCache[itemID] = candidate
+                        }
+                    }
+                    return await viewModel.addTracks(itemIDs)
                 }
             )
         }
@@ -489,11 +505,11 @@ struct PlaylistDetailView: View {
     }
 
     private func title(for trackID: MediaItemID) -> String {
-        trackCandidates.first { $0.id == trackID }?.title ?? trackID.externalID
+        candidateCache[trackID]?.title ?? trackID.externalID
     }
 
     private func subtitle(for trackID: MediaItemID) -> String? {
-        trackCandidates.first { $0.id == trackID }?.subtitle
+        candidateCache[trackID]?.subtitle
     }
 }
 

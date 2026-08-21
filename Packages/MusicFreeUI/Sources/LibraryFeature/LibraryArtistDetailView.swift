@@ -133,6 +133,7 @@ struct LibraryArtistDetailView: View {
                     )
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(Text(album.title))
                 .accessibilityIdentifier("library.artist.album.\(album.id.rawValue)")
                 .contextMenu {
                     let target = LibraryCollectionQueueTarget.album(album.id)

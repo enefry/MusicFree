@@ -26,9 +26,7 @@ struct RootScene: View {
     var body: some View {
         startupAwareContent
             .tint(MusicFreeColorTokens.accent)
-            .preferredColorScheme(
-                router.presented == .player ? .dark : appearance.colorScheme
-            )
+            .preferredColorScheme(appearance.colorScheme)
             .environment(\.locale, language.locale)
             .task {
                 await startServices()
@@ -117,18 +115,27 @@ struct RootScene: View {
                 compactContent(services: services)
             }
         }
-        .background {
-            if router.presented == .player {
-                playerFallbackBackground
-                    .ignoresSafeArea()
-            } else {
-                MusicFreeColorTokens.backgroundPrimary.ignoresSafeArea()
+        .background(MusicFreeColorTokens.backgroundPrimary.ignoresSafeArea())
+        .sheet(item: $router.presented) { presentation in
+            ZStack {
+                // The sheet's content must own the bottom safe area as well;
+                // otherwise the root scene can show through below the player.
+                Color.black.ignoresSafeArea()
+                presentedView(for: presentation)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-        }
-        .fullScreenCover(item: $router.presented) { presentation in
-            presentedView(for: presentation)
-                .presentationBackground(.clear)
-                .presentationDragIndicator(.hidden)
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+            // Let the system coordinate the sheet's dismiss gesture with
+            // the ScrollViews inside Now Playing.
+            .presentationContentInteraction(.scrolls)
+            .interactiveDismissDisabled(false)
+            // Keep uncovered system safe-area pixels opaque while the player
+            // artwork remains the visible content background.
+            .presentationCornerRadius(0)
+            .presentationBackground {
+                Color.black.ignoresSafeArea()
+            }
         }
     }
 
@@ -329,31 +336,23 @@ struct RootScene: View {
     private func presentedView(for presentation: AppRouter.Presentation) -> some View {
         switch presentation {
         case .player:
-            ZStack {
-                playerFallbackBackground
-                    .ignoresSafeArea()
-
-                Group {
-                    if let services = container.serviceContainer {
-                        PlayerScene(
-                            serving: services.playbackServing,
-                            audioServing: services.playbackAudioServing,
-                            artworkServing: services.artworkServing,
-                            library: services.libraryServing,
-                            lyricsServing: services.lyrics
-                        )
-                    } else {
-                        PlayerScene(serving: PlayerStore())
-                    }
-                }
-            }
-            .overlay(alignment: .top) {
-                PlayerDismissHandle {
-                    router.dismissPresentation()
+            Group {
+                if let services = container.serviceContainer {
+                    PlayerScene(
+                        serving: services.playbackServing,
+                        audioServing: services.playbackAudioServing,
+                        artworkServing: services.artworkServing,
+                        library: services.libraryServing,
+                        lyricsServing: services.lyrics
+                    )
+                } else {
+                    PlayerScene(serving: PlayerStore())
                 }
             }
             .toolbarBackground(.hidden, for: .navigationBar)
-            .preferredColorScheme(.dark)
+            // Keep the player controls dark without publishing a scene-level
+            // color-scheme preference that can survive sheet dismissal.
+            .colorScheme(.dark)
         }
     }
 
@@ -510,44 +509,6 @@ struct RootScene: View {
         }
     }
 
-    private var playerFallbackBackground: some View {
-        LinearGradient(
-            colors: [
-                Color(red: 0.48, green: 0.24, blue: 0.13),
-                Color(red: 0.18, green: 0.10, blue: 0.07)
-            ],
-            startPoint: .top,
-            endPoint: .bottom
-        )
-    }
-}
-
-private struct PlayerDismissHandle: View {
-    let dismiss: () -> Void
-
-    var body: some View {
-        Capsule(style: .continuous)
-            .fill(.white.opacity(0.42))
-            .frame(width: 60, height: 5)
-            .frame(maxWidth: .infinity)
-            .padding(.top, 8)
-            // Keep the drag hit area above the player header so header actions
-            // remain tappable while the handle stays easy to grab.
-            .frame(height: 36, alignment: .top)
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 12)
-                    .onEnded { value in
-                        guard value.translation.height > 80,
-                              abs(value.translation.height) > abs(value.translation.width)
-                        else {
-                            return
-                        }
-                        dismiss()
-                    }
-            )
-            .accessibilityHidden(true)
-    }
 }
 
 private struct MusicFreeLaunchAnimation: View {

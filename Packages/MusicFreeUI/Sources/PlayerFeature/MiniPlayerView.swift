@@ -232,7 +232,10 @@ public struct MiniPlayerView: View {
                     for: value.translation,
                     predictedEndTranslation: value.predictedEndTranslation,
                     canGoPrevious: viewModel.canGoPrevious,
-                    canGoNext: viewModel.canGoNext
+                    canGoNext: viewModel.canGoNext,
+                    activationDistance: MiniPlayerSwipePolicy.activationDistance(
+                        for: carouselWidth
+                    )
                 )
 
                 switch action {
@@ -380,7 +383,7 @@ enum MiniPlayerSwipeAction: Equatable {
 
 enum MiniPlayerSwipePolicy {
     static let minimumDragDistance: CGFloat = 12
-    static let activationDistance: CGFloat = 52
+    static let baseActivationDistance: CGFloat = 52
     static let maximumDisplayOffset: CGFloat = 72
     static let unavailableDirectionResistance: CGFloat = 0.28
 
@@ -396,16 +399,21 @@ enum MiniPlayerSwipePolicy {
         for translation: CGSize,
         predictedEndTranslation _: CGSize,
         canGoPrevious: Bool,
-        canGoNext: Bool
+        canGoNext: Bool,
+        activationDistance: CGFloat = baseActivationDistance
     ) -> MiniPlayerSwipeAction? {
         guard isHorizontal(translation),
-              abs(translation.width) >= activationDistance
+              abs(translation.width) >= max(1, activationDistance)
         else { return nil }
 
         if translation.width > 0 {
             return canGoPrevious ? .previous : nil
         }
         return canGoNext ? .next : nil
+    }
+
+    static func activationDistance(for carouselWidth: CGFloat) -> CGFloat {
+        max(baseActivationDistance, carouselWidth * 0.12)
     }
 
     static func displayOffset(

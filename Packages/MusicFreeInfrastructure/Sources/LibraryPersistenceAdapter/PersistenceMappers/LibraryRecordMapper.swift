@@ -224,7 +224,9 @@ enum LibraryRecordMapper {
             ),
             position: record.position
         )
-        guard PersistenceKey.entry(playlistID: value.playlistID, itemID: value.trackID) == record.storageKey else {
+        guard PersistenceKey.entry(playlistID: value.playlistID, itemID: value.trackID) == record.storageKey
+                || PersistenceKey.legacyEntry(playlistID: value.playlistID, itemID: value.trackID) == record.storageKey
+        else {
             throw LibraryPersistenceError.corruptedRecord
         }
         return value

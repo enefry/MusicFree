@@ -6,6 +6,19 @@ struct NativeLibraryCollectionItem {
     let id: String
     let accessibilityLabel: String
     let accessibilityHint: String
+    let accessibilityValue: String?
+
+    init(
+        id: String,
+        accessibilityLabel: String,
+        accessibilityHint: String,
+        accessibilityValue: String? = nil
+    ) {
+        self.id = id
+        self.accessibilityLabel = accessibilityLabel
+        self.accessibilityHint = accessibilityHint
+        self.accessibilityValue = accessibilityValue
+    }
 }
 
 struct NativeLibraryCollectionSection {
@@ -260,7 +273,7 @@ struct NativeLibraryCollectionView: UIViewRepresentable {
                 : item.accessibilityHint
             cell.accessibilityValue = isSelectionModeActive
                 ? (isSelected ? L("已选择") : L("未选择"))
-                : nil
+                : item.accessibilityValue
             var accessibilityTraits: UIAccessibilityTraits = [.button]
             if isSelectionModeActive, isSelected {
                 accessibilityTraits.insert(.selected)

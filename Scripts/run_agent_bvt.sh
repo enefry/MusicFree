@@ -4,30 +4,50 @@ set -euo pipefail
 
 script_dir="${0:A:h}"
 project_dir="${script_dir:h}"
-device_name="${BVT_DEVICE_NAME:-iPhone 17 Pro}"
-bundle_id="win.tools4me.musicplayer"
+requested_device_name="${BVT_DEVICE_NAME:-}"
+bundle_id="win.tools4me.music"
 timestamp="$(/bin/date +%Y%m%d-%H%M%S)"
 result_bundle_path="${BVT_RESULT_BUNDLE_PATH:-${TMPDIR:-/tmp}/MusicFreeAgentBVT-${timestamp}.xcresult}"
+derived_data_path="${project_dir}/.noindex/DerivedData"
 
 if ! command -v jq >/dev/null 2>&1; then
   print -u2 "BVT requires jq at /usr/bin/jq or on PATH."
   exit 2
 fi
 
-device_record="$(
-  xcrun simctl list devices available -j \
-    | jq -r --arg name "${device_name}" \
+available_devices="$(xcrun simctl list devices available -j)"
+
+if [[ -n "${requested_device_name}" ]]; then
+  device_record="$(
+    jq -r --arg name "${requested_device_name}" \
       '[.devices | to_entries[] | .key as $runtime | .value[]
         | select(.name == $name and .isAvailable == true)
-        | [.udid, $runtime, .state]][0] // [] | @tsv'
-)"
+        | [.name, .udid, $runtime, .state]][0] // [] | @tsv' \
+      <<< "${available_devices}"
+  )"
+else
+  device_record="$(
+    jq -r \
+      '[.devices | to_entries[] | .key as $runtime | .value[]
+        | select(
+            .isAvailable == true
+            and (.deviceTypeIdentifier | contains("iPhone"))
+          )
+        | [.name, .udid, $runtime, .state]][0] // [] | @tsv' \
+      <<< "${available_devices}"
+  )"
+fi
 
 if [[ -z "${device_record}" ]]; then
-  print -u2 "BVT device is unavailable: ${device_name}"
+  if [[ -n "${requested_device_name}" ]]; then
+    print -u2 "BVT device is unavailable: ${requested_device_name}"
+  else
+    print -u2 "BVT requires an available iPhone Simulator."
+  fi
   exit 2
 fi
 
-IFS=$'\t' read -r device_udid device_runtime device_state <<< "${device_record}"
+IFS=$'\t' read -r device_name device_udid device_runtime device_state <<< "${device_record}"
 
 if [[ -e "${result_bundle_path}" ]]; then
   print -u2 "BVT result bundle already exists: ${result_bundle_path}"
@@ -51,6 +71,7 @@ cd "${project_dir}"
 xcodebuild \
   -project MusicFree.xcodeproj \
   -scheme MusicFree \
+  -derivedDataPath "${derived_data_path}" \
   -destination "platform=iOS Simulator,id=${device_udid}" \
   -only-testing:MusicFreeUITests/MusicFreeBVTUITests/testAgentBVTCompletesCoreIPhoneFlowAndPersistsState \
   -resultBundlePath "${result_bundle_path}" \

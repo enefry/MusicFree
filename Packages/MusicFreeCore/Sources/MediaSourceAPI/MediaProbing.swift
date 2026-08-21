@@ -3,6 +3,7 @@ import Foundation
 /// One audio track reported by a probe. Unknown technical values remain nil.
 public struct ProbedAudioTrack: Codable, Equatable, Sendable {
   public let index: Int
+  public let stableID: String?
   public let codec: String?
   public let sampleRate: Double?
   public let channelCount: Int?
@@ -11,10 +12,12 @@ public struct ProbedAudioTrack: Codable, Equatable, Sendable {
   public let bitRate: Int?
   public let language: String?
   public let title: String?
+  public let isDefault: Bool
   public let isDecodable: Bool
 
   public init(
     index: Int,
+    stableID: String? = nil,
     codec: String? = nil,
     sampleRate: Double? = nil,
     channelCount: Int? = nil,
@@ -22,9 +25,11 @@ public struct ProbedAudioTrack: Codable, Equatable, Sendable {
     bitRate: Int? = nil,
     language: String? = nil,
     title: String? = nil,
+    isDefault: Bool = false,
     isDecodable: Bool = true
   ) {
     self.index = index
+    self.stableID = stableID
     self.codec = codec
     self.sampleRate = sampleRate
     self.channelCount = channelCount
@@ -32,6 +37,7 @@ public struct ProbedAudioTrack: Codable, Equatable, Sendable {
     self.bitRate = bitRate
     self.language = language
     self.title = title
+    self.isDefault = isDefault
     self.isDecodable = isDecodable
   }
 }
