@@ -575,6 +575,40 @@ func graphOnlySharedAssetReferenceCounting() async throws {
     await store.close()
 }
 
+@Test("Removing a non-local variant also removes its graph records")
+func removingNonLocalVariantPrunesItsMediaGraph() async throws {
+    let store = try LibraryPersistenceStore(configuration: .inMemory)
+    let library = SwiftDataLibraryRepository(store: store)
+    let sourceID = MediaSourceID("remote-test")
+    let itemID = MediaItemID(sourceID: sourceID, externalID: "remote-variant")
+    let assetID = MediaAssetID(sourceID: sourceID, externalID: "remote-asset")
+    let logicalID = LogicalTrackID("remote-logical-track")
+
+    try await library.apply(try LibraryTransaction(
+        idempotencyKey: "remove-remote-variant",
+        mutations: [
+            .upsert(.logicalTrack(LogicalTrack(id: logicalID, title: "Remote Track"))),
+            .upsert(.mediaAsset(MediaAsset(id: assetID, fileName: "remote.m4a"))),
+            .upsert(.trackVariant(TrackVariant(
+                id: itemID,
+                logicalTrackID: logicalID,
+                assetID: assetID
+            )))
+        ]
+    ))
+
+    #expect(try await library.trackVariant(id: itemID) != nil)
+    #expect(try await library.logicalTrack(id: logicalID) != nil)
+    #expect(try await library.mediaAsset(id: assetID) != nil)
+
+    try await library.remove([itemID])
+
+    #expect(try await library.trackVariant(id: itemID) == nil)
+    #expect(try await library.logicalTrack(id: logicalID) == nil)
+    #expect(try await library.mediaAsset(id: assetID) == nil)
+    await store.close()
+}
+
 @Test("replacing a graph-only variant prunes its old release member and group")
 func replacingGraphOnlyVariantPrunesOldCollectionReferences() async throws {
     let store = try LibraryPersistenceStore(configuration: .inMemory)

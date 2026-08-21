@@ -293,44 +293,56 @@ struct QueueView: View {
     return Array(orderedEntries[startIndex...])
   }
 
+  @ViewBuilder
   private func queueRow(
     _ entry: PlaybackQueueEntry,
     isCurrent: Bool
   ) -> some View {
-    let track = tracks[entry.itemID]
     let currentDisplay = entry.id == viewModel.snapshot.queue.currentEntryID
       ? viewModel.snapshot.currentItem
       : nil
 
-    return HStack(spacing: MusicFreeSpacingTokens.rowGap) {
-      ArtworkResourceView(
-        artworkID: track?.artworkID ?? currentDisplay?.artworkID,
-        sourceID: entry.itemID.sourceID,
-        serving: artworkServing,
-        accessibilityLabel: (track?.artworkID ?? currentDisplay?.artworkID) == nil
-          ? L("暂无封面")
-          : L("封面"),
-        placeholderTitle: track?.title ?? currentDisplay?.title
-      )
+    HStack(spacing: MusicFreeSpacingTokens.rowGap) {
+      if let itemID = entry.itemID {
+        let track = tracks[itemID]
+        ArtworkResourceView(
+          artworkID: track?.artworkID ?? currentDisplay?.artworkID,
+          sourceID: itemID.sourceID,
+          serving: artworkServing,
+          accessibilityLabel: (track?.artworkID ?? currentDisplay?.artworkID) == nil
+            ? L("暂无封面")
+            : L("封面"),
+          placeholderTitle: track?.title ?? currentDisplay?.title
+        )
 
-      VStack(alignment: .leading, spacing: MusicFreeSpacingTokens.xSmall) {
-        Text(track?.title ?? currentDisplay?.title ?? entry.itemID.externalID)
-          .font(MusicFreeTypographyTokens.rowTitle)
-          .foregroundStyle(MusicFreeColorTokens.foregroundPrimary)
-          .lineLimit(1)
-
-        if let subtitle = QueueArtistNameLoader.subtitle(
-          for: track,
-          artistNames: artistNames
-        ) {
-          Text(subtitle)
-            .font(MusicFreeTypographyTokens.rowSubtitle)
-            .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
+        VStack(alignment: .leading, spacing: MusicFreeSpacingTokens.xSmall) {
+          Text(track?.title ?? currentDisplay?.title ?? itemID.externalID)
+            .font(MusicFreeTypographyTokens.rowTitle)
+            .foregroundStyle(MusicFreeColorTokens.foregroundPrimary)
             .lineLimit(1)
+
+          if let subtitle = QueueArtistNameLoader.subtitle(
+            for: track,
+            artistNames: artistNames
+          ) {
+            Text(subtitle)
+              .font(MusicFreeTypographyTokens.rowSubtitle)
+              .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
+              .lineLimit(1)
+          }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .layoutPriority(1)
+      } else {
+        Image(systemName: "questionmark.circle")
+          .foregroundStyle(MusicFreeColorTokens.foregroundTertiary)
+          .accessibilityHidden(true)
+
+        Text(L("歌曲暂不可用"))
+          .font(MusicFreeTypographyTokens.rowTitle)
+          .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
+          .frame(maxWidth: .infinity, alignment: .leading)
       }
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .layoutPriority(1)
 
       if isCurrent {
         Image(systemName: "speaker.wave.2.fill")
@@ -477,8 +489,9 @@ struct QueueView: View {
     var loaded: [MediaItemID: Track] = [:]
     for entry in viewModel.snapshot.queue.entries {
       guard !Task.isCancelled else { return }
-      if let track = try? await library.track(id: entry.itemID) {
-        loaded[entry.itemID] = track
+      guard let itemID = entry.itemID else { continue }
+      if let track = try? await library.track(id: itemID) {
+        loaded[itemID] = track
       }
     }
     guard !Task.isCancelled else { return }
@@ -511,7 +524,7 @@ struct QueueView: View {
   }
 
   private func shouldReloadQueue(for change: LibraryChange) -> Bool {
-    let queueIDs = Set(viewModel.snapshot.queue.entries.map(\.itemID))
+    let queueIDs = Set(viewModel.snapshot.queue.entries.compactMap(\.itemID))
     guard !queueIDs.isEmpty else { return false }
     if !queueIDs.isDisjoint(with: change.affectedIDs.trackIDs) {
       return true

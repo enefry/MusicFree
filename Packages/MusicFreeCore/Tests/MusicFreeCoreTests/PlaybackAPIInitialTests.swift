@@ -69,7 +69,7 @@ func legacyPlaybackQueueEntryDecoding() throws {
   let entry = try JSONDecoder().decode(PlaybackQueueEntry.self, from: payload)
   let expectedItemID = MediaItemID(sourceID: .local, externalID: "legacy-queue-track")
 
-  #expect(entry.itemID == expectedItemID)
+  #expect(entry.itemID == Optional(expectedItemID))
   #expect(entry.preferredVariantID == expectedItemID)
   #expect(entry.logicalTrackID == LogicalTrackID(legacyVariantID: expectedItemID))
 
@@ -77,6 +77,27 @@ func legacyPlaybackQueueEntryDecoding() throws {
   let roundTrip = try JSONDecoder().decode(PlaybackQueueEntry.self, from: encoded)
   #expect(roundTrip == entry)
   #expect(!String(decoding: encoded, as: UTF8.self).contains("itemID"))
+}
+
+@Test("Logical-only queue entries remain safe to inspect")
+func logicalOnlyPlaybackQueueEntryIsSafeToInspect() throws {
+  let entry = PlaybackQueueEntry(
+    id: UUID(uuidString: "00000000-0000-0000-0000-000000000098")!,
+    logicalTrackID: LogicalTrackID("logical-only-queue-entry"),
+    preferredVariantID: nil
+  )
+  let snapshot = PlaybackQueueSnapshot(
+    entries: [entry],
+    currentEntryID: entry.id,
+    resumePosition: .seconds(4)
+  )
+
+  #expect(entry.itemID == nil)
+  #expect(snapshot.itemIDs.isEmpty)
+  #expect(snapshot.currentItemID == nil)
+
+  let encoded = try JSONEncoder().encode(snapshot)
+  #expect(try JSONDecoder().decode(PlaybackQueueSnapshot.self, from: encoded) == snapshot)
 }
 
 @Test("Queue edits are deterministic value transformations")

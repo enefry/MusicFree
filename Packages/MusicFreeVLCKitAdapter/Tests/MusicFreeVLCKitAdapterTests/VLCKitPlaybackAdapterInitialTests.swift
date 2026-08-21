@@ -6,6 +6,36 @@ import Testing
 @testable import VLCKitPlaybackAdapter
 
 struct VLCKitPlaybackAdapterInitialTests {
+  @Test("Parser waiter delivers a completion that happened before registration")
+  func parserWaiterCompletionBeforeRegistration() async {
+    let state = VLCMediaParseWaiterState()
+    _ = state.complete(.failure(VLCKitAdapterError.cancelled))
+
+    let task = Task {
+      do {
+        let value = try await withCheckedThrowingContinuation {
+          (continuation: CheckedContinuation<Int, Error>) in
+          switch state.register(continuation) {
+          case .start:
+            Issue.record("A completed waiter must not start parsing")
+          case .resume(let result):
+            continuation.resume(with: result)
+          }
+        }
+        return Result<Int, Error>.success(value)
+      } catch {
+        return Result<Int, Error>.failure(error)
+      }
+    }
+
+    let result = await task.value
+    guard case .failure(let error) = result else {
+      Issue.record("Expected the pending cancellation to be delivered")
+      return
+    }
+    #expect((error as? VLCKitAdapterError) == .cancelled)
+  }
+
   @Test("VLC player states map to stable playback phases")
   func stateMapping() {
     #expect(VLCPlaybackEventMapper.phase(for: VLCPlaybackStateCode.opening) == .preparing)
@@ -476,6 +506,7 @@ struct VLCKitPlaybackAdapterInitialTests {
       ),
       startAt: nil
     )
+    #expect(engine.state.duration == range.duration)
     try await engine.seek(to: .milliseconds(20))
     #expect(engine.state.position == .milliseconds(20))
     try engine.play()

@@ -46,12 +46,12 @@ public struct PlaybackQueueSummary: Codable, Equatable, Hashable, Sendable {
     }
 
     public var itemIDs: [MediaItemID] {
-        entries.map(\.itemID)
+        entries.compactMap(\.itemID)
     }
 
     public var currentItemID: MediaItemID? {
         guard let currentEntryID else { return nil }
-        return entries.first(where: { $0.id == currentEntryID })?.itemID
+        return entries.first(where: { $0.id == currentEntryID })?.itemID ?? nil
     }
 
     public var count: Int {

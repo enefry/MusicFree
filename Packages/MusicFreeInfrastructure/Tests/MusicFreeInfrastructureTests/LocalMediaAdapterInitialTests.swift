@@ -411,6 +411,43 @@ struct LocalMediaAdapterInitialTests {
     #expect(await repository.applyAttemptCount() == 1)
   }
 
+  @Test("Separate bundle imports merge album and disc track counts")
+  func separateBundleImportsPreserveTrackCounts() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let firstRoot = fixture.inputRoot.appendingPathComponent("Batch One", isDirectory: true)
+    let secondRoot = fixture.inputRoot.appendingPathComponent("Batch Two", isDirectory: true)
+    try FileManager.default.createDirectory(at: firstRoot, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: secondRoot, withIntermediateDirectories: true)
+    try Data("batch-one".utf8).write(to: firstRoot.appendingPathComponent("01.flac"))
+    try Data("batch-two".utf8).write(to: secondRoot.appendingPathComponent("02.flac"))
+
+    let repository = InMemoryLibraryRepository()
+    let importer = try fixture.makeImporter(repository: repository)
+    let firstEvents = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [firstRoot]
+    )))
+    #expect(try completedResult(in: firstEvents).imported == 1)
+    let secondEvents = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [secondRoot]
+    )))
+    #expect(try completedResult(in: secondEvents).imported == 1)
+
+    let transaction = try #require((await repository.appliedTransactions).last)
+    let album = try #require(transaction.mutations.compactMap { mutation -> Album? in
+      guard case .upsert(.album(let value)) = mutation else { return nil }
+      return value
+    }.first)
+    let disc = try #require(transaction.mutations.compactMap { mutation -> Disc? in
+      guard case .upsert(.disc(let value)) = mutation else { return nil }
+      return value
+    }.first)
+    #expect(album.trackCount == 2)
+    #expect(disc.trackCount == 2)
+  }
+
   @Test("Directory re-import repairs a missing managed asset")
   func directoryBundleRepairsMissingManagedAsset() async throws {
     let fixture = try Fixture()
@@ -427,6 +464,15 @@ struct LocalMediaAdapterInitialTests {
       urls: [albumRoot]
     )))
     #expect(try completedResult(in: firstEvents).imported == 2)
+    let initialTransaction = try #require((await repository.appliedTransactions).first)
+    #expect(initialTransaction.mutations.compactMap { mutation -> Int? in
+      guard case .upsert(.album(let value)) = mutation else { return nil }
+      return value.trackCount
+    }.first == 2)
+    #expect(initialTransaction.mutations.compactMap { mutation -> Int? in
+      guard case .upsert(.disc(let value)) = mutation else { return nil }
+      return value.trackCount
+    }.first == 2)
     let itemID = try #require(persistedItemID(in: firstEvents))
     let track = try #require(await repository.track(id: itemID))
     let preservedStatistics = PlaybackStatistics(
@@ -462,11 +508,54 @@ struct LocalMediaAdapterInitialTests {
     #expect(persistedItemIDs(in: recoveryEvents) == [itemID])
     #expect(await repository.applyAttemptCount() == 2)
     #expect(FileManager.default.fileExists(atPath: managedURL.path))
+    let recoveryTransaction = try #require((await repository.appliedTransactions).last)
+    #expect(recoveryTransaction.mutations.compactMap { mutation -> Int? in
+      guard case .upsert(.album(let value)) = mutation else { return nil }
+      return value.trackCount
+    }.first == 2)
+    #expect(recoveryTransaction.mutations.compactMap { mutation -> Int? in
+      guard case .upsert(.disc(let value)) = mutation else { return nil }
+      return value.trackCount
+    }.first == 2)
     let restored = try Data(contentsOf: managedURL)
     #expect(restored == Data((track.fileName == "01.flac" ? "repair-first" : "repair-second").utf8))
     let restoredTrack = try #require(await repository.track(id: itemID))
     #expect(restoredTrack.isFavorite)
     #expect(restoredTrack.statistics == preservedStatistics)
+  }
+
+  @Test("Single-file imports preserve album and disc counts")
+  func singleFileImportsPreserveTrackCounts() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let firstURL = fixture.inputRoot.appendingPathComponent("single-first.flac")
+    let secondURL = fixture.inputRoot.appendingPathComponent("single-second.flac")
+    try Data("single-first".utf8).write(to: firstURL)
+    try Data("single-second".utf8).write(to: secondURL)
+
+    let repository = MusicTestSupport.InMemoryLibraryRepository()
+    let importer = try fixture.makeImporter(repository: repository)
+    let firstEvents = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [firstURL]
+    )))
+    #expect(try completedResult(in: firstEvents).imported == 1)
+    let secondEvents = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [secondURL]
+    )))
+    #expect(try completedResult(in: secondEvents).imported == 1)
+
+    let tracks = try await repository.tracks(
+      matching: TrackQuery(sourceID: .local),
+      page: try LibraryPageRequest(limit: LibraryPageRequest.maximumLimit)
+    )
+    let albumID = try #require(tracks.elements.first?.albumID)
+    let album = try await repository.album(id: albumID)
+    #expect(album?.trackCount == 2)
+    let releaseID = AlbumReleaseID(legacyAlbumID: albumID)
+    let discs = try await repository.discs(for: releaseID)
+    #expect(discs.first?.trackCount == 2)
   }
 
   @Test("Restoring a local asset preserves playlist membership and logical playback state")

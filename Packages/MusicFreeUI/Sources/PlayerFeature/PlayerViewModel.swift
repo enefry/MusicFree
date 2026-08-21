@@ -342,7 +342,11 @@ final class PlayerViewModel: ObservableObject {
     // Selecting a queue row is a playback intent, not just a persisted cursor
     // edit. Going through `.play` keeps queue selection, resource resolution,
     // audio-session activation, and VLC preparation in one coordinator path.
-    send(.play(itemID: entry.itemID))
+    guard let itemID = entry.itemID else {
+      lastCommandError = .noCurrentItem
+      return
+    }
+    send(.play(itemID: itemID))
   }
 
   func removeQueueEntry(_ entryID: UUID) {

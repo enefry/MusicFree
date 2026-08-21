@@ -714,7 +714,7 @@ struct NowPlayingView: View {
     }
 
     private func continuePlayingContent(contentWidth: CGFloat) -> some View {
-        let entries = viewModel.upcomingQueueEntries()
+        let entries = viewModel.upcomingQueueEntries().filter { $0.itemID != nil }
 
         return VStack(alignment: .leading, spacing: 0) {
             Text(L("继续播放"))
@@ -738,20 +738,23 @@ struct NowPlayingView: View {
             } else {
                 VStack(spacing: 0) {
                     ForEach(entries) { entry in
-                        ContinuePlayingRow(
-                            entry: entry,
-                            track: queueTracks[entry.itemID],
-                            subtitle: QueueArtistNameLoader.subtitle(
-                                for: queueTracks[entry.itemID],
-                                artistNames: queueArtistNames
-                            ),
-                            artworkServing: artworkServing,
-                            onSelect: { viewModel.send(.play(itemID: entry.itemID)) },
-                            foregroundPrimary: playerForegroundPrimary,
-                            foregroundSecondary: playerForegroundSecondary,
-                            foregroundTertiary: playerForegroundTertiary,
-                            contentWidth: contentWidth
-                        )
+                        if let itemID = entry.itemID {
+                            ContinuePlayingRow(
+                                entry: entry,
+                                itemID: itemID,
+                                track: queueTracks[itemID],
+                                subtitle: QueueArtistNameLoader.subtitle(
+                                    for: queueTracks[itemID],
+                                    artistNames: queueArtistNames
+                                ),
+                                artworkServing: artworkServing,
+                                onSelect: { viewModel.send(.play(itemID: itemID)) },
+                                foregroundPrimary: playerForegroundPrimary,
+                                foregroundSecondary: playerForegroundSecondary,
+                                foregroundTertiary: playerForegroundTertiary,
+                                contentWidth: contentWidth
+                            )
+                        }
                     }
                 }
                 .padding(.top, 16)
@@ -1230,8 +1233,11 @@ struct NowPlayingView: View {
     }
 
     private var queueKey: String {
-        viewModel.snapshot.queue.entries.map {
-            "\($0.id.uuidString):\($0.itemID.sourceID.rawValue):\($0.itemID.externalID)"
+        viewModel.snapshot.queue.entries.map { entry in
+            guard let itemID = entry.itemID else {
+                return "\(entry.id.uuidString):logical:\(entry.logicalTrackID.rawValue)"
+            }
+            return "\(entry.id.uuidString):\(itemID.sourceID.rawValue):\(itemID.externalID)"
         }.joined(separator: ",")
     }
 
@@ -1244,14 +1250,18 @@ struct NowPlayingView: View {
         }
 
         let entries = viewModel.snapshot.queue.entries
-        let expectedQueueKey = entries.map {
-            "\($0.id.uuidString):\($0.itemID.sourceID.rawValue):\($0.itemID.externalID)"
+        let expectedQueueKey = entries.map { entry in
+            guard let itemID = entry.itemID else {
+                return "\(entry.id.uuidString):logical:\(entry.logicalTrackID.rawValue)"
+            }
+            return "\(entry.id.uuidString):\(itemID.sourceID.rawValue):\(itemID.externalID)"
         }.joined(separator: ",")
         var loaded: [MediaItemID: Track] = [:]
         for entry in entries {
             guard !Task.isCancelled else { return }
-            if let track = try? await library.track(id: entry.itemID) {
-                loaded[entry.itemID] = track
+            guard let itemID = entry.itemID else { continue }
+            if let track = try? await library.track(id: itemID) {
+                loaded[itemID] = track
             }
         }
         guard !Task.isCancelled else { return }
@@ -1305,7 +1315,7 @@ struct NowPlayingView: View {
     }
 
     private func shouldReloadQueue(for change: LibraryChange) -> Bool {
-        let queueIDs = Set(viewModel.snapshot.queue.entries.map(\.itemID))
+        let queueIDs = Set(viewModel.snapshot.queue.entries.compactMap(\.itemID))
         guard !queueIDs.isEmpty else { return false }
         if !queueIDs.isDisjoint(with: change.affectedIDs.trackIDs) {
             return true
@@ -1339,6 +1349,7 @@ struct NowPlayingView: View {
 
 private struct ContinuePlayingRow: View {
     let entry: PlaybackQueueEntry
+    let itemID: MediaItemID
     let track: Track?
     let subtitle: String?
     let artworkServing: (any ArtworkServing)?
@@ -1357,7 +1368,7 @@ private struct ContinuePlayingRow: View {
             HStack(spacing: NowPlayingLayoutMetrics.headerContentSpacing) {
                 ArtworkResourceView(
                     artworkID: track?.artworkID,
-                    sourceID: entry.itemID.sourceID,
+                    sourceID: itemID.sourceID,
                     serving: artworkServing,
                     accessibilityLabel: track?.artworkID == nil ? L("暂无封面") : L("封面"),
                     placeholderTitle: track?.title,

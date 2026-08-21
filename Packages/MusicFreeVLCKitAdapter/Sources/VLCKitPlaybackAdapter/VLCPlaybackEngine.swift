@@ -428,6 +428,11 @@ public final class VLCPlaybackEngine: PlaybackEngine, PlaybackAudioControlling {
         }
 
         if case .time(_, _, nil, let durationMilliseconds) = event {
+            // A segmented item owns a logical duration. The media callback
+            // reports the physical file length, which must not replace it.
+            guard currentItem?.selection.range == nil else {
+                return
+            }
             guard let duration = VLCPlaybackEventMapper.durationFromMilliseconds(durationMilliseconds),
                   let itemID = currentItem?.itemID
             else {

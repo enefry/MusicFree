@@ -1369,7 +1369,10 @@ public actor LibraryPersistenceStore {
 
             if let queueRecord = try fetch(PlaybackQueueRecord.self).first {
                 let snapshot = try PlaybackRecordMapper.queue(from: queueRecord)
-                let remainingEntries = snapshot.entries.filter { !existingItemIDs.contains($0.itemID) }
+                let remainingEntries = snapshot.entries.filter { entry in
+                    guard let entryItemID = entry.itemID else { return true }
+                    return !existingItemIDs.contains(entryItemID)
+                }
                 if remainingEntries.count != snapshot.entries.count {
                     let remainingIDs = Set(remainingEntries.map(\.id))
                     let currentEntryID = snapshot.currentEntryID.flatMap { remainingIDs.contains($0) ? $0 : nil }
@@ -3050,11 +3053,7 @@ public actor LibraryPersistenceStore {
 
     private func removeLocalMediaGraph(for itemIDs: Set<MediaItemID>) throws {
         let allVariants = try fetch(TrackVariantRecord.self)
-        let removedKeys = Set(
-            itemIDs
-                .filter { $0.sourceID == .local }
-                .map(PersistenceKey.item)
-        )
+        let removedKeys = Set(itemIDs.map(PersistenceKey.item))
         let removed = allVariants.filter { removedKeys.contains($0.storageKey) }
         let remaining = allVariants.filter { !removedKeys.contains($0.storageKey) }
         let retainedLogicalIDs = Set(remaining.map(\.logicalTrackID))

@@ -401,7 +401,10 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
             }
 
             var updatedQueue = durableQueue
-            for entry in durableQueue.entries where itemIDs.contains(entry.itemID) {
+            for entry in durableQueue.entries {
+                guard let entryItemID = entry.itemID,
+                      itemIDs.contains(entryItemID)
+                else { continue }
                 updatedQueue = try updatedQueue.applying(.remove(entry.id))
             }
             if updatedQueue != durableQueue, queueRepository != nil {
@@ -470,8 +473,12 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
             throw PlaybackError.noCurrentItem
         }
 
+        guard let currentEntryItemID = currentEntry.itemID else {
+            throw PlaybackError.resourceUnavailable
+        }
+
         if snapshotValue.phase == .preparing
-            || engine.state.itemID != currentEntry.itemID {
+            || engine.state.itemID != currentEntryItemID {
             try await prepareAndPlay(entry: currentEntry, intent: intent)
             return
         }
@@ -849,7 +856,7 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
     private func advanceFromUser(direction: Int) async throws {
         let selection: (entry: PlaybackQueueEntry, intent: UInt64)? = try await withQueueMutation {
             guard !queue.isEmpty else { return nil }
-            guard let entry = adjacentOrWrappedEntry(direction: direction) else { return nil }
+            guard let entry = adjacentOrWrappedPlayableEntry(direction: direction) else { return nil }
             let intent = beginPlaybackIntent()
             let selected = try queue.applying(.setCurrent(entry.id))
             try await persistQueue(selected, intent: intent)
@@ -863,7 +870,7 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
         let entry = try await withQueueMutation {
             try requireCurrentIntent(intent)
             guard !queue.isEmpty else { throw PlaybackError.noCurrentItem }
-            guard let entry = adjacentOrWrappedEntry(direction: direction) else {
+            guard let entry = adjacentOrWrappedPlayableEntry(direction: direction) else {
                 throw PlaybackError.noCurrentItem
             }
             let selected = try queue.applying(.setCurrent(entry.id))
@@ -882,6 +889,9 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
         guard let engine else {
             throw AppServiceError.missingDependency("playbackEngine")
         }
+        guard let itemID = entry.itemID else {
+            throw PlaybackError.resourceUnavailable
+        }
 
         let startAt = overrideStartAt ?? queue.resumePosition
         // Publish the new intent before asynchronous lookup so a failed
@@ -891,17 +901,17 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
         updateSnapshot(state: PlaybackState(
             phase: .preparing,
             generation: activeGeneration,
-            itemID: entry.itemID,
+            itemID: itemID,
             position: startAt ?? .zero
         ))
         await publishSnapshot()
         try requireCurrentIntent(intent)
-        if engine.state.itemID != nil, engine.state.itemID != entry.itemID {
+        if engine.state.itemID != nil, engine.state.itemID != itemID {
             engine.stop()
         }
 
         guard let track = try await valueForCurrentIntent(intent, operation: {
-            try await self.loadTrack(entry.itemID)
+            try await self.loadTrack(itemID)
         }) else {
             throw PlaybackError.resourceUnavailable
         }
@@ -913,7 +923,7 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
         updateSnapshot(state: PlaybackState(
             phase: .preparing,
             generation: activeGeneration,
-            itemID: entry.itemID,
+            itemID: itemID,
             position: startAt ?? .zero,
             duration: track.duration
         ))
@@ -941,7 +951,7 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
         try await prepareEngine(
             engine,
             item: PlaybackItem(
-                itemID: entry.itemID,
+                itemID: itemID,
                 resource: resource,
                 selection: track.playbackSelection,
                 displaySnapshot: display
@@ -969,7 +979,7 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
                 await self.clock.now()
             }
             try? await historyRepository.recordPlaybackStarted(
-                PlaybackStart(sessionID: sessionID, itemID: entry.itemID, startedAt: startedAt)
+                PlaybackStart(sessionID: sessionID, itemID: itemID, startedAt: startedAt)
             )
             try requireCurrentIntent(intent)
         }
@@ -1047,6 +1057,15 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
             }
         case .off, .all:
             do {
+                // Natural completion leaves the final position persisted by
+                // position events. Clear it before advancing so a queue-end
+                // stop, or a single-item repeat-all cycle, cannot resume from
+                // EOF on the next manual play.
+                try await withQueueMutation {
+                    guard queue.resumePosition != nil else { return }
+                    let updated = try queue.applying(.setResumePosition(nil))
+                    try await persistQueue(updated, intent: intent)
+                }
                 try await advance(direction: 1, intent: intent)
             } catch {
                 guard playbackIntentVersion == intent else { return }
@@ -1311,19 +1330,29 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
         guard let current = queue.currentEntry,
               let index = ordered.firstIndex(of: current)
         else {
-            return direction > 0 ? ordered.first : ordered.last
+            return direction > 0
+                ? ordered.first(where: { $0.itemID != nil })
+                : ordered.last(where: { $0.itemID != nil })
         }
-        let nextIndex = index + direction
-        guard ordered.indices.contains(nextIndex) else { return nil }
-        return ordered[nextIndex]
+        var nextIndex = index + direction
+        while ordered.indices.contains(nextIndex) {
+            if ordered[nextIndex].itemID != nil {
+                return ordered[nextIndex]
+            }
+            nextIndex += direction
+        }
+        return nil
     }
 
-    private func adjacentOrWrappedEntry(direction: Int) -> PlaybackQueueEntry? {
+    private func adjacentOrWrappedPlayableEntry(direction: Int) -> PlaybackQueueEntry? {
         if let adjacent = adjacentEntry(direction: direction) {
             return adjacent
         }
         guard queue.repeatMode == .all else { return nil }
-        return direction > 0 ? orderedEntries().first : orderedEntries().last
+        let ordered = orderedEntries()
+        return direction > 0
+            ? ordered.first(where: { $0.itemID != nil })
+            : ordered.last(where: { $0.itemID != nil })
     }
 
     private func orderedEntries() -> [PlaybackQueueEntry] {

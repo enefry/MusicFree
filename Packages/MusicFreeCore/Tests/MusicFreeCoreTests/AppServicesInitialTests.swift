@@ -1441,6 +1441,60 @@ func appServicesNaturalCompletionStartsNextTrackFromTheBeginning() async throws 
 }
 
 @MainActor
+@Test("Playback completion skips queue entries without an available variant")
+func appServicesCompletionSkipsUnavailableQueueEntries() async throws {
+    let firstID = MediaItemID(sourceID: .local, externalID: "skip-first")
+    let unavailableEntry = PlaybackQueueEntry(
+        id: UUID(uuidString: "00000000-0000-0000-0000-000000000471")!,
+        logicalTrackID: LogicalTrackID("skip-unavailable"),
+        preferredVariantID: nil
+    )
+    let secondID = MediaItemID(sourceID: .local, externalID: "skip-second")
+    let entries = [
+        PlaybackQueueEntry(
+            id: UUID(uuidString: "00000000-0000-0000-0000-000000000472")!,
+            itemID: firstID
+        ),
+        unavailableEntry,
+        PlaybackQueueEntry(
+            id: UUID(uuidString: "00000000-0000-0000-0000-000000000473")!,
+            itemID: secondID
+        )
+    ]
+    let queue = TestQueueRepository(value: PlaybackQueueSnapshot(
+        entries: entries,
+        currentEntryID: entries[0].id
+    ))
+    let engine = FakePlaybackEngine(capabilities: [.seeking])
+    let container = try AppServiceContainer(
+        dependencies: AppDependencies(
+            mediaSources: [TestSource()],
+            libraryRepository: TestLibraryRepository(tracks: [
+                Track(id: firstID, title: "Skip First", duration: .seconds(20)),
+                Track(id: secondID, title: "Skip Second", duration: .seconds(5))
+            ]),
+            playbackQueueRepository: queue,
+            playbackEngine: engine
+        )
+    )
+    _ = try await container.start()
+
+    try await container.playback.execute(.resume)
+    let generation = engine.state.generation
+    engine.emit(.ended(
+        generation: generation,
+        itemID: firstID,
+        reason: .ended
+    ))
+
+    await waitForPreparedItemCount(2, on: engine)
+
+    #expect(engine.prepareCalls.map(\.item.itemID) == [firstID, secondID])
+    #expect(container.playback.snapshot.currentItemID == secondID)
+    #expect(container.playback.snapshot.phase == .playing)
+}
+
+@MainActor
 @Test("Single-track repeat restarts from the beginning after natural completion")
 func appServicesSingleRepeatRestartsFromTheBeginning() async throws {
     let itemID = MediaItemID(sourceID: .local, externalID: "repeat-one")
@@ -1491,6 +1545,9 @@ func appServicesSingleRepeatRestartsFromTheBeginning() async throws {
     ))
 
     await waitForPreparedItemCount(2, on: engine)
+    for _ in 0..<2_000 where container.playback.snapshot.phase != .playing {
+        try? await Task.sleep(for: .milliseconds(1))
+    }
 
     #expect(engine.prepareCalls.count >= 2)
     guard engine.prepareCalls.count >= 2 else { return }
@@ -1498,6 +1555,60 @@ func appServicesSingleRepeatRestartsFromTheBeginning() async throws {
     #expect(container.playback.snapshot.currentItemID == itemID)
     #expect(container.playback.snapshot.phase == .playing)
     #expect(container.playback.snapshot.queue.resumePosition == nil)
+}
+
+@MainActor
+@Test("Playback completion at queue end clears the persisted EOF position")
+func appServicesQueueEndClearsResumePositionBeforeManualResume() async throws {
+    let itemID = MediaItemID(sourceID: .local, externalID: "queue-end")
+    let entry = PlaybackQueueEntry(
+        id: UUID(uuidString: "00000000-0000-0000-0000-000000000480")!,
+        itemID: itemID
+    )
+    let queue = TestQueueRepository(
+        value: PlaybackQueueSnapshot(
+            entries: [entry],
+            currentEntryID: entry.id,
+            resumePosition: .seconds(20)
+        )
+    )
+    let engine = FakePlaybackEngine(capabilities: [.seeking])
+    let container = try AppServiceContainer(
+        dependencies: AppDependencies(
+            mediaSources: [TestSource()],
+            libraryRepository: TestLibraryRepository(
+                tracks: [Track(id: itemID, title: "Queue End", duration: .seconds(20))]
+            ),
+            playbackQueueRepository: queue,
+            playbackEngine: engine
+        )
+    )
+    _ = try await container.start()
+
+    try await container.playback.execute(.resume)
+    #expect(engine.prepareCalls[0].startAt == .seconds(20))
+
+    let generation = engine.state.generation
+    engine.emit(.positionChanged(
+        generation: generation,
+        itemID: itemID,
+        position: .seconds(20),
+        duration: .seconds(20)
+    ))
+    engine.emit(.ended(
+        generation: generation,
+        itemID: itemID,
+        reason: .ended
+    ))
+
+    for _ in 0..<2_000 where container.playback.snapshot.phase != .stopped {
+        try? await Task.sleep(for: .milliseconds(1))
+    }
+    #expect(container.playback.snapshot.queue.resumePosition == nil)
+
+    try await container.playback.execute(.resume)
+    #expect(engine.prepareCalls.count == 2)
+    #expect(engine.prepareCalls[1].startAt == nil)
 }
 
 @MainActor
@@ -1659,6 +1770,33 @@ func playbackStartupCanonicalizesLegacyQueueIdentity() async throws {
     #expect(container.playback.snapshot.currentItemID == availableID)
     #expect(container.playback.snapshot.position == .seconds(8))
 
+    await container.stop()
+}
+
+@MainActor
+@Test("Playback startup tolerates a logical-only restored queue entry")
+func playbackStartupToleratesLogicalOnlyQueueEntry() async throws {
+    let entry = PlaybackQueueEntry(
+        id: UUID(uuidString: "00000000-0000-0000-0000-000000000603")!,
+        logicalTrackID: LogicalTrackID("logical-only-restored-entry"),
+        preferredVariantID: nil
+    )
+    let queue = TestQueueRepository(value: PlaybackQueueSnapshot(
+        entries: [entry],
+        currentEntryID: entry.id,
+        resumePosition: .seconds(8)
+    ))
+    let container = try AppServiceContainer(
+        dependencies: AppDependencies(
+            libraryRepository: TestLibraryRepository(tracks: []),
+            playbackQueueRepository: queue
+        )
+    )
+
+    _ = try await container.start()
+
+    #expect(container.playback.snapshot.currentItemID == nil)
+    #expect(container.playback.snapshot.queue.entries == [entry])
     await container.stop()
 }
 
@@ -2014,7 +2152,7 @@ func appServicesEnqueueNextUsesCurrentPosition() async throws {
     let persisted = try await queue.load()
     #expect(persisted.itemIDs == [firstID, currentID] + nextIDs + [lastID])
     let orderedItemIDs = persisted.shuffleOrder.compactMap { entryID in
-        persisted.entries.first { $0.id == entryID }?.itemID
+        persisted.entries.first { $0.id == entryID }?.itemID ?? nil
     }
     #expect(orderedItemIDs == [lastID, currentID] + nextIDs + [firstID])
 }

@@ -833,7 +833,10 @@ internal actor LibraryCoordinator: LibraryServing {
         _ snapshot: PlaybackQueueSnapshot,
         removing itemIDs: Set<MediaItemID>
     ) -> PlaybackQueueSnapshot {
-        let entries = snapshot.entries.filter { !itemIDs.contains($0.itemID) }
+        let entries = snapshot.entries.filter { entry in
+            guard let entryItemID = entry.itemID else { return true }
+            return !itemIDs.contains(entryItemID)
+        }
         let entryIDs = Set(entries.map(\.id))
         let currentEntryID = snapshot.currentEntryID.flatMap { entryIDs.contains($0) ? $0 : nil }
         let shuffleOrder = snapshot.shuffleOrder.filter(entryIDs.contains)

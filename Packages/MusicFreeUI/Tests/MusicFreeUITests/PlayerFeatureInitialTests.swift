@@ -422,8 +422,8 @@ func miniPlayerAdjacentQueueEntriesFollowPlaybackOrder() {
     autoStart: false
   )
 
-  #expect(viewModel.adjacentQueueEntry(direction: -1)?.itemID.externalID == "queue-0")
-  #expect(viewModel.adjacentQueueEntry(direction: 1)?.itemID.externalID == "queue-2")
+  #expect(viewModel.adjacentQueueEntry(direction: -1)?.itemID?.externalID == "queue-0")
+  #expect(viewModel.adjacentQueueEntry(direction: 1)?.itemID?.externalID == "queue-2")
 
   let repeatingFirst = PlayerViewModel(
     serving: RecordingPlaybackServing(
@@ -431,7 +431,7 @@ func miniPlayerAdjacentQueueEntriesFollowPlaybackOrder() {
     ),
     autoStart: false
   )
-  #expect(repeatingFirst.adjacentQueueEntry(direction: -1)?.itemID.externalID == "queue-3")
+  #expect(repeatingFirst.adjacentQueueEntry(direction: -1)?.itemID?.externalID == "queue-3")
 }
 
 @Test("Now Playing pins its queue only above the regular-height boundary")
@@ -635,7 +635,7 @@ func playerFeatureUsesShuffledSuccessors() {
   #expect(viewModel.canGoPrevious)
   #expect(viewModel.canGoNext)
   #expect(
-    viewModel.upcomingQueueEntries().map(\.itemID.externalID)
+    viewModel.upcomingQueueEntries().compactMap(\.itemID).map(\.externalID)
       == ["queue-8", "queue-0", "queue-2", "queue-3", "queue-5", "queue-6", "queue-7"]
   )
 }
@@ -1286,14 +1286,15 @@ private func makeQueuePlayerSnapshot(
   }
   let orderedIDs = shuffleOrder.map { entries[$0].id }
   let currentEntry = entries[currentIndex]
+  let currentItemID = currentEntry.itemID!
   return PlaybackSessionSnapshot(
     state: PlaybackState(
       phase: .paused,
       generation: PlaybackGeneration(1),
-      itemID: currentEntry.itemID,
+      itemID: currentItemID,
       duration: .seconds(120)
     ),
-    currentItem: PlaybackDisplaySnapshot(title: currentEntry.itemID.externalID),
+    currentItem: PlaybackDisplaySnapshot(title: currentItemID.externalID),
     queue: PlaybackQueueSummary(
       entries: entries,
       currentEntryID: currentEntry.id,

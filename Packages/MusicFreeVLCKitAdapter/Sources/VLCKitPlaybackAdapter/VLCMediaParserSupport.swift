@@ -1,5 +1,106 @@
 import Foundation
 
+internal enum VLCMediaParseWaiterRegistration {
+  case start
+  case resume(Result<Int, Error>)
+}
+
+/// Serializes the continuation, parser-start, cancellation, and timeout races
+/// that can happen before VLCKit's delegate callback is delivered.
+internal final class VLCMediaParseWaiterState: @unchecked Sendable {
+  typealias Completion = (
+    continuation: CheckedContinuation<Int, Error>?,
+    timeoutTask: Task<Void, Never>?
+  )
+
+  private let lock = NSLock()
+  private var continuation: CheckedContinuation<Int, Error>?
+  private var pendingResult: Result<Int, Error>?
+  private var timeoutTask: Task<Void, Never>?
+  private var didFinish = false
+  private var parserStartInProgress = false
+  private var parserStarted = false
+  private var cancellationRequested = false
+
+  func register(
+    _ continuation: CheckedContinuation<Int, Error>
+  ) -> VLCMediaParseWaiterRegistration {
+    lock.lock()
+    if didFinish {
+      let result = pendingResult ?? .failure(VLCKitAdapterError.cancelled)
+      pendingResult = nil
+      lock.unlock()
+      return .resume(result)
+    }
+    self.continuation = continuation
+    lock.unlock()
+    return .start
+  }
+
+  func complete(_ result: Result<Int, Error>) -> Completion? {
+    lock.lock()
+    guard !didFinish else {
+      lock.unlock()
+      return nil
+    }
+    didFinish = true
+    let continuation = self.continuation
+    self.continuation = nil
+    if continuation == nil {
+      pendingResult = result
+    }
+    let timeoutTask = self.timeoutTask
+    self.timeoutTask = nil
+    lock.unlock()
+    return (continuation, timeoutTask)
+  }
+
+  func beginParserStart() -> Bool {
+    lock.lock()
+    guard !didFinish else {
+      lock.unlock()
+      return false
+    }
+    parserStartInProgress = true
+    lock.unlock()
+    return true
+  }
+
+  func endParserStart(succeeded: Bool) -> Bool {
+    lock.lock()
+    parserStartInProgress = false
+    if succeeded {
+      parserStarted = true
+    }
+    let shouldCancel = succeeded && cancellationRequested
+    lock.unlock()
+    return shouldCancel
+  }
+
+  func requestCancellation() -> Bool {
+    lock.lock()
+    guard !didFinish else {
+      lock.unlock()
+      return false
+    }
+    cancellationRequested = true
+    let shouldCancelParser = parserStarted && !parserStartInProgress
+    lock.unlock()
+    return shouldCancelParser
+  }
+
+  func installTimeoutTask(_ task: Task<Void, Never>) -> Bool {
+    lock.lock()
+    guard !didFinish else {
+      lock.unlock()
+      return false
+    }
+    timeoutTask = task
+    lock.unlock()
+    return true
+  }
+}
+
 #if canImport(VLCKit)
 import VLCKit
 
@@ -17,8 +118,8 @@ internal final class VLCMediaParserBridge: NSObject, VLCMediaParserDelegate {
 }
 
 /// Keeps the parser, media, and weak Objective-C delegate alive for one
-/// cancellable parse transaction. A lock protects the single-resume gate
-/// shared by the delegate, timeout task, and cancellation handler.
+/// cancellable parse transaction. The state object protects the single-resume
+/// gate shared by the delegate, timeout task, and cancellation handler.
 internal final class VLCMediaParseWaiter: @unchecked Sendable {
   private let parser: VLCMediaParser
   private let media: VLCMedia
@@ -26,10 +127,7 @@ internal final class VLCMediaParseWaiter: @unchecked Sendable {
     self?.finish(status: status)
   }
   private let timeoutMilliseconds: UInt64
-  private let lock = NSLock()
-  private var continuation: CheckedContinuation<Int, Error>?
-  private var timeoutTask: Task<Void, Never>?
-  private var didFinish = false
+  private let state = VLCMediaParseWaiterState()
 
   init(parser: VLCMediaParser, media: VLCMedia, timeoutMilliseconds: UInt64) {
     self.parser = parser
@@ -40,25 +138,11 @@ internal final class VLCMediaParseWaiter: @unchecked Sendable {
   func wait() async throws -> Int {
     try await withTaskCancellationHandler(operation: {
       try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Int, Error>) in
-        lock.lock()
-        self.continuation = continuation
-        lock.unlock()
-
-        parser.delegate = bridge
-        let result = parser.queue(media, options: VLCMediaParsingOptions(rawValue: 1))
-        guard result == 0 else {
-          finish(error: VLCKitAdapterError.parserFailed)
-          return
-        }
-
-        let timeoutMilliseconds = self.timeoutMilliseconds
-        timeoutTask = Task { [weak self] in
-          do {
-            try await Task.sleep(nanoseconds: timeoutMilliseconds * 1_000_000)
-            self?.finish(error: VLCKitAdapterError.parserTimedOut)
-          } catch {
-            // Cancellation is the normal cleanup path after a parse finishes.
-          }
+        switch state.register(continuation) {
+        case .resume(let result):
+          continuation.resume(with: result)
+        case .start:
+          startParsing()
         }
       }
     }, onCancel: { [weak self] in
@@ -66,9 +150,41 @@ internal final class VLCMediaParseWaiter: @unchecked Sendable {
     })
   }
 
+  private func startParsing() {
+    guard state.beginParserStart() else { return }
+
+    parser.delegate = bridge
+    let result = parser.queue(media, options: VLCMediaParsingOptions(rawValue: 1))
+    let shouldCancel = state.endParserStart(succeeded: result == 0)
+    guard result == 0 else {
+      finish(error: VLCKitAdapterError.parserFailed)
+      return
+    }
+
+    if shouldCancel {
+      parser.cancelParsing(for: media)
+    }
+
+    let timeoutMilliseconds = self.timeoutMilliseconds
+    let timeoutTask = Task { [weak self] in
+      do {
+        try await Task.sleep(nanoseconds: timeoutMilliseconds * 1_000_000)
+        self?.finish(error: VLCKitAdapterError.parserTimedOut)
+      } catch {
+        // Cancellation is the normal cleanup path after a parse finishes.
+      }
+    }
+    if !state.installTimeoutTask(timeoutTask) {
+      timeoutTask.cancel()
+    }
+  }
+
   private func cancel() {
-    parser.cancelParsing(for: media)
+    let shouldCancelParser = state.requestCancellation()
     finish(error: VLCKitAdapterError.cancelled)
+    if shouldCancelParser {
+      parser.cancelParsing(for: media)
+    }
   }
 
   private func finish(status: Int) {
@@ -93,21 +209,11 @@ internal final class VLCMediaParseWaiter: @unchecked Sendable {
   }
 
   private func complete(_ result: Result<Int, Error>) {
-    lock.lock()
-    guard !didFinish else {
-      lock.unlock()
-      return
-    }
-    didFinish = true
-    let continuation = self.continuation
-    self.continuation = nil
-    let timeoutTask = self.timeoutTask
-    self.timeoutTask = nil
-    lock.unlock()
+    guard let completion = state.complete(result) else { return }
 
     parser.delegate = nil
-    timeoutTask?.cancel()
-    continuation?.resume(with: result)
+    completion.timeoutTask?.cancel()
+    completion.continuation?.resume(with: result)
   }
 }
 #endif

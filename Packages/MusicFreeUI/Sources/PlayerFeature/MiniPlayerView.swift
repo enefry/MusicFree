@@ -283,7 +283,12 @@ public struct MiniPlayerView: View {
 
     private var queuePreviewKey: String {
         let entries = viewModel.snapshot.queue.entries
-            .map { "\($0.id.uuidString):\($0.itemID.sourceID.rawValue):\($0.itemID.externalID)" }
+            .map { entry in
+                guard let itemID = entry.itemID else {
+                    return "\(entry.id.uuidString):logical:\(entry.logicalTrackID.rawValue)"
+                }
+                return "\(entry.id.uuidString):\(itemID.sourceID.rawValue):\(itemID.externalID)"
+            }
             .joined(separator: ",")
         return "\(viewModel.snapshot.currentItemID?.description ?? "none")|\(viewModel.snapshot.queue.currentEntryID?.uuidString ?? "none")|\(viewModel.snapshot.queue.repeatMode.rawValue)|\(entries)"
     }
@@ -318,10 +323,11 @@ public struct MiniPlayerView: View {
         currentEntryID: UUID
     ) -> MiniPlayerCarouselItem? {
         guard let entry, entry.id != currentEntryID else { return nil }
+        guard let itemID = entry.itemID else { return nil }
         guard let display = previewDisplays[entry.id] else { return nil }
         return MiniPlayerCarouselItem(
             entryID: entry.id,
-            itemID: entry.itemID,
+            itemID: itemID,
             display: display,
             isCurrent: false
         )
@@ -341,7 +347,8 @@ public struct MiniPlayerView: View {
         var loadedTracks: [UUID: Track] = [:]
         for entry in entries {
             guard !Task.isCancelled else { return }
-            if let track = try? await library.track(id: entry.itemID) {
+            guard let itemID = entry.itemID else { continue }
+            if let track = try? await library.track(id: itemID) {
                 loadedTracks[entry.id] = track
             }
         }

@@ -363,6 +363,14 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
     let statistics: PlaybackStatistics
   }
 
+  private struct ExistingTrackCounts: Sendable {
+    let albumTrackIDs: [AlbumID: Set<MediaItemID>]
+    let discTrackIDs: [DiscID: Set<MediaItemID>]
+    let albumFallbackCounts: [AlbumID: Int]
+    let discFallbackCounts: [DiscID: Int]
+    let existingDiscs: [DiscID: Disc]
+  }
+
   private let configuration: LocalMediaConfiguration
   private let coordinator: ImportCoordinator
   private let store: ManagedMediaStore
@@ -898,11 +906,18 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
       ) else {
         throw LocalMediaError.persistenceFailed
       }
+      let countedTransaction = try await transactionWithReconciledTrackCounts(
+        baseTransaction,
+        incomingTracks: plan.normalizedTracks
+          .filter { includedItemIDs.contains($0.itemID) }
+          .map(\.track),
+        knownExistingItemIDs: existingItemIDs
+      )
       let existingLogicalTracks = try await existingLogicalTracks(
         for: plan.normalizedTracks.map(\.track.logicalTrackID)
       )
       let transaction = try preservingUserPlaybackState(
-        in: baseTransaction,
+        in: countedTransaction,
         existingTracks: existingTracksByItemID,
         existingLogicalTracks: existingLogicalTracks
       )
@@ -1096,6 +1111,11 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
         existingTracks: existingTrack.map { [itemID: $0] } ?? [:],
         existingLogicalTracks: existingLogicalTracks
       )
+      let countedTransaction = try await transactionWithReconciledTrackCounts(
+        transaction,
+        incomingTracks: [normalized.track],
+        knownExistingItemIDs: existingAssetID == nil ? [] : [itemID]
+      )
 
       if existingManagedURL == nil {
         managedLocation = try await store.moveToManaged(
@@ -1111,7 +1131,7 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
       }
 
       do {
-        try await libraryRepository.apply(transaction)
+        try await libraryRepository.apply(countedTransaction)
       } catch is CancellationError {
         throw CancellationError()
       } catch {
@@ -1160,6 +1180,165 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
       }
     }
     return result
+  }
+
+  private func transactionWithReconciledTrackCounts(
+    _ transaction: LibraryTransaction,
+    incomingTracks: [Track],
+    knownExistingItemIDs: Set<MediaItemID>
+  ) async throws -> LibraryTransaction {
+    let counts = try await existingTrackCounts(
+      for: incomingTracks
+    )
+    var discIDs = Set<DiscID>()
+    var mutations = transaction.mutations.map { mutation -> LibraryMutation in
+      switch mutation {
+      case .upsert(.album(let value)):
+        let incoming = incomingTracks.filter { $0.albumID == value.id }.map(\.id)
+        guard !incoming.isEmpty else { return mutation }
+        let count = mergedTrackCount(
+          existing: counts.albumTrackIDs[value.id] ?? [],
+          incoming: incoming,
+          fallback: counts.albumFallbackCounts[value.id],
+          knownExistingItemIDs: knownExistingItemIDs
+        )
+        return .upsert(.album(Album(
+          id: value.id,
+          title: value.title,
+          sortTitle: value.sortTitle,
+          artistIDs: value.artistIDs,
+          artwork: value.artwork,
+          releaseYear: value.releaseYear,
+          trackCount: count,
+          albumType: value.albumType
+        )))
+      case .upsert(.disc(let value)):
+        discIDs.insert(value.id)
+        let incoming = incomingTracks
+          .filter { $0.discProjection?.id == value.id }
+          .map(\.id)
+        guard !incoming.isEmpty else { return mutation }
+        let count = mergedTrackCount(
+          existing: counts.discTrackIDs[value.id] ?? [],
+          incoming: incoming,
+          fallback: counts.discFallbackCounts[value.id],
+          knownExistingItemIDs: knownExistingItemIDs
+        )
+        return .upsert(.disc(Disc(
+          id: value.id,
+          releaseID: value.releaseID,
+          number: value.number,
+          title: value.title ?? counts.existingDiscs[value.id]?.title,
+          trackCount: count
+        )))
+      default:
+        return mutation
+      }
+    }
+
+    for track in incomingTracks {
+      guard let disc = track.discProjection, discIDs.insert(disc.id).inserted else {
+        continue
+      }
+      let incoming = incomingTracks
+        .filter { $0.discProjection?.id == disc.id }
+        .map(\.id)
+      let count = mergedTrackCount(
+        existing: counts.discTrackIDs[disc.id] ?? [],
+        incoming: incoming,
+        fallback: counts.discFallbackCounts[disc.id],
+        knownExistingItemIDs: knownExistingItemIDs
+      )
+      mutations.append(.upsert(.disc(Disc(
+        id: disc.id,
+        releaseID: disc.releaseID,
+        number: disc.number,
+        title: counts.existingDiscs[disc.id]?.title,
+        trackCount: count
+      ))))
+    }
+
+    return try LibraryTransaction(
+      idempotencyKey: transaction.idempotencyKey,
+      expectedRevision: transaction.expectedRevision,
+      mutations: mutations
+    )
+  }
+
+  private func existingTrackCounts(
+    for incomingTracks: [Track]
+  ) async throws -> ExistingTrackCounts {
+    do {
+      let albumIDs = Set(incomingTracks.compactMap(\.albumID))
+      var albumTrackIDs: [AlbumID: Set<MediaItemID>] = [:]
+      var discTrackIDs: [DiscID: Set<MediaItemID>] = [:]
+      var albumFallbackCounts: [AlbumID: Int] = [:]
+      var discFallbackCounts: [DiscID: Int] = [:]
+      var existingDiscs: [DiscID: Disc] = [:]
+
+      for albumID in albumIDs.sorted() {
+        if let count = try await libraryRepository.album(id: albumID)?.trackCount {
+          albumFallbackCounts[albumID] = count
+        }
+        let releaseID = AlbumReleaseID(legacyAlbumID: albumID)
+        for disc in try await libraryRepository.discs(for: releaseID) {
+          existingDiscs[disc.id] = disc
+          if let count = disc.trackCount {
+            discFallbackCounts[disc.id] = count
+          }
+        }
+
+        var request = try LibraryPageRequest(limit: LibraryPageRequest.maximumLimit)
+        while true {
+          let page = try await libraryRepository.tracks(
+            matching: TrackQuery(albumID: albumID),
+            page: request
+          )
+          for track in page.elements where track.albumID == albumID {
+            albumTrackIDs[albumID, default: []].insert(track.id)
+            if let discID = track.discProjection?.id {
+              discTrackIDs[discID, default: []].insert(track.id)
+            }
+          }
+          guard let next = try page.nextPage(limit: LibraryPageRequest.maximumLimit) else {
+            break
+          }
+          request = next
+        }
+      }
+
+      return ExistingTrackCounts(
+        albumTrackIDs: albumTrackIDs,
+        discTrackIDs: discTrackIDs,
+        albumFallbackCounts: albumFallbackCounts,
+        discFallbackCounts: discFallbackCounts,
+        existingDiscs: existingDiscs
+      )
+    } catch is CancellationError {
+      throw CancellationError()
+    } catch let error as LocalMediaError {
+      throw error
+    } catch {
+      throw LocalMediaError.persistenceFailed
+    }
+  }
+
+  private func mergedTrackCount(
+    existing: Set<MediaItemID>,
+    incoming: [MediaItemID],
+    fallback: Int?,
+    knownExistingItemIDs: Set<MediaItemID>
+  ) -> Int {
+    let incomingIDs = Set(incoming)
+    guard existing.isEmpty else {
+      return existing.union(incomingIDs).count
+    }
+    guard let fallback else {
+      return incomingIDs.count
+    }
+    let knownIncomingCount = incomingIDs.intersection(knownExistingItemIDs).count
+    let newIncomingCount = incomingIDs.subtracting(knownExistingItemIDs).count
+    return max(fallback, knownIncomingCount) + newIncomingCount
   }
 
   private func preservingUserPlaybackState(

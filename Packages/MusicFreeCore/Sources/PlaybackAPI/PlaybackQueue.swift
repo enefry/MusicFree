@@ -56,11 +56,12 @@ public struct PlaybackQueueEntry: Codable, Equatable, Hashable, Identifiable, Se
     id
   }
 
-  public var itemID: MediaItemID {
-    guard let preferredVariantID else {
-      preconditionFailure("A local playback queue entry requires a preferred variant")
-    }
-    return preferredVariantID
+  /// The selected media variant, when this entry can currently be played.
+  ///
+  /// A queue may retain a logical track while its variants are temporarily
+  /// unavailable, so callers must handle the missing value explicitly.
+  public var itemID: MediaItemID? {
+    preferredVariantID
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -167,7 +168,7 @@ public struct PlaybackQueueSnapshot: Codable, Equatable, Hashable, Sendable {
   public static let empty = Self()
 
   public var itemIDs: [MediaItemID] {
-    entries.map(\.itemID)
+    entries.compactMap(\.itemID)
   }
 
   public var currentEntry: PlaybackQueueEntry? {
