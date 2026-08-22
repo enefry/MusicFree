@@ -6,6 +6,7 @@ import Foundation
 enum AppBVTFixtureSeeder {
     static let launchArgument = "--bvt-seed-audio"
     static let layoutLaunchArgument = "--bvt-seed-layout-library"
+    static let resetPlaybackHistoryLaunchArgument = "--bvt-reset-playback-history"
     static let trackTitle = "BVT Tone"
     static let longTrackTitle = "BVT Extremely Long Track Title That Must Stay Inside The Player Width"
 
@@ -58,6 +59,14 @@ enum AppBVTFixtureSeeder {
             }
         }
 
+        if arguments.contains(launchArgument) {
+            let coverURL = fixtureDirectory.appendingPathComponent("cover.png")
+            let coverData = makeCoverData()
+            if (try? Data(contentsOf: coverURL)) != coverData {
+                try? coverData.write(to: coverURL, options: .atomic)
+            }
+        }
+
         let layoutDirectory = fixtureDirectory.appendingPathComponent("LayoutFixtures", isDirectory: true)
         if arguments.contains(layoutLaunchArgument) {
             for fixture in layoutFixtures {
@@ -90,6 +99,10 @@ enum AppBVTFixtureSeeder {
             "[00:24.00]Stay with me until the end"
         ]
         return Data(lines.joined(separator: "\n").utf8)
+    }
+
+    private static func makeCoverData() -> Data {
+        Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAUUlEQVRIx2P8717HQEvA8ouJhbYW/KS1BTT3wS8mVtpaMByCaDQVEfQBjVPRaCQPvA9oH0TMo6mIgAWjqYigBUO/LBqNZIIW0CGIRlPRAPsAACtZIT1eLtkxAAAAAElFTkSuQmCC") ?? Data()
     }
 
     private static func makeWaveData(

@@ -19608,6 +19608,17 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "MusicKitでメタデータを補完" } }
       }
     },
+    "MusicBrainz" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "MusicBrainz" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "MusicBrainz" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "MusicBrainz" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "MusicBrainz" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "MusicBrainz" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "MusicBrainz" } }
+      }
+    },
     "重新请求 Apple Music 权限" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -19738,6 +19749,50 @@
         "de" : { "stringUnit" : { "state" : "translated", "value" : "Metadaten" } },
         "es" : { "stringUnit" : { "state" : "translated", "value" : "Metadatos" } },
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "メタデータ" } }
+      }
+    },
+    "按启用顺序依次匹配；成功后停止。已有本地信息不会覆盖。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Sources are tried in enabled order and stop after a match. Existing local information is kept." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "按启用顺序依次匹配；成功后停止。已有本地信息不会覆盖。" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Les sources sont utilisées dans l’ordre activé et s’arrêtent après une correspondance. Les informations locales existantes sont conservées." } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Die aktivierten Quellen werden der Reihe nach verwendet und nach einem Treffer beendet. Vorhandene lokale Informationen bleiben erhalten." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Las fuentes se prueban en el orden activado y se detienen al encontrar una coincidencia. Se conserva la información local existente." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "有効にした順にソースを試し、一致すると停止します。既存のローカル情報は保持されます。" } }
+      }
+    },
+    "按启用顺序匹配歌词；播放页按需获取并保存，预下载只处理没有本地歌词的歌曲。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Lyrics are matched in enabled order. Player pages fetch and save them on demand; pre-download only processes songs without local lyrics." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "按启用顺序匹配歌词；播放页按需获取并保存，预下载只处理没有本地歌词的歌曲。" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Les paroles sont recherchées dans l’ordre activé. La page du lecteur les récupère et les enregistre à la demande ; le pré-téléchargement ne traite que les titres sans paroles locales." } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Liedtexte werden in der aktivierten Reihenfolge gesucht. Die Wiedergabeseite lädt sie bei Bedarf und speichert sie; der Vorab-Download verarbeitet nur Titel ohne lokale Liedtexte." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Las letras se buscan en el orden activado. La página del reproductor las obtiene y guarda cuando es necesario; la predescarga solo procesa canciones sin letras locales." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "歌詞は有効にした順に検索します。再生ページでは必要に応じて取得して保存し、先行ダウンロードではローカル歌詞がない曲だけを処理します。" } }
+      }
+    },
+    "已有 %d 个元数据来源可用" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "%d metadata sources available" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已有 %d 个元数据来源可用" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "%d sources de métadonnées disponibles" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "%d Metadatenquellen verfügbar" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "%d fuentes de metadatos disponibles" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "メタデータソース %d 件が利用可能" } }
+      }
+    },
+    "暂无可用的元数据来源" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "No metadata sources available" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "暂无可用的元数据来源" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Aucune source de métadonnées disponible" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Keine Metadatenquelle verfügbar" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "No hay fuentes de metadatos disponibles" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "利用可能なメタデータソースはありません" } }
       }
     },
     "优先使用 Metadata Server，未匹配时回退到 LRCLIB。" : {
@@ -19903,6 +19958,546 @@
         "de" : { "stringUnit" : { "state" : "translated", "value" : "Das Jahr muss eine gültige Zahl sein." } },
         "es" : { "stringUnit" : { "state" : "translated", "value" : "El año debe ser un número válido." } },
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "年は有効な数字で入力してください。" } }
+      }
+    },
+    "存储维护" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Storage maintenance" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "存储维护" } }
+      }
+    },
+    "清理暂存、修复删除事务或清理已完成的隔离文件。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Clear staging, repair removal transactions, or clear finalized quarantine files." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "清理暂存、修复删除事务或清理已完成的隔离文件。" } }
+      }
+    },
+    "操作前请确认" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Review before continuing" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "操作前请确认" } }
+      }
+    },
+    "这些操作只处理应用生成的暂存、隔离文件和已记录的维护事务。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "These actions only handle app-generated staging files, quarantine files, and recorded maintenance transactions." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "这些操作只处理应用生成的暂存、隔离文件和已记录的维护事务。" } }
+      }
+    },
+    "不会删除已经进入资料库的媒体文件。清理已完成的文件后，不能从隔离目录恢复这些副本。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Library media files will not be deleted. After finalized files are cleared, those copies cannot be restored from quarantine." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "不会删除已经进入资料库的媒体文件。清理已完成的文件后，不能从隔离目录恢复这些副本。" } }
+      }
+    },
+    "最近一次操作" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Latest operation" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "最近一次操作" } }
+      }
+    },
+    "维护完成" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Maintenance complete" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "维护完成" } }
+      }
+    },
+    "已修复 %d 个待删除事务" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Repaired %d pending removal transactions" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已修复 %d 个待删除事务" } }
+      }
+    },
+    "操作完成，未发现需要处理的项目。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Operation complete. No items required attention." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "操作完成，未发现需要处理的项目。" } }
+      }
+    },
+    "当前暂存：%@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Current staging: %@" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "当前暂存：%@" } }
+      }
+    },
+    "当前待修复：%d 项" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Pending repair: %d items" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "当前待修复：%d 项" } }
+      }
+    },
+    "当前隔离：%@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Current quarantine: %@" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "当前隔离：%@" } }
+      }
+    },
+    "详细说明" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Details" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "详细说明" } }
+      }
+    },
+    "操作预期" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "What to expect" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "操作预期" } }
+      }
+    },
+    "删除导入流程留下的暂存副本。只处理暂存目录，不影响已经进入资料库的媒体文件。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Deletes staging copies left by the import flow. Only the staging directory is handled; media already in the library is not affected." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "删除导入流程留下的暂存副本。只处理暂存目录，不影响已经进入资料库的媒体文件。" } }
+      }
+    },
+    "检查未完成的删除事务，并根据资料库记录恢复或完成事务。不会重新删除资料库中的媒体文件。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Checks unfinished removal transactions and restores or completes them according to library records. It does not delete library media again." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "检查未完成的删除事务，并根据资料库记录恢复或完成事务。不会重新删除资料库中的媒体文件。" } }
+      }
+    },
+    "删除已经完成处理的隔离副本，保留仍处于 pending 状态的文件。清理后不能从隔离目录恢复这些副本。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Deletes finalized quarantine copies while preserving files that are still pending. After cleanup, those copies cannot be restored from quarantine." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "删除已经完成处理的隔离副本，保留仍处于 pending 状态的文件。清理后不能从隔离目录恢复这些副本。" } }
+      }
+    },
+    "清理完成后，导入暂存占用会减少，存储状态会更新；正在进行的导入会等待维护完成。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "After cleanup, staging usage should decrease and storage status will update; an active import waits for maintenance to finish." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "清理完成后，导入暂存占用会减少，存储状态会更新；正在进行的导入会等待维护完成。" } }
+      }
+    },
+    "待删除项目会逐项核对；可恢复或可完成的事务会被处理，仍无法判断的事务会保留。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Pending removals are checked one by one; recoverable or completable transactions are handled, while unresolved transactions remain." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "待删除项目会逐项核对；可恢复或可完成的事务会被处理，仍无法判断的事务会保留。" } }
+      }
+    },
+    "清理完成后，隔离文件占用会减少；pending 隔离文件会保留，不会被清理。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "After cleanup, quarantine usage should decrease; pending quarantine files are preserved." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "清理完成后，隔离文件占用会减少；pending 隔离文件会保留，不会被清理。" } }
+      }
+    },
+    "将删除导入暂存目录中的文件；已经进入资料库的媒体文件不受影响。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Files in the import staging directory will be deleted; library media is not affected." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "将删除导入暂存目录中的文件；已经进入资料库的媒体文件不受影响。" } }
+      }
+    },
+    "将核对未完成的删除事务，并恢复或完成能够确定状态的事务；无法判断的事务会保留。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Unfinished removal transactions will be checked; transactions with a known state will be restored or completed, and unresolved ones will remain." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "将核对未完成的删除事务，并恢复或完成能够确定状态的事务；无法判断的事务会保留。" } }
+      }
+    },
+    "将删除已完成处理的隔离副本，并保留 pending 隔离文件；清理后的副本不能恢复。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Finalized quarantine copies will be deleted and pending quarantine files will be preserved; cleared copies cannot be restored." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "将删除已完成处理的隔离副本，并保留 pending 隔离文件；清理后的副本不能恢复。" } }
+      }
+    },
+    "存储状态已更新" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Storage status updated" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "存储状态已更新" } }
+      }
+    },
+    "存储状态刷新失败，请稍后重试。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Failed to refresh storage status. Please try again later." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "存储状态刷新失败，请稍后重试。" } }
+      }
+    },
+    "Discogs" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Discogs" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Discogs" } }
+      }
+    },
+    "Metadata Server" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Metadata Server" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Metadata Server" } }
+      }
+    },
+    "MusicKit" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "MusicKit" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "MusicKit" } }
+      }
+    },
+    "Provider 服务说明" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Provider service disclosures" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Provider 服务说明" } }
+      }
+    },
+    "不可用" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Unavailable" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "不可用" } }
+      }
+    },
+    "不同意" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Decline" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "不同意" } }
+      }
+    },
+
+    "调试" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Debug" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "调试" } }
+      }
+    },
+    "元数据填充" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Metadata enrichment" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "元数据填充" } }
+      }
+    },
+    "元数据查询发送歌曲名称和艺人；歌词查询可能附带专辑和时长。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Metadata searches send the song title and artist; lyrics searches may also include the album and duration." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "元数据查询发送歌曲名称和艺人；歌词查询可能附带专辑和时长。" } }
+      }
+    },
+    "关闭 Provider 后不再发送新的请求；已经由第三方服务接收的请求日志由其隐私政策管理。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "After a Provider is disabled, no new requests are sent; request logs already received by the third party are governed by its privacy policy." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "关闭 Provider 后不再发送新的请求；已经由第三方服务接收的请求日志由其隐私政策管理。" } }
+      }
+    },
+    "发送信息" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Information sent" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "发送信息" } }
+      }
+    },
+    "同意后，应用才会在你开启 Provider 时向对应服务发送歌曲匹配信息。应用不会主动上传音频文件、完整文件路径或整个音乐库。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "After consent, the app sends song matching information to a service only when you enable its Provider. The app does not intentionally upload audio files, complete file paths, or the full music library." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "同意后，应用才会在你开启 Provider 时向对应服务发送歌曲匹配信息。应用不会主动上传音频文件、完整文件路径或整个音乐库。" } }
+      }
+    },
+    "同意并继续" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Agree and continue" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "同意并继续" } }
+      }
+    },
+    "同意应用隐私政策" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Agree to the app privacy policy" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "同意应用隐私政策" } }
+      }
+    },
+    "尚未接入" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Not integrated" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "尚未接入" } }
+      }
+    },
+    "已确认" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Confirmed" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已确认" } }
+      }
+    },
+    "应用配置的 Metadata Server" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Metadata Server configured by the app" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "应用配置的 Metadata Server" } }
+      }
+    },
+    "应用隐私政策" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "App privacy policy" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "应用隐私政策" } }
+      }
+    },
+    "应用隐私政策 v1.1.0" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "App privacy policy v1.1.0" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "应用隐私政策 v1.1.0" } }
+      }
+    },
+    "应用隐私政策已同意" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "App privacy policy accepted" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "应用隐私政策已同意" } }
+      }
+    },
+    "提供元数据或歌词服务。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Provide metadata or lyrics services." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "提供元数据或歌词服务。" } }
+      }
+    },
+    "撤回同意并关闭联网服务" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Withdraw consent and disable online services" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "撤回同意并关闭联网服务" } }
+      }
+    },
+    "服务" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Service" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "服务" } }
+      }
+    },
+    "服务说明" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Service disclosure" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "服务说明" } }
+      }
+    },
+    "未同意应用隐私政策时，元数据和歌词 Provider 不会发起网络请求。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Metadata and lyrics Providers cannot make network requests until the app privacy policy is accepted." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "未同意应用隐私政策时，元数据和歌词 Provider 不会发起网络请求。" } }
+      }
+    },
+    "未授权" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Not authorized" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "未授权" } }
+      }
+    },
+    "未确认" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Not confirmed" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "未确认" } }
+      }
+    },
+    "本地播放器的基本播放功能不需要联网。元数据和歌词服务属于可选的第三方服务，所有 Provider 默认关闭。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Basic local playback does not require a network connection. Metadata and lyrics are optional third-party services, and every Provider is disabled by default." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "本地播放器的基本播放功能不需要联网。元数据和歌词服务属于可选的第三方服务，所有 Provider 默认关闭。" } }
+      }
+    },
+    "权限已拒绝" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Permission denied" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "权限已拒绝" } }
+      }
+    },
+    "查看完整隐私政策" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "View the full privacy policy" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "查看完整隐私政策" } }
+      }
+    },
+    "查看服务隐私政策" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "View the service privacy policy" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "查看服务隐私政策" } }
+      }
+    },
+    "查询元数据、封面和歌词。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Look up metadata, artwork, and lyrics." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "查询元数据、封面和歌词。" } }
+      }
+    },
+    "查询发行版本、曲目元数据和封面。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Look up release versions, track metadata, and artwork." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "查询发行版本、曲目元数据和封面。" } }
+      }
+    },
+    "查询开放音乐元数据和专辑封面。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Look up open music metadata and album artwork." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "查询开放音乐元数据和专辑封面。" } }
+      }
+    },
+    "查询歌曲元数据和封面。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Look up song metadata and artwork." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "查询歌曲元数据和封面。" } }
+      }
+    },
+    "查询歌词。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Look up lyrics." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "查询歌词。" } }
+      }
+    },
+    "歌曲名称、艺人和用于目录匹配的音乐信息。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Song title, artist, and music information used for catalog matching." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "歌曲名称、艺人和用于目录匹配的音乐信息。" } }
+      }
+    },
+    "歌曲名称、艺人，以及可选的专辑和时长。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Song title, artist, and optionally the album and duration." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "歌曲名称、艺人，以及可选的专辑和时长。" } }
+      }
+    },
+    "歌曲名称和艺人。应用配置的 Discogs 访问令牌不会发送给其他服务。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Song title and artist. An app-configured Discogs access token is not sent to other services." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "歌曲名称和艺人。应用配置的 Discogs 访问令牌不会发送给其他服务。" } }
+      }
+    },
+    "歌曲名称和艺人；匹配成功后使用 MusicBrainz 发布信息请求封面。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Song title and artist; after a match, release information from MusicBrainz is used to request artwork." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "歌曲名称和艺人；匹配成功后使用 MusicBrainz 发布信息请求封面。" } }
+      }
+    },
+    "状态未知" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Status unknown" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "状态未知" } }
+      }
+    },
+    "用于匹配的歌曲元数据；具体字段取决于 Provider 实现。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Song metadata used for matching; the exact fields depend on the Provider implementation." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "用于匹配的歌曲元数据；具体字段取决于 Provider 实现。" } }
+      }
+    },
+    "用途" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Purpose" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "用途" } }
+      }
+    },
+    "网络服务通常可以获得请求 IP 地址和 User-Agent，并按照各自的隐私政策处理请求日志。匹配结果、封面和歌词会保存到本地资料库。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Online services can usually receive the request IP address and User-Agent and handle request logs under their own privacy policies. Matching results, artwork, and lyrics are saved to the local library." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "网络服务通常可以获得请求 IP 地址和 User-Agent，并按照各自的隐私政策处理请求日志。匹配结果、封面和歌词会保存到本地资料库。" } }
+      }
+    },
+    "设备受限" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Restricted on this device" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "设备受限" } }
+      }
+    },
+    "请先开启至少一个可用的元数据来源。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Enable at least one available metadata source first." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "请先开启至少一个可用的元数据来源。" } }
+      }
+    },
+    "请先开启至少一个歌词来源，本地歌词仍可显示。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Enable at least one lyrics source first. Local lyrics can still be displayed." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "请先开启至少一个歌词来源，本地歌词仍可显示。" } }
+      }
+    },
+    "启用 Provider 时才会要求确认对应服务说明；未启用的 Provider 不会发起请求。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "A Provider service disclosure is requested only when you enable that Provider; disabled Providers make no requests." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "启用 Provider 时才会要求确认对应服务说明；未启用的 Provider 不会发起请求。" } }
+      }
+    },
+    "重置全部隐私" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Reset all privacy" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "重置全部隐私" } }
+      }
+    },
+    "重新请求权限" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Request permission again" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "重新请求权限" } }
+      }
+    },
+    "隐私与联网" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Privacy and online services" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "隐私与联网" } }
+      }
+    },
+    "隐私与联网服务" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Privacy and online services" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "隐私与联网服务" } }
       }
     }
   },

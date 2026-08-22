@@ -422,9 +422,14 @@ final class AppContainer: ObservableObject {
                 .appendingPathComponent("Library", isDirectory: true)
                 .appendingPathComponent("metadata-enrichment.json", isDirectory: false)
         )
+#if !METADATA_SERVER_DISABLED
         let metadataServerConfiguration = MetadataServerConfiguration.from()
+#endif
+        let musicBrainzAPIConfiguration = MusicBrainzAPIConfiguration.from()
         let discogsAPIConfiguration = DiscogsAPIConfiguration.from()
+#if !LYRICS_DISABLED
         let lrclibAPIConfiguration = LRCLIBAPIConfiguration.from()
+#endif
 
         let localMediaConfiguration = try LocalMediaConfiguration(
             managedRoot: appSupportRoot.appendingPathComponent("Media", isDirectory: true),
@@ -509,6 +514,12 @@ final class AppContainer: ObservableObject {
         var metadataEnrichmentProviders: [any MetadataEnrichmentProviding] = [
             metadataEnrichmentProvider
         ]
+        if let musicBrainzAPIConfiguration {
+            metadataEnrichmentProviders.append(
+                MusicBrainzMetadataProvider(configuration: musicBrainzAPIConfiguration)
+            )
+        }
+#if !METADATA_SERVER_DISABLED
         if let metadataServerConfiguration {
             let durationProvider: MetadataServerMetadataProvider.DurationProvider?
             if let localSource {
@@ -530,12 +541,17 @@ final class AppContainer: ObservableObject {
                 )
             )
         }
+#endif
         if let discogsAPIConfiguration {
             metadataEnrichmentProviders.append(
                 DiscogsMetadataProvider(configuration: discogsAPIConfiguration)
             )
         }
+#if LYRICS_DISABLED
+        let lyricsProviders: [any LyricsProviding] = []
+#else
         var lyricsProviders: [any LyricsProviding] = []
+#if !METADATA_SERVER_DISABLED
         if let metadataServerConfiguration,
            let lyricsConfiguration = MetadataServerLyricsConfiguration(
                metadataServerConfiguration: metadataServerConfiguration
@@ -544,9 +560,11 @@ final class AppContainer: ObservableObject {
                 MetadataServerLyricsProvider(configuration: lyricsConfiguration)
             )
         }
+#endif
         if let lrclibAPIConfiguration {
             lyricsProviders.append(LRCLIBLyricsProvider(configuration: lrclibAPIConfiguration))
         }
+#endif
         let remover = try ManagedMediaRemover(
             configuration: localMediaConfiguration,
             libraryRepository: libraryRepository

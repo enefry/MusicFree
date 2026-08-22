@@ -59,6 +59,7 @@ let package = Package(
             name: "SettingsFeature",
             dependencies: [
                 "DesignSystem",
+                .product(name: "MusicDomain", package: "MusicFreeCore"),
                 .product(name: "SettingsAPI", package: "MusicFreeCore"),
                 .product(name: "PlaybackAPI", package: "MusicFreeCore"),
                 .product(name: "SystemIntegrationAPI", package: "MusicFreeCore"),

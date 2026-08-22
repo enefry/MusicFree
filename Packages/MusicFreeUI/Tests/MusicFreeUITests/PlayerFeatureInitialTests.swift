@@ -562,12 +562,24 @@ func nowPlayingHistoryFiltersCurrentUnfinishedSession() {
   let currentID = MediaItemID(sourceID: .local, externalID: "history-current")
   let otherID = MediaItemID(sourceID: .local, externalID: "history-other")
   let currentTrack = Track(id: currentID, title: "Current")
+  let activeSessionID = UUID()
+  let previousUnfinishedSessionID = UUID()
   let items = [
-    makePlayerHistoryItem(sessionID: UUID(), track: currentTrack),
+    makePlayerHistoryItem(
+      sessionID: activeSessionID,
+      track: currentTrack,
+      lastEventAt: 120
+    ),
+    makePlayerHistoryItem(
+      sessionID: previousUnfinishedSessionID,
+      track: currentTrack,
+      lastEventAt: 100
+    ),
     makePlayerHistoryItem(
       sessionID: UUID(),
       track: currentTrack,
-      completionReason: .ended
+      completionReason: .ended,
+      lastEventAt: 110
     ),
     makePlayerHistoryItem(
       sessionID: UUID(),
@@ -580,11 +592,30 @@ func nowPlayingHistoryFiltersCurrentUnfinishedSession() {
     currentItemID: currentID
   )
 
-  #expect(visible.count == 2)
+  #expect(visible.count == 3)
+  #expect(!visible.contains(where: { $0.sessionID == activeSessionID }))
+  #expect(visible.contains(where: {
+    $0.sessionID == previousUnfinishedSessionID
+      && $0.lastCompletionReason == nil
+  }))
   #expect(visible.contains(where: {
     $0.track.id == currentID && $0.lastCompletionReason == .ended
   }))
   #expect(visible.contains(where: { $0.track.id == otherID }))
+}
+
+@Test("Now Playing history actions reuse play and enqueue-next commands")
+func nowPlayingHistoryActionsMapToPlaybackCommands() {
+  let itemID = MediaItemID(sourceID: .local, externalID: "history-action")
+
+  #expect(
+    NowPlayingHistoryAction.play.command(for: itemID)
+      == .play(itemID: itemID)
+  )
+  #expect(
+    NowPlayingHistoryAction.enqueueNext.command(for: itemID)
+      == .enqueueNext(itemIDs: [itemID])
+  )
 }
 
 @MainActor
@@ -1255,13 +1286,14 @@ private enum LibraryTestFailure: Error {
 private func makePlayerHistoryItem(
   sessionID: UUID,
   track: Track,
-  completionReason: PlaybackCompletionReason? = nil
+  completionReason: PlaybackCompletionReason? = nil,
+  lastEventAt: TimeInterval = 110
 ) -> PlaybackHistoryItem {
   PlaybackHistoryItem(
     sessionID: sessionID,
     track: track,
     lastStartedAt: Date(timeIntervalSince1970: 100),
-    lastEventAt: Date(timeIntervalSince1970: 110),
+    lastEventAt: Date(timeIntervalSince1970: lastEventAt),
     totalPlayedDuration: .seconds(10),
     lastPosition: .seconds(10),
     lastCompletionReason: completionReason

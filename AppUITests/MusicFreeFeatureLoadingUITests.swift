@@ -34,6 +34,7 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
     func testMetadataEnrichmentScanStartsAndCancels() {
         let app = XCUIApplication()
         defer { app.terminate() }
+        app.launchArguments = ["--bvt-seed-audio", "--bvt-seed-layout-library"]
         app.launch()
 
         let tabBar = app.tabBars.firstMatch
@@ -45,6 +46,17 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
         XCTAssertTrue(
             app.descendants(matching: .any)["settings.form"].waitForExistence(timeout: 15)
         )
+
+        let debugReset = app.descendants(matching: .any)[
+            "settings.debug.resetAllPrivacy"
+        ].firstMatch
+        XCTAssertTrue(
+            scrollToElement(debugReset, in: app, maximumSwipes: 12),
+            "Debug builds must expose the privacy reset action."
+        )
+        debugReset.tap()
+        scrollSettingsToTop(in: app)
+
         let metadataEntry = app.descendants(matching: .any)[
             "settings.import.metadataEnrichment.entry"
         ].firstMatch
@@ -67,28 +79,51 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
             "The metadata enrichment page should expose a Lyrics section."
         )
 
-        let metadataServerToggle = app.switches[
-            "settings.import.metadataProvider.metadataServer.enabled"
+        let privacyDisclosure = app.descendants(matching: .any)[
+            "settings.privacyDisclosure"
         ].firstMatch
-        XCTAssertTrue(metadataServerToggle.waitForExistence(timeout: 10))
-        if (metadataServerToggle.value as? String) != "1" {
-            metadataServerToggle.coordinate(
-                withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)
-            ).tap()
-            let enabledExpectation = XCTNSPredicateExpectation(
-                predicate: NSPredicate(format: "value == '1'"),
-                object: metadataServerToggle
-            )
-            XCTAssertEqual(
-                XCTWaiter.wait(for: [enabledExpectation], timeout: 15),
-                .completed,
-                "Enabling Metadata Server should update the persisted settings state."
-            )
-        }
+        XCTAssertFalse(
+            privacyDisclosure.waitForExistence(timeout: 2),
+            "Opening the Provider settings page must not request every Provider's consent."
+        )
+
+        let musicBrainzToggle = app.switches[
+            "settings.import.metadataProvider.musicBrainz.enabled"
+        ].firstMatch
+        XCTAssertTrue(musicBrainzToggle.waitForExistence(timeout: 10))
+        XCTAssertEqual(musicBrainzToggle.value as? String, "0")
+        musicBrainzToggle.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)
+        ).tap()
+
+        XCTAssertTrue(
+            app.descendants(matching: .any)[
+                "settings.privacyDisclosure.application"
+            ].firstMatch.waitForExistence(timeout: 10),
+            "The first Provider activation must request the application policy."
+        )
+        app.buttons["settings.privacyDisclosure.accept"].firstMatch.tap()
+        XCTAssertTrue(
+            app.descendants(matching: .any)[
+                "settings.privacyDisclosure.provider.musicBrainz"
+            ].firstMatch.waitForExistence(timeout: 10),
+            "After the application policy, only the selected Provider disclosure should appear."
+        )
+        app.buttons["settings.privacyDisclosure.accept"].firstMatch.tap()
+
+        let enabledExpectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == '1'"),
+            object: musicBrainzToggle
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [enabledExpectation], timeout: 15),
+            .completed,
+            "Accepting both disclosures should enable only the selected Provider."
+        )
 
         let scanButton = app.buttons["settings.import.musicKitScan"].firstMatch
         XCTAssertTrue(
-            scanButton.waitForExistence(timeout: 10),
+            scrollToElement(scanButton, in: app, maximumSwipes: 8),
             "The metadata scan action should be available when a provider is enabled."
         )
         scanButton.tap()
@@ -108,6 +143,66 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
             "Cancelling a metadata scan should restore the scan action."
         )
         XCTAssertFalse(cancelButton.exists)
+    }
+
+    @MainActor
+    func testProviderPrivacyDeclineKeepsProviderDisabled() {
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        app.launch()
+
+        let settingsTab = tabButton("Settings", in: app)
+        XCTAssertTrue(settingsTab.waitForExistence(timeout: 15))
+        settingsTab.tap()
+        let form = app.descendants(matching: .any)["settings.form"].firstMatch
+        XCTAssertTrue(form.waitForExistence(timeout: 15))
+
+        let debugReset = app.descendants(matching: .any)[
+            "settings.debug.resetAllPrivacy"
+        ].firstMatch
+        XCTAssertTrue(scrollToElement(debugReset, in: app, maximumSwipes: 12))
+        debugReset.tap()
+        scrollSettingsToTop(in: app)
+
+        let metadataEntry = app.descendants(matching: .any)[
+            "settings.import.metadataEnrichment.entry"
+        ].firstMatch
+        XCTAssertTrue(scrollToElement(metadataEntry, in: app, maximumSwipes: 12))
+        metadataEntry.tap()
+
+        let musicBrainzToggle = app.switches[
+            "settings.import.metadataProvider.musicBrainz.enabled"
+        ].firstMatch
+        XCTAssertTrue(musicBrainzToggle.waitForExistence(timeout: 10))
+        musicBrainzToggle.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)
+        ).tap()
+        XCTAssertTrue(
+            app.buttons["settings.privacyDisclosure.accept"].firstMatch
+                .waitForExistence(timeout: 10)
+        )
+        app.buttons["settings.privacyDisclosure.accept"].firstMatch.tap()
+        XCTAssertTrue(
+            app.descendants(matching: .any)[
+                "settings.privacyDisclosure.provider.musicBrainz"
+            ].firstMatch.waitForExistence(timeout: 10)
+        )
+        app.buttons["settings.privacyDisclosure.decline"].firstMatch.tap()
+
+        let disabledExpectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == '0'"),
+            object: musicBrainzToggle
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [disabledExpectation], timeout: 10),
+            .completed,
+            "Declining a Provider disclosure must leave that Provider disabled."
+        )
+        XCTAssertTrue(
+            app.descendants(matching: .any)["settings.import.metadata.section"]
+                .firstMatch.exists,
+            "Declining a Provider disclosure must keep the settings page open."
+        )
     }
 
     @MainActor
@@ -380,6 +475,33 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
         let storageRefresh = app.buttons["settings.storage.refresh"].firstMatch
         XCTAssertTrue(scrollToElement(storageRefresh, in: app))
         attachScreenshot(named: "17-settings-storage")
+        storageRefresh.tap()
+        let storageRefreshToast = app.descendants(matching: .any)[
+            "settings.storage.refresh.toast"
+        ].firstMatch
+        XCTAssertTrue(storageRefreshToast.waitForExistence(timeout: 5))
+
+        let storageMaintenance = app.descendants(matching: .any)[
+            "settings.storage.maintenance"
+        ].firstMatch
+        XCTAssertTrue(scrollToElement(storageMaintenance, in: app))
+        storageMaintenance.tap()
+        let maintenanceForm = app.descendants(matching: .any)[
+            "settings.storage.maintenance.form"
+        ].firstMatch
+        XCTAssertTrue(maintenanceForm.waitForExistence(timeout: 10))
+        let maintenanceButtons = [
+            app.buttons["settings.storage.clearStaging"].firstMatch,
+            app.buttons["settings.storage.repairRemovals"].firstMatch,
+            app.buttons["settings.storage.clearQuarantine"].firstMatch
+        ]
+        for button in maintenanceButtons {
+            XCTAssertTrue(scrollToElement(button, in: app))
+            XCTAssertTrue(app.staticTexts["Details"].firstMatch.exists)
+            XCTAssertTrue(app.staticTexts["What to expect"].firstMatch.exists)
+        }
+        backTo("Settings", in: app)
+        XCTAssertTrue(form.waitForExistence(timeout: 10))
 
         let about = app.descendants(matching: .any)["settings.about"].firstMatch
         XCTAssertTrue(scrollToElement(about, in: app))
@@ -434,6 +556,20 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
             miniPlayer.staticTexts[longTrackTitle].waitForExistence(timeout: 15),
             "Selecting the long-title queue entry must update the Mini Player before presentation."
         )
+        let otherTrackRow = tracks.cells.matching(
+            NSPredicate(format: "label == %@", "BVT Tone")
+        ).firstMatch
+        XCTAssertTrue(otherTrackRow.waitForExistence(timeout: 5))
+        otherTrackRow.tap()
+        XCTAssertTrue(
+            miniPlayer.staticTexts["BVT Tone"].waitForExistence(timeout: 15),
+            "The fixture must switch away from the first song so Now Playing has a real history item."
+        )
+        longTrackRow.tap()
+        XCTAssertTrue(
+            miniPlayer.staticTexts[longTrackTitle].waitForExistence(timeout: 15),
+            "Returning to the first song must refresh the current row and history."
+        )
         attachScreenshot(named: "21-mini-player")
         miniPlayer.tap()
 
@@ -443,6 +579,15 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
         XCTAssertTrue(
             artworkSurface.waitForExistence(timeout: 10),
             "Opening the Mini Player must start in the artwork surface."
+        )
+        let artworkLoadedExpectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "Artwork loaded"),
+            object: artworkSurface
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [artworkLoadedExpectation], timeout: 15),
+            .completed,
+            "The Apple Music visual comparison must use a loaded cover, not the placeholder."
         )
         XCTAssertTrue(app.buttons["Favorite"].firstMatch.waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["More actions"].firstMatch.waitForExistence(timeout: 5))
@@ -475,6 +620,39 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
             "player.continuePlaying.list"
         ].firstMatch
         XCTAssertTrue(continuePlayingList.waitForExistence(timeout: 10))
+        let currentQueueRow = app.descendants(matching: .any)[
+            "player.nowPlaying.current"
+        ].firstMatch
+        XCTAssertTrue(
+            currentQueueRow.waitForExistence(timeout: 10),
+            "The queue surface must expose a distinct current-playing row."
+        )
+        XCTAssertLessThanOrEqual(
+            currentQueueRow.frame.minY,
+            queueScrollView.frame.minY + 120,
+            "The queue must open with the current-playing row anchored near the top."
+        )
+        let historyHeading = app.descendants(matching: .any)[
+            "player.nowPlaying.history.heading"
+        ].firstMatch
+        XCTAssertTrue(historyHeading.waitForExistence(timeout: 10))
+        let historyRows = app.descendants(matching: .any).matching(
+            NSPredicate(
+                format: "identifier BEGINSWITH %@ AND identifier != %@ AND identifier != %@",
+                "player.nowPlaying.history.",
+                "player.nowPlaying.history.clear",
+                "player.nowPlaying.history.heading"
+            )
+        )
+        XCTAssertGreaterThan(
+            historyRows.count,
+            0,
+            "Switching tracks in the fixture must create at least one History row."
+        )
+        XCTAssertFalse(
+            isElementVisible(historyHeading, in: queueScrollView),
+            "History should start above the current row and appear only after pulling down."
+        )
         XCTAssertTrue(
             continuePlayingList.staticTexts["BVT Artist"].firstMatch
                 .waitForExistence(timeout: 10),
@@ -521,6 +699,17 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
             )
         }
         attachScreenshot(named: "23-now-playing-queue")
+
+        revealQueueHistory(historyHeading, in: queueScrollView)
+        XCTAssertTrue(
+            isElementVisible(historyHeading, in: queueScrollView),
+            "Pulling down from the current row must reveal the History section."
+        )
+        XCTAssertTrue(
+            isElementHittable(historyRows.firstMatch, in: queueScrollView),
+            "History rows must be visible after the Apple Music-style pull-down."
+        )
+        attachScreenshot(named: "23-now-playing-history")
 
         XCTAssertTrue(app.buttons["Pause"].firstMatch.waitForExistence(timeout: 5))
         guard let pauseButton = app.buttons.matching(identifier: "Pause")
@@ -656,6 +845,283 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
 
         cancelEditingButton.tap()
         XCTAssertTrue(editQueueButton.waitForExistence(timeout: 5))
+    }
+
+    @MainActor
+    func testNowPlayingPresentationStaysStableAcrossRepeatedTransitions() {
+        let expectedTitle = "BVT Extremely Long Track Title That Must Stay Inside The Player Width"
+        let app = reviewApp()
+        defer { app.terminate() }
+        app.launch()
+
+        XCTAssertTrue(tabButton("Library", in: app).waitForExistence(timeout: 15))
+        waitForSeededLibraryTrack(in: app)
+        openLibrarySection("Songs", in: app)
+
+        let tracks = app.descendants(matching: .any)["library.tracks"].firstMatch
+        XCTAssertTrue(tracks.waitForExistence(timeout: 10))
+        XCTAssertTrue(tracks.buttons["Play"].firstMatch.waitForExistence(timeout: 10))
+        tracks.buttons["Play"].firstMatch.tap()
+
+        let track = tracks.cells.matching(
+            NSPredicate(format: "label == %@", expectedTitle)
+        ).firstMatch
+        XCTAssertTrue(track.waitForExistence(timeout: 10))
+        track.tap()
+
+        let miniPlayer = app.descendants(matching: .any)["player.mini"].firstMatch
+        XCTAssertTrue(miniPlayer.waitForExistence(timeout: 15))
+        XCTAssertTrue(miniPlayer.staticTexts[expectedTitle].waitForExistence(timeout: 15))
+
+        // REGRESSION GUARD: this test spends longer than the seeded 30-second
+        // track while cycling through Artwork, Queue, Lyrics, and dismissal.
+        // Pause the fixture before the first presentation so an automatic
+        // track change cannot masquerade as a missing or clipped title.
+        let pauseButton = app.buttons["Pause"].firstMatch
+        XCTAssertTrue(
+            pauseButton.waitForExistence(timeout: 5),
+            "The transition fixture must expose a pause control before cycling."
+        )
+        pauseButton.tap()
+
+        for cycle in 0..<3 {
+            miniPlayer.tap()
+            let artworkSurface = app.descendants(matching: .any)[
+                "player.nowPlaying.artwork"
+            ].firstMatch
+            XCTAssertTrue(artworkSurface.waitForExistence(timeout: 10))
+
+            let loadedArtwork = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "value == %@", "Artwork loaded"),
+                object: artworkSurface
+            )
+            XCTAssertEqual(
+                XCTWaiter.wait(for: [loadedArtwork], timeout: 15),
+                .completed,
+                "Every repeated presentation must use the real cover before visual assertions."
+            )
+            assertNowPlayingPresentationFrameIsStable(
+                expectedTitle: expectedTitle,
+                artworkSurface: artworkSurface,
+                surfaceIdentifier: "player.nowPlaying.artwork",
+                in: app
+            )
+            attachScreenshot(named: "now-playing-regression-\(cycle)-artwork")
+
+            let queueButton = app.buttons["player.queue.footer"].firstMatch
+            XCTAssertTrue(queueButton.waitForExistence(timeout: 5))
+            queueButton.tap()
+            let queueScroll = playerQueueScrollView(in: app)
+            XCTAssertTrue(queueScroll.waitForExistence(timeout: 10))
+            XCTAssertTrue(
+                app.staticTexts["Continue Playing"].waitForExistence(timeout: 10)
+            )
+            assertNowPlayingPresentationFrameIsStable(
+                expectedTitle: expectedTitle,
+                surfaceIdentifier: "player.nowPlaying.current",
+                in: app
+            )
+            attachScreenshot(named: "now-playing-regression-\(cycle)-queue")
+
+            let lyricsButton = app.buttons["Lyrics"].firstMatch
+            XCTAssertTrue(lyricsButton.waitForExistence(timeout: 5))
+            lyricsButton.tap()
+            XCTAssertTrue(
+                app.scrollViews["player.nowPlaying.lyricsScroll"].firstMatch
+                    .waitForExistence(timeout: 15)
+            )
+            assertNowPlayingPresentationFrameIsStable(
+                expectedTitle: expectedTitle,
+                surfaceIdentifier: "player.nowPlaying.lyrics",
+                in: app
+            )
+            attachScreenshot(named: "now-playing-regression-\(cycle)-lyrics")
+
+            let artworkReturnButton = app.buttons["player.lyrics.footer"].firstMatch
+            XCTAssertTrue(artworkReturnButton.waitForExistence(timeout: 5))
+            artworkReturnButton.tap()
+            XCTAssertTrue(artworkSurface.waitForExistence(timeout: 10))
+            assertNowPlayingPresentationFrameIsStable(
+                expectedTitle: expectedTitle,
+                artworkSurface: artworkSurface,
+                surfaceIdentifier: "player.nowPlaying.artwork",
+                in: app
+            )
+
+            let nowPlaying = app.descendants(matching: .any)["player.nowPlaying"].firstMatch
+            XCTAssertTrue(nowPlaying.waitForExistence(timeout: 5))
+            let start = app.coordinate(
+                withNormalizedOffset: CGVector(dx: 0.5, dy: 0.075)
+            )
+            let end = app.coordinate(
+                withNormalizedOffset: CGVector(dx: 0.5, dy: 0.70)
+            )
+            start.press(forDuration: 0.08, thenDragTo: end)
+            XCTAssertTrue(nowPlaying.waitForNonExistence(timeout: 5))
+            XCTAssertTrue(miniPlayer.waitForExistence(timeout: 5))
+        }
+    }
+
+    @MainActor
+    func testNowPlayingLargeHistoryScrollRemainsResponsive() {
+        let currentTitle = "BVT Extremely Long Track Title That Must Stay Inside The Player Width"
+        let alternateTitle = "BVT Tone"
+        let app = reviewApp(resetPlaybackHistory: true)
+        defer { app.terminate() }
+        app.launch()
+
+        XCTAssertTrue(tabButton("Library", in: app).waitForExistence(timeout: 15))
+        waitForSeededLibraryTrack(in: app)
+        openLibrarySection("Songs", in: app)
+
+        let tracks = app.descendants(matching: .any)["library.tracks"].firstMatch
+        XCTAssertTrue(tracks.waitForExistence(timeout: 10))
+        XCTAssertTrue(tracks.buttons["Play"].firstMatch.waitForExistence(timeout: 10))
+        tracks.buttons["Play"].firstMatch.tap()
+
+        let currentRow = tracks.cells.matching(
+            NSPredicate(format: "label == %@", currentTitle)
+        ).firstMatch
+        let alternateRow = tracks.cells.matching(
+            NSPredicate(format: "label == %@", alternateTitle)
+        ).firstMatch
+        XCTAssertTrue(currentRow.waitForExistence(timeout: 10))
+        XCTAssertTrue(alternateRow.waitForExistence(timeout: 10))
+        currentRow.tap()
+
+        let miniPlayer = app.descendants(matching: .any)["player.mini"].firstMatch
+        XCTAssertTrue(miniPlayer.waitForExistence(timeout: 15))
+        XCTAssertTrue(miniPlayer.staticTexts[currentTitle].waitForExistence(timeout: 15))
+
+        // Each explicit play creates a separate session record. Generate more
+        // rows than a phone viewport can hold so LazyVStack and sheet scrolling
+        // are exercised with a real playback-history snapshot.
+        for index in 0..<100 {
+            let row = index.isMultiple(of: 2) ? alternateRow : currentRow
+            let expectedTitle = index.isMultiple(of: 2) ? alternateTitle : currentTitle
+            row.tap()
+            // A rapid sequence of taps can cancel an in-flight playback
+            // command before it records its session. Confirm each transition
+            // before starting the next one, otherwise the test claims to
+            // create 100 rows while the store contains only a fraction.
+            XCTAssertTrue(
+                miniPlayer.staticTexts[expectedTitle].waitForExistence(timeout: 5),
+                "The app must remain responsive while building a large history."
+            )
+        }
+
+        miniPlayer.tap()
+        let artworkSurface = app.descendants(matching: .any)[
+            "player.nowPlaying.artwork"
+        ].firstMatch
+        XCTAssertTrue(artworkSurface.waitForExistence(timeout: 10))
+        let loadedArtwork = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "Artwork loaded"),
+            object: artworkSurface
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [loadedArtwork], timeout: 15), .completed)
+
+        let queueButton = app.buttons["player.queue.footer"].firstMatch
+        XCTAssertTrue(queueButton.waitForExistence(timeout: 5))
+        queueButton.tap()
+        let queueScroll = playerQueueScrollView(in: app)
+        XCTAssertTrue(queueScroll.waitForExistence(timeout: 10))
+
+        let currentQueueRow = app.descendants(matching: .any)[
+            "player.nowPlaying.current"
+        ].firstMatch
+        XCTAssertTrue(currentQueueRow.waitForExistence(timeout: 10))
+        XCTAssertLessThanOrEqual(
+            currentQueueRow.frame.minY,
+            queueScroll.frame.minY + 120,
+            "Large-history queues must still open with the current row at the top."
+        )
+
+        // Use the stable product identifier instead of a label subscript. In
+        // XCTest, staticTexts["History"] queries the accessibility identifier
+        // and can miss the localized heading entirely. The heading is above
+        // the current-playing anchor and lives in a LazyVStack, so a large
+        // history is intentionally not materialized until the user pulls it
+        // into the viewport.
+        let historyHeading = app.descendants(matching: .any)[
+            "player.nowPlaying.history.heading"
+        ].firstMatch
+        // A hundred history rows are intentionally above the current anchor.
+        // Use page-sized system swipes here; short pulls can stop halfway
+        // through a large LazyVStack, where the heading is not materialized
+        // yet and XCTest reports a false missing-element failure.
+        let maximumHistoryRevealSwipes = 40
+        for _ in 0..<maximumHistoryRevealSwipes {
+            if isElementVisible(historyHeading, in: queueScroll) {
+                break
+            }
+            queueScroll.swipeDown()
+        }
+        XCTAssertTrue(
+            historyHeading.waitForExistence(timeout: 10),
+            "Pulling down must materialize the History heading above the current row."
+        )
+        let historyCount = Int(historyHeading.value as? String ?? "") ?? 0
+        XCTAssertGreaterThanOrEqual(
+            historyCount,
+            80,
+            "The large-history fixture must expose at least 80 historical sessions."
+        )
+
+        XCTAssertTrue(
+            isElementVisible(historyHeading, in: queueScroll),
+            "A large history must be reachable above the current-playing anchor."
+        )
+
+        // Use a real boundary row instead of an invisible marker. LazyVStack
+        // only materializes rows near the viewport, so the oldest row is the
+        // reliable proof that the scroll reached the far end of the history.
+        let oldestHistoryRow = app.descendants(matching: .any)[
+            "player.nowPlaying.history.oldest"
+        ].firstMatch
+        let endScrollStart = Date()
+        // REGRESSION GUARD: after the heading is visible, the oldest rows are
+        // below it. Use the system scroll view's page-sized swipe so this
+        // measures real list movement instead of accumulating dozens of
+        // short XCTest drag waits. The finite bound prevents a broken scroll
+        // from hanging the test while still covering a larger reused store.
+        let maximumHistorySwipes = min(40, max(10, historyCount / 4 + 4))
+        for _ in 0..<maximumHistorySwipes where !oldestHistoryRow.exists {
+            queueScroll.swipeUp()
+        }
+        XCTAssertTrue(
+            oldestHistoryRow.waitForExistence(timeout: 10),
+            "Scrolling through a large history must materialize its oldest row."
+        )
+        XCTAssertTrue(
+            isElementVisible(oldestHistoryRow, in: queueScroll),
+            "Scrolling through a large history must reach its oldest row."
+        )
+
+        // Keep the reach-to-oldest metric separate from the round-trip metric
+        // below. Combining them makes a healthy list fail because of the
+        // additional four pairs of verification gestures.
+        let endScrollElapsed = Date().timeIntervalSince(endScrollStart)
+        let roundTripStart = Date()
+        for _ in 0..<4 {
+            pullQueueUp(in: queueScroll)
+            pullQueueDown(in: queueScroll)
+        }
+        let roundTripElapsed = Date().timeIntervalSince(roundTripStart)
+        XCTAssertLessThan(
+            endScrollElapsed,
+            35,
+            "Large-history scrolling must reach the oldest row without a long layout stall."
+        )
+        XCTAssertLessThan(
+            roundTripElapsed,
+            20,
+            "Large-history round-trip scrolling must remain responsive."
+        )
+        XCTAssertTrue(
+            app.buttons["player.queue.footer"].firstMatch.isHittable,
+            "Fixed playback controls must remain responsive after large-history scrolling."
+        )
     }
 
     @MainActor
@@ -963,9 +1429,21 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
         XCTAssertTrue(moreButton.waitForExistence(timeout: 5))
         let queueScrollView = app.scrollViews["player.nowPlaying.upperScroll"].firstMatch
         XCTAssertTrue(queueScrollView.waitForExistence(timeout: 10))
+
+        let historyHeading = app.staticTexts["History"].firstMatch
+        XCTAssertTrue(
+            historyHeading.waitForExistence(timeout: 5),
+            "The Now Playing queue must include a history section above the current item."
+        )
+        revealQueueHistory(historyHeading, in: queueScrollView)
+        XCTAssertTrue(
+            isElementVisible(historyHeading, in: queueScrollView),
+            "Pulling down from the current item must reveal playback history."
+        )
+
         for _ in 0..<5 {
             if !moreButton.isHittable {
-                queueScrollView.swipeDown()
+                bringQueueActionIntoView(moreButton, in: queueScrollView)
             }
             XCTAssertTrue(moreButton.isHittable)
             moreButton.tap()
@@ -1002,7 +1480,7 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
     }
 
     @MainActor
-    private func reviewApp() -> XCUIApplication {
+    private func reviewApp(resetPlaybackHistory: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = [
             "--bvt-seed-audio",
@@ -1011,7 +1489,102 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
             "-musicfree.language",
             "en"
         ]
+        if resetPlaybackHistory {
+            app.launchArguments.append("--bvt-reset-playback-history")
+        }
         return app
+    }
+
+    @MainActor
+    private func assertNowPlayingPresentationFrameIsStable(
+        expectedTitle: String,
+        artworkSurface: XCUIElement? = nil,
+        surfaceIdentifier: String,
+        in app: XCUIApplication
+    ) {
+        // REGRESSION GATE: Every Now Playing layout/background change must run
+        // this boundary check together with the screenshot transition test.
+        // It catches the third-occurrence failure where a zero-width frame
+        // leaves only the tail of the title visible during presentation.
+        let nowPlaying = app.descendants(matching: .any)["player.nowPlaying"].firstMatch
+        XCTAssertTrue(nowPlaying.exists)
+
+        // REGRESSION GATE: do not query the title globally. During a system
+        // Sheet transition the presenting Mini Player can retain an off-screen
+        // accessibility copy (for example x = -161) while it is being removed.
+        // Scope the title to the visible Now Playing surface instead.
+        let visibleSurface = app.descendants(matching: .any)[surfaceIdentifier].firstMatch
+        XCTAssertTrue(
+            visibleSurface.waitForExistence(timeout: 5),
+            "The \(surfaceIdentifier) surface must stay mounted."
+        )
+        let surfaceFrame = visibleSurface.frame
+        XCTAssertFalse(
+            surfaceFrame.isEmpty,
+            "The visible \(surfaceIdentifier) surface must retain a measurable frame."
+        )
+        XCTAssertGreaterThanOrEqual(
+            surfaceFrame.minX,
+            -1,
+            "The visible \(surfaceIdentifier) surface must not escape the leading screen edge."
+        )
+        XCTAssertLessThanOrEqual(
+            surfaceFrame.maxX,
+            app.frame.maxX + 1,
+            "The visible \(surfaceIdentifier) surface must stay inside the screen width."
+        )
+        XCTAssertGreaterThanOrEqual(
+            surfaceFrame.minY,
+            -1,
+            "The visible \(surfaceIdentifier) surface must not escape above the screen."
+        )
+        XCTAssertLessThanOrEqual(
+            surfaceFrame.maxY,
+            app.frame.maxY + 1,
+            "The visible \(surfaceIdentifier) surface must stay inside the screen height."
+        )
+        // SwiftUI may either propagate the surface identifier to contained
+        // elements or preserve the title's own identifier, depending on the
+        // container. Query by label plus both supported identifiers; using
+        // staticTexts[expectedTitle] would query identifiers and can select
+        // the artwork element instead of the title.
+        let titleCandidates = app.staticTexts.matching(
+            NSPredicate(
+                format: "label == %@ AND (identifier == %@ OR identifier == %@)",
+                expectedTitle,
+                surfaceIdentifier,
+                "player.nowPlaying.current.title"
+            )
+        ).allElementsBoundByIndex
+        let title = titleCandidates.first { candidate in
+            let frame = candidate.frame
+            return !frame.isEmpty
+                && frame.minX >= -1
+                && frame.maxX <= app.frame.maxX + 1
+                && frame.minY >= 0
+                && frame.maxY <= app.frame.maxY + 1
+        }
+        XCTAssertTrue(
+            title != nil,
+            "The visible Now Playing title must stay mounted."
+        )
+        guard let title else { return }
+        XCTAssertGreaterThanOrEqual(
+            title.frame.minX,
+            -1,
+            "The current title must not be horizontally clipped during a transition."
+        )
+        XCTAssertLessThanOrEqual(
+            title.frame.maxX,
+            app.frame.maxX + 1,
+            "The current title must remain inside the screen width during a transition."
+        )
+
+        if let artworkSurface {
+            XCTAssertFalse(artworkSurface.frame.isEmpty)
+            XCTAssertGreaterThanOrEqual(artworkSurface.frame.minX, -1)
+            XCTAssertLessThanOrEqual(artworkSurface.frame.maxX, app.frame.maxX + 1)
+        }
     }
 
     @MainActor
@@ -1088,6 +1661,96 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
             withNormalizedOffset: CGVector(dx: 0.96, dy: 0.56)
         )
         start.press(forDuration: 0.05, thenDragTo: end)
+    }
+
+    @MainActor
+    private func bringQueueActionIntoView(
+        _ element: XCUIElement,
+        in scrollView: XCUIElement
+    ) {
+        // A full XCTest swipe can move the compact current row past the top
+        // edge. Use short, deterministic drags so the system sheet keeps its
+        // own dismissal gesture and the queue settles on the visible row.
+        for _ in 0..<5 where !element.isHittable {
+            let start = scrollView.coordinate(
+                withNormalizedOffset: CGVector(dx: 0.5, dy: 0.34)
+            )
+            let end = scrollView.coordinate(
+                withNormalizedOffset: CGVector(dx: 0.5, dy: 0.18)
+            )
+            start.press(forDuration: 0.05, thenDragTo: end)
+        }
+    }
+
+    @MainActor
+    private func revealQueueHistory(
+        _ heading: XCUIElement,
+        in scrollView: XCUIElement
+    ) {
+        // The queue contains the complete history. Use short pulls so the
+        // sheet remains owned by the system while progressively exposing the
+        // rows above the current-playing anchor. The heading is a static text,
+        // so use its frame rather than isHittable; XCTest can report an
+        // invalid activation point for a visible LazyVStack header.
+        for _ in 0..<8 where !isElementVisible(heading, in: scrollView) {
+            let start = scrollView.coordinate(
+                withNormalizedOffset: CGVector(dx: 0.5, dy: 0.24)
+            )
+            let end = scrollView.coordinate(
+                withNormalizedOffset: CGVector(dx: 0.5, dy: 0.62)
+            )
+            start.press(forDuration: 0.05, thenDragTo: end)
+        }
+    }
+
+    @MainActor
+    private func pullQueueDown(in scrollView: XCUIElement) {
+        let start = scrollView.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.5, dy: 0.24)
+        )
+        let end = scrollView.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.5, dy: 0.62)
+        )
+        start.press(forDuration: 0.05, thenDragTo: end)
+    }
+
+    @MainActor
+    private func pullQueueUp(in scrollView: XCUIElement) {
+        let start = scrollView.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.5, dy: 0.72)
+        )
+        let end = scrollView.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.5, dy: 0.26)
+        )
+        start.press(forDuration: 0.05, thenDragTo: end)
+    }
+
+    @MainActor
+    private func isElementHittable(
+        _ element: XCUIElement,
+        in container: XCUIElement
+    ) -> Bool {
+        guard element.exists else { return false }
+        let elementFrame = element.frame
+        let containerFrame = container.frame
+        guard !elementFrame.isEmpty,
+              !containerFrame.isEmpty,
+              elementFrame.intersects(containerFrame)
+        else {
+            return false
+        }
+        return element.isHittable
+    }
+
+    @MainActor
+    private func isElementVisible(
+        _ element: XCUIElement,
+        in container: XCUIElement
+    ) -> Bool {
+        guard element.exists else { return false }
+        let elementFrame = element.frame
+        let containerFrame = container.frame
+        return !elementFrame.isEmpty && elementFrame.intersects(containerFrame)
     }
 
     @MainActor
@@ -1648,6 +2311,14 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
     private func settingsScrollContainer(in app: XCUIApplication) -> XCUIElement {
         let settingsForm = app.collectionViews["settings.form"].firstMatch
         return settingsForm.waitForExistence(timeout: 2) ? settingsForm : app
+    }
+
+    @MainActor
+    private func scrollSettingsToTop(in app: XCUIApplication) {
+        let scrollContainer = settingsScrollContainer(in: app)
+        for _ in 0..<12 {
+            scrollContainer.swipeDown()
+        }
     }
 
     @MainActor

@@ -183,13 +183,22 @@ public final class AppServiceContainer {
                 try Task.checkCancellation()
                 let settingsResult = try await self.effectiveSettingsOrDefault()
                 try Task.checkCancellation()
-                let metadataProviders = settingsResult.effective.settings.importPreferences
-                    .metadataProviders
+                let importPreferences = settingsResult.effective.settings.importPreferences
+                await self.metadataEnrichmentCoordinator.setPrivacyPreferences(
+                    importPreferences.privacyPreferences
+                )
+                let metadataProviders = importPreferences.runtimeMetadataProviders
                 await self.metadataEnrichmentCoordinator.setProviderPreferences(
                     metadataProviders
                 )
                 await self.metadataEnrichmentCoordinator.setEnabled(
                     metadataProviders.contains(where: \.isEnabled)
+                )
+                await self.lyricsCoordinator.setPrivacyPreferences(
+                    importPreferences.privacyPreferences
+                )
+                await self.lyricsCoordinator.setProviderPreferences(
+                    importPreferences.runtimeLyricsProviders
                 )
                 try Task.checkCancellation()
                 var fallbacks = settingsResult.fallbacks
@@ -344,11 +353,22 @@ public final class AppServiceContainer {
                 await self.sleepTimerCoordinator.update(
                     preferences: effective.settings.playbackPreferences.sleepTimer
                 )
+                let importPreferences = effective.settings.importPreferences
+                await self.metadataEnrichmentCoordinator.setPrivacyPreferences(
+                    importPreferences.privacyPreferences
+                )
+                await self.lyricsCoordinator.setPrivacyPreferences(
+                    importPreferences.privacyPreferences
+                )
+                let metadataProviders = importPreferences.runtimeMetadataProviders
                 await self.metadataEnrichmentCoordinator.setProviderPreferences(
-                    effective.settings.importPreferences.metadataProviders
+                    metadataProviders
                 )
                 await self.metadataEnrichmentCoordinator.setEnabled(
-                    effective.settings.importPreferences.metadataProviders.contains(where: \.isEnabled)
+                    metadataProviders.contains(where: \.isEnabled)
+                )
+                await self.lyricsCoordinator.setProviderPreferences(
+                    importPreferences.runtimeLyricsProviders
                 )
             }
         }

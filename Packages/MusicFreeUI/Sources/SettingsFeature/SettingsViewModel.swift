@@ -2,6 +2,7 @@ import AppServices
 import DesignSystem
 import Foundation
 import LibraryAPI
+import MusicDomain
 import Observation
 import OSLog
 import PlaybackAPI
@@ -19,6 +20,7 @@ final class SettingsViewModel {
     let store: any SettingsFeatureStore
     private let metadataEnrichment: (any MetadataEnrichmentServing)?
     private let lyricsServing: (any LyricsServing)?
+    private var registeredLyricsProviderIDs: Set<LyricsProviderID>?
 
     private(set) var settings: AppSettings = .defaults
     private(set) var playbackCapabilities: PlaybackCapabilities = []
@@ -34,6 +36,7 @@ final class SettingsViewModel {
     private(set) var lyricsPreloadSnapshot = LyricsPreloadSnapshot()
     private(set) var playbackRateDraft: Double?
     private(set) var equalizerPreampDraft: Double?
+    private(set) var cacheLimitDraftBytes: Int64?
     var isResetConfirmationPresented = false
     var isMaintenanceConfirmationPresented = false
     private(set) var requestedMaintenanceAction: StorageMaintenanceAction?
@@ -53,7 +56,7 @@ final class SettingsViewModel {
     private var recentlyWrittenSettings: Set<AppSettings> = []
     private var failedSaveSettings: AppSettings?
     private var equalizerBandGainDrafts: [Int: Double] = [:]
-    private var storageRefreshTask: Task<Void, Never>?
+    private var storageRefreshTask: Task<Bool, Never>?
     private var storageRefreshGeneration: UInt64 = 0
     private var metadataIntentGeneration: UInt64 = 0
     private var metadataScanIntentGeneration: UInt64 = 0
@@ -95,7 +98,24 @@ final class SettingsViewModel {
     }
 
     var canPreloadLyrics: Bool {
-        lyricsServing != nil
+        lyricsServing != nil && hasEnabledLyricsProviders
+    }
+
+    var hasEnabledLyricsProviders: Bool {
+        settings.importPreferences.runtimeLyricsProviders.contains { preference in
+            preference.isEnabled
+                && (registeredLyricsProviderIDs?.contains(preference.provider) ?? true)
+        }
+    }
+
+    /// Provider capabilities visible to settings. The backing registration
+    /// state stays private so pages cannot mutate runtime composition.
+    var availableLyricsProviderIDs: Set<LyricsProviderID> {
+        registeredLyricsProviderIDs ?? []
+    }
+
+    var isPrivacyPolicyAccepted: Bool {
+        settings.importPreferences.privacyPreferences.isPrivacyPolicyAccepted
     }
 
     var canEditPlayback: Bool {
@@ -143,6 +163,25 @@ final class SettingsViewModel {
         equalizerPreampDraft ?? settings.playbackPreferences.equalizer.preamp.decibels
     }
 
+    var displayedCacheLimitBytes: Int64 {
+        cacheLimitDraftBytes ?? settings.storagePreferences.cacheLimit.bytes
+    }
+
+    var maximumCacheLimitBytes: Int64? {
+        guard let storageUsage,
+              let availableBytes = storageUsage.availableBytes
+        else { return nil }
+
+        let (availableAndCachedBytes, overflowed) = availableBytes.addingReportingOverflow(
+            storageUsage.cacheBytes
+        )
+        let feasibleBytes = overflowed ? StorageByteLimit.maximumBytes : availableAndCachedBytes
+        return min(
+            max(feasibleBytes, StorageByteLimit.minimumBytes),
+            StorageByteLimit.maximumBytes
+        )
+    }
+
     var supportsGapless: Bool {
         playbackCapabilities.contains(.gapless)
     }
@@ -184,9 +223,11 @@ final class SettingsViewModel {
         }
 
         if let lyricsServing {
+            registeredLyricsProviderIDs = await lyricsServing.registeredLyricsProviderIDs()
             lyricsPreloadSnapshot = await lyricsServing.preloadSnapshot()
             startLyricsPreloadObservation(using: lyricsServing)
         } else {
+            registeredLyricsProviderIDs = nil
             lyricsPreloadSnapshot = LyricsPreloadSnapshot()
         }
 
@@ -202,6 +243,9 @@ final class SettingsViewModel {
             equalizerDescriptor = effective.equalizerDescriptor
             systemCapabilities = effective.systemCapabilities
             loadState = .loaded
+            // A successful load establishes the committed baseline. Provider
+            // activation is allowed immediately after the settings page appears.
+            mutationState = .saved
             syncMetadataRuntime(for: loaded)
             await metadataRuntimeTask?.value
             await refreshStorageUsage()
@@ -222,11 +266,11 @@ final class SettingsViewModel {
         await load()
     }
 
-    func refreshStorageUsage() async {
-        guard loadState == .loaded, !isMaintainingStorage else { return }
+    @discardableResult
+    func refreshStorageUsage() async -> Bool {
+        guard loadState == .loaded, !isMaintainingStorage else { return false }
         if let storageRefreshTask {
-            await storageRefreshTask.value
-            return
+            return await storageRefreshTask.value
         }
 
         storageRefreshGeneration = nextGeneration(after: storageRefreshGeneration)
@@ -239,24 +283,27 @@ final class SettingsViewModel {
                 guard !Task.isCancelled,
                       let self,
                       self.storageRefreshGeneration == generation
-                else { return }
+                else { return false }
                 self.storageUsage = usage
                 if case .failed = self.maintenanceState {
                     self.maintenanceState = .idle
                 }
+                return true
             } catch {
                 guard !Task.isCancelled,
                       let self,
                       self.storageRefreshGeneration == generation
-                else { return }
+                else { return false }
                 self.storageUsage = nil
+                return false
             }
         }
         storageRefreshTask = task
-        await task.value
-        guard storageRefreshGeneration == generation else { return }
+        let succeeded = await task.value
+        guard storageRefreshGeneration == generation else { return false }
         storageRefreshTask = nil
         isRefreshingStorage = false
+        return succeeded
     }
 
     func performStorageMaintenance(_ actions: Set<StorageMaintenanceAction>) async {
@@ -800,7 +847,9 @@ final class SettingsViewModel {
             AppSettings(
                 importPreferences: ImportPreferences(
                     duplicatePolicy: policy,
-                    metadataProviders: current.importPreferences.metadataProviders
+                    metadataProviders: current.importPreferences.metadataProviders,
+                    lyricsProviders: current.importPreferences.lyricsProviders,
+                    privacyPreferences: current.importPreferences.privacyPreferences
                 ),
                 playbackPreferences: current.playbackPreferences,
                 storagePreferences: current.storagePreferences
@@ -810,6 +859,117 @@ final class SettingsViewModel {
 
     func setMusicKitMetadataEnrichmentEnabled(_ isEnabled: Bool) {
         setMetadataProviderEnabled(.musicKit, isEnabled)
+    }
+
+    func setLyricsProvidersEnabled(_ isEnabled: Bool) {
+        applyEdit { current in
+            AppSettings(
+                importPreferences: current.importPreferences.settingLyricsProvidersEnabled(isEnabled),
+                playbackPreferences: current.playbackPreferences,
+                storagePreferences: current.storagePreferences
+            )
+        }
+    }
+
+    func setLyricsProviderEnabled(
+        _ provider: LyricsProviderID,
+        _ isEnabled: Bool
+    ) {
+        guard canEditPlayback else { return }
+        applyEdit { current in
+            AppSettings(
+                importPreferences: current.importPreferences.settingLyricsProvider(
+                    provider,
+                    enabled: isEnabled
+                ),
+                playbackPreferences: current.playbackPreferences,
+                storagePreferences: current.storagePreferences
+            )
+        }
+    }
+
+    func acceptPrivacyPolicy() {
+        applyEdit { current in
+            AppSettings(
+                importPreferences: current.importPreferences.settingPrivacyPreferences(
+                    current.importPreferences.privacyPreferences.acceptingPrivacyPolicy()
+                ),
+                playbackPreferences: current.playbackPreferences,
+                storagePreferences: current.storagePreferences
+            )
+        }
+    }
+
+    func acceptProviderPrivacy(for providerID: String) {
+        applyEdit { current in
+            AppSettings(
+                importPreferences: current.importPreferences.settingPrivacyPreferences(
+                    current.importPreferences.privacyPreferences.acceptingProviderPolicy(
+                        providerID
+                    )
+                ),
+                playbackPreferences: current.playbackPreferences,
+                storagePreferences: current.storagePreferences
+            )
+        }
+    }
+
+    func revokeOnlinePrivacy() {
+        applyEdit { current in
+            let importPreferences = current.importPreferences
+                .settingPrivacyPreferences(.revokingOnlineServices())
+                .settingMetadataProviders(
+                    current.importPreferences.metadataProviders.map {
+                        $0.settingEnabled(false)
+                    }
+                )
+                .settingLyricsProviders(
+                    current.importPreferences.lyricsProviders.map {
+                        $0.settingEnabled(false)
+                    }
+                )
+            return AppSettings(
+                importPreferences: importPreferences,
+                playbackPreferences: current.playbackPreferences,
+                storagePreferences: current.storagePreferences
+            )
+        }
+    }
+
+    /// Clears every online-service consent and disables every Provider.
+    /// This is intentionally exposed for repeatable privacy-flow testing.
+    func resetAllPrivacy() {
+        revokeOnlinePrivacy()
+    }
+
+    func revokeProviderPrivacy(for providerID: String) {
+        applyEdit { current in
+            let importPreferences = current.importPreferences
+                .settingPrivacyPreferences(
+                    current.importPreferences.privacyPreferences.revokingProviderPolicy(
+                        providerID
+                    )
+                )
+                .settingMetadataProviders(
+                    current.importPreferences.metadataProviders.map { preference in
+                        preference.provider.rawValue == providerID
+                            ? preference.settingEnabled(false)
+                            : preference
+                    }
+                )
+                .settingLyricsProviders(
+                    current.importPreferences.lyricsProviders.map { preference in
+                        preference.provider.rawValue == providerID
+                            ? preference.settingEnabled(false)
+                            : preference
+                    }
+                )
+            return AppSettings(
+                importPreferences: importPreferences,
+                playbackPreferences: current.playbackPreferences,
+                storagePreferences: current.storagePreferences
+            )
+        }
     }
 
     func setMetadataProviderEnabled(
@@ -828,7 +988,7 @@ final class SettingsViewModel {
             return
         }
 
-        let previousPreferences = settings.importPreferences.metadataProviders
+        let previousPreferences = settings.importPreferences.runtimeMetadataProviders
         if !isEnabled {
             applyMetadataProviderSetting(provider, enabled: false)
             metadataActionTask = Task { @MainActor [weak self] in
@@ -838,7 +998,7 @@ final class SettingsViewModel {
                       self.metadataIntentGeneration == generation,
                       self.mutationState == .saved
                 else { return }
-                let preferences = self.settings.importPreferences.metadataProviders
+                let preferences = self.settings.importPreferences.runtimeMetadataProviders
                 await metadataEnrichment.setProviderPreferences(preferences)
                 await metadataEnrichment.setEnabled(preferences.contains(where: \.isEnabled))
                 self.metadataEnrichmentSnapshot = await metadataEnrichment.snapshot()
@@ -847,9 +1007,26 @@ final class SettingsViewModel {
         }
 
         metadataActionTask = Task { @MainActor [weak self] in
-            let authorization = await metadataEnrichment.requestAuthorization(for: provider)
+            await self?.waitForPendingWork()
             guard !Task.isCancelled,
                   let self,
+                  self.metadataIntentGeneration == generation,
+                  self.mutationState == .saved
+            else { return }
+
+            // The consent save and the AppServiceContainer settings stream are
+            // independent tasks. Apply the latest consent directly before the
+            // authorization request so a newly accepted Provider can be
+            // enabled without depending on stream scheduling.
+            let currentImportPreferences = self.settings.importPreferences
+            await metadataEnrichment.setPrivacyPreferences(
+                currentImportPreferences.privacyPreferences
+            )
+            await metadataEnrichment.setProviderPreferences(
+                currentImportPreferences.runtimeMetadataProviders
+            )
+            let authorization = await metadataEnrichment.requestAuthorization(for: provider)
+            guard !Task.isCancelled,
                   self.metadataIntentGeneration == generation
             else { return }
             guard authorization == .authorized else {
@@ -874,7 +1051,7 @@ final class SettingsViewModel {
                 )
                 return
             }
-            let preferences = self.settings.importPreferences.metadataProviders
+            let preferences = self.settings.importPreferences.runtimeMetadataProviders
             await metadataEnrichment.setProviderPreferences(preferences)
             await metadataEnrichment.setEnabled(preferences.contains(where: \.isEnabled))
             self.metadataEnrichmentSnapshot = await metadataEnrichment.snapshot()
@@ -895,6 +1072,85 @@ final class SettingsViewModel {
         applyEdit { current in
             AppSettings(
                 importPreferences: current.importPreferences.settingMetadataProviders(reordered),
+                playbackPreferences: current.playbackPreferences,
+                storagePreferences: current.storagePreferences
+            )
+        }
+        syncMetadataRuntime(for: settings)
+    }
+
+    /// Reorders only the providers currently exposed by the settings UI.
+    /// Providers hidden by an app-level feature switch stay in their persisted
+    /// slots and do not become accidental reorder targets.
+    func moveMetadataProvider(
+        _ provider: MetadataEnrichmentProvider,
+        by offset: Int,
+        within visibleProviders: [MetadataEnrichmentProvider]
+    ) {
+        guard canEditPlayback,
+              let sourceVisibleIndex = visibleProviders.firstIndex(of: provider)
+        else { return }
+
+        let destinationVisibleIndex = sourceVisibleIndex + offset
+        guard visibleProviders.indices.contains(destinationVisibleIndex)
+        else { return }
+        let destinationProvider = visibleProviders[destinationVisibleIndex]
+
+        let providers = settings.importPreferences.metadataProviders
+        guard let sourceIndex = providers.firstIndex(where: { $0.provider == provider }),
+              let destinationIndex = providers.firstIndex(where: {
+                  $0.provider == destinationProvider
+              }),
+              sourceIndex != destinationIndex
+        else { return }
+
+        var reordered = providers
+        reordered.swapAt(sourceIndex, destinationIndex)
+        applyEdit { current in
+            AppSettings(
+                importPreferences: current.importPreferences.settingMetadataProviders(reordered),
+                playbackPreferences: current.playbackPreferences,
+                storagePreferences: current.storagePreferences
+            )
+        }
+        syncMetadataRuntime(for: settings)
+    }
+
+    func moveMetadataProviders(
+        from source: IndexSet,
+        to destination: Int,
+        within visibleProviders: [MetadataEnrichmentProvider]
+    ) {
+        guard canEditPlayback,
+              !source.isEmpty,
+              destination >= 0,
+              destination <= visibleProviders.count,
+              source.allSatisfy({ visibleProviders.indices.contains($0) })
+        else { return }
+
+        var reorderedVisibleProviders = visibleProviders
+        reorderedVisibleProviders.move(fromOffsets: source, toOffset: destination)
+
+        let persistedProviders = settings.importPreferences.metadataProviders
+        let visibleProviderIDs = Set(visibleProviders)
+        let persistedVisibleIndices = persistedProviders.indices.filter {
+            visibleProviderIDs.contains(persistedProviders[$0].provider)
+        }
+        guard persistedVisibleIndices.count == reorderedVisibleProviders.count else { return }
+
+        var reorderedPersistedProviders = persistedProviders
+        for (visibleIndex, persistedIndex) in persistedVisibleIndices.enumerated() {
+            guard let preference = persistedProviders.first(where: {
+                $0.provider == reorderedVisibleProviders[visibleIndex]
+            }) else { return }
+            reorderedPersistedProviders[persistedIndex] = preference
+        }
+
+        applyEdit { current in
+            AppSettings(
+                importPreferences: current.importPreferences.settingMetadataProviders(
+                    reorderedPersistedProviders
+                ),
                 playbackPreferences: current.playbackPreferences,
                 storagePreferences: current.storagePreferences
             )
@@ -1019,6 +1275,7 @@ final class SettingsViewModel {
 
     func startLyricsPreload() {
         guard let lyricsServing,
+              hasEnabledLyricsProviders,
               lyricsPreloadSnapshot.status != .downloading
         else {
             Self.metadataLogger.debug(
@@ -1146,7 +1403,7 @@ final class SettingsViewModel {
         metadataRuntimeTask?.cancel()
         metadataRuntimeGeneration = nextGeneration(after: metadataRuntimeGeneration)
         let generation = metadataRuntimeGeneration
-        let preferences = settings.importPreferences.metadataProviders
+        let preferences = settings.importPreferences.runtimeMetadataProviders
         let requestedValue = preferences.contains(where: \.isEnabled)
         guard let metadataEnrichment else { return }
         let previousTask = metadataRuntimeTask
@@ -1260,6 +1517,31 @@ final class SettingsViewModel {
         } catch {
             recordValidationFailure(error)
         }
+    }
+
+    func beginCacheLimitEditing() {
+        guard maximumCacheLimitBytes != nil else { return }
+        cacheLimitDraftBytes = clampedCacheLimitBytes(
+            settings.storagePreferences.cacheLimit.bytes
+        )
+    }
+
+    func updateCacheLimitDraft(bytes: Int64) {
+        guard maximumCacheLimitBytes != nil else { return }
+        cacheLimitDraftBytes = clampedCacheLimitBytes(bytes)
+    }
+
+    func endCacheLimitEditing() {
+        guard let cacheLimitDraftBytes else { return }
+        let finalBytes = clampedCacheLimitBytes(cacheLimitDraftBytes)
+        self.cacheLimitDraftBytes = nil
+        guard finalBytes != settings.storagePreferences.cacheLimit.bytes else { return }
+        setCacheLimit(bytes: finalBytes)
+    }
+
+    private func clampedCacheLimitBytes(_ bytes: Int64) -> Int64 {
+        let maximumBytes = maximumCacheLimitBytes ?? StorageByteLimit.maximumBytes
+        return min(max(bytes, StorageByteLimit.minimumBytes), maximumBytes)
     }
 
     func setStagingRetention(_ duration: Duration) {

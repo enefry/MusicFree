@@ -17,6 +17,7 @@ xcuserdata/
 !Docs/VLCKIT_FORMAT_MATRIX.md
 !Docs/APP_STORE_SUBMISSION.md
 !Docs/PRIVACY_POLICY.md
+!Docs/PRIVACY_POLICY_v1.1.0.md
 !ThirdPartyNotices/
 !ThirdPartyNotices/*.md
 
@@ -51,4 +52,3 @@ dist
 Design/AppStore
 Design/screenshot
 APP_STORE_SUBMISSION.md
-

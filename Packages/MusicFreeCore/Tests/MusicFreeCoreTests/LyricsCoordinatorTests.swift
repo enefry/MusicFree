@@ -2,7 +2,16 @@
 import LibraryAPI
 import MusicDomain
 import MusicTestSupport
+import SettingsAPI
 import Testing
+
+private func acceptedPrivacy(
+    for providers: [LyricsProviderID]
+) -> PrivacyPreferences {
+    providers.reduce(PrivacyPreferences.defaults.acceptingPrivacyPolicy()) { privacy, provider in
+        privacy.acceptingProviderPolicy(provider.rawValue)
+    }
+}
 
 @Suite(.serialized)
 struct LyricsCoordinatorTests {
@@ -51,6 +60,10 @@ struct LyricsCoordinatorTests {
             providers: [provider],
             library: library
         )
+        await coordinator.setPrivacyPreferences(acceptedPrivacy(for: [.lrclib]))
+        await coordinator.setProviderPreferences([
+            LyricsProviderPreference(provider: .lrclib, isEnabled: true)
+        ])
 
         let result = try await coordinator.fetchLyrics(
             for: LyricsQuery(
@@ -144,6 +157,22 @@ struct LyricsCoordinatorTests {
             providers: [first, second],
             library: library
         )
+        await coordinator.setPrivacyPreferences(
+            acceptedPrivacy(for: [
+                LyricsProviderID(rawValue: "first"),
+                LyricsProviderID(rawValue: "second")
+            ])
+        )
+        await coordinator.setProviderPreferences([
+            LyricsProviderPreference(
+                provider: LyricsProviderID(rawValue: "first"),
+                isEnabled: true
+            ),
+            LyricsProviderPreference(
+                provider: LyricsProviderID(rawValue: "second"),
+                isEnabled: true
+            )
+        ])
 
         let result = try await coordinator.fetchLyrics(
             for: LyricsQuery(itemID: itemID, title: "Song", artistName: "Artist"),
@@ -154,6 +183,94 @@ struct LyricsCoordinatorTests {
         #expect(await first.callCount == 1)
         #expect(await second.callCount == 1)
         #expect(try await repository.track(id: itemID)?.lyrics == secondLyrics)
+    }
+
+    @Test("Lyrics coordinator skips disabled providers")
+    func skipsDisabledProviders() async throws {
+        let itemID = MediaItemID(sourceID: .local, externalID: "lyrics-provider-disabled")
+        let repository = InMemoryLibraryRepository(tracks: [Track(id: itemID, title: "Song")])
+        let firstProviderID = LyricsProviderID(rawValue: "first-disabled")
+        let first = TestLyricsProvider(
+            provider: firstProviderID,
+            result: TrackLyrics(rawText: "First provider line")
+        )
+        let secondLyrics = TrackLyrics(rawText: "Second provider line")
+        let secondProviderID = LyricsProviderID(rawValue: "second-enabled")
+        let second = TestLyricsProvider(
+            provider: secondProviderID,
+            result: secondLyrics
+        )
+        let library = LibraryCoordinator(
+            repository: repository,
+            remover: nil,
+            queueRepository: nil,
+            historyRepository: nil
+        )
+        let coordinator = LyricsCoordinator(
+            providers: [first, second],
+            library: library
+        )
+
+        await coordinator.setPrivacyPreferences(
+            acceptedPrivacy(for: [firstProviderID, secondProviderID])
+        )
+        await coordinator.setProviderPreferences([
+            LyricsProviderPreference(provider: firstProviderID, isEnabled: false),
+            LyricsProviderPreference(provider: secondProviderID, isEnabled: true)
+        ])
+        let result = try await coordinator.fetchLyrics(
+            for: LyricsQuery(itemID: itemID, title: "Song"),
+            forceRefresh: true
+        )
+
+        #expect(result == secondLyrics)
+        #expect(await first.callCount == 0)
+        #expect(await second.callCount == 1)
+    }
+
+    @Test("Lyrics coordinator disables provider queries and preload")
+    func disablesProviderQueriesAndPreload() async throws {
+        let itemID = MediaItemID(sourceID: .local, externalID: "lyrics-disabled")
+        let localLyrics = TrackLyrics(rawText: "Local line")
+        let repository = InMemoryLibraryRepository(
+            tracks: [Track(id: itemID, title: "Song", lyrics: localLyrics)]
+        )
+        let lyrics = TrackLyrics(rawText: "Online line")
+        let provider = TestLyricsProvider(provider: .lrclib, result: lyrics)
+        let library = LibraryCoordinator(
+            repository: repository,
+            remover: nil,
+            queueRepository: nil,
+            historyRepository: nil
+        )
+        let coordinator = LyricsCoordinator(providers: [provider], library: library)
+
+        await coordinator.setPrivacyPreferences(acceptedPrivacy(for: [.lrclib]))
+        #expect(await coordinator.registeredLyricsProviderIDs() == [.lrclib])
+        await coordinator.setEnabled(false)
+        let localResult = try await coordinator.fetchLyrics(
+            for: LyricsQuery(itemID: itemID, title: "Song"),
+            forceRefresh: false
+        )
+        let disabledResult = try await coordinator.fetchLyrics(
+            for: LyricsQuery(itemID: itemID, title: "Song"),
+            forceRefresh: true
+        )
+        await coordinator.startPreload()
+
+        #expect(localResult == localLyrics)
+        #expect(disabledResult == nil)
+        #expect(await provider.callCount == 0)
+        #expect((await coordinator.preloadSnapshot()).status == .idle)
+
+        await coordinator.setEnabled(true)
+        let enabledResult = try await coordinator.fetchLyrics(
+            for: LyricsQuery(itemID: itemID, title: "Song"),
+            forceRefresh: true
+        )
+
+        #expect(enabledResult == lyrics)
+        #expect(await provider.callCount == 1)
     }
 
     @Test("Lyrics preload skips cached tracks and persists missing lyrics")
@@ -194,6 +311,10 @@ struct LyricsCoordinatorTests {
             historyRepository: nil
         )
         let coordinator = LyricsCoordinator(providers: [provider], library: library)
+        await coordinator.setPrivacyPreferences(acceptedPrivacy(for: [.lrclib]))
+        await coordinator.setProviderPreferences([
+            LyricsProviderPreference(provider: .lrclib, isEnabled: true)
+        ])
 
         await coordinator.startPreload()
         let starting = await coordinator.preloadSnapshot()

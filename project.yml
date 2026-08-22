@@ -60,6 +60,7 @@ targets:
         SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: false
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS: true
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) $(METADATA_SERVER_FEATURE_FLAG) $(LYRICS_FEATURE_FLAG)"
     dependencies:
       - package: MusicFreeCore
         product: AppServices

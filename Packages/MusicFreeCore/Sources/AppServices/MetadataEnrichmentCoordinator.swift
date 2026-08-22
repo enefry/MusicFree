@@ -30,6 +30,7 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
     )
 
     private var providerPreferences: [MetadataProviderPreference]
+    private var privacyPreferences = PrivacyPreferences.defaults
     private var enabled = false
     private var authorization: MetadataEnrichmentAuthorizationStatus
     private var activeProvider: MetadataProviderID?
@@ -60,20 +61,11 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
         self.authorization = .unavailable
         self.activeProvider = nil
 
-        var initialPreferences = ImportPreferences.defaultMetadataProviders
-        var seen = Set<MetadataProviderID>()
-        for provider in providers where seen.insert(provider.provider).inserted {
-            if let index = initialPreferences.firstIndex(where: {
-                $0.provider == provider.provider
-            }) {
-                initialPreferences[index] = initialPreferences[index].settingEnabled(true)
-            } else {
-                initialPreferences.append(
-                    MetadataProviderPreference(provider: provider.provider, isEnabled: true)
-                )
-            }
-        }
-        self.providerPreferences = initialPreferences
+        // Provider registration must never imply user consent or enablement.
+        // The persisted settings are applied during service startup; keeping
+        // the coordinator's initial state disabled also makes previews and
+        // pre-start snapshots safe.
+        self.providerPreferences = ImportPreferences.defaultMetadataProviders
     }
 
     func snapshot() -> MetadataEnrichmentSnapshot {
@@ -102,9 +94,8 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
 
     func requestAuthorization() async -> MetadataEnrichmentAuthorizationStatus {
         let providerID = providerPreferences.first {
-            $0.isEnabled && providers[$0.provider] != nil
+            isProviderRuntimeEnabled($0)
         }?.provider
-            ?? providerPreferences.first(where: { providers[$0.provider] != nil })?.provider
         guard let providerID else {
             authorization = .unavailable
             publish()
@@ -116,6 +107,11 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
     func requestAuthorization(
         for providerID: MetadataProviderID
     ) async -> MetadataEnrichmentAuthorizationStatus {
+        guard privacyPreferences.isProviderPolicyAccepted(providerID.rawValue) else {
+            await refreshProviderStatuses()
+            publish()
+            return .unavailable
+        }
         guard let provider = providers[providerID] else {
             await refreshProviderStatuses()
             publish()
@@ -128,6 +124,23 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
         }?.authorization ?? .unavailable
         publish()
         return requestedAuthorization
+    }
+
+    func setPrivacyPreferences(_ preferences: PrivacyPreferences) async {
+        guard preferences != privacyPreferences else {
+            await refreshProviderStatuses()
+            publish()
+            return
+        }
+
+        privacyPreferences = preferences
+        if enabled {
+            await cancelRunningWork()
+        }
+        enabled = false
+        await refreshProviderStatuses()
+        publish()
+        startQueueWorkerIfNeeded()
     }
 
     func setProviderPreferences(
@@ -158,7 +171,7 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
             return
         }
 
-        guard providerPreferences.contains(where: \.isEnabled), !providers.isEmpty else {
+        guard providerPreferences.contains(where: isProviderRuntimeEnabled), !providers.isEmpty else {
             enabled = false
             authorization = .unavailable
             activeProvider = nil
@@ -203,7 +216,7 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
             statuses.append(
                 MetadataEnrichmentProviderSnapshot(
                     provider: preference.provider,
-                    isEnabled: preference.isEnabled,
+                    isEnabled: isProviderRuntimeEnabled(preference),
                     isRegistered: providers[preference.provider] != nil,
                     authorization: authorization
                 )
@@ -226,11 +239,19 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
 
     private func enabledProviderIDs() -> [MetadataProviderID] {
         providerPreferences.compactMap { preference in
-            guard preference.isEnabled, providers[preference.provider] != nil else {
+            guard isProviderRuntimeEnabled(preference) else {
                 return nil
             }
             return preference.provider
         }
+    }
+
+    private func isProviderRuntimeEnabled(
+        _ preference: MetadataProviderPreference
+    ) -> Bool {
+        preference.isEnabled
+            && providers[preference.provider] != nil
+            && privacyPreferences.isProviderPolicyAccepted(preference.provider.rawValue)
     }
 
     func enqueue(itemID: MediaItemID) {

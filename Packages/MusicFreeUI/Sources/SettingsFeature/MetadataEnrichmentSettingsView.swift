@@ -1,14 +1,37 @@
 import DesignSystem
 import LibraryAPI
+import MusicDomain
 import SettingsAPI
 import SwiftUI
 
 struct MetadataEnrichmentSettingsView: View {
     @Bindable var viewModel: SettingsViewModel
+    let metadataServerEnabled: Bool
+    let lyricsEnabled: Bool
     @State private var displayedSnapshot = MetadataEnrichmentSnapshot()
     @State private var displayedLyricsPreloadSnapshot = LyricsPreloadSnapshot()
     @State private var scanPresentation: ScanPresentation = .idle
     @State private var lyricsPreloadPresentation: LyricsPreloadPresentation = .idle
+    @State private var privacyDisclosure: PrivacyDisclosure?
+    @State private var pendingProviderActivation: ProviderActivation?
+
+    private enum ProviderActivation: Identifiable {
+        case metadata(MetadataProviderID)
+        case lyrics(LyricsProviderID)
+
+        var id: String {
+            "provider-activation.\(providerID)"
+        }
+
+        var providerID: String {
+            switch self {
+            case let .metadata(provider):
+                return provider.rawValue
+            case let .lyrics(provider):
+                return provider.rawValue
+            }
+        }
+    }
 
     private enum ScanPresentation {
         case idle
@@ -22,15 +45,36 @@ struct MetadataEnrichmentSettingsView: View {
         case cancelling
     }
 
+    init(
+        viewModel: SettingsViewModel,
+        metadataServerEnabled: Bool = true,
+        lyricsEnabled: Bool = true
+    ) {
+        _viewModel = Bindable(viewModel)
+        self.metadataServerEnabled = metadataServerEnabled
+        self.lyricsEnabled = lyricsEnabled
+    }
+
     var body: some View {
-        Form {
+        List {
             metadataSection
-            lyricsSection
+            if lyricsEnabled {
+                lyricsSection
+            }
         }
         .navigationTitle(L("元数据填充"))
         .navigationBarTitleDisplayMode(.inline)
+        .environment(\.editMode, .constant(.active))
+        .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .background(MusicFreeColorTokens.backgroundGrouped)
+        .sheet(item: $privacyDisclosure) { disclosure in
+            PrivacyDisclosureView(
+                disclosure: disclosure,
+                onAccept: acceptPrivacyDisclosure,
+                onDecline: declinePrivacyDisclosure
+            )
+        }
         .task {
             viewModel.resumeMetadataObservation()
             displayedSnapshot = viewModel.metadataEnrichmentSnapshot
@@ -51,68 +95,161 @@ struct MetadataEnrichmentSettingsView: View {
         }
     }
 
+    private func setMetadataProviderEnabled(
+        _ provider: MetadataProviderID,
+        _ isEnabled: Bool
+    ) {
+        guard isEnabled else {
+            viewModel.setMetadataProviderEnabled(provider, false)
+            return
+        }
+        requestProviderActivation(.metadata(provider))
+    }
+
+    private func setLyricsProviderEnabled(
+        _ provider: LyricsProviderID,
+        _ isEnabled: Bool
+    ) {
+        guard isEnabled else {
+            viewModel.setLyricsProviderEnabled(provider, false)
+            return
+        }
+        requestProviderActivation(.lyrics(provider))
+    }
+
+    private func requestProviderActivation(_ activation: ProviderActivation) {
+        pendingProviderActivation = activation
+
+        if !viewModel.isPrivacyPolicyAccepted {
+            privacyDisclosure = .application
+        } else if !viewModel.settings.importPreferences.privacyPreferences
+            .isProviderPolicyAccepted(activation.providerID) {
+            privacyDisclosure = .provider(
+                PrivacyProviderCatalog.descriptor(for: activation.providerID)
+            )
+        } else {
+            completeProviderActivation()
+        }
+    }
+
+    private func acceptPrivacyDisclosure() {
+        switch privacyDisclosure {
+        case .application:
+            viewModel.acceptPrivacyPolicy()
+            guard let activation = pendingProviderActivation else {
+                privacyDisclosure = nil
+                return
+            }
+            privacyDisclosure = .provider(
+                PrivacyProviderCatalog.descriptor(for: activation.providerID)
+            )
+        case let .provider(descriptor):
+            viewModel.acceptProviderPrivacy(for: descriptor.id)
+            completeProviderActivation()
+        case nil:
+            break
+        }
+    }
+
+    private func declinePrivacyDisclosure() {
+        switch privacyDisclosure {
+        case .application:
+            viewModel.revokeOnlinePrivacy()
+        case let .provider(descriptor):
+            viewModel.revokeProviderPrivacy(for: descriptor.id)
+        case nil:
+            break
+        }
+        pendingProviderActivation = nil
+        privacyDisclosure = nil
+    }
+
+    private func completeProviderActivation() {
+        guard let activation = pendingProviderActivation else {
+            privacyDisclosure = nil
+            return
+        }
+
+        pendingProviderActivation = nil
+        privacyDisclosure = nil
+        Task { @MainActor in
+            await viewModel.waitForPendingWork()
+            switch activation {
+            case let .metadata(provider):
+                viewModel.setMetadataProviderEnabled(provider, true)
+            case let .lyrics(provider):
+                viewModel.setLyricsProviderEnabled(provider, true)
+            }
+        }
+    }
+
     @ViewBuilder
     private var metadataSection: some View {
         Section {
-            Text(L("按顺序尝试已启用的来源；匹配成功后停止。本地已有信息不会被覆盖。"))
-                .font(MusicFreeTypographyTokens.secondary)
-                .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
-
-            ForEach(
-                Array(viewModel.settings.importPreferences.metadataProviders.enumerated()),
-                id: \.element.provider
-            ) { item in
-                metadataProviderRow(
-                    item.element,
-                    index: item.offset,
-                    total: viewModel.settings.importPreferences.metadataProviders.count
+            ForEach(visibleMetadataProviderPreferences) { preference in
+                metadataProviderRow(preference)
+            }
+            .onMove { source, destination in
+                viewModel.moveMetadataProviders(
+                    from: source,
+                    to: destination,
+                    within: visibleMetadataProviderPreferences.map(\.provider)
                 )
             }
-
-            Text(metadataAvailabilityText)
-                .font(MusicFreeTypographyTokens.secondary)
-                .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
 
             metadataScanContent
         } header: {
             Text(L("元数据"))
                 .accessibilityIdentifier("settings.import.metadata.section")
+        } footer: {
+            metadataFooter
         }
     }
 
     @ViewBuilder
     private var lyricsSection: some View {
         Section {
-            Label(L("Metadata Server"), systemImage: "server.rack")
-            Label("LRCLIB", systemImage: "quote.bubble")
-
-            Text(L("优先使用 Metadata Server，未匹配时回退到 LRCLIB。"))
-                .font(MusicFreeTypographyTokens.secondary)
-                .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
-
-        Text(L("打开播放页歌词时按需在线获取，成功后保存到本地资料库。"))
-                .font(MusicFreeTypographyTokens.secondary)
-                .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
-
-            Text(L("只处理没有本地歌词的歌曲，成功后保存到 App 资料库。"))
-                .font(MusicFreeTypographyTokens.secondary)
-                .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
+            ForEach(visibleLyricsProviderPreferences) { preference in
+                Toggle(
+                    isOn: Binding(
+                        get: {
+                            isLyricsProviderEffectivelyEnabled(preference.provider)
+                        },
+                        set: {
+                            setLyricsProviderEnabled(preference.provider, $0)
+                        }
+                    )
+                ) {
+                    Label(
+                        lyricsProviderTitle(preference.provider),
+                        systemImage: lyricsProviderIcon(preference.provider)
+                    )
+                }
+                .accessibilityIdentifier(
+                    lyricsProviderToggleIdentifier(preference.provider)
+                )
+            }
 
             lyricsPreloadContent
         } header: {
             Text(L("歌词"))
                 .accessibilityIdentifier("settings.import.lyrics.section")
+        } footer: {
+            Label(
+                L("按启用顺序匹配歌词；播放页按需获取并保存，预下载只处理没有本地歌词的歌曲。"),
+                systemImage: "info.circle"
+            )
         }
     }
 
     @ViewBuilder
     private var lyricsPreloadContent: some View {
         let preload = displayedLyricsPreloadSnapshot
-        Text(L("预下载歌词"))
-            .font(MusicFreeTypographyTokens.secondary)
-            .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
-
-        if !viewModel.canPreloadLyrics {
+        if !viewModel.hasEnabledLyricsProviders {
+            Text(L("请先开启至少一个歌词来源，本地歌词仍可显示。"))
+                .font(MusicFreeTypographyTokens.secondary)
+                .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
+        } else if !viewModel.canPreloadLyrics {
             Text(L("歌词服务不可用。"))
                 .font(MusicFreeTypographyTokens.secondary)
                 .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
@@ -169,10 +306,6 @@ struct MetadataEnrichmentSettingsView: View {
     @ViewBuilder
     private var metadataScanContent: some View {
         let scan = displayedSnapshot.scan
-        Text(L("扫描本地资料库"))
-            .font(MusicFreeTypographyTokens.secondary)
-            .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
-
         if displayedSnapshot.isEnabled,
            displayedSnapshot.authorization == .authorized {
             if scan.status == .scanning {
@@ -232,34 +365,33 @@ struct MetadataEnrichmentSettingsView: View {
 
     @ViewBuilder
     private func metadataProviderRow(
-        _ preference: MetadataProviderPreference,
-        index: Int,
-        total: Int
+        _ preference: MetadataProviderPreference
     ) -> some View {
         let status = displayedSnapshot.status(for: preference.provider)
         let isRegistered = status?.isRegistered == true
 
-        HStack(alignment: .top, spacing: MusicFreeSpacingTokens.small) {
-            Toggle(
-                isOn: Binding(
-                    get: {
-                        viewModel.settings.importPreferences
-                            .isMetadataProviderEnabled(preference.provider)
-                    },
-                    set: {
-                        viewModel.setMetadataProviderEnabled(preference.provider, $0)
-                    }
-                )
-            ) {
-                Label(
-                    providerTitle(preference.provider),
-                    systemImage: providerIcon(preference.provider)
-                )
-            }
-            .disabled(!isRegistered)
-            .accessibilityIdentifier(providerToggleIdentifier(preference.provider))
+        VStack(alignment: .leading, spacing: MusicFreeSpacingTokens.xSmall) {
+            HStack(alignment: .top, spacing: MusicFreeSpacingTokens.small) {
+                Toggle(
+                    isOn: Binding(
+                        get: {
+                            isMetadataProviderEffectivelyEnabled(preference.provider)
+                        },
+                        set: {
+                            setMetadataProviderEnabled(preference.provider, $0)
+                        }
+                    )
+                ) {
+                    Label(
+                        providerTitle(preference.provider),
+                        systemImage: providerIcon(preference.provider)
+                    )
+                }
+                .disabled(!isRegistered)
+                .accessibilityIdentifier(providerToggleIdentifier(preference.provider))
 
-            VStack(alignment: .trailing, spacing: MusicFreeSpacingTokens.xSmall) {
+                Spacer(minLength: MusicFreeSpacingTokens.small)
+
                 Text(providerStatusText(status))
                     .font(MusicFreeTypographyTokens.secondary)
                     .foregroundStyle(
@@ -268,60 +400,96 @@ struct MetadataEnrichmentSettingsView: View {
                             : MusicFreeColorTokens.warning
                     )
                     .multilineTextAlignment(.trailing)
+            }
 
-                HStack(spacing: MusicFreeSpacingTokens.xSmall) {
-                    Button {
-                        viewModel.moveMetadataProvider(at: index, by: -1)
-                    } label: {
-                        Image(systemName: "chevron.up")
-                    }
-                    .disabled(index == 0)
-                    .accessibilityLabel(L("上移"))
-                    .accessibilityIdentifier(
-                        "settings.import.metadataProvider.\(preference.provider.rawValue).moveUp"
-                    )
-
-                    Button {
-                        viewModel.moveMetadataProvider(at: index, by: 1)
-                    } label: {
-                        Image(systemName: "chevron.down")
-                    }
-                    .disabled(index == total - 1)
-                    .accessibilityLabel(L("下移"))
-                    .accessibilityIdentifier(
-                        "settings.import.metadataProvider.\(preference.provider.rawValue).moveDown"
-                    )
+            if let status,
+               status.isRegistered,
+               status.authorization == .denied || status.authorization == .restricted {
+                Button {
+                    viewModel.requestMetadataAuthorization(for: preference.provider)
+                } label: {
+                    Label(L("重新请求权限"), systemImage: "arrow.clockwise")
                 }
-                .buttonStyle(.borderless)
+                .accessibilityIdentifier(providerAuthorizationIdentifier(preference.provider))
             }
-        }
-
-        if let status,
-           status.isRegistered,
-           status.authorization == .denied || status.authorization == .restricted {
-            Button {
-                viewModel.requestMetadataAuthorization(for: preference.provider)
-            } label: {
-                Label(L("重新请求权限"), systemImage: "arrow.clockwise")
-            }
-            .accessibilityIdentifier(providerAuthorizationIdentifier(preference.provider))
         }
     }
 
-    private var metadataAvailabilityText: String {
-        let availableCount = displayedSnapshot.providerStatuses.filter {
-            $0.isRegistered && $0.authorization == .authorized
-        }.count
-        if availableCount > 0 {
-            return L("已有 %d 个元数据来源可用；本地已有信息不会被覆盖。", availableCount)
+    private var metadataFooter: some View {
+        VStack(alignment: .leading, spacing: MusicFreeSpacingTokens.xSmall) {
+            Label(
+                L("按启用顺序依次匹配；成功后停止。已有本地信息不会覆盖。"),
+                systemImage: "info.circle"
+            )
         }
-        return L("暂无可用的元数据来源。")
+    }
+
+    private var visibleMetadataProviderPreferences: [MetadataProviderPreference] {
+        viewModel.settings.importPreferences.metadataProviders.filter {
+            isMetadataProviderVisible($0.provider)
+        }
+    }
+
+    private var visibleLyricsProviderPreferences: [LyricsProviderPreference] {
+        viewModel.settings.importPreferences.lyricsProviders.filter {
+            isLyricsProviderVisible($0.provider)
+        }
+    }
+
+    private func isMetadataProviderVisible(_ provider: MetadataEnrichmentProvider) -> Bool {
+        metadataServerEnabled || provider != .metadataServer
+    }
+
+    private func isMetadataProviderEffectivelyEnabled(
+        _ provider: MetadataEnrichmentProvider
+    ) -> Bool {
+        viewModel.settings.importPreferences.runtimeMetadataProviders.contains {
+            $0.provider == provider && $0.isEnabled
+        }
+    }
+
+    private func isLyricsProviderVisible(_ provider: LyricsProviderID) -> Bool {
+        metadataServerEnabled || provider != .metadataServer
+    }
+
+    private func isLyricsProviderEffectivelyEnabled(_ provider: LyricsProviderID) -> Bool {
+        viewModel.settings.importPreferences.runtimeLyricsProviders.contains {
+            $0.provider == provider && $0.isEnabled
+        }
+    }
+
+    private func lyricsProviderTitle(_ provider: LyricsProviderID) -> String {
+        switch provider {
+        case .metadataServer:
+            return L("Metadata Server")
+        case .lrclib:
+            return "LRCLIB"
+        default:
+            return provider.rawValue
+        }
+    }
+
+    private func lyricsProviderIcon(_ provider: LyricsProviderID) -> String {
+        switch provider {
+        case .metadataServer:
+            return "server.rack"
+        case .lrclib:
+            return "quote.bubble"
+        default:
+            return "puzzlepiece.extension"
+        }
+    }
+
+    private func lyricsProviderToggleIdentifier(_ provider: LyricsProviderID) -> String {
+        "settings.import.lyricsProvider.\(provider.rawValue).enabled"
     }
 
     private func providerTitle(_ provider: MetadataEnrichmentProvider) -> String {
         switch provider {
         case .musicKit:
             return L("MusicKit")
+        case .musicBrainz:
+            return L("MusicBrainz")
         case .metadataServer:
             return L("Metadata Server")
         case .discogs:
@@ -335,6 +503,8 @@ struct MetadataEnrichmentSettingsView: View {
         switch provider {
         case .musicKit:
             return "wand.and.stars"
+        case .musicBrainz:
+            return "globe"
         case .metadataServer:
             return "server.rack"
         case .discogs:

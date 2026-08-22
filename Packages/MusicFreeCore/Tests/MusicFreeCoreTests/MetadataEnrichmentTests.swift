@@ -7,6 +7,14 @@ import MusicTestSupport
 import SettingsAPI
 import Testing
 
+private func acceptedPrivacy(
+    for providers: [MetadataProviderID]
+) -> PrivacyPreferences {
+    providers.reduce(PrivacyPreferences.defaults.acceptingPrivacyPolicy()) { privacy, provider in
+        privacy.acceptingProviderPolicy(provider.rawValue)
+    }
+}
+
 private actor TestMetadataProvider: MetadataEnrichmentProviding {
     let provider: MetadataEnrichmentProvider
     private(set) var searchCount = 0
@@ -284,6 +292,12 @@ func metadataEnrichmentSupplementsImportedMetadata() async throws {
         metadataEnrichmentRecordRepository: records
     ))
 
+    await container.metadataEnrichmentServing.setPrivacyPreferences(
+        acceptedPrivacy(for: [.musicKit])
+    )
+    await container.metadataEnrichmentServing.setProviderPreferences([
+        MetadataProviderPreference(provider: .musicKit, isEnabled: true)
+    ])
     await container.metadataEnrichmentServing.setEnabled(true)
     await container.metadataEnrichmentServing.enqueue(itemID: itemID)
 
@@ -340,6 +354,12 @@ func metadataEnrichmentPersistsArtwork() async throws {
         metadataEnrichmentRecordRepository: records
     ))
 
+    await container.metadataEnrichmentServing.setPrivacyPreferences(
+        acceptedPrivacy(for: [.musicKit])
+    )
+    await container.metadataEnrichmentServing.setProviderPreferences([
+        MetadataProviderPreference(provider: .musicKit, isEnabled: true)
+    ])
     await container.metadataEnrichmentServing.setEnabled(true)
     await container.metadataEnrichmentServing.startScan()
 
@@ -360,10 +380,16 @@ func metadataEnrichmentPersistsArtwork() async throws {
     #expect(finalAlbum.artwork?.id == artworkID)
     #expect(await artworkWriter.values == [artworkData])
 
-    let record = try #require(try await records.record(for: itemID))
-    #expect(record.candidateCount == 1)
-    #expect(record.updatedFields.contains(.artwork))
-    #expect(record.lastErrorCode == nil)
+    var record: MetadataEnrichmentRecord?
+    for _ in 0..<50 {
+        record = try await records.record(for: itemID)
+        if record?.candidateCount == 1 { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    let completedRecord = try #require(record)
+    #expect(completedRecord.candidateCount == 1)
+    #expect(completedRecord.updatedFields.contains(.artwork))
+    #expect(completedRecord.lastErrorCode == nil)
 }
 
 @MainActor
@@ -392,6 +418,12 @@ func metadataEnrichmentManualScanRetriesNoMatch() async throws {
         metadataEnrichmentRecordRepository: records
     ))
 
+    await container.metadataEnrichmentServing.setPrivacyPreferences(
+        acceptedPrivacy(for: [.musicKit])
+    )
+    await container.metadataEnrichmentServing.setProviderPreferences([
+        MetadataProviderPreference(provider: .musicKit, isEnabled: true)
+    ])
     await container.metadataEnrichmentServing.setEnabled(true)
     await container.metadataEnrichmentServing.startScan()
     for _ in 0..<50 {
@@ -460,6 +492,12 @@ func metadataEnrichmentManualScanRetriesExhaustedFailure() async throws {
         metadataEnrichmentRecordRepository: records
     ))
 
+    await container.metadataEnrichmentServing.setPrivacyPreferences(
+        acceptedPrivacy(for: [.musicKit])
+    )
+    await container.metadataEnrichmentServing.setProviderPreferences([
+        MetadataProviderPreference(provider: .musicKit, isEnabled: true)
+    ])
     await container.metadataEnrichmentServing.setEnabled(true)
     await container.metadataEnrichmentServing.startScan()
     for _ in 0..<50 {
@@ -507,6 +545,9 @@ func metadataEnrichmentFallsBackThroughProviderOrder() async throws {
         metadataEnrichmentRecordRepository: records
     ))
 
+    await container.metadataEnrichmentServing.setPrivacyPreferences(
+        acceptedPrivacy(for: [.musicKit, .metadataServer])
+    )
     await container.metadataEnrichmentServing.setProviderPreferences([
         MetadataProviderPreference(provider: .musicKit, isEnabled: true),
         MetadataProviderPreference(provider: .metadataServer, isEnabled: true)
@@ -563,6 +604,9 @@ func metadataEnrichmentStopsAfterProviderMatch() async throws {
         metadataEnrichmentProviders: [first, second]
     ))
 
+    await container.metadataEnrichmentServing.setPrivacyPreferences(
+        acceptedPrivacy(for: [.musicKit, .metadataServer])
+    )
     await container.metadataEnrichmentServing.setProviderPreferences([
         MetadataProviderPreference(provider: .musicKit, isEnabled: true),
         MetadataProviderPreference(provider: .metadataServer, isEnabled: true)
@@ -600,6 +644,9 @@ func metadataEnrichmentIgnoresUnregisteredProvider() async throws {
         metadataEnrichmentProvider: provider
     ))
 
+    await container.metadataEnrichmentServing.setPrivacyPreferences(
+        acceptedPrivacy(for: [.musicKit, .metadataServer])
+    )
     await container.metadataEnrichmentServing.setProviderPreferences([
         MetadataProviderPreference(provider: .metadataServer, isEnabled: true),
         MetadataProviderPreference(provider: .musicKit, isEnabled: true)
@@ -633,6 +680,9 @@ func metadataEnrichmentKeepsActiveAuthorizationWhenAnotherProviderIsDenied() asy
         metadataEnrichmentProviders: [primary, secondary]
     ))
 
+    await container.metadataEnrichmentServing.setPrivacyPreferences(
+        acceptedPrivacy(for: [.musicKit, .metadataServer])
+    )
     await container.metadataEnrichmentServing.setProviderPreferences([
         MetadataProviderPreference(provider: .musicKit, isEnabled: true),
         MetadataProviderPreference(provider: .metadataServer, isEnabled: true)

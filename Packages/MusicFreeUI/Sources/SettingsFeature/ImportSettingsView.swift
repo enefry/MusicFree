@@ -3,6 +3,18 @@ import SwiftUI
 
 struct ImportSettingsView: View {
     let viewModel: SettingsViewModel
+    let metadataServerEnabled: Bool
+    let lyricsEnabled: Bool
+
+    init(
+        viewModel: SettingsViewModel,
+        metadataServerEnabled: Bool = true,
+        lyricsEnabled: Bool = true
+    ) {
+        self.viewModel = viewModel
+        self.metadataServerEnabled = metadataServerEnabled
+        self.lyricsEnabled = lyricsEnabled
+    }
 
     var body: some View {
         Section(L("导入与资料库")) {
@@ -19,7 +31,11 @@ struct ImportSettingsView: View {
                 .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
 
             NavigationLink {
-                MetadataEnrichmentSettingsView(viewModel: viewModel)
+                MetadataEnrichmentSettingsView(
+                    viewModel: viewModel,
+                    metadataServerEnabled: metadataServerEnabled,
+                    lyricsEnabled: lyricsEnabled
+                )
             } label: {
                 HStack(spacing: MusicFreeSpacingTokens.small) {
                     Label(L("元数据填充"), systemImage: "wand.and.stars")
@@ -36,13 +52,16 @@ struct ImportSettingsView: View {
     }
 
     private var metadataEntryStatus: String {
-        let preferences = viewModel.settings.importPreferences.metadataProviders
-        let enabledCount = preferences.filter(\.isEnabled).count
+        let preferences = viewModel.settings.importPreferences.runtimeMetadataProviders
+        let enabledProviders = preferences.filter {
+            $0.isEnabled && (metadataServerEnabled || $0.provider != .metadataServer)
+        }
+        let enabledCount = enabledProviders.count
         guard enabledCount > 0 else { return L("未开启") }
-        let enabledProviders = preferences.filter(\.isEnabled).map(\.provider)
+        let enabledProviderIDs = enabledProviders.map(\.provider)
 
         let availableCount = viewModel.metadataEnrichmentSnapshot.providerStatuses.filter {
-            enabledProviders.contains($0.provider)
+            enabledProviderIDs.contains($0.provider)
                 && $0.isRegistered
                 && $0.authorization == .authorized
         }.count

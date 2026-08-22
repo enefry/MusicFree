@@ -2,13 +2,16 @@ import Foundation
 import LibraryAPI
 import MusicDomain
 import OSLog
+import SettingsAPI
 
 /// Coordinates the ordered lyrics provider chain and keeps successful results
 /// in the library. A local result always wins unless the caller explicitly
 /// asks for a refresh.
 internal actor LyricsCoordinator: LyricsServing {
-    private let providers: [any LyricsProviding]
+    private let providers: [LyricsProviderID: any LyricsProviding]
     private let library: any LibraryServing
+    private var providerPreferences: [LyricsProviderPreference]
+    private var privacyPreferences = PrivacyPreferences.defaults
     private static let logger = Logger(
         subsystem: "com.musicfree.app",
         category: "lyrics-preload"
@@ -22,31 +25,69 @@ internal actor LyricsCoordinator: LyricsServing {
         providers: [any LyricsProviding],
         library: any LibraryServing
     ) {
-        self.providers = providers
+        var registered: [LyricsProviderID: any LyricsProviding] = [:]
+        for provider in providers where registered[provider.provider] == nil {
+            registered[provider.provider] = provider
+        }
+        self.providers = registered
         self.library = library
+
+        // A registered provider is only a capability. It must remain disabled
+        // until the persisted user preference, privacy consent, and provider
+        // policy acknowledgement are all applied.
+        self.providerPreferences = ImportPreferences.defaultLyricsProviders
+    }
+
+    func setProviderPreferences(
+        _ preferences: [LyricsProviderPreference]
+    ) async {
+        let normalized = Self.normalizedProviderPreferences(preferences)
+        guard normalized != providerPreferences else { return }
+        providerPreferences = normalized
+        await cancelPreload()
+    }
+
+    func setPrivacyPreferences(_ preferences: PrivacyPreferences) async {
+        guard preferences != privacyPreferences else { return }
+        privacyPreferences = preferences
+        await cancelPreload()
+    }
+
+    func registeredLyricsProviderIDs() async -> Set<LyricsProviderID> {
+        Set(providers.keys)
+    }
+
+    /// Compatibility entry point for callers written against the temporary
+    /// all-providers lyrics switch.
+    func setEnabled(_ enabled: Bool) async {
+        await setProviderPreferences(
+            providerPreferences.map { $0.settingEnabled(enabled) }
+        )
     }
 
     func fetchLyrics(
         for query: LyricsQuery,
         forceRefresh: Bool
     ) async throws -> TrackLyrics? {
-        guard !providers.isEmpty else { return nil }
         guard let currentTrack = try await library.track(id: query.itemID) else {
             return nil
         }
         if !forceRefresh, let localLyrics = currentTrack.lyrics {
             return localLyrics
         }
+        guard !enabledProviders().isEmpty else { return nil }
 
         var lastError: Error?
-        for provider in providers {
+        for provider in enabledProviders() {
             try Task.checkCancellation()
+            guard isProviderEnabled(provider.provider) else { return nil }
             do {
                 guard let lyrics = try await provider.fetchLyrics(for: query),
                       !lyrics.isEmpty
                 else {
                     continue
                 }
+                guard isProviderEnabled(provider.provider) else { return nil }
                 let updated = try await library.supplementMetadata(
                     TrackMetadataSupplement(
                         itemID: query.itemID,
@@ -86,8 +127,10 @@ internal actor LyricsCoordinator: LyricsServing {
     }
 
     func startPreload() async {
-        guard preloadTask == nil else {
-            Self.logger.debug("preload request ignored reason=already_running")
+        guard !enabledProviders().isEmpty, preloadTask == nil else {
+            Self.logger.debug(
+                "preload request ignored enabledProviders=\(self.enabledProviders().count, privacy: .public)"
+            )
             return
         }
 
@@ -139,7 +182,9 @@ internal actor LyricsCoordinator: LyricsServing {
     private func performPreload() async {
         let startedAt = Date()
         do {
+            guard !enabledProviders().isEmpty else { throw CancellationError() }
             let tracks = try await loadLocalTracks()
+            guard !enabledProviders().isEmpty else { throw CancellationError() }
             preload = LyricsPreloadSnapshot(
                 status: .downloading,
                 total: tracks.count
@@ -363,6 +408,36 @@ internal actor LyricsCoordinator: LyricsServing {
         Self.logger.debug(
             "preload snapshot subscriber disconnected id=\(id.uuidString, privacy: .public) subscribers=\(self.preloadContinuations.count, privacy: .public)"
         )
+    }
+
+    private static func normalizedProviderPreferences(
+        _ preferences: [LyricsProviderPreference]
+    ) -> [LyricsProviderPreference] {
+        var seen = Set<LyricsProviderID>()
+        let normalized = preferences.filter { seen.insert($0.provider).inserted }
+        return normalized.isEmpty ? ImportPreferences.defaultLyricsProviders : normalized
+    }
+
+    private func enabledProviders() -> [any LyricsProviding] {
+        providerPreferences.compactMap { preference in
+            guard isProviderRuntimeEnabled(preference) else { return nil }
+            return providers[preference.provider]
+        }
+    }
+
+    private func isProviderEnabled(_ provider: LyricsProviderID) -> Bool {
+        guard let preference = providerPreferences.first(where: { $0.provider == provider }) else {
+            return false
+        }
+        return isProviderRuntimeEnabled(preference)
+    }
+
+    private func isProviderRuntimeEnabled(
+        _ preference: LyricsProviderPreference
+    ) -> Bool {
+        preference.isEnabled
+            && providers[preference.provider] != nil
+            && privacyPreferences.isProviderPolicyAccepted(preference.provider.rawValue)
     }
 
     private static func errorCode(_ error: Error) -> String {

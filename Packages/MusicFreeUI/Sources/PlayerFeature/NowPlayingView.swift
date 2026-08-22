@@ -1,4 +1,5 @@
 import AppServices
+import Combine
 import DesignSystem
 import Foundation
 import LibraryAPI
@@ -34,6 +35,38 @@ enum NowPlayingVerticalLayoutPolicy {
     }
 }
 
+enum NowPlayingHistoryAction: Equatable {
+    case play
+    case enqueueNext
+
+    var title: String {
+        switch self {
+        case .play:
+            return L("播放")
+        case .enqueueNext:
+            return L("下一首播放")
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .play:
+            return "play.fill"
+        case .enqueueNext:
+            return "text.append"
+        }
+    }
+
+    func command(for itemID: MediaItemID) -> PlaybackSessionCommand {
+        switch self {
+        case .play:
+            return .play(itemID: itemID)
+        case .enqueueNext:
+            return .enqueueNext(itemIDs: [itemID])
+        }
+    }
+}
+
 private enum NowPlayingLayoutMetrics {
     static let horizontalInset: CGFloat = 32
     static let topChromeInset: CGFloat = 31
@@ -50,24 +83,9 @@ private enum NowPlayingLayoutMetrics {
     static let queueRowArtworkSize: CGFloat = 48
     static let queueRowHeight: CGFloat = 60
     static let queueRowActionWidth: CGFloat = 40
-
-    static var headerActionsWidth: CGFloat {
-        (headerActionSize * 2) + headerActionSpacing
-    }
-
-    static func headerTextWidth(
-        contentWidth: CGFloat,
-        leadingWidth: CGFloat = 0
-    ) -> CGFloat {
-        max(
-            0,
-            contentWidth
-                - leadingWidth
-                - (leadingWidth > 0 ? headerContentSpacing : 0)
-                - headerActionsWidth
-                - headerContentSpacing
-        )
-    }
+    static let historyRowHeight: CGFloat = 72
+    static let currentArtworkSize: CGFloat = 72
+    static let currentRowHeight: CGFloat = 96
 
     static func queueRowTextWidth(contentWidth: CGFloat) -> CGFloat {
         max(
@@ -80,6 +98,8 @@ private enum NowPlayingLayoutMetrics {
         )
     }
 }
+
+private let nowPlayingCurrentQueueAnchor = "player.nowPlaying.current.anchor"
 
 enum NowPlayingHeaderMetadata {
     static func title(_ title: String?) -> String? {
@@ -131,14 +151,25 @@ struct NowPlayingView: View {
     private let artworkServing: (any ArtworkServing)?
     private let library: (any LibraryServing)?
     private let lyricsServing: (any LyricsServing)?
+    private let rendersBackdrop: Bool
 
     @StateObject private var artworkLoader = ArtworkImageLoader()
     @StateObject private var favoriteController: PlayerFavoriteController
+    @StateObject private var historyLoader: NowPlayingHistoryLoader
     @State private var queueTracks: [MediaItemID: Track] = [:]
     @State private var queueArtistNames: [ArtistID: String] = [:]
     @State private var queueAlbumNames: [AlbumID: String] = [:]
     @State private var surface: NowPlayingSurface = .artwork
     @State private var isMoreActionsDismissEnabled = false
+    @State private var selectedHistoryItem: PlaybackHistoryItem?
+    @State private var isHistoryActionPresented = false
+    @State private var activeHistoryAction: NowPlayingHistoryAction?
+    @State private var activeHistorySessionID: UUID?
+    @State private var historyActionErrorMessage: String?
+    @State private var isHistoryClearConfirmationPresented = false
+    @State private var hasAppliedQueueInitialScrollPosition = false
+    @State private var queueScrollGeneration = 0
+    @State private var queueHasUserScrolled = false
 
     init(
         viewModel: PlayerViewModel,
@@ -146,7 +177,8 @@ struct NowPlayingView: View {
         isMoreActionsPresented: Binding<Bool> = .constant(false),
         artworkServing: (any ArtworkServing)? = nil,
         library: (any LibraryServing)? = nil,
-        lyricsServing: (any LyricsServing)? = nil
+        lyricsServing: (any LyricsServing)? = nil,
+        rendersBackdrop: Bool = true
     ) {
         self.viewModel = viewModel
         self.onShowQueue = onShowQueue
@@ -154,16 +186,25 @@ struct NowPlayingView: View {
         self.artworkServing = artworkServing
         self.library = library
         self.lyricsServing = lyricsServing
+        self.rendersBackdrop = rendersBackdrop
         _favoriteController = StateObject(
             wrappedValue: PlayerFavoriteController(library: library)
+        )
+        _historyLoader = StateObject(
+            wrappedValue: NowPlayingHistoryLoader(library: library)
         )
     }
 
     var body: some View {
         ZStack {
-            playerBackdrop
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .ignoresSafeArea()
+            // REGRESSION GUARD: the system player sheet owns the stable dark
+            // surface. Keep this view transparent when rendersBackdrop is
+            // false so a presentation transition cannot add a second layer.
+            if rendersBackdrop {
+                playerBackdrop
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .ignoresSafeArea()
+            }
 
             Group {
                 switch viewModel.presentationState {
@@ -200,7 +241,11 @@ struct NowPlayingView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.black.ignoresSafeArea())
+        .background(
+            rendersBackdrop
+                ? Color.black.ignoresSafeArea()
+                : Color.clear.ignoresSafeArea()
+        )
         .overlay {
             if isMoreActionsPresented {
                 moreActionsOverlay
@@ -226,14 +271,73 @@ struct NowPlayingView: View {
         .task(id: queueKey) {
             await loadQueueTracks()
         }
+        .task(id: historyLoadKey) {
+            await historyLoader.load()
+        }
         .task {
             await observeLibraryChanges()
+        }
+        .task {
+            await historyLoader.observeChanges()
         }
         .task(id: viewModel.snapshot.currentItemID) {
             favoriteController.load(itemID: viewModel.snapshot.currentItemID)
         }
         .onChange(of: viewModel.snapshot.currentItemID) { _, _ in
-            surface = .artwork
+            resetQueueInitialScrollPosition(reanchor: true)
+        }
+        .onChange(of: viewModel.snapshot.queue.currentEntryID) { _, _ in
+            resetQueueInitialScrollPosition(reanchor: true)
+        }
+        .onChange(of: surface) { _, surface in
+            if surface == .queue {
+                resetQueueInitialScrollPosition(reanchor: true)
+            }
+        }
+        .confirmationDialog(
+            L("播放历史歌曲"),
+            isPresented: $isHistoryActionPresented
+        ) {
+            if let selectedHistoryItem {
+                ForEach([NowPlayingHistoryAction.play, .enqueueNext], id: \.self) { action in
+                    Button {
+                        beginHistoryAction(action, for: selectedHistoryItem)
+                    } label: {
+                        Label(action.title, systemImage: action.systemImage)
+                    }
+                    .disabled(activeHistoryAction != nil)
+                }
+            }
+            Button(L("取消"), role: .cancel) {}
+        } message: {
+            if let selectedHistoryItem {
+                Text(selectedHistoryItem.track.title)
+            }
+        }
+        .alert(
+            L("操作失败"),
+            isPresented: Binding(
+                get: { historyActionErrorMessage != nil },
+                set: { isPresented in
+                    if !isPresented { historyActionErrorMessage = nil }
+                }
+            )
+        ) {
+            Button(L("好"), role: .cancel) { historyActionErrorMessage = nil }
+        } message: {
+            Text(historyActionErrorMessage ?? L("请稍后重试。"))
+        }
+        .confirmationDialog(
+            L("清除播放历史？"),
+            isPresented: $isHistoryClearConfirmationPresented,
+            titleVisibility: .visible
+        ) {
+            Button(L("清除播放历史"), role: .destructive) {
+                Task { await historyLoader.clear() }
+            }
+            Button(L("取消"), role: .cancel) {}
+        } message: {
+            Text(L("歌曲仍会保留在资料库中，累计播放统计不会重置。"))
         }
     }
 
@@ -282,76 +386,140 @@ struct NowPlayingView: View {
 
     private var playbackContent: some View {
         GeometryReader { geometry in
-            let contentWidth = max(
-                0,
-                geometry.size.width - (NowPlayingLayoutMetrics.horizontalInset * 2)
-            )
-            let layoutMode = NowPlayingVerticalLayoutPolicy.mode(
-                availableHeight: geometry.size.height,
-                verticalSizeClass: verticalSizeClass,
-                dynamicTypeSize: dynamicTypeSize
-            )
-            // GeometryReader is already laid out inside the safe-area content
-            // region. Only reserve the gap below the root drag handle here.
-            let topChromeInset = NowPlayingLayoutMetrics.topChromeInset
-            let pinnedSurfaceHeight = max(
-                0,
-                geometry.size.height
-                    - topChromeInset
-                    - NowPlayingLayoutMetrics.pinnedControlsHeight
-            )
+            // SwiftUI can propose a zero-width/zero-height frame while a
+            // system sheet is installing or rotating. Do not render content
+            // with that proposal: fixed artwork would overflow while text
+            // frames collapse and show only a trailing fragment.
+            if geometry.size.width <= NowPlayingLayoutMetrics.horizontalInset * 2
+                || geometry.size.height <= 1 {
+                Color.clear
+            } else {
+                let contentWidth = geometry.size.width
+                    - (NowPlayingLayoutMetrics.horizontalInset * 2)
+                let layoutMode = NowPlayingVerticalLayoutPolicy.mode(
+                    availableHeight: geometry.size.height,
+                    verticalSizeClass: verticalSizeClass,
+                    dynamicTypeSize: dynamicTypeSize
+                )
+                // GeometryReader is already laid out inside the safe-area
+                // content region. Only reserve the gap below the root drag
+                // handle here.
+                let topChromeInset = NowPlayingLayoutMetrics.topChromeInset
+                let pinnedSurfaceHeight = max(
+                    0,
+                    geometry.size.height
+                        - topChromeInset
+                        - NowPlayingLayoutMetrics.pinnedControlsHeight
+                )
 
-            ZStack(alignment: .top) {
-                if layoutMode == .scrolling {
-                    let compactSurfaceHeight = max(
-                        0,
-                        geometry.size.height
-                            - topChromeInset
-                            - NowPlayingLayoutMetrics.compactControlsHeight
-                    )
+                ZStack(alignment: .top) {
+                    if surface == .queue {
+                        queuePlayerColumn(
+                            viewportWidth: geometry.size.width,
+                            viewportHeight: geometry.size.height,
+                            contentWidth: contentWidth,
+                            topChromeInset: topChromeInset,
+                            usesCompactControls: layoutMode == .scrolling
+                        )
+                    } else if layoutMode == .scrolling {
+                        let compactSurfaceHeight = max(
+                            0,
+                            geometry.size.height
+                                - topChromeInset
+                                - NowPlayingLayoutMetrics.compactControlsHeight
+                        )
 
-                    ScrollView(.vertical) {
-                        VStack(spacing: 0) {
-                            surfaceContent(
-                                contentWidth: contentWidth,
-                                surfaceHeight: compactSurfaceHeight
-                            )
-                            .frame(
-                                width: contentWidth,
-                                height: compactSurfaceHeight,
-                                alignment: .top
-                            )
-
-                            compactBottomControls
+                        ScrollView(.vertical) {
+                            VStack(spacing: 0) {
+                                surfaceContent(
+                                    contentWidth: contentWidth,
+                                    surfaceHeight: compactSurfaceHeight
+                                )
                                 .frame(
                                     width: contentWidth,
-                                    height: NowPlayingLayoutMetrics.compactControlsHeight,
+                                    height: compactSurfaceHeight,
                                     alignment: .top
                                 )
-                        }
-                        .frame(width: geometry.size.width, alignment: .top)
-                    }
-                    .frame(width: geometry.size.width, height: geometry.size.height)
-                    .contentMargins(.top, topChromeInset, for: .scrollContent)
-                    .contentMargins(.bottom, 0, for: .scrollContent)
-                    .scrollIndicators(.hidden)
-                    .accessibilityElement(children: .contain)
-                    .accessibilityIdentifier("player.nowPlaying.scroll")
-                } else {
-                    playerColumn(
-                        viewportWidth: geometry.size.width,
-                        contentWidth: contentWidth,
-                        surfaceHeight: pinnedSurfaceHeight,
-                        topChromeInset: topChromeInset,
-                        isPinned: true
-                    )
-                }
 
+                                compactBottomControls
+                                    .frame(
+                                        width: contentWidth,
+                                        height: NowPlayingLayoutMetrics.compactControlsHeight,
+                                        alignment: .top
+                                    )
+                            }
+                            .frame(width: geometry.size.width, alignment: .top)
+                        }
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        .contentMargins(.top, topChromeInset, for: .scrollContent)
+                        .contentMargins(.bottom, 0, for: .scrollContent)
+                        .scrollIndicators(.hidden)
+                        .accessibilityElement(children: .contain)
+                        .accessibilityIdentifier("player.nowPlaying.scroll")
+                    } else {
+                        playerColumn(
+                            viewportWidth: geometry.size.width,
+                            contentWidth: contentWidth,
+                            surfaceHeight: pinnedSurfaceHeight,
+                            topChromeInset: topChromeInset,
+                            isPinned: true
+                        )
+                    }
+                }
+                .frame(width: geometry.size.width, height: geometry.size.height)
+                .clipped()
             }
-            .frame(width: geometry.size.width, height: geometry.size.height)
-            .clipped()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func queuePlayerColumn(
+        viewportWidth: CGFloat,
+        viewportHeight: CGFloat,
+        contentWidth: CGFloat,
+        topChromeInset: CGFloat,
+        usesCompactControls: Bool
+    ) -> some View {
+        let controlsHeight = usesCompactControls
+            ? NowPlayingLayoutMetrics.compactControlsHeight
+            : NowPlayingLayoutMetrics.pinnedControlsHeight
+
+        let availableQueueHeight = max(
+            0,
+            viewportHeight - topChromeInset - controlsHeight
+        )
+
+        return VStack(spacing: 0) {
+            queueSurface(
+                contentWidth: contentWidth,
+                surfaceHeight: availableQueueHeight
+            )
+            .frame(width: contentWidth, height: availableQueueHeight)
+
+            queueBottomControls(usesCompactControls: usesCompactControls)
+                .frame(
+                    width: contentWidth,
+                    height: controlsHeight,
+                    alignment: .top
+                )
+        }
+        .frame(
+            width: viewportWidth,
+            height: max(0, viewportHeight - topChromeInset),
+            alignment: .top
+        )
+        .padding(.top, topChromeInset)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("player.nowPlaying.queueLayout")
+    }
+
+    @ViewBuilder
+    private func queueBottomControls(usesCompactControls: Bool) -> some View {
+        if usesCompactControls {
+            compactBottomControls
+        } else {
+            bottomControls
+        }
     }
 
     private func playerColumn(
@@ -402,14 +570,31 @@ struct NowPlayingView: View {
         let metadataBottomSpacing = usesPortraitSpacing ? 24.0 : 16.0
 
         return VStack(spacing: 0) {
-            ArtworkView(
-                image: artworkLoader.image,
-                accessibilityLabel: currentArtworkID == nil ? L("暂无封面") : L("封面"),
-                fillsAvailableWidth: true,
-                cornerRadius: 0
-            )
+            ZStack {
+                ArtworkView(
+                    image: artworkLoader.image,
+                    accessibilityLabel: currentArtworkID == nil ? L("暂无封面") : L("封面"),
+                    fillsAvailableWidth: true,
+                    cornerRadius: 0
+                )
+            }
             .frame(width: dimension, height: dimension)
             .shadow(color: .black.opacity(0.28), radius: 22, y: 12)
+            // Keep the fixture's real-cover state observable even though
+            // ArtworkView intentionally owns its own accessibility element.
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(
+                Text(currentArtworkID == nil ? L("暂无封面") : L("封面"))
+            )
+            .accessibilityValue(
+                Text(artworkLoader.image == nil ? "No artwork" : "Artwork loaded")
+            )
+            .accessibilityAddTraits(.isImage)
+            .accessibilityIdentifier(
+                artworkLoader.image == nil
+                    ? "player.nowPlaying.artwork.placeholder"
+                    : "player.nowPlaying.artwork.image"
+            )
             .padding(.top, 14)
 
             Spacer(minLength: 0)
@@ -423,10 +608,6 @@ struct NowPlayingView: View {
     }
 
     private func artworkMetadata(contentWidth: CGFloat) -> some View {
-        let textWidth = NowPlayingLayoutMetrics.headerTextWidth(
-            contentWidth: contentWidth
-        )
-
         return HStack(
             alignment: .center,
             spacing: NowPlayingLayoutMetrics.headerContentSpacing
@@ -437,6 +618,12 @@ struct NowPlayingView: View {
                     .foregroundStyle(playerForegroundPrimary)
                     .lineLimit(1)
                     .truncationMode(.tail)
+                    // REGRESSION GUARD: the system Sheet leaves a presenting
+                    // Mini Player transition copy in the accessibility tree.
+                    // Give the visible Now Playing title its own identity so
+                    // UI checks cannot mistake that off-screen copy for this
+                    // layout boundary.
+                    .accessibilityIdentifier("player.nowPlaying.current.title")
 
                 if let artist = NowPlayingHeaderMetadata.artistSubtitle(currentArtist) {
                     Text(artist)
@@ -445,7 +632,12 @@ struct NowPlayingView: View {
                         .lineLimit(1)
                 }
             }
-            .frame(width: textWidth, alignment: .leading)
+            // REGRESSION GUARD: do not derive this width from a transient
+            // GeometryReader proposal. During a system-sheet transition the
+            // proposal can change while the HStack still owns its previous
+            // text layout, leaving only the title tail at the leading edge.
+            // The actions keep their fixed width; the title gets the rest.
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             .clipped()
 
             headerActions
@@ -455,11 +647,6 @@ struct NowPlayingView: View {
     }
 
     private func compactHeader(contentWidth: CGFloat) -> some View {
-        let textWidth = NowPlayingLayoutMetrics.headerTextWidth(
-            contentWidth: contentWidth,
-            leadingWidth: NowPlayingLayoutMetrics.headerArtworkSize
-        )
-
         return HStack(
             alignment: .center,
             spacing: NowPlayingLayoutMetrics.headerContentSpacing
@@ -482,6 +669,9 @@ struct NowPlayingView: View {
                     .foregroundStyle(playerForegroundPrimary)
                     .lineLimit(1)
                     .truncationMode(.tail)
+                    // Keep this identifier aligned with the Artwork and
+                    // Queue current rows. See the Sheet transition guard above.
+                    .accessibilityIdentifier("player.nowPlaying.current.title")
 
                 if let artist = NowPlayingHeaderMetadata.artistSubtitle(currentArtist) {
                     Text(artist)
@@ -490,7 +680,10 @@ struct NowPlayingView: View {
                     .lineLimit(1)
                 }
             }
-            .frame(width: textWidth, alignment: .leading)
+            // Keep the title in the remaining width when the system Sheet
+            // remeasures its content. A computed fixed width can retain a
+            // stale horizontal position for one transition frame.
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             .clipped()
 
             headerActions
@@ -538,34 +731,285 @@ struct NowPlayingView: View {
     }
 
     private func queueSurface(contentWidth: CGFloat, surfaceHeight: CGFloat) -> some View {
-        ZStack(alignment: .bottom) {
+        let historyItems = displayedHistoryItems
+
+        return ScrollViewReader { proxy in
             ScrollView(.vertical) {
-                VStack(spacing: 0) {
-                    compactHeader(contentWidth: contentWidth)
-                    .padding(.top, 0)
+                // Keep one system-coordinated scroll container. The lazy stack
+                // is required for large history snapshots; adding a nested
+                // ScrollView or a second drag state machine regresses sheet
+                // dismissal and can make the transition flash or hang.
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    queueHistoryHeader(
+                        contentWidth: contentWidth,
+                        historyCount: historyItems.count
+                    )
+                        .padding(.bottom, 24)
+
+                    if historyLoader.failureMessage != nil {
+                        Button {
+                            Task { await historyLoader.load() }
+                        } label: {
+                            Label(L("载入失败，点击重试"), systemImage: "arrow.clockwise")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(playerForegroundSecondary)
+                                .frame(
+                                    width: contentWidth,
+                                    height: NowPlayingLayoutMetrics.historyRowHeight,
+                                    alignment: .leading
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(historyLoader.state == .loading)
+                    }
+
+                    switch historyLoader.state {
+                    case .idle, .loading:
+                        HStack(spacing: 10) {
+                            ProgressView()
+                                .tint(playerForegroundSecondary)
+                            Text(L("正在载入播放历史"))
+                                .font(.subheadline)
+                                .foregroundStyle(playerForegroundSecondary)
+                        }
+                        .frame(
+                            width: contentWidth,
+                            height: NowPlayingLayoutMetrics.historyRowHeight,
+                            alignment: .leading
+                        )
+                    case .failed:
+                        if historyLoader.failureMessage == nil {
+                            historyRetryRow
+                        }
+                    case .empty:
+                        Text(L("暂无播放历史"))
+                            .font(.subheadline)
+                            .foregroundStyle(playerForegroundSecondary)
+                            .frame(
+                                width: contentWidth,
+                                height: NowPlayingLayoutMetrics.historyRowHeight,
+                                alignment: .leading
+                            )
+                    case .loaded:
+                        if historyItems.isEmpty {
+                            Text(L("当前歌曲尚未形成历史记录"))
+                                .font(.subheadline)
+                                .foregroundStyle(playerForegroundSecondary)
+                                .frame(
+                                    width: contentWidth,
+                                    height: NowPlayingLayoutMetrics.historyRowHeight,
+                                    alignment: .leading
+                                )
+                        } else {
+                            // REGRESSION GUARD: keep history rows as direct
+                            // LazyVStack children. Wrapping this ForEach in a
+                            // composite history view makes large snapshots an
+                            // eager block and causes endpoint scrolling stalls.
+                            ForEach(historyItems) { item in
+                                nowPlayingHistoryRow(
+                                    item,
+                                    contentWidth: contentWidth,
+                                    isNewest: item.id == historyItems.first?.id,
+                                    isOldest: item.id == historyItems.last?.id
+                                )
+                            }
+                        }
+                    }
+
+                    currentPlayingContent(contentWidth: contentWidth)
+                        .padding(.bottom, 28)
 
                     queueModeControls(contentWidth: contentWidth)
-                    .padding(.top, 16)
+                        .padding(.bottom, 28)
 
                     continuePlayingContent(contentWidth: contentWidth)
-                    .padding(.top, 16)
+                        .padding(.bottom, 24)
+
+                    queueScrollTailSpacer(
+                        contentWidth: contentWidth,
+                        surfaceHeight: surfaceHeight
+                    )
                 }
                 .frame(width: contentWidth, alignment: .top)
+                .padding(.top, 8)
                 .padding(.bottom, 24)
+                .scrollTargetLayout()
             }
             .scrollIndicators(.hidden)
             .scrollBounceBehavior(.basedOnSize)
             .accessibilityIdentifier("player.nowPlaying.upperScroll")
-
-            LinearGradient(
-                colors: [.clear, .black.opacity(0.16)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .frame(height: 28)
-            .allowsHitTesting(false)
+            .onAppear {
+                // REGRESSION GUARD: entering the queue is a new navigation
+                // intent. Always place the current row at the viewport top;
+                // history remains immediately above it and is revealed only
+                // when the user pulls the system scroll view downward.
+                resetQueueInitialScrollPosition(reanchor: true)
+                applyInitialQueueScrollPosition(using: proxy)
+            }
+            .onChange(of: historyLoader.state) { _, state in
+                guard state != .loading, !queueHasUserScrolled else { return }
+                resetQueueInitialScrollPosition()
+                applyInitialQueueScrollPosition(using: proxy)
+            }
+            .onChange(of: queueAnchorKey) { _, _ in
+                resetQueueInitialScrollPosition(reanchor: true)
+                applyInitialQueueScrollPosition(using: proxy)
+            }
+            .onScrollPhaseChange { _, phase in
+                if phase == .tracking || phase == .interacting {
+                    queueHasUserScrolled = true
+                }
+            }
         }
         .frame(width: contentWidth, height: surfaceHeight, alignment: .top)
+    }
+
+    private func queueScrollTailSpacer(
+        contentWidth: CGFloat,
+        surfaceHeight: CGFloat
+    ) -> some View {
+        // REGRESSION GUARD: ScrollViewReader cannot place the current row at
+        // the top when the content after it is shorter than the viewport; the
+        // system clamps the offset to the bottom and leaves the row halfway
+        // down the screen. Preserve normal system scrolling by adding only
+        // the invisible tail height needed to make the current anchor valid.
+        let upcomingCount = viewModel.upcomingQueueEntries()
+            .filter { $0.itemID != nil }
+            .count
+        // Keep the estimate intentionally conservative. The mode controls,
+        // the Continue Playing heading, and optional album metadata all sit
+        // after the current row but are not represented by one fixed row.
+        let estimatedContentAfterCurrent =
+            CGFloat(upcomingCount + 1) * NowPlayingLayoutMetrics.queueRowHeight
+                + 180
+        let tailHeight = max(0, surfaceHeight - estimatedContentAfterCurrent)
+
+        return Color.clear
+            .frame(width: contentWidth, height: tailHeight)
+            .accessibilityHidden(true)
+    }
+
+    private func queueHistoryHeader(
+        contentWidth: CGFloat,
+        historyCount: Int
+    ) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(L("历史"))
+                .font(.title2.weight(.bold))
+                .foregroundStyle(playerForegroundPrimary)
+                .frame(minHeight: 44, alignment: .leading)
+                // Keep the loaded count observable for the large-history
+                // acceptance test without adding another visible label.
+                .accessibilityValue(Text("\(historyCount)"))
+                .accessibilityIdentifier("player.nowPlaying.history.heading")
+
+            Spacer(minLength: 12)
+
+            Button(L("清除"), role: .destructive) {
+                isHistoryClearConfirmationPresented = true
+            }
+            .font(.title3)
+            .foregroundStyle(playerForegroundSecondary)
+            .disabled(displayedHistoryItems.isEmpty || historyLoader.isClearing)
+            .accessibilityIdentifier("player.nowPlaying.history.clear")
+        }
+        .frame(width: contentWidth, alignment: .leading)
+    }
+
+    private var historyRetryRow: some View {
+        Button {
+            Task { await historyLoader.load() }
+        } label: {
+            Label(L("载入失败，点击重试"), systemImage: "arrow.clockwise")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(playerForegroundSecondary)
+                .frame(
+                    maxWidth: .infinity,
+                    minHeight: NowPlayingLayoutMetrics.historyRowHeight,
+                    alignment: .leading
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func currentPlayingContent(contentWidth: CGFloat) -> some View {
+        return HStack(
+            alignment: .center,
+            spacing: NowPlayingLayoutMetrics.headerContentSpacing
+        ) {
+            ArtworkView(
+                image: artworkLoader.image,
+                accessibilityLabel: currentArtworkID == nil ? L("暂无封面") : L("封面"),
+                fillsAvailableWidth: true,
+                cornerRadius: 12
+            )
+            .frame(
+                width: NowPlayingLayoutMetrics.currentArtworkSize,
+                height: NowPlayingLayoutMetrics.currentArtworkSize
+            )
+            .shadow(color: .black.opacity(0.24), radius: 12, y: 6)
+            .accessibilityIdentifier("player.nowPlaying.current.image")
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(currentTitle ?? L("正在播放"))
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(playerForegroundPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .accessibilityIdentifier("player.nowPlaying.current.title")
+
+                if let artist = currentArtist {
+                    Text(artist)
+                        .font(.body)
+                        .foregroundStyle(playerForegroundSecondary)
+                        .lineLimit(1)
+                }
+            }
+            // The current row shares the same transition-sensitive width
+            // contract as the artwork and lyrics headers. Keep its cover and
+            // actions fixed, then let the text absorb only the remainder.
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+            .clipped()
+
+            headerActions
+        }
+        .frame(width: contentWidth, alignment: .leading)
+        .frame(height: NowPlayingLayoutMetrics.currentRowHeight, alignment: .leading)
+        .id(nowPlayingCurrentQueueAnchor)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("player.nowPlaying.current")
+    }
+
+    private var displayedHistoryItems: [PlaybackHistoryItem] {
+        NowPlayingHistoryPresentation.nowPlayingItems(
+            from: historyLoader.items,
+            currentItemID: viewModel.snapshot.currentItemID
+        )
+    }
+
+    private func nowPlayingHistoryRow(
+        _ item: PlaybackHistoryItem,
+        contentWidth: CGFloat,
+        isNewest: Bool,
+        isOldest: Bool
+    ) -> some View {
+        NowPlayingHistoryRow(
+            item: item,
+            artistNames: historyLoader.artistNames,
+            artworkServing: artworkServing,
+            contentWidth: contentWidth,
+            isPerformingAction: activeHistorySessionID == item.sessionID,
+            boundaryAccessibilityIdentifier: isNewest
+                ? "player.nowPlaying.history.newest"
+                : isOldest
+                    ? "player.nowPlaying.history.oldest"
+                    : nil,
+            onSelect: {
+                guard activeHistoryAction == nil else { return }
+                selectedHistoryItem = item
+                isHistoryActionPresented = true
+            }
+        )
     }
 
     private func lyricsSurface(contentWidth: CGFloat, surfaceHeight: CGFloat) -> some View {
@@ -591,6 +1035,7 @@ struct NowPlayingView: View {
         }
         .frame(width: contentWidth, height: surfaceHeight, alignment: .top)
         .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("player.nowPlaying.lyrics")
     }
 
     private var lyricsActionBar: some View {
@@ -1115,36 +1560,11 @@ struct NowPlayingView: View {
     }
 
     private var playerBackdrop: some View {
-        GeometryReader { geometry in
-            ZStack {
-                Color.black
-
-                if let image = artworkLoader.image {
-                    image
-                        .resizable()
-                        .scaledToFill()
-                        .frame(
-                            width: geometry.size.width,
-                            height: geometry.size.height
-                        )
-                        .blur(radius: 42)
-                        .scaleEffect(1.24)
-                        .opacity(0.9)
-
-                    LinearGradient(
-                        colors: [
-                            .black.opacity(0.16),
-                            .black.opacity(0.28),
-                            .black.opacity(0.68)
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                }
-            }
-            .frame(width: geometry.size.width, height: geometry.size.height)
-            .clipped()
-        }
+        // REGRESSION GUARD: Now Playing is intentionally a solid dark surface.
+        // Artwork remains visible in the album-art elements only; do not add a
+        // full-screen cover blur here or in the system presentation background.
+        Color.black
+        .ignoresSafeArea()
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }
@@ -1239,6 +1659,76 @@ struct NowPlayingView: View {
             }
             return "\(entry.id.uuidString):\(itemID.sourceID.rawValue):\(itemID.externalID)"
         }.joined(separator: ",")
+    }
+
+    private var historyLoadKey: String {
+        let generation = viewModel.snapshot.generation.rawValue
+        let itemID = viewModel.snapshot.currentItemID
+        return "\(generation):\(itemID?.sourceID.rawValue ?? ""):\(itemID?.externalID ?? "")"
+    }
+
+    private var queueAnchorKey: String {
+        viewModel.snapshot.queue.currentEntryID?.uuidString ?? "none"
+    }
+
+    private func resetQueueInitialScrollPosition(reanchor: Bool = false) {
+        hasAppliedQueueInitialScrollPosition = false
+        queueScrollGeneration &+= 1
+        if reanchor {
+            queueHasUserScrolled = false
+        }
+    }
+
+    private func applyInitialQueueScrollPosition(using proxy: ScrollViewProxy) {
+        guard !hasAppliedQueueInitialScrollPosition,
+              !queueHasUserScrolled,
+              viewModel.snapshot.queue.currentEntryID != nil
+        else { return }
+
+        hasAppliedQueueInitialScrollPosition = true
+        let expectedGeneration = queueScrollGeneration
+        proxy.scrollTo(nowPlayingCurrentQueueAnchor, anchor: .top)
+        Task { @MainActor in
+            // LazyVStack may not have materialized the target row during the
+            // first appearance callback. Give layout a few run-loop turns so
+            // the system scroll position is applied to the real row.
+            for delay in [0, 80_000_000, 220_000_000, 600_000_000] {
+                if delay > 0 {
+                    try? await Task.sleep(nanoseconds: UInt64(delay))
+                } else {
+                    await Task.yield()
+                }
+                guard expectedGeneration == queueScrollGeneration,
+                      !Task.isCancelled
+                else { return }
+                proxy.scrollTo(nowPlayingCurrentQueueAnchor, anchor: .top)
+            }
+        }
+    }
+
+    private func beginHistoryAction(
+        _ action: NowPlayingHistoryAction,
+        for item: PlaybackHistoryItem
+    ) {
+        guard activeHistoryAction == nil else { return }
+
+        isHistoryActionPresented = false
+        activeHistoryAction = action
+        activeHistorySessionID = item.sessionID
+        viewModel.send(action.command(for: item.track.id))
+
+        Task { @MainActor in
+            await viewModel.waitForPendingWork()
+            guard !Task.isCancelled else { return }
+
+            let error = viewModel.lastCommandError
+            activeHistoryAction = nil
+            activeHistorySessionID = nil
+            selectedHistoryItem = nil
+            if let error {
+                historyActionErrorMessage = playerErrorMessage(error)
+            }
+        }
     }
 
     private func loadQueueTracks() async {
@@ -1344,6 +1834,214 @@ struct NowPlayingView: View {
         default:
             return L("播放操作无法完成，请稍后重试。")
         }
+    }
+}
+
+/// Shares one decoded player artwork between the presenting underlay and the
+/// system sheet presentation background. Keeping this state above both view
+/// instances prevents a transition frame from showing different fallbacks.
+@MainActor
+public final class PlayerPresentationBackdropStore: ObservableObject {
+    @Published public private(set) var image: Image?
+
+    private let artworkLoader = ArtworkImageLoader()
+    private var observationTask: Task<Void, Never>?
+    private var artworkTask: Task<Void, Never>?
+    private var artworkKey = ""
+
+    public init() {}
+
+    public func start(
+        playback: any PlaybackServing,
+        artworkServing: any ArtworkServing
+    ) {
+        guard observationTask == nil else { return }
+
+        apply(
+            playback.snapshot,
+            artworkServing: artworkServing
+        )
+        observationTask = Task { [weak self] in
+            for await nextSnapshot in playback.makeSnapshotStream() {
+                guard !Task.isCancelled else { return }
+                self?.apply(nextSnapshot, artworkServing: artworkServing)
+            }
+        }
+    }
+
+    private func apply(
+        _ nextSnapshot: PlaybackSessionSnapshot,
+        artworkServing: any ArtworkServing
+    ) {
+        // REGRESSION GUARD: playback snapshots include progress updates. Do
+        // not publish or retain those high-frequency values in the root view;
+        // doing so rebuilds the TabView bottom accessory while it is settling
+        // and can produce an invalid Mini Player hit frame. Only the artwork
+        // image below is presentation state and may invalidate the UI.
+        let nextArtworkKey = "\(nextSnapshot.currentItemID?.sourceID.rawValue ?? ""):\(nextSnapshot.currentItem?.artworkID?.rawValue ?? "")"
+        guard artworkKey != nextArtworkKey else { return }
+
+        artworkKey = nextArtworkKey
+        artworkTask?.cancel()
+        artworkTask = Task { [weak self] in
+            guard let self else { return }
+            await self.artworkLoader.load(
+                artworkID: nextSnapshot.currentItem?.artworkID,
+                sourceID: nextSnapshot.currentItemID?.sourceID,
+                serving: artworkServing
+            )
+            guard !Task.isCancelled, self.artworkKey == nextArtworkKey else {
+                return
+            }
+            self.image = self.artworkLoader.image
+        }
+    }
+}
+
+/// Paints the player artwork behind the system sheet's safe areas. The
+/// presentation background is separate from NowPlayingView's content bounds,
+/// so it can cover the status-bar region without participating in gestures.
+@MainActor
+public struct PlayerPresentationBackdrop: View {
+    @ObservedObject private var store: PlayerPresentationBackdropStore
+    private let presentationDimCompensation: Double
+
+    public init(
+        store: PlayerPresentationBackdropStore,
+        presentationDimCompensation: Double = 0
+    ) {
+        _store = ObservedObject(wrappedValue: store)
+        self.presentationDimCompensation = presentationDimCompensation
+    }
+
+    public var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                Color.black
+
+                if let image = store.image {
+                    image
+                        .resizable()
+                        .scaledToFill()
+                        .frame(
+                            width: geometry.size.width,
+                            height: geometry.size.height
+                        )
+                        .blur(radius: 42)
+                        .scaleEffect(1.24)
+                        .opacity(0.92)
+
+                    LinearGradient(
+                        stops: [
+                            .init(color: .black.opacity(0.08), location: 0),
+                            .init(color: .black.opacity(0.08), location: 0.10),
+                            .init(color: .black.opacity(0.20), location: 0.50),
+                            .init(color: .black.opacity(0.46), location: 1)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                }
+
+                if presentationDimCompensation > 0 {
+                    Color.black.opacity(presentationDimCompensation)
+                }
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+            .clipped()
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+private struct NowPlayingHistoryRow: View {
+    let item: PlaybackHistoryItem
+    let artistNames: [ArtistID: String]
+    let artworkServing: (any ArtworkServing)?
+    let contentWidth: CGFloat
+    let isPerformingAction: Bool
+    let boundaryAccessibilityIdentifier: String?
+    let onSelect: () -> Void
+
+    var body: some View {
+        let textWidth = max(
+            0,
+            contentWidth
+                - NowPlayingLayoutMetrics.queueRowArtworkSize
+                - NowPlayingLayoutMetrics.headerContentSpacing
+                - (isPerformingAction
+                    ? NowPlayingLayoutMetrics.queueRowActionWidth
+                        + NowPlayingLayoutMetrics.headerContentSpacing
+                    : 0)
+        )
+
+        Button(action: onSelect) {
+            HStack(spacing: NowPlayingLayoutMetrics.headerContentSpacing) {
+                ArtworkResourceView(
+                    artworkID: item.track.artworkID,
+                    sourceID: item.track.id.sourceID,
+                    serving: artworkServing,
+                    accessibilityLabel: item.track.artworkID == nil ? L("暂无封面") : L("封面"),
+                    placeholderTitle: item.track.title,
+                    fillsAvailableWidth: true,
+                    cornerRadius: 8
+                )
+                .frame(
+                    width: NowPlayingLayoutMetrics.queueRowArtworkSize,
+                    height: NowPlayingLayoutMetrics.queueRowArtworkSize
+                )
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(item.track.title)
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(.white.opacity(0.96))
+                        .lineLimit(1)
+
+                    if let subtitle = QueueArtistNameLoader.subtitle(
+                        for: item.track,
+                        artistNames: artistNames
+                    ) {
+                        Text(subtitle)
+                            .font(.subheadline)
+                            .foregroundStyle(.white.opacity(0.64))
+                            .lineLimit(1)
+                    }
+                }
+                .frame(
+                    width: textWidth,
+                    alignment: .leading
+                )
+                .clipped()
+
+                if isPerformingAction {
+                    ProgressView()
+                        .tint(.white.opacity(0.84))
+                        .frame(width: 28, height: 28)
+                }
+            }
+            .frame(
+                width: contentWidth,
+                height: NowPlayingLayoutMetrics.historyRowHeight,
+                alignment: .leading
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .frame(
+            width: contentWidth,
+            height: NowPlayingLayoutMetrics.historyRowHeight,
+            alignment: .leading
+        )
+        .contentShape(Rectangle())
+        .disabled(isPerformingAction)
+        .accessibilityElement(children: .combine)
+        .accessibilityHint(Text(L("选择播放方式")))
+        .accessibilityIdentifier(
+            boundaryAccessibilityIdentifier
+                ?? "player.nowPlaying.history.\(item.sessionID.uuidString)"
+        )
     }
 }
 

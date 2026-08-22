@@ -858,8 +858,22 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
         ? media.itemID
         : nil
     })
+    // A Documents rescan can discover a sidecar cover after the audio bytes
+    // were already imported. Reuse the healthy managed asset and fill only a
+    // missing artwork reference; an existing user-selected cover remains
+    // authoritative.
+    let artworkRepairItemIDs = Set(plan.normalizedTracks.compactMap { media -> MediaItemID? in
+      guard existingItemIDs.contains(media.itemID),
+            !repairItemIDs.contains(media.itemID),
+            let existingTrack = existingTracksByItemID[media.itemID],
+            existingTrack.artwork == nil,
+            media.artworkID != nil,
+            media.artworkData != nil
+      else { return nil }
+      return media.itemID
+    })
     if request.duplicatePolicy == .report,
-       !existingItemIDs.subtracting(repairItemIDs).isEmpty
+       !existingItemIDs.subtracting(repairItemIDs.union(artworkRepairItemIDs)).isEmpty
     {
       throw LocalMediaError.duplicate
     }
@@ -867,6 +881,7 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
     let includedItemIDs = Set(plan.itemIDs)
       .subtracting(existingItemIDs)
       .union(repairItemIDs)
+      .union(artworkRepairItemIDs)
     guard !includedItemIDs.isEmpty else {
       return BundleOutcome(imported: 0, duplicate: 0, skipped: existingItemIDs.count)
     }

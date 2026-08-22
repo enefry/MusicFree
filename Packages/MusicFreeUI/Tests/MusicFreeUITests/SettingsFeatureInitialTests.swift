@@ -25,6 +25,7 @@ private final class SettingsFeatureTestStore: SettingsFeatureStore {
     var maintenanceResult: StorageMaintenanceResult?
     var maintenanceCallCount = 0
     var suspendNextStorageUsage = false
+    var nextStorageUsageError: Error?
 
     private var changeContinuation: AsyncStream<AppSettings>.Continuation?
     private var storageUsageContinuation: CheckedContinuation<StorageUsageSnapshot, Error>?
@@ -93,6 +94,10 @@ private final class SettingsFeatureTestStore: SettingsFeatureStore {
 
     func storageUsage() async throws -> StorageUsageSnapshot {
         storageUsageCallCount += 1
+        if let nextStorageUsageError {
+            self.nextStorageUsageError = nil
+            throw nextStorageUsageError
+        }
         if suspendNextStorageUsage {
             suspendNextStorageUsage = false
             return try await withCheckedThrowingContinuation { continuation in
@@ -127,6 +132,12 @@ private final class SettingsFeatureTestStore: SettingsFeatureStore {
 private enum SettingsFeatureTestError: Error, Sendable {
     case write
     case reset
+}
+
+private func acceptedPrivacy(for providerIDs: [String]) -> PrivacyPreferences {
+    providerIDs.reduce(PrivacyPreferences.defaults.acceptingPrivacyPolicy()) {
+        $0.acceptingProviderPolicy($1)
+    }
 }
 
 @MainActor
@@ -244,6 +255,25 @@ private actor SettingsMetadataEnrichmentTestService: MetadataEnrichmentServing {
     }
 }
 
+private actor SettingsLyricsTestService: LyricsServing {
+    private let registeredProviderIDs: Set<LyricsProviderID>
+
+    init(registeredProviderIDs: Set<LyricsProviderID>) {
+        self.registeredProviderIDs = registeredProviderIDs
+    }
+
+    func registeredLyricsProviderIDs() async -> Set<LyricsProviderID> {
+        registeredProviderIDs
+    }
+
+    func fetchLyrics(
+        for _: LyricsQuery,
+        forceRefresh _: Bool
+    ) async throws -> TrackLyrics? {
+        nil
+    }
+}
+
 @MainActor
 @Test("Settings loads, validates, and serializes a saved playback change")
 func settingsFeatureLoadsAndSaves() async throws {
@@ -268,9 +298,78 @@ func settingsFeatureLoadsAndSaves() async throws {
 }
 
 @MainActor
+@Test("Privacy consent enables providers and revocation closes them")
+func settingsFeaturePrivacyConsentControlsOnlineProviders() async {
+    let store = SettingsFeatureTestStore()
+    let viewModel = SettingsViewModel(store: store)
+
+    await viewModel.load()
+    viewModel.acceptPrivacyPolicy()
+    viewModel.acceptProviderPrivacy(for: MetadataProviderID.musicKit.rawValue)
+    viewModel.setMetadataProviderEnabled(.musicKit, true)
+    await viewModel.waitForPendingWork()
+
+    #expect(viewModel.isPrivacyPolicyAccepted)
+    #expect(viewModel.settings.importPreferences.isMetadataProviderEnabled(.musicKit))
+    #expect(viewModel.settings.importPreferences.runtimeMetadataProviders.contains {
+        $0.provider == .musicKit && $0.isEnabled
+    })
+
+    viewModel.revokeOnlinePrivacy()
+    await viewModel.waitForPendingWork()
+
+    #expect(!viewModel.isPrivacyPolicyAccepted)
+    #expect(viewModel.settings.importPreferences.metadataProviders.allSatisfy { !$0.isEnabled })
+    #expect(viewModel.settings.importPreferences.runtimeMetadataProviders.allSatisfy { !$0.isEnabled })
+}
+
+@MainActor
+@Test("Debug privacy reset clears consent and disables every Provider")
+func settingsFeatureDebugPrivacyResetClearsAllOnlineConsent() async {
+    let initial = AppSettings(
+        importPreferences: ImportPreferences(
+            metadataProviders: [
+                MetadataProviderPreference(provider: .musicKit, isEnabled: true),
+                MetadataProviderPreference(provider: .musicBrainz, isEnabled: true)
+            ],
+            lyricsProviders: [
+                LyricsProviderPreference(provider: .lrclib, isEnabled: true)
+            ],
+            privacyPreferences: acceptedPrivacy(
+                for: [
+                    MetadataProviderID.musicKit.rawValue,
+                    MetadataProviderID.musicBrainz.rawValue,
+                    LyricsProviderID.lrclib.rawValue
+                ]
+            )
+        )
+    )
+    let store = SettingsFeatureTestStore(settings: initial)
+    let viewModel = SettingsViewModel(store: store)
+
+    await viewModel.load()
+    viewModel.resetAllPrivacy()
+    await viewModel.waitForPendingWork()
+
+    #expect(!viewModel.isPrivacyPolicyAccepted)
+    #expect(viewModel.settings.importPreferences.metadataProviders.allSatisfy { !$0.isEnabled })
+    #expect(viewModel.settings.importPreferences.lyricsProviders.allSatisfy { !$0.isEnabled })
+    #expect(!viewModel.settings.importPreferences.privacyPreferences
+        .isProviderPolicyAccepted(MetadataProviderID.musicKit.rawValue))
+}
+
+@MainActor
 @Test("MusicKit metadata toggle persists only after authorization succeeds")
 func settingsFeatureGatesMusicKitMetadataByAuthorization() async {
-    let store = SettingsFeatureTestStore()
+    let store = SettingsFeatureTestStore(
+        settings: AppSettings(
+            importPreferences: ImportPreferences(
+                privacyPreferences: acceptedPrivacy(
+                    for: [MetadataProviderID.musicKit.rawValue]
+                )
+            )
+        )
+    )
     let service = SettingsMetadataEnrichmentTestService(
         authorization: .notDetermined,
         requestedAuthorization: .authorized
@@ -367,7 +466,13 @@ func settingsFeaturePreservesMetadataProviderPreferences() async {
                 metadataProviders: [
                     MetadataProviderPreference(provider: .musicKit),
                     MetadataProviderPreference(provider: .metadataServer)
-                ]
+                ],
+                privacyPreferences: acceptedPrivacy(
+                    for: [
+                        MetadataProviderID.musicKit.rawValue,
+                        MetadataProviderID.metadataServer.rawValue
+                    ]
+                )
             )
         )
     )
@@ -406,10 +511,120 @@ func settingsFeaturePreservesMetadataProviderPreferences() async {
 }
 
 @MainActor
+@Test("Settings reorders visible metadata providers around a hidden provider")
+func settingsFeatureReordersVisibleMetadataProvidersAroundHiddenProvider() async {
+    let store = SettingsFeatureTestStore(
+        settings: AppSettings(
+            importPreferences: ImportPreferences(
+                metadataProviders: [
+                    MetadataProviderPreference(provider: .musicKit),
+                    MetadataProviderPreference(provider: .metadataServer),
+                    MetadataProviderPreference(provider: .discogs)
+                ]
+            )
+        )
+    )
+    let service = SettingsMetadataEnrichmentTestService(authorization: .authorized)
+    let viewModel = SettingsViewModel(store: store, metadataEnrichment: service)
+
+    await viewModel.load()
+    viewModel.moveMetadataProviders(
+        from: IndexSet(integer: 0),
+        to: 2,
+        within: [.musicKit, .discogs]
+    )
+    await viewModel.waitForPendingWork()
+
+    #expect(viewModel.settings.importPreferences.metadataProviders.map(\.provider) == [
+        .discogs,
+        .metadataServer,
+        .musicKit
+    ])
+}
+
+@MainActor
+@Test("Settings persists independent lyrics provider switches")
+func settingsFeaturePersistsLyricsProviderSwitches() async {
+    let store = SettingsFeatureTestStore(
+        settings: AppSettings(
+            importPreferences: ImportPreferences(
+                lyricsProviders: [
+                    LyricsProviderPreference(provider: .metadataServer, isEnabled: true),
+                    LyricsProviderPreference(provider: .lrclib, isEnabled: true)
+                ],
+                privacyPreferences: acceptedPrivacy(
+                    for: [
+                        LyricsProviderID.metadataServer.rawValue,
+                        LyricsProviderID.lrclib.rawValue
+                    ]
+                )
+            )
+        )
+    )
+    let viewModel = SettingsViewModel(store: store)
+
+    await viewModel.load()
+    #expect(viewModel.hasEnabledLyricsProviders)
+    #expect(viewModel.settings.importPreferences.isLyricsProviderEnabled(.metadataServer))
+    #expect(viewModel.settings.importPreferences.isLyricsProviderEnabled(.lrclib))
+
+    viewModel.setLyricsProviderEnabled(.metadataServer, false)
+    await viewModel.waitForPendingWork()
+
+    #expect(!viewModel.settings.importPreferences.isLyricsProviderEnabled(.metadataServer))
+    #expect(viewModel.settings.importPreferences.isLyricsProviderEnabled(.lrclib))
+    #expect(viewModel.hasEnabledLyricsProviders)
+    #expect(!store.current.importPreferences.isLyricsProviderEnabled(.metadataServer))
+
+    viewModel.setDuplicateImportPolicy(.keepBoth)
+    await viewModel.waitForPendingWork()
+    #expect(!viewModel.settings.importPreferences.isLyricsProviderEnabled(.metadataServer))
+    #expect(viewModel.settings.importPreferences.isLyricsProviderEnabled(.lrclib))
+
+    viewModel.setLyricsProviderEnabled(.lrclib, false)
+    await viewModel.waitForPendingWork()
+    #expect(!viewModel.hasEnabledLyricsProviders)
+
+    viewModel.setLyricsProviderEnabled(.metadataServer, true)
+    await viewModel.waitForPendingWork()
+    #expect(viewModel.hasEnabledLyricsProviders)
+    #expect(viewModel.settings.importPreferences.isLyricsProviderEnabled(.metadataServer))
+    #expect(!viewModel.settings.importPreferences.isLyricsProviderEnabled(.lrclib))
+    #expect(store.current.importPreferences.isLyricsProviderEnabled(.metadataServer))
+}
+
+@MainActor
+@Test("Settings ignores enabled lyrics providers unavailable at runtime")
+func settingsFeatureIgnoresUnavailableLyricsProviders() async {
+    let store = SettingsFeatureTestStore(
+        settings: AppSettings(
+            importPreferences: ImportPreferences(
+                lyricsProviders: [
+                    LyricsProviderPreference(provider: .metadataServer, isEnabled: true),
+                    LyricsProviderPreference(provider: .lrclib, isEnabled: false)
+                ]
+            )
+        )
+    )
+    let service = SettingsLyricsTestService(registeredProviderIDs: [.lrclib])
+    let viewModel = SettingsViewModel(store: store, lyricsServing: service)
+
+    await viewModel.load()
+
+    #expect(!viewModel.hasEnabledLyricsProviders)
+    #expect(!viewModel.canPreloadLyrics)
+}
+
+@MainActor
 @Test("Resetting settings disables MusicKit metadata runtime")
 func settingsFeatureResetDisablesMusicKitMetadataRuntime() async {
     let initial = AppSettings(
-        importPreferences: ImportPreferences(useMusicKitMetadataEnrichment: true)
+        importPreferences: ImportPreferences(
+            useMusicKitMetadataEnrichment: true,
+            privacyPreferences: acceptedPrivacy(
+                for: [MetadataProviderID.musicKit.rawValue]
+            )
+        )
     )
     let store = SettingsFeatureTestStore(settings: initial)
     let service = SettingsMetadataEnrichmentTestService(authorization: .authorized)
@@ -468,6 +683,57 @@ func settingsFeatureSavesAutomaticCachePruning() async {
     #expect(store.savedValues.first?.storagePreferences.automaticallyPruneCache == false)
     #expect(viewModel.settings.storagePreferences.automaticallyPruneCache == false)
     #expect(viewModel.mutationState == .saved)
+}
+
+@MainActor
+@Test("Cache limit uses feasible local capacity and saves only when dragging ends")
+func settingsFeatureCoalescesCacheLimitDragging() async {
+    let gibibyte: Int64 = 1_024 * 1_024 * 1_024
+    let store = SettingsFeatureTestStore()
+    store.storageUsageValue = StorageUsageSnapshot(
+        cacheBytes: 4 * gibibyte,
+        availableBytes: 20 * gibibyte
+    )
+    let viewModel = SettingsViewModel(store: store)
+
+    await viewModel.load()
+
+    #expect(viewModel.maximumCacheLimitBytes == 24 * gibibyte)
+    viewModel.beginCacheLimitEditing()
+    viewModel.updateCacheLimitDraft(bytes: 12 * gibibyte)
+    viewModel.updateCacheLimitDraft(bytes: 18 * gibibyte)
+    viewModel.updateCacheLimitDraft(bytes: 128 * gibibyte)
+
+    #expect(viewModel.displayedCacheLimitBytes == 24 * gibibyte)
+    #expect(viewModel.settings.storagePreferences.cacheLimit == .fiveGiB)
+    #expect(store.savedValues.isEmpty)
+
+    viewModel.endCacheLimitEditing()
+    await viewModel.waitForPendingWork()
+
+    #expect(store.savedValues.count == 1)
+    #expect(store.savedValues.first?.storagePreferences.cacheLimit.bytes == 24 * gibibyte)
+    #expect(viewModel.displayedCacheLimitBytes == 24 * gibibyte)
+    #expect(viewModel.mutationState == .saved)
+}
+
+@Test("Cache limit slider favors smaller values and formats whole units")
+func cacheLimitSliderUsesNonlinearWholeUnitScale() {
+    let gigabyte: Int64 = 1_000_000_000
+    let maximumBytes = 100 * gigabyte
+
+    let midpointBytes = CacheLimitSliderScale.bytes(
+        for: 0.5,
+        maximumBytes: maximumBytes
+    )
+
+    #expect(midpointBytes == 25 * gigabyte)
+    #expect(CacheLimitSliderScale.position(
+        for: midpointBytes,
+        maximumBytes: maximumBytes
+    ) < 0.51)
+    #expect(CacheLimitSliderScale.text(for: 5 * 1_024 * 1_024 * 1_024) == "5 GB")
+    #expect(CacheLimitSliderScale.text(for: StorageByteLimit.minimumBytes) == "67 MB")
 }
 
 @MainActor
@@ -785,6 +1051,21 @@ func settingsFeatureSerializesStorageRefresh() async {
     await second.value
 
     #expect(viewModel.storageUsage == refreshed)
+    #expect(!viewModel.isRefreshingStorage)
+}
+
+@MainActor
+@Test("Storage refresh reports failure after the request finishes")
+func settingsFeatureReportsStorageRefreshFailure() async {
+    let store = SettingsFeatureTestStore()
+    let viewModel = SettingsViewModel(store: store)
+    await viewModel.load()
+
+    store.nextStorageUsageError = StorageMaintenanceError.failed
+    let succeeded = await viewModel.refreshStorageUsage()
+
+    #expect(!succeeded)
+    #expect(viewModel.storageUsage == nil)
     #expect(!viewModel.isRefreshingStorage)
 }
 

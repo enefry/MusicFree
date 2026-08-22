@@ -6,6 +6,7 @@ import Foundation
 /// app can add providers without making older persisted settings undecodable.
 public struct MetadataProviderID: RawRepresentable, Codable, Hashable, Comparable, Sendable, Identifiable, CustomStringConvertible {
     public static let musicKit = Self(rawValue: "musicKit")
+    public static let musicBrainz = Self(rawValue: "musicBrainz")
     public static let metadataServer = Self(rawValue: "metadataServer")
     public static let discogs = Self(rawValue: "discogs")
 

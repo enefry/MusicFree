@@ -193,6 +193,22 @@ public protocol ArtworkServing: Sendable {
 /// Loads online lyrics on demand and persists a successful result in the
 /// library without making the player depend on a concrete network adapter.
 public protocol LyricsServing: Sendable {
+    /// Returns the providers registered by the current application build.
+    /// This lets settings distinguish persisted preferences from unavailable
+    /// providers hidden by a feature switch or missing configuration.
+    func registeredLyricsProviderIDs() async -> Set<LyricsProviderID>
+
+    /// Applies the current application and provider privacy consent before
+    /// any external lyrics request is allowed.
+    func setPrivacyPreferences(_ preferences: PrivacyPreferences) async
+
+    /// Applies the ordered, user-controlled lyrics provider preferences.
+    func setProviderPreferences(
+        _ preferences: [LyricsProviderPreference]
+    ) async
+
+    /// Compatibility entry point for the temporary all-providers switch.
+    func setEnabled(_ enabled: Bool) async
     func fetchLyrics(
         for query: LyricsQuery,
         forceRefresh: Bool
@@ -204,6 +220,16 @@ public protocol LyricsServing: Sendable {
 }
 
 public extension LyricsServing {
+    func registeredLyricsProviderIDs() async -> Set<LyricsProviderID> { [] }
+
+    func setPrivacyPreferences(_: PrivacyPreferences) async {}
+
+    func setProviderPreferences(
+        _: [LyricsProviderPreference]
+    ) async {}
+
+    func setEnabled(_ enabled: Bool) async {}
+
     func preloadSnapshot() async -> LyricsPreloadSnapshot {
         LyricsPreloadSnapshot()
     }
@@ -287,6 +313,9 @@ public protocol MetadataEnrichmentServing: Sendable {
     func requestAuthorization(
         for provider: MetadataProviderID
     ) async -> MetadataEnrichmentAuthorizationStatus
+    /// Applies the current application and provider privacy consent before
+    /// any external metadata request is allowed.
+    func setPrivacyPreferences(_ preferences: PrivacyPreferences) async
     func setProviderPreferences(
         _ preferences: [MetadataProviderPreference]
     ) async
@@ -302,6 +331,8 @@ public extension MetadataEnrichmentServing {
     ) async -> MetadataEnrichmentAuthorizationStatus {
         await requestAuthorization()
     }
+
+    func setPrivacyPreferences(_: PrivacyPreferences) async {}
 
     func setProviderPreferences(
         _: [MetadataProviderPreference]

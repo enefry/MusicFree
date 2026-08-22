@@ -1257,6 +1257,60 @@ func documentsScannerRestoresCompletedSnapshot() async throws {
     #expect(await relaunchedImporter.requestCount == 0)
 }
 
+@Test("Documents scanner invalidates pre-artwork snapshots after schema migration")
+func documentsScannerReimportsLegacySnapshotAfterSchemaMigration() async throws {
+    struct LegacyEntry: Codable {
+        let relativePath: String
+        let fileSize: Int
+        let modificationDate: Date?
+    }
+
+    struct LegacySnapshot: Codable {
+        let schemaVersion: Int
+        let entries: [LegacyEntry]
+    }
+
+    let testRoot = FileManager.default.temporaryDirectory
+        .appendingPathComponent("MusicFreeScannerMigrationTests-\(UUID().uuidString)", isDirectory: true)
+    let documentsURL = testRoot.appendingPathComponent("Documents", isDirectory: true)
+    let snapshotURL = testRoot.appendingPathComponent("State/snapshot.json")
+    try FileManager.default.createDirectory(at: documentsURL, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: testRoot) }
+
+    let mediaURL = documentsURL.appendingPathComponent("persisted.flac")
+    try Data("persisted".utf8).write(to: mediaURL)
+    let modificationDate = try mediaURL.resourceValues(
+        forKeys: [.contentModificationDateKey]
+    ).contentModificationDate
+    let legacySnapshot = LegacySnapshot(
+        schemaVersion: 1,
+        entries: [
+            LegacyEntry(
+                relativePath: mediaURL.lastPathComponent,
+                fileSize: 9,
+                modificationDate: modificationDate
+            )
+        ]
+    )
+    let snapshotData = try JSONEncoder().encode(legacySnapshot)
+    try FileManager.default.createDirectory(
+        at: snapshotURL.deletingLastPathComponent(),
+        withIntermediateDirectories: true
+    )
+    try snapshotData.write(to: snapshotURL)
+
+    let importer = RecordingImportService()
+    let scanner = AppDocumentsScanner(
+        documentsURL: documentsURL,
+        snapshotURL: snapshotURL,
+        importer: importer
+    )
+
+    let result = try await scanner.scanIfNeeded()
+    #expect(result?.imported == 1)
+    #expect(await importer.requestCount == 1)
+}
+
 }
 
 private actor RecordingImportService: ImportServing {

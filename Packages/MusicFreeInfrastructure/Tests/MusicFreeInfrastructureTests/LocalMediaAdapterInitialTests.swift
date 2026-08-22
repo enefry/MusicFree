@@ -411,6 +411,51 @@ struct LocalMediaAdapterInitialTests {
     #expect(await repository.applyAttemptCount() == 1)
   }
 
+  @Test("Directory re-import attaches newly discovered artwork to an existing track")
+  func directoryBundleRepairsMissingArtworkWithoutMovingAudio() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let albumRoot = fixture.inputRoot.appendingPathComponent("Artwork Album", isDirectory: true)
+    try FileManager.default.createDirectory(at: albumRoot, withIntermediateDirectories: true)
+    let audioURL = albumRoot.appendingPathComponent("01.flac")
+    try Data("artwork-repair-audio".utf8).write(to: audioURL)
+
+    let repository = InMemoryLibraryRepository()
+    let initialImporter = try LocalMediaImporter(
+      configuration: fixture.configuration,
+      probe: FixedProbe(),
+      metadataReader: NoArtworkMetadataReader(),
+      libraryRepository: repository
+    )
+    let initialEvents = try await collect(initialImporter.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [albumRoot]
+    )))
+    let itemID = try #require(persistedItemID(in: initialEvents))
+    #expect(try await repository.track(id: itemID)?.artwork == nil)
+
+    let coverURL = albumRoot.appendingPathComponent("cover.png")
+    try validPNGData().write(to: coverURL)
+    let artworkImporter = try LocalMediaImporter(
+      configuration: fixture.configuration,
+      probe: FixedProbe(),
+      metadataReader: NoArtworkMetadataReader(),
+      libraryRepository: repository
+    )
+    let artworkEvents = try await collect(artworkImporter.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [albumRoot]
+    )))
+    let artworkResult = try completedResult(in: artworkEvents)
+    let repairedTrack = try #require(await repository.track(id: itemID))
+
+    #expect(artworkResult.imported == 1)
+    #expect(artworkResult.skipped == 0)
+    #expect(artworkResult.failed == 0)
+    #expect(repairedTrack.artworkID != nil)
+    #expect(await repository.applyAttemptCount() == 2)
+  }
+
   @Test("Separate bundle imports merge album and disc track counts")
   func separateBundleImportsPreserveTrackCounts() async throws {
     let fixture = try Fixture()

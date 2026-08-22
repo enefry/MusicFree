@@ -128,8 +128,27 @@ enum NowPlayingHistoryPresentation {
     from items: [PlaybackHistoryItem],
     currentItemID: MediaItemID?
   ) -> [PlaybackHistoryItem] {
-    items.filter { item in
-      !(item.track.id == currentItemID && item.lastCompletionReason == nil)
-    }
+    // REGRESSION GUARD: only the active playback session is represented by
+    // the current row. Filtering by item ID hides every unfinished replay of
+    // the same song and makes a large history appear truncated. History
+    // records carry a session ID, so select the latest unfinished session
+    // explicitly and leave older sessions available to scroll.
+    let currentSessionID = items
+      .filter {
+        $0.track.id == currentItemID && $0.lastCompletionReason == nil
+      }
+      .max { lhs, rhs in
+        lhs.lastEventAt < rhs.lastEventAt
+      }?
+      .sessionID
+
+    return items.filter { $0.sessionID != currentSessionID }
+  }
+
+  static func nowPlayingItems(
+    from items: [PlaybackHistoryItem],
+    currentItemID: MediaItemID?
+  ) -> [PlaybackHistoryItem] {
+    visibleItems(from: items, currentItemID: currentItemID)
   }
 }

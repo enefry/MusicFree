@@ -7,6 +7,18 @@ import PlaylistFeature
 import SettingsFeature
 import SwiftUI
 
+#if METADATA_SERVER_DISABLED
+private let metadataServerEnabled = false
+#else
+private let metadataServerEnabled = true
+#endif
+
+#if LYRICS_DISABLED
+private let lyricsEnabled = false
+#else
+private let lyricsEnabled = true
+#endif
+
 struct RootScene: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.scenePhase) private var scenePhase
@@ -26,6 +38,10 @@ struct RootScene: View {
     var body: some View {
         startupAwareContent
             .tint(MusicFreeColorTokens.accent)
+            // The player sheet owns its dark appearance. The presenting scene
+            // must keep the user's appearance for the whole presentation.
+            // Changing this at the root makes the entire app flash to dark
+            // mode while the system sheet is still installing its first frame.
             .preferredColorScheme(appearance.colorScheme)
             .environment(\.locale, language.locale)
             .task {
@@ -101,15 +117,20 @@ struct RootScene: View {
             if horizontalSizeClass == .regular {
                 splitView(services: services)
                     .safeAreaInset(edge: .bottom, spacing: 0) {
-                        MiniPlayerView(
-                            serving: services.playbackServing,
-                            audioServing: services.playbackAudioServing,
-                            artworkServing: services.artworkServing,
-                            library: services.libraryServing,
-                            onPresentPlayer: { router.present(.player) }
-                        )
-                        .frame(maxWidth: .infinity)
-                        .background(.bar)
+                        // Keep the presenting carousel out of the tree during
+                        // the system Sheet transition; its old offset must not
+                        // be rendered in the player surface.
+                        if router.presented != .player {
+                            MiniPlayerView(
+                                serving: services.playbackServing,
+                                audioServing: services.playbackAudioServing,
+                                artworkServing: services.artworkServing,
+                                library: services.libraryServing,
+                                onPresentPlayer: { router.present(.player) }
+                            )
+                            .frame(maxWidth: .infinity)
+                            .background(.bar)
+                        }
                     }
             } else {
                 compactContent(services: services)
@@ -117,23 +138,24 @@ struct RootScene: View {
         }
         .background(MusicFreeColorTokens.backgroundPrimary.ignoresSafeArea())
         .sheet(item: $router.presented) { presentation in
-            ZStack {
-                // The sheet's content must own the bottom safe area as well;
-                // otherwise the root scene can show through below the player.
-                Color.black.ignoresSafeArea()
-                presentedView(for: presentation)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
+            presentedView(for: presentation)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // Scope the player appearance to the system presentation. The
+            // underlying scene keeps its existing appearance after dismissal.
+            .preferredColorScheme(.dark)
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
             // Let the system coordinate the sheet's dismiss gesture with
             // the ScrollViews inside Now Playing.
             .presentationContentInteraction(.scrolls)
             .interactiveDismissDisabled(false)
-            // Keep uncovered system safe-area pixels opaque while the player
-            // artwork remains the visible content background.
             .presentationCornerRadius(0)
             .presentationBackground {
+                // REGRESSION GUARD: Now Playing intentionally uses a stable
+                // dark surface. Do not reintroduce an artwork backdrop here;
+                // a second background layer can leak through the system-sheet
+                // safe area and make the page change color while switching
+                // between Artwork, Queue, and Lyrics.
                 Color.black.ignoresSafeArea()
             }
         }
@@ -150,13 +172,21 @@ struct RootScene: View {
             }
         }
         .tabViewBottomAccessory {
-            MiniPlayerView(
-                serving: services.playbackServing,
-                audioServing: services.playbackAudioServing,
-                artworkServing: services.artworkServing,
-                library: services.libraryServing,
-                onPresentPlayer: { router.present(.player) }
-            )
+            // REGRESSION GUARD: remove the presenting MiniPlayer while the
+            // system player Sheet is installing. Keeping its GeometryReader
+            // carousel alive lets an in-flight horizontal offset escape the
+            // bottom accessory and leave a title tail in the middle of the
+            // player. Do not replace this with opacity or hidden: the native
+            // accessory can retain the transformed render/accessibility frame.
+            if router.presented != .player {
+                MiniPlayerView(
+                    serving: services.playbackServing,
+                    audioServing: services.playbackAudioServing,
+                    artworkServing: services.artworkServing,
+                    library: services.libraryServing,
+                    onPresentPlayer: { router.present(.player) }
+                )
+            }
         }
         .tabBarMinimizeBehavior(.onScrollDown)
         .accessibilityIdentifier("app.tabBar")
@@ -220,7 +250,9 @@ struct RootScene: View {
                     appIconProvider: AppAlternateIconProvider(),
                     sleepTimerServing: services.sleepTimerServing,
                     metadataEnrichment: services.metadataEnrichmentServing,
-                    lyricsServing: services.lyrics,
+                    lyricsServing: lyricsEnabled ? services.lyrics : nil,
+                    metadataServerEnabled: metadataServerEnabled,
+                    lyricsEnabled: lyricsEnabled,
                     additionContent: additionSettingsContent
                 )
             }
@@ -326,7 +358,9 @@ struct RootScene: View {
                 appIconProvider: AppAlternateIconProvider(),
                 sleepTimerServing: services.sleepTimerServing,
                 metadataEnrichment: services.metadataEnrichmentServing,
-                lyricsServing: services.lyrics,
+                lyricsServing: lyricsEnabled ? services.lyrics : nil,
+                metadataServerEnabled: metadataServerEnabled,
+                lyricsEnabled: lyricsEnabled,
                 additionContent: additionSettingsContent
             )
         }
@@ -343,10 +377,11 @@ struct RootScene: View {
                         audioServing: services.playbackAudioServing,
                         artworkServing: services.artworkServing,
                         library: services.libraryServing,
-                        lyricsServing: services.lyrics
+                        lyricsServing: lyricsEnabled ? services.lyrics : nil,
+                        rendersBackdrop: false
                     )
                 } else {
-                    PlayerScene(serving: PlayerStore())
+                    PlayerScene(serving: PlayerStore(), rendersBackdrop: false)
                 }
             }
             .toolbarBackground(.hidden, for: .navigationBar)
@@ -438,6 +473,16 @@ struct RootScene: View {
                 await services.stop()
                 return
             }
+#if DEBUG
+            if ProcessInfo.processInfo.arguments.contains(
+                AppBVTFixtureSeeder.resetPlaybackHistoryLaunchArgument
+            ) {
+                // BVT-only reset: the large-history gate must start from a
+                // known store state even when the same Simulator is reused.
+                // Keep this launch-gated so normal users never lose history.
+                try? await services.libraryServing.clearPlaybackHistory()
+            }
+#endif
             container.completeStartup(report)
         } catch is CancellationError {
             return

@@ -9,6 +9,7 @@ public struct PlayerScene: View {
   private let artworkServing: (any ArtworkServing)?
   private let library: (any LibraryServing)?
   private let lyricsServing: (any LyricsServing)?
+  private let rendersBackdrop: Bool
 
   public init() {
     self.init(serving: PlayerStore())
@@ -18,12 +19,14 @@ public struct PlayerScene: View {
     viewModel: PlayerViewModel,
     artworkServing: (any ArtworkServing)? = nil,
     library: (any LibraryServing)? = nil,
-    lyricsServing: (any LyricsServing)? = nil
+    lyricsServing: (any LyricsServing)? = nil,
+    rendersBackdrop: Bool = true
   ) {
     _viewModel = StateObject(wrappedValue: viewModel)
     self.artworkServing = artworkServing
     self.library = library
     self.lyricsServing = lyricsServing
+    self.rendersBackdrop = rendersBackdrop
   }
 
   public init(
@@ -31,13 +34,15 @@ public struct PlayerScene: View {
     audioServing: (any PlayerAudioServing)? = nil,
     artworkServing: (any ArtworkServing)? = nil,
     library: (any LibraryServing)? = nil,
-    lyricsServing: (any LyricsServing)? = nil
+    lyricsServing: (any LyricsServing)? = nil,
+    rendersBackdrop: Bool = true
   ) {
     self.init(
       viewModel: PlayerViewModel(serving: serving, audioServing: audioServing),
       artworkServing: artworkServing,
       library: library,
-      lyricsServing: lyricsServing
+      lyricsServing: lyricsServing,
+      rendersBackdrop: rendersBackdrop
     )
   }
 
@@ -48,7 +53,8 @@ public struct PlayerScene: View {
       isMoreActionsPresented: $isMoreActionsPresented,
       artworkServing: artworkServing,
       library: library,
-      lyricsServing: lyricsServing
+      lyricsServing: lyricsServing,
+      rendersBackdrop: rendersBackdrop
     )
     .sheet(isPresented: $isQueuePresented) {
       NavigationStack {

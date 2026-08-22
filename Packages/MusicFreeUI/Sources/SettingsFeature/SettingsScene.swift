@@ -10,10 +10,13 @@ public struct SettingsScene<AdditionsContent: View>: View {
     private let appIconOptions: [SettingsAppIconOption]
     private let appIconProvider: any SettingsAppIconProviding
     private let sleepTimerServing: (any SleepTimerServing)?
+    private let metadataServerEnabled: Bool
+    private let lyricsEnabled: Bool
     private let additionContent: AdditionsContent?
     @Binding private var appearance: MusicFreeAppearance
     @Binding private var language: MusicFreeLanguage
     @State private var viewModel: SettingsViewModel
+    @State private var storageRefreshToast: StorageRefreshToast?
 
     @MainActor
     init(
@@ -27,6 +30,8 @@ public struct SettingsScene<AdditionsContent: View>: View {
         sleepTimerServing: (any SleepTimerServing)? = nil,
         metadataEnrichment: (any MetadataEnrichmentServing)? = nil,
         lyricsServing: (any LyricsServing)? = nil,
+        metadataServerEnabled: Bool = true,
+        lyricsEnabled: Bool = true,
         @ViewBuilder additionContent: () -> AdditionsContent? = { nil }
     ) {
         self.releaseInfoProvider = releaseInfoProvider
@@ -34,6 +39,8 @@ public struct SettingsScene<AdditionsContent: View>: View {
         self.appIconOptions = appIconOptions
         self.appIconProvider = appIconProvider
         self.sleepTimerServing = sleepTimerServing
+        self.metadataServerEnabled = metadataServerEnabled
+        self.lyricsEnabled = lyricsEnabled
         _appearance = appearance
         _language = language
         _viewModel = State(initialValue: SettingsViewModel(
@@ -58,6 +65,8 @@ public struct SettingsScene<AdditionsContent: View>: View {
         sleepTimerServing: (any SleepTimerServing)? = nil,
         metadataEnrichment: (any MetadataEnrichmentServing)? = nil,
         lyricsServing: (any LyricsServing)? = nil,
+        metadataServerEnabled: Bool = true,
+        lyricsEnabled: Bool = true,
         @ViewBuilder additionContent: () -> AdditionsContent? = { nil }
     ) {
         self.releaseInfoProvider = releaseInfoProvider
@@ -65,6 +74,8 @@ public struct SettingsScene<AdditionsContent: View>: View {
         self.appIconOptions = appIconOptions
         self.appIconProvider = appIconProvider
         self.sleepTimerServing = sleepTimerServing
+        self.metadataServerEnabled = metadataServerEnabled
+        self.lyricsEnabled = lyricsEnabled
         _appearance = appearance
         _language = language
         _viewModel = State(initialValue: SettingsViewModel(
@@ -165,10 +176,28 @@ public struct SettingsScene<AdditionsContent: View>: View {
                 viewModel.cancelStorageMaintenance()
             }
         } message: {
-            Text(L("操作只处理应用生成的缓存或已记录的维护事务，不会删除资料库媒体文件。"))
+            Text(maintenanceConfirmationMessage)
         }
         .task {
             await viewModel.load()
+        }
+        .overlay(alignment: .bottom) {
+            if let storageRefreshToast {
+                StorageRefreshToastView(toast: storageRefreshToast)
+                    .padding(.horizontal, MusicFreeSpacingTokens.large)
+                    .padding(.bottom, MusicFreeSpacingTokens.large)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .allowsHitTesting(false)
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: storageRefreshToast?.id)
+        .task(id: storageRefreshToast?.id) {
+            guard storageRefreshToast != nil else { return }
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeInOut(duration: 0.2)) {
+                storageRefreshToast = nil
+            }
         }
     }
 
@@ -219,8 +248,42 @@ public struct SettingsScene<AdditionsContent: View>: View {
                 viewModel: viewModel,
                 sleepTimerServing: sleepTimerServing
             )
-            ImportSettingsView(viewModel: viewModel)
-            StorageSettingsView(viewModel: viewModel)
+            ImportSettingsView(
+                viewModel: viewModel,
+                metadataServerEnabled: metadataServerEnabled,
+                lyricsEnabled: lyricsEnabled
+            )
+            StorageSettingsView(
+                viewModel: viewModel,
+                onRefreshCompleted: { succeeded in
+                    presentStorageRefreshToast(succeeded: succeeded)
+                }
+            )
+
+            Section(L("隐私")) {
+                NavigationLink {
+                    PrivacySettingsView(
+                        viewModel: viewModel,
+                        metadataServerEnabled: metadataServerEnabled,
+                        lyricsEnabled: lyricsEnabled
+                    )
+                } label: {
+                    Label(L("隐私与联网服务"), systemImage: "hand.raised.shield")
+                }
+                .accessibilityIdentifier("settings.privacy")
+            }
+
+#if DEBUG
+            Section(L("调试")) {
+                Button(role: .destructive) {
+                    viewModel.resetAllPrivacy()
+                } label: {
+                    Label(L("重置全部隐私"), systemImage: "arrow.counterclockwise")
+                }
+                .disabled(viewModel.isSaving)
+                .accessibilityIdentifier("settings.debug.resetAllPrivacy")
+            }
+#endif
 
             Section(L("关于")) {
                 NavigationLink {
@@ -267,6 +330,28 @@ public struct SettingsScene<AdditionsContent: View>: View {
         case .repairPendingRemovals: return L("修复待删除项目？")
         case .clearFinalizedQuarantine: return L("清理已完成隔离？")
         case nil: return L("执行存储维护？")
+        }
+    }
+
+    private var maintenanceConfirmationMessage: String {
+        switch viewModel.requestedMaintenanceAction {
+        case .clearImportStaging:
+            return L("将删除导入暂存目录中的文件；已经进入资料库的媒体文件不受影响。")
+        case .repairPendingRemovals:
+            return L("将核对未完成的删除事务，并恢复或完成能够确定状态的事务；无法判断的事务会保留。")
+        case .clearFinalizedQuarantine:
+            return L("将删除已完成处理的隔离副本，并保留 pending 隔离文件；清理后的副本不能恢复。")
+        case nil:
+            return L("操作只处理应用生成的缓存或已记录的维护事务，不会删除资料库媒体文件。")
+        }
+    }
+
+    @MainActor
+    private func presentStorageRefreshToast(succeeded: Bool) {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            storageRefreshToast = StorageRefreshToast(
+                result: succeeded ? .succeeded : .failed
+            )
         }
     }
 }

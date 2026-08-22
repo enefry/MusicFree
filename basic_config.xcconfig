@@ -1,7 +1,7 @@
 // MusicFree shared application metadata.
 
-BUILD_VERSION = 2026081503
-APP_VERSION = 1.0.100
+BUILD_VERSION = 2026082103
+APP_VERSION = 1.1.3
 
 APP_CATEGORY = public.app-category.music
 APP_DISPLAY_NAME = MyMusic
@@ -16,6 +16,20 @@ MUSIC_DOMAIN= music.tools4me.win
 METADATA_SERVER_BASE_URL=$(HTTPS_PREFIX)$(MUSIC_DOMAIN)/api/v1/metadata
 
 METADATA_SERVER_REQUEST_TIMEOUT = 45
+
+// Metadata Server is temporarily offline. Remove this token to re-enable
+// both its metadata and lyrics providers.
+METADATA_SERVER_FEATURE_FLAG = METADATA_SERVER_DISABLED
+
+// Set to LYRICS_DISABLED to turn off remote lyrics providers and preloading.
+// Leave empty to keep online lyrics enabled.
+LYRICS_FEATURE_FLAG =
+
+MUSICBRAINZ_API_BASE_URL = $(HTTPS_PREFIX)musicbrainz.org/ws/2
+MUSICBRAINZ_COVER_ART_BASE_URL = $(HTTPS_PREFIX)coverartarchive.org
+MUSICBRAINZ_API_USER_AGENT = MyMusic/iOS/$(APP_VERSION) + music.tools4me.win
+MUSICBRAINZ_API_REQUEST_TIMEOUT = 45
+MUSICBRAINZ_API_MINIMUM_REQUEST_INTERVAL = 1
 
 DISCOGS_API_BASE_URL = $(HTTPS_PREFIX)api.discogs.com
 DISCOGS_API_USER_AGENT = MyMusic/iOS/$(APP_VERSION) + music.tools4me.win

@@ -19,6 +19,8 @@ enum AppDocumentsScannerError: Error, LocalizedError, Sendable {
 /// Detects Finder/iTunes file-sharing changes and feeds Documents through the
 /// same import boundary used by the document picker.
 actor AppDocumentsScanner {
+    private static let snapshotSchemaVersion = 2
+
     private struct Entry: Codable, Equatable, Sendable {
         let relativePath: String
         let fileSize: Int
@@ -30,7 +32,7 @@ actor AppDocumentsScanner {
         let entries: [Entry]
 
         init(entries: [Entry]) {
-            self.schemaVersion = 1
+            self.schemaVersion = AppDocumentsScanner.snapshotSchemaVersion
             self.entries = entries
         }
     }
@@ -126,7 +128,7 @@ actor AppDocumentsScanner {
         guard let snapshotURL,
               let data = try? Data(contentsOf: snapshotURL),
               let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data),
-              snapshot.schemaVersion == 1
+              snapshot.schemaVersion == Self.snapshotSchemaVersion
         else {
             return
         }

@@ -11,10 +11,18 @@ func settingsDefaultsAreSafe() {
     #expect(settings.importPreferences.duplicatePolicy == .skipExisting)
     #expect(settings.importPreferences.metadataProviders.map(\.provider) == [
         .musicKit,
+        .musicBrainz,
         .metadataServer,
         .discogs
     ])
     #expect(settings.importPreferences.metadataProviders.allSatisfy { !$0.isEnabled })
+    #expect(settings.importPreferences.lyricsProviders.map(\.provider) == [
+        .metadataServer,
+        .lrclib
+    ])
+    #expect(settings.importPreferences.lyricsProviders.allSatisfy { !$0.isEnabled })
+    #expect(!settings.importPreferences.lyricsProvidersEnabled)
+    #expect(settings.importPreferences.privacyPreferences == .defaults)
     #expect(settings.playbackPreferences.rate == .normal)
     #expect(!settings.playbackPreferences.equalizer.isEnabled)
     #expect(settings.playbackPreferences.equalizer.preamp == .zero)
@@ -35,12 +43,15 @@ func importPreferencesMigrateMetadataProviders() throws {
     #expect(migrated.duplicatePolicy == .keepBoth)
     #expect(migrated.metadataProviders.map(\.provider) == [
         .musicKit,
+        .musicBrainz,
         .metadataServer,
         .discogs
     ])
     #expect(migrated.isMetadataProviderEnabled(.musicKit))
     #expect(!migrated.isMetadataProviderEnabled(.metadataServer))
     #expect(!migrated.isMetadataProviderEnabled(.discogs))
+    #expect(migrated.lyricsProviders.allSatisfy { !$0.isEnabled })
+    #expect(!migrated.lyricsProvidersEnabled)
 
     let customProvider = MetadataProviderID(rawValue: "customProvider")
     let configured = ImportPreferences(
@@ -48,7 +59,8 @@ func importPreferencesMigrateMetadataProviders() throws {
             MetadataProviderPreference(provider: .metadataServer, isEnabled: true),
             MetadataProviderPreference(provider: .musicKit, isEnabled: false),
             MetadataProviderPreference(provider: customProvider, isEnabled: true)
-        ]
+        ],
+        lyricsProvidersEnabled: false
     )
     let roundTripped = try JSONDecoder().decode(
         ImportPreferences.self,
@@ -58,10 +70,30 @@ func importPreferencesMigrateMetadataProviders() throws {
         .metadataServer,
         .musicKit,
         customProvider,
+        .musicBrainz,
         .discogs
     ])
     #expect(Array(roundTripped.metadataProviders.prefix(3)) == configured.metadataProviders)
     #expect(!roundTripped.isMetadataProviderEnabled(.discogs))
+    #expect(!roundTripped.lyricsProvidersEnabled)
+
+    let perProvider = ImportPreferences(
+        lyricsProviders: [
+            LyricsProviderPreference(provider: .lrclib, isEnabled: false),
+            LyricsProviderPreference(provider: .metadataServer, isEnabled: true)
+        ]
+    )
+    let perProviderRoundTrip = try JSONDecoder().decode(
+        ImportPreferences.self,
+        from: JSONEncoder().encode(perProvider)
+    )
+    #expect(perProviderRoundTrip.lyricsProviders.map(\.provider) == [
+        .lrclib,
+        .metadataServer
+    ])
+    #expect(!perProviderRoundTrip.isLyricsProviderEnabled(.lrclib))
+    #expect(perProviderRoundTrip.isLyricsProviderEnabled(.metadataServer))
+    #expect(perProviderRoundTrip.lyricsProvidersEnabled)
 }
 
 @Test("Import preferences append Discogs to previously saved provider orders")
@@ -77,11 +109,46 @@ func importPreferencesMigratePreviouslySavedProviderOrder() throws {
     #expect(migrated.metadataProviders.map(\.provider) == [
         .metadataServer,
         .musicKit,
+        .musicBrainz,
         .discogs
     ])
     #expect(migrated.isMetadataProviderEnabled(.metadataServer))
     #expect(!migrated.isMetadataProviderEnabled(.musicKit))
     #expect(!migrated.isMetadataProviderEnabled(.discogs))
+    #expect(migrated.lyricsProviders.allSatisfy { !$0.isEnabled })
+    #expect(!migrated.lyricsProvidersEnabled)
+}
+
+@Test("Online providers require application and provider privacy consent")
+func privacyConsentGatesRuntimeProviders() throws {
+    let preferences = ImportPreferences(
+        metadataProviders: [
+            MetadataProviderPreference(provider: .musicBrainz, isEnabled: true)
+        ],
+        lyricsProviders: [
+            LyricsProviderPreference(provider: .lrclib, isEnabled: true)
+        ]
+    )
+
+    #expect(preferences.runtimeMetadataProviders.allSatisfy { !$0.isEnabled })
+    #expect(preferences.runtimeLyricsProviders.allSatisfy { !$0.isEnabled })
+
+    let consentedPrivacy = PrivacyPreferences.defaults
+        .acceptingPrivacyPolicy()
+        .acceptingProviderPolicy(MetadataProviderID.musicBrainz.rawValue)
+        .acceptingProviderPolicy(LyricsProviderID.lrclib.rawValue)
+    let consented = preferences.settingPrivacyPreferences(consentedPrivacy)
+
+    #expect(consented.runtimeMetadataProviders.first?.isEnabled == true)
+    #expect(consented.runtimeLyricsProviders.first?.isEnabled == true)
+
+    let roundTripped = try JSONDecoder().decode(
+        ImportPreferences.self,
+        from: JSONEncoder().encode(consented)
+    )
+    #expect(roundTripped.privacyPreferences == consentedPrivacy)
+    #expect(roundTripped.runtimeMetadataProviders.first?.isEnabled == true)
+    #expect(roundTripped.runtimeLyricsProviders.first?.isEnabled == true)
 }
 
 @Test("Import preferences reject empty metadata provider IDs")
