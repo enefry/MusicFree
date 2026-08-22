@@ -151,6 +151,29 @@ func privacyConsentGatesRuntimeProviders() throws {
     #expect(roundTripped.runtimeLyricsProviders.first?.isEnabled == true)
 }
 
+@Test("Provider consent cannot be granted before application privacy consent")
+func providerConsentRequiresApplicationPrivacyConsent() {
+    let providerOnly = PrivacyPreferences.defaults.acceptingProviderPolicy(
+        MetadataProviderID.musicBrainz.rawValue
+    )
+
+    #expect(providerOnly == .defaults)
+
+    let outdatedApplicationConsent = PrivacyPreferences(
+        privacyPolicyVersion: "1.0.0",
+        providerConsents: [
+            ProviderPrivacyConsent(
+                providerID: MetadataProviderID.musicBrainz.rawValue,
+                policyVersion: PrivacyPreferences.currentProviderPolicyVersion
+            )
+        ]
+    ).acceptingPrivacyPolicy()
+
+    #expect(!outdatedApplicationConsent.isProviderPolicyAccepted(
+        MetadataProviderID.musicBrainz.rawValue
+    ))
+}
+
 @Test("Import preferences reject empty metadata provider IDs")
 func importPreferencesRejectEmptyMetadataProviderID() {
     let payload = #"{"metadataProviders":[{"provider":"","isEnabled":true}]}"#

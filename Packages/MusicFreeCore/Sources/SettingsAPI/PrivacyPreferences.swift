@@ -49,13 +49,16 @@ public struct PrivacyPreferences: Codable, Equatable, Hashable, Sendable {
     }
 
     public func acceptingPrivacyPolicy() -> Self {
-        Self(
+        let preservedProviderConsents = isPrivacyPolicyAccepted ? providerConsents : []
+        return Self(
             privacyPolicyVersion: Self.currentPrivacyPolicyVersion,
-            providerConsents: providerConsents
+            providerConsents: preservedProviderConsents
         )
     }
 
     public func acceptingProviderPolicy(_ providerID: String) -> Self {
+        guard isPrivacyPolicyAccepted else { return self }
+
         let normalizedID = providerID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedID.isEmpty else { return self }
 

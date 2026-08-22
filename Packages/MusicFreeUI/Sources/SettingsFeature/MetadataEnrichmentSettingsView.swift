@@ -5,6 +5,7 @@ import SettingsAPI
 import SwiftUI
 
 struct MetadataEnrichmentSettingsView: View {
+    @Environment(\.dismiss) private var dismiss
     @Bindable var viewModel: SettingsViewModel
     let metadataServerEnabled: Bool
     let lyricsEnabled: Bool
@@ -14,6 +15,9 @@ struct MetadataEnrichmentSettingsView: View {
     @State private var lyricsPreloadPresentation: LyricsPreloadPresentation = .idle
     @State private var privacyDisclosure: PrivacyDisclosure?
     @State private var pendingProviderActivation: ProviderActivation?
+    @State private var hasCheckedApplicationPrivacy = false
+    @State private var isEntryPrivacyDisclosure = false
+    @State private var shouldDismissAfterPrivacyDisclosure = false
 
     private enum ProviderActivation: Identifiable {
         case metadata(MetadataProviderID)
@@ -68,7 +72,7 @@ struct MetadataEnrichmentSettingsView: View {
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .background(MusicFreeColorTokens.backgroundGrouped)
-        .sheet(item: $privacyDisclosure) { disclosure in
+        .sheet(item: $privacyDisclosure, onDismiss: privacyDisclosureDidDismiss) { disclosure in
             PrivacyDisclosureView(
                 disclosure: disclosure,
                 onAccept: acceptPrivacyDisclosure,
@@ -93,6 +97,25 @@ struct MetadataEnrichmentSettingsView: View {
                 applyLyricsPreloadSnapshot(value)
             }
         }
+        .task {
+            await viewModel.waitForPendingWork()
+            requestApplicationPrivacyOnEntry()
+        }
+    }
+
+    private func requestApplicationPrivacyOnEntry() {
+        guard !hasCheckedApplicationPrivacy else { return }
+        hasCheckedApplicationPrivacy = true
+        guard !viewModel.isPrivacyPolicyAccepted else { return }
+
+        isEntryPrivacyDisclosure = true
+        privacyDisclosure = .application
+    }
+
+    private func privacyDisclosureDidDismiss() {
+        guard shouldDismissAfterPrivacyDisclosure else { return }
+        shouldDismissAfterPrivacyDisclosure = false
+        dismiss()
     }
 
     private func setMetadataProviderEnabled(
@@ -119,6 +142,7 @@ struct MetadataEnrichmentSettingsView: View {
 
     private func requestProviderActivation(_ activation: ProviderActivation) {
         pendingProviderActivation = activation
+        isEntryPrivacyDisclosure = false
 
         if !viewModel.isPrivacyPolicyAccepted {
             privacyDisclosure = .application
@@ -137,6 +161,7 @@ struct MetadataEnrichmentSettingsView: View {
         case .application:
             viewModel.acceptPrivacyPolicy()
             guard let activation = pendingProviderActivation else {
+                isEntryPrivacyDisclosure = false
                 privacyDisclosure = nil
                 return
             }
@@ -152,6 +177,14 @@ struct MetadataEnrichmentSettingsView: View {
     }
 
     private func declinePrivacyDisclosure() {
+        let isApplicationDisclosure: Bool
+        if case .application = privacyDisclosure {
+            isApplicationDisclosure = true
+        } else {
+            isApplicationDisclosure = false
+        }
+        let shouldDismissPage = isEntryPrivacyDisclosure && isApplicationDisclosure
+
         switch privacyDisclosure {
         case .application:
             viewModel.revokeOnlinePrivacy()
@@ -161,6 +194,8 @@ struct MetadataEnrichmentSettingsView: View {
             break
         }
         pendingProviderActivation = nil
+        isEntryPrivacyDisclosure = false
+        shouldDismissAfterPrivacyDisclosure = shouldDismissPage
         privacyDisclosure = nil
     }
 

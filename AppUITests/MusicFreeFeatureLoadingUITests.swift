@@ -82,9 +82,16 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
         let privacyDisclosure = app.descendants(matching: .any)[
             "settings.privacyDisclosure"
         ].firstMatch
+        XCTAssertTrue(
+            app.descendants(matching: .any)[
+                "settings.privacyDisclosure.application"
+            ].firstMatch.waitForExistence(timeout: 10),
+            "Opening the Provider settings page must request the application policy first."
+        )
+        app.buttons["settings.privacyDisclosure.accept"].firstMatch.tap()
         XCTAssertFalse(
             privacyDisclosure.waitForExistence(timeout: 2),
-            "Opening the Provider settings page must not request every Provider's consent."
+            "Accepting the application policy should keep the Provider settings page open."
         )
 
         let musicBrainzToggle = app.switches[
@@ -98,16 +105,9 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
 
         XCTAssertTrue(
             app.descendants(matching: .any)[
-                "settings.privacyDisclosure.application"
-            ].firstMatch.waitForExistence(timeout: 10),
-            "The first Provider activation must request the application policy."
-        )
-        app.buttons["settings.privacyDisclosure.accept"].firstMatch.tap()
-        XCTAssertTrue(
-            app.descendants(matching: .any)[
                 "settings.privacyDisclosure.provider.musicBrainz"
             ].firstMatch.waitForExistence(timeout: 10),
-            "After the application policy, only the selected Provider disclosure should appear."
+            "The first Provider activation must request only that Provider's disclosure."
         )
         app.buttons["settings.privacyDisclosure.accept"].firstMatch.tap()
 
@@ -174,14 +174,15 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
             "settings.import.metadataProvider.musicBrainz.enabled"
         ].firstMatch
         XCTAssertTrue(musicBrainzToggle.waitForExistence(timeout: 10))
+        XCTAssertTrue(
+            app.descendants(matching: .any)[
+                "settings.privacyDisclosure.application"
+            ].firstMatch.waitForExistence(timeout: 10)
+        )
+        app.buttons["settings.privacyDisclosure.accept"].firstMatch.tap()
         musicBrainzToggle.coordinate(
             withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)
         ).tap()
-        XCTAssertTrue(
-            app.buttons["settings.privacyDisclosure.accept"].firstMatch
-                .waitForExistence(timeout: 10)
-        )
-        app.buttons["settings.privacyDisclosure.accept"].firstMatch.tap()
         XCTAssertTrue(
             app.descendants(matching: .any)[
                 "settings.privacyDisclosure.provider.musicBrainz"
@@ -202,6 +203,49 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
             app.descendants(matching: .any)["settings.import.metadata.section"]
                 .firstMatch.exists,
             "Declining a Provider disclosure must keep the settings page open."
+        )
+    }
+
+    @MainActor
+    func testApplicationPrivacyDeclineDismissesProviderPage() {
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        app.launch()
+
+        let settingsTab = tabButton("Settings", in: app)
+        XCTAssertTrue(settingsTab.waitForExistence(timeout: 15))
+        settingsTab.tap()
+        let form = app.descendants(matching: .any)["settings.form"].firstMatch
+        XCTAssertTrue(form.waitForExistence(timeout: 15))
+
+        let debugReset = app.descendants(matching: .any)[
+            "settings.debug.resetAllPrivacy"
+        ].firstMatch
+        XCTAssertTrue(scrollToElement(debugReset, in: app, maximumSwipes: 12))
+        debugReset.tap()
+        scrollSettingsToTop(in: app)
+
+        let metadataEntry = app.descendants(matching: .any)[
+            "settings.import.metadataEnrichment.entry"
+        ].firstMatch
+        XCTAssertTrue(scrollToElement(metadataEntry, in: app, maximumSwipes: 12))
+        metadataEntry.tap()
+
+        XCTAssertTrue(
+            app.descendants(matching: .any)[
+                "settings.privacyDisclosure.application"
+            ].firstMatch.waitForExistence(timeout: 10)
+        )
+        app.buttons["settings.privacyDisclosure.decline"].firstMatch.tap()
+
+        XCTAssertTrue(
+            scrollToElement(metadataEntry, in: app, maximumSwipes: 12),
+            "Declining the application policy should return to Settings."
+        )
+        XCTAssertFalse(
+            app.descendants(matching: .any)["settings.import.metadata.section"]
+                .firstMatch.exists,
+            "Declining the application policy should dismiss the Provider page."
         )
     }
 

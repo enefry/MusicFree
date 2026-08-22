@@ -324,6 +324,37 @@ func settingsFeaturePrivacyConsentControlsOnlineProviders() async {
 }
 
 @MainActor
+@Test("Provider privacy revocation disables matching metadata and lyrics providers")
+func settingsFeatureProviderPrivacyRevocationDisablesMatchingProviders() async {
+    let providerID = MetadataProviderID.metadataServer.rawValue
+    let initial = AppSettings(
+        importPreferences: ImportPreferences(
+            metadataProviders: [
+                MetadataProviderPreference(provider: .metadataServer, isEnabled: true)
+            ],
+            lyricsProviders: [
+                LyricsProviderPreference(provider: .metadataServer, isEnabled: true)
+            ],
+            privacyPreferences: acceptedPrivacy(for: [providerID])
+        )
+    )
+    let store = SettingsFeatureTestStore(settings: initial)
+    let viewModel = SettingsViewModel(store: store)
+
+    await viewModel.load()
+    #expect(viewModel.settings.importPreferences.runtimeMetadataProviders.first?.isEnabled == true)
+    #expect(viewModel.settings.importPreferences.runtimeLyricsProviders.first?.isEnabled == true)
+
+    viewModel.revokeProviderPrivacy(for: providerID)
+    await viewModel.waitForPendingWork()
+
+    #expect(!viewModel.settings.importPreferences.isMetadataProviderEnabled(.metadataServer))
+    #expect(!viewModel.settings.importPreferences.isLyricsProviderEnabled(.metadataServer))
+    #expect(!viewModel.settings.importPreferences.privacyPreferences
+        .isProviderPolicyAccepted(providerID))
+}
+
+@MainActor
 @Test("Debug privacy reset clears consent and disables every Provider")
 func settingsFeatureDebugPrivacyResetClearsAllOnlineConsent() async {
     let initial = AppSettings(

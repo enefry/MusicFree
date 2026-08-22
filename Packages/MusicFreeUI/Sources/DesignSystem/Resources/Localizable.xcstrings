@@ -20234,6 +20234,13 @@
         "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "同意应用隐私政策" } }
       }
     },
+    "同意" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Agree" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "同意" } }
+      }
+    },
     "尚未接入" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -20290,6 +20297,13 @@
         "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "撤回同意并关闭联网服务" } }
       }
     },
+    "撤回" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Withdraw" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "撤回" } }
+      }
+    },
     "服务" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -20309,6 +20323,13 @@
       "localizations" : {
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Metadata and lyrics Providers cannot make network requests until the app privacy policy is accepted." } },
         "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "未同意应用隐私政策时，元数据和歌词 Provider 不会发起网络请求。" } }
+      }
+    },
+    "Provider 同意独立保存；撤回后会同时关闭对应 Provider，未启用的 Provider 不会发起请求。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Provider consent is stored independently; withdrawing it also disables the corresponding Provider, and disabled Providers make no requests." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Provider 同意独立保存；撤回后会同时关闭对应 Provider，未启用的 Provider 不会发起请求。" } }
       }
     },
     "未授权" : {

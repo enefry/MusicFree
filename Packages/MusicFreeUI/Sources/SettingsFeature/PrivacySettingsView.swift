@@ -284,6 +284,7 @@ struct PrivacySettingsView: View {
                     } label: {
                         Label(L("撤回同意并关闭联网服务"), systemImage: "hand.raised")
                     }
+                    .accessibilityIdentifier("settings.privacy.application.revoke")
                 } else {
                     Text(L("未同意应用隐私政策时，元数据和歌词 Provider 不会发起网络请求。"))
                         .font(MusicFreeTypographyTokens.secondary)
@@ -294,6 +295,7 @@ struct PrivacySettingsView: View {
                     } label: {
                         Label(L("同意应用隐私政策"), systemImage: "checkmark.shield")
                     }
+                    .accessibilityIdentifier("settings.privacy.application.accept")
                 }
 
                 SafariServiceLink(
@@ -306,27 +308,34 @@ struct PrivacySettingsView: View {
 
             Section {
                 ForEach(providerDescriptors) { descriptor in
-                    NavigationLink {
-                        PrivacyProviderDetailsView(descriptor: descriptor)
-                    } label: {
-                        HStack(spacing: MusicFreeSpacingTokens.small) {
-                            Label(descriptor.title, systemImage: "network")
+                    VStack(alignment: .leading, spacing: MusicFreeSpacingTokens.small) {
+                        NavigationLink {
+                            PrivacyProviderDetailsView(descriptor: descriptor)
+                        } label: {
+                            HStack(spacing: MusicFreeSpacingTokens.small) {
+                                Label(descriptor.title, systemImage: "network")
+                                Spacer(minLength: MusicFreeSpacingTokens.small)
+                                Text(providerConsentStatus(for: descriptor))
+                                    .font(MusicFreeTypographyTokens.caption)
+                                    .foregroundStyle(
+                                        isProviderPolicyAccepted(descriptor)
+                                            ? MusicFreeColorTokens.accent
+                                            : MusicFreeColorTokens.foregroundSecondary
+                                    )
+                            }
+                        }
+
+                        HStack {
                             Spacer(minLength: MusicFreeSpacingTokens.small)
-                            Text(
-                                viewModel.settings.importPreferences.privacyPreferences
-                                    .isProviderPolicyAccepted(descriptor.id)
-                                    ? L("已确认")
-                                    : L("未确认")
-                            )
-                            .font(MusicFreeTypographyTokens.caption)
-                            .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
+                            providerConsentButton(for: descriptor)
                         }
                     }
+                    .accessibilityIdentifier("settings.privacy.provider.\(descriptor.id)")
                 }
             } header: {
                 Text(L("Provider 服务说明"))
             } footer: {
-                Text(L("启用 Provider 时才会要求确认对应服务说明；未启用的 Provider 不会发起请求。"))
+                Text(L("Provider 同意独立保存；撤回后会同时关闭对应 Provider，未启用的 Provider 不会发起请求。"))
             }
         }
         .navigationTitle(L("隐私与联网"))
@@ -363,5 +372,44 @@ struct PrivacySettingsView: View {
         }
 
         return providerIDs.map(PrivacyProviderCatalog.descriptor)
+    }
+
+    private func isProviderPolicyAccepted(
+        _ descriptor: PrivacyProviderDescriptor
+    ) -> Bool {
+        viewModel.settings.importPreferences.privacyPreferences
+            .isProviderPolicyAccepted(descriptor.id)
+    }
+
+    private func providerConsentStatus(
+        for descriptor: PrivacyProviderDescriptor
+    ) -> String {
+        isProviderPolicyAccepted(descriptor) ? L("已确认") : L("未确认")
+    }
+
+    @ViewBuilder
+    private func providerConsentButton(
+        for descriptor: PrivacyProviderDescriptor
+    ) -> some View {
+        if isProviderPolicyAccepted(descriptor) {
+            Button(role: .destructive) {
+                viewModel.revokeProviderPrivacy(for: descriptor.id)
+            } label: {
+                Label(L("撤回"), systemImage: "hand.raised")
+            }
+            .accessibilityIdentifier(
+                "settings.privacy.provider.\(descriptor.id).revoke"
+            )
+        } else {
+            Button {
+                viewModel.acceptProviderPrivacy(for: descriptor.id)
+            } label: {
+                Label(L("同意"), systemImage: "checkmark")
+            }
+            .disabled(!viewModel.isPrivacyPolicyAccepted)
+            .accessibilityIdentifier(
+                "settings.privacy.provider.\(descriptor.id).accept"
+            )
+        }
     }
 }
