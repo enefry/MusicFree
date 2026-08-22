@@ -718,62 +718,81 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
     do {
       var assets: [PreparedLocalMediaAsset] = []
       for file in bundle.mediaCandidates {
-        try Task.checkCancellation()
-        continuation.yield(.copying(importID: request.importID, url: file.url))
-        let staged = try await staging.stage(
-          sourceURL: file.url,
-          importID: request.importID
-        )
-        stagedURLs.append(staged)
-
-        continuation.yield(.hashing(importID: request.importID, url: file.url))
-        let contentHash = try await hasher.hash(fileAt: staged).lowercased()
-        guard contentHash.count == 64, contentHash.allSatisfy(\.isHexDigit) else {
-          throw LocalMediaError.hashingFailed
-        }
-
-        continuation.yield(.probing(importID: request.importID, url: file.url))
-        let resource = PlaybackResource.localFile(staged)
-        let probeResult: MediaProbeResult
+        var stagedForFile: URL?
         do {
-          probeResult = try await probeReader.probe(resource).validated()
-        } catch let error as MediaSourceError {
-          throw Self.mapProbeError(error)
-        } catch let error as MediaProbeError {
-          throw Self.mapProbeError(MediaSourceError.probeFailed(error))
-        } catch is CancellationError {
-          throw CancellationError()
-        } catch {
-          throw LocalMediaError.probeFailed
-        }
-
-        let rawMetadata: RawMediaMetadata
-        do {
-          let embeddedMetadata = try await metadataReader.readMetadata(from: resource)
-          let sidecarLyrics = try? LocalLyricsReader.readSidecar(for: file.url)
-          rawMetadata = embeddedMetadata.lyrics == nil
-            ? embeddedMetadata.replacingLyrics(sidecarLyrics ?? nil)
-            : embeddedMetadata
-        } catch is CancellationError {
-          throw CancellationError()
-        } catch {
-          throw LocalMediaError.metadataFailed
-        }
-
-        let externalID = "sha256-\(contentHash)"
-        assets.append(PreparedLocalMediaAsset(
-          file: file,
-          stagedURL: staged,
-          contentHash: contentHash,
-          assetID: MediaAssetID(sourceID: .local, externalID: externalID),
-          probe: probeResult,
-          metadata: rawMetadata,
-          folderArtwork: FolderArtworkResolver().selection(
-            for: file.url,
-            in: bundle,
-            allowRootArtwork: allowRootArtwork
+          try Task.checkCancellation()
+          continuation.yield(.copying(importID: request.importID, url: file.url))
+          let staged = try await staging.stage(
+            sourceURL: file.url,
+            importID: request.importID
           )
-        ))
+          stagedForFile = staged
+          stagedURLs.append(staged)
+
+          continuation.yield(.hashing(importID: request.importID, url: file.url))
+          let contentHash = try await hasher.hash(fileAt: staged).lowercased()
+          guard contentHash.count == 64, contentHash.allSatisfy(\.isHexDigit) else {
+            throw LocalMediaError.hashingFailed
+          }
+
+          continuation.yield(.probing(importID: request.importID, url: file.url))
+          let resource = PlaybackResource.localFile(staged)
+          let probeResult: MediaProbeResult
+          do {
+            probeResult = try await probeReader.probe(resource).validated()
+          } catch let error as MediaSourceError {
+            throw Self.mapProbeError(error)
+          } catch let error as MediaProbeError {
+            throw Self.mapProbeError(MediaSourceError.probeFailed(error))
+          } catch is CancellationError {
+            throw CancellationError()
+          } catch {
+            throw LocalMediaError.probeFailed
+          }
+
+          let rawMetadata: RawMediaMetadata
+          do {
+            let embeddedMetadata = try await metadataReader.readMetadata(from: resource)
+            let sidecarLyrics = try? LocalLyricsReader.readSidecar(for: file.url)
+            rawMetadata = embeddedMetadata.lyrics == nil
+              ? embeddedMetadata.replacingLyrics(sidecarLyrics ?? nil)
+              : embeddedMetadata
+          } catch is CancellationError {
+            throw CancellationError()
+          } catch {
+            throw LocalMediaError.metadataFailed
+          }
+
+          let externalID = "sha256-\(contentHash)"
+          assets.append(PreparedLocalMediaAsset(
+            file: file,
+            stagedURL: staged,
+            contentHash: contentHash,
+            assetID: MediaAssetID(sourceID: .local, externalID: externalID),
+            probe: probeResult,
+            metadata: rawMetadata,
+            folderArtwork: FolderArtworkResolver().selection(
+              for: file.url,
+              in: bundle,
+              allowRootArtwork: allowRootArtwork
+            )
+          ))
+        } catch let error as LocalMediaError
+          where !Self.isLikelyAudioFile(file.url)
+            && (error == .unsupportedInput || error == .probeFailed)
+        {
+          // A directory can contain checksum files or other unknown
+          // attachments. Ignore an unreferenced unknown file after probing;
+          // an explicitly referenced CUE file still fails in the planner.
+          if let stagedForFile {
+            await staging.remove(stagedForFile)
+          }
+          continue
+        }
+      }
+
+      guard !assets.isEmpty else {
+        throw LocalMediaError.unsupportedInput
       }
 
       let plan = try LocalMediaBundlePlanner().plan(
@@ -1561,5 +1580,15 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
       return MediaSourceError.cancelled
     }
     return MediaSourceError.importFailed(.unknown)
+  }
+
+  private static func isLikelyAudioFile(_ url: URL) -> Bool {
+    switch url.pathExtension.lowercased() {
+    case "aac", "ac3", "aif", "aiff", "alac", "ape", "caf", "dts", "flac",
+      "m4a", "m4b", "mka", "mp3", "oga", "ogg", "opus", "wav", "webm", "wma", "wv":
+      return true
+    default:
+      return false
+    }
   }
 }

@@ -118,7 +118,10 @@ struct LocalMediaBundlePlanner: Sendable {
 
     for cueFile in bundle.cueFiles {
       let cueData = try readCue(cueFile.url)
-      let cueHash = MusicContentIdentity.sha256Hex(cueData)
+      // The CUE file is the logical object; its metadata is a mutable
+      // revision. Keep track IDs tied to the object's stable source identity
+      // so title/performer/encoding edits do not orphan user state.
+      let cueObjectID = stableCueObjectID(for: cueFile.url)
       let sheet = try CUESheetParser().parse(data: cueData)
       var resolvedByPath: [String: PreparedLocalMediaAsset] = [:]
       var durations: [String: Duration] = [:]
@@ -131,10 +134,10 @@ struct LocalMediaBundlePlanner: Sendable {
         guard let asset = assetsByURL[resolvedURL], let duration = asset.probe.duration else {
           throw CUESheetError.missingAssetDuration
         }
-        if let existingOwner = cueOwnerByAsset[resolvedURL], existingOwner != cueHash {
+        if let existingOwner = cueOwnerByAsset[resolvedURL], existingOwner != cueObjectID {
           throw LocalMediaError.metadataFailed
         }
-        cueOwnerByAsset[resolvedURL] = cueHash
+        cueOwnerByAsset[resolvedURL] = cueObjectID
         referencedURLs.insert(resolvedURL)
         resolvedByPath[file.path.lowercased()] = asset
         durations[file.path.lowercased()] = duration
@@ -147,7 +150,7 @@ struct LocalMediaBundlePlanner: Sendable {
                 $0.path.caseInsensitiveCompare(segment.filePath) == .orderedSame
               })
         else { throw CUESheetError.referencedFileNotFound }
-        let externalID = "cue-\(cueHash)-f\(fileOrdinal + 1)-t\(segment.track.number)"
+        let externalID = "cue-\(cueObjectID)-f\(fileOrdinal + 1)-t\(segment.track.number)"
         let itemID = MediaItemID(sourceID: .local, externalID: externalID)
         let metadata = cueMetadata(
           sheet: sheet,
@@ -508,6 +511,12 @@ struct LocalMediaBundlePlanner: Sendable {
     } catch {
       throw LocalMediaError.metadataFailed
     }
+  }
+
+  private func stableCueObjectID(for url: URL) -> String {
+    let canonicalPath = url.resolvingSymlinksInPath().standardizedFileURL.path
+      .lowercased()
+    return MusicContentIdentity.compositeToken(["local-cue-v1", canonicalPath])
   }
 
   private func releaseFolder(

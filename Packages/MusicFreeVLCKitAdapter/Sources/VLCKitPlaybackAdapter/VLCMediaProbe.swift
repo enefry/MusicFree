@@ -54,6 +54,10 @@ public final class VLCMediaProbe: @unchecked Sendable, MediaProbing {
           bitRate: track.bitrate == 0 ? nil : Int(track.bitrate),
           language: normalized(track.language),
           title: normalized(track.trackDescription),
+          // VLCMediaTrack does not expose the container's default flag. Do
+          // not infer it from array order; the playback engine will leave VLC
+          // in control unless a higher-level probe provides an explicit flag.
+          isDefault: false,
           isDecodable: true
         )
       }
