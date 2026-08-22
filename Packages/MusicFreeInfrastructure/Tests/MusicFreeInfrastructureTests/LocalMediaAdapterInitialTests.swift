@@ -166,12 +166,14 @@ struct LocalMediaAdapterInitialTests {
     let coverURL = albumRoot.appendingPathComponent("cover.jpg")
     let frontURL = albumRoot.appendingPathComponent("front.png")
     let notesURL = albumRoot.appendingPathComponent("notes.nfo")
+    let checksumURL = albumRoot.appendingPathComponent("album.sfv")
     try Data("audio".utf8).write(to: audioURL)
     try Data("FILE \"01 Song.flac\" WAVE".utf8).write(to: cueURL)
     try Data("[00:01]line".utf8).write(to: lyricsURL)
     try Data("damaged".utf8).write(to: coverURL)
     try validPNGData().write(to: frontURL)
     try Data("notes".utf8).write(to: notesURL)
+    try Data("01 Song.flac 00000000".utf8).write(to: checksumURL)
 
     let files = try ImportFileEnumerator(configuration: fixture.configuration).enumerate(albumRoot)
     let bundle = try FolderImportBundleAnalyzer().analyze(inputURL: albumRoot, files: files)
@@ -181,6 +183,7 @@ struct LocalMediaAdapterInitialTests {
     #expect(bundle.lyricsFiles.map(\.url) == [lyricsURL])
     #expect(bundle.artworkFiles.map(\.url) == [coverURL, frontURL])
     #expect(bundle.resources.first(where: { $0.file.url == notesURL })?.kind == .sidecar)
+    #expect(bundle.resources.first(where: { $0.file.url == checksumURL })?.kind == .sidecar)
 
     let artwork = try #require(FolderArtworkResolver().selection(
       for: audioURL,
@@ -191,6 +194,71 @@ struct LocalMediaAdapterInitialTests {
     #expect(artwork.reason == .frontFile)
     #expect(artwork.pixelWidth > 0)
     #expect(artwork.pixelHeight > 0)
+  }
+
+  @Test("Directory imports ignore an undecodable unknown sidecar beside audio")
+  func directoryImportIgnoresUndecodableUnknownSidecar() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let albumRoot = fixture.inputRoot.appendingPathComponent("Unknown Sidecar", isDirectory: true)
+    try FileManager.default.createDirectory(at: albumRoot, withIntermediateDirectories: true)
+    try Data("playable-audio".utf8).write(to: albumRoot.appendingPathComponent("01.flac"))
+    try Data("sidecar".utf8).write(to: albumRoot.appendingPathComponent("download.unknown"))
+
+    let repository = InMemoryLibraryRepository()
+    let importer = try fixture.makeImporter(
+      repository: repository,
+      probe: UnknownSidecarProbe()
+    )
+    let events = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [albumRoot]
+    )))
+    let result = try completedResult(in: events)
+    let tracks = try await repository.tracks(
+      matching: TrackQuery(sourceID: .local),
+      page: try LibraryPageRequest(limit: LibraryPageRequest.maximumLimit)
+    )
+
+    #expect(result.imported == 1)
+    #expect(result.failed == 0)
+    #expect(tracks.elements.count == 1)
+    #expect(tracks.elements.first?.fileName == "01.flac")
+  }
+
+  @Test("CUE references to an undecodable unknown asset fail strictly")
+  func cueReferenceToUnknownAssetFailsStrictly() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let albumRoot = fixture.inputRoot.appendingPathComponent("Strict CUE", isDirectory: true)
+    try FileManager.default.createDirectory(at: albumRoot, withIntermediateDirectories: true)
+    try Data("not-audio".utf8).write(to: albumRoot.appendingPathComponent("referenced.unknown"))
+    try Data("""
+    TITLE "Strict CUE"
+    FILE "referenced.unknown" BINARY
+      TRACK 01 AUDIO
+        TITLE "Referenced"
+        INDEX 01 00:00:00
+    """.utf8).write(to: albumRoot.appendingPathComponent("album.cue"))
+
+    let repository = InMemoryLibraryRepository()
+    let importer = try fixture.makeImporter(
+      repository: repository,
+      probe: UnknownSidecarProbe()
+    )
+    let events = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [albumRoot]
+    )))
+    let result = try completedResult(in: events)
+    let tracks = try await repository.tracks(
+      matching: TrackQuery(sourceID: .local),
+      page: try LibraryPageRequest(limit: LibraryPageRequest.maximumLimit)
+    )
+
+    #expect(result.imported == 0)
+    #expect(result.failed == 1)
+    #expect(tracks.elements.isEmpty)
   }
 
   @Test("A root musicfree.collection.json manifest creates an ordered Box Set")
@@ -826,6 +894,67 @@ struct LocalMediaAdapterInitialTests {
     #expect(try Data(contentsOf: firstURL) == Data("cue-shared-audio".utf8))
   }
 
+  @Test("CUE item IDs remain stable across metadata revisions")
+  func cueItemIDsRemainStableAcrossMetadataRevisions() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let albumRoot = fixture.inputRoot.appendingPathComponent("Stable CUE", isDirectory: true)
+    try FileManager.default.createDirectory(at: albumRoot, withIntermediateDirectories: true)
+    try Data("stable-cue-audio".utf8).write(to: albumRoot.appendingPathComponent("image.flac"))
+    let cueURL = albumRoot.appendingPathComponent("album.cue")
+    try Data("""
+    TITLE "Original Album"
+    PERFORMER "Original Artist"
+    FILE "image.flac" WAVE
+      TRACK 01 AUDIO
+        TITLE "First"
+        INDEX 01 00:00:00
+      TRACK 02 AUDIO
+        TITLE "Second"
+        INDEX 01 00:01:00
+    """.utf8).write(to: cueURL)
+
+    let repository = InMemoryLibraryRepository()
+    let importer = try fixture.makeImporter(repository: repository)
+    let firstEvents = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [albumRoot]
+    )))
+    let firstResult = try completedResult(in: firstEvents)
+    let firstIDs = Set(persistedItemIDs(in: firstEvents))
+    #expect(firstResult.imported == 2)
+    #expect(firstIDs.count == 2)
+
+    try Data("""
+
+    TITLE   "Revised Album"
+    PERFORMER "Revised Artist"
+    FILE "image.flac" WAVE
+      TRACK 01 AUDIO
+        TITLE "First Revised"
+        INDEX 01 00:00:00
+      TRACK 02 AUDIO
+        TITLE "Second Revised"
+        INDEX 01 00:01:00
+    """.utf8).write(to: cueURL)
+
+    let secondEvents = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [albumRoot]
+    )))
+    let secondResult = try completedResult(in: secondEvents)
+    let tracks = try await repository.tracks(
+      matching: TrackQuery(sourceID: .local),
+      page: try LibraryPageRequest(limit: LibraryPageRequest.maximumLimit)
+    )
+
+    #expect(secondResult.imported == 0)
+    #expect(secondResult.skipped == 2)
+    #expect(secondResult.failed == 0)
+    #expect(Set(tracks.elements.map(\.id)) == firstIDs)
+    #expect(tracks.elements.count == 2)
+  }
+
   @Test("CUE removal keeps a shared asset until its last logical track is removed")
   func cueRemovalUsesSharedAssetReferenceCount() async throws {
     let fixture = try Fixture()
@@ -1031,6 +1160,28 @@ struct LocalMediaAdapterInitialTests {
       channelCount: 2,
       indexHint: 2
     ))
+  }
+
+  @Test("Multi-stream probes without a default do not force the first stream")
+  func multiStreamWithoutDefaultLeavesSelectionToDecoder() throws {
+    let probe = MediaProbeResult(
+      audioTracks: [
+        ProbedAudioTrack(index: 0, stableID: "stream-one", codec: "aac"),
+        ProbedAudioTrack(index: 1, stableID: "stream-two", codec: "aac")
+      ],
+      container: "matroska",
+      duration: .seconds(30)
+    )
+
+    #expect(ProbedAudioStreamSelector.preferred(in: probe) == nil)
+
+    let normalized = try MetadataNormalizer().normalize(
+      fileURL: URL(fileURLWithPath: "/fixture/no-default.mka"),
+      contentHash: String(repeating: "f", count: 64),
+      probe: probe,
+      metadata: RawMediaMetadata(title: "No Default")
+    )
+    #expect(normalized.track.playbackSelection.audioStream == nil)
   }
 
   @Test("Malformed probed stream values are normalized without domain precondition failures")
@@ -2998,6 +3149,17 @@ private struct MultipleAudioStreamProbe: MediaProbing {
       container: "matroska",
       duration: .seconds(180)
     )
+  }
+}
+
+private struct UnknownSidecarProbe: MediaProbing {
+  func probe(_ resource: PlaybackResource) async throws -> MediaProbeResult {
+    if case .localFile(let url) = resource,
+       url.pathExtension.caseInsensitiveCompare("unknown") == .orderedSame
+    {
+      throw MediaSourceError.probeFailed(.unsupportedFormat)
+    }
+    return try await FixedProbe().probe(resource)
   }
 }
 

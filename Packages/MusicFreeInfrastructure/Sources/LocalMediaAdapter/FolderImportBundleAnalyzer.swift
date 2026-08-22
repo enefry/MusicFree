@@ -91,10 +91,14 @@ struct FolderImportBundleAnalyzer: Sendable {
       return .artwork
     case "json", "xml", "yaml", "yml", "m3u", "m3u8":
       return .manifest
-    case "txt", "nfo", "log", "pdf":
+    case "txt", "nfo", "log", "pdf",
+      "sfv", "accurip", "md5", "md5sum", "sha1", "sha256", "sha512",
+      "crc", "crc32", "checksum", "checksums":
       return .sidecar
     default:
-      // A decoder probe, not an extension allow-list, makes the final audio decision.
+      // Keep unknown extensions probeable: some valid audio containers have
+      // no useful filename declaration. The importer drops an un-decodable
+      // unknown file when it is an unreferenced folder sidecar.
       return .mediaCandidate
     }
   }
