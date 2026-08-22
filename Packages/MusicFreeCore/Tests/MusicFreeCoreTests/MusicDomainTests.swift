@@ -18,6 +18,28 @@ func mediaIDsPreserveSourceIsolation() throws {
     #expect(decoded == first)
 }
 
+@Test("Legacy TrackVariant payloads decode without source refresh fields")
+func legacyTrackVariantPayloadDecodesWithoutSourceRefreshFields() throws {
+    let variant = TrackVariant(
+        id: MediaItemID(sourceID: .local, externalID: "legacy-variant"),
+        logicalTrackID: LogicalTrackID("local:legacy-variant"),
+        assetID: MediaAssetID(sourceID: .local, externalID: "legacy-asset")
+    )
+    let encoded = try JSONEncoder().encode(variant)
+    var payload = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    payload.removeValue(forKey: "sourceIdentityHint")
+    payload.removeValue(forKey: "sourceMetadataRevision")
+    payload.removeValue(forKey: "sourceMetadata")
+
+    let legacyData = try JSONSerialization.data(withJSONObject: payload)
+    let decoded = try JSONDecoder().decode(TrackVariant.self, from: legacyData)
+
+    #expect(decoded == variant)
+    #expect(decoded.sourceIdentityHint == nil)
+    #expect(decoded.sourceMetadataRevision == nil)
+    #expect(decoded.sourceMetadata == nil)
+}
+
 @Test("ID descriptions redact path-shaped values")
 func idDescriptionsRedactPaths() {
     let item = MediaItemID(

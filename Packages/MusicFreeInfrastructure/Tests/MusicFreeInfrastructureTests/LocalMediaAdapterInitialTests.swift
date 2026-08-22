@@ -226,6 +226,55 @@ struct LocalMediaAdapterInitialTests {
     #expect(tracks.elements.first?.fileName == "01.flac")
   }
 
+  @Test("Directory imports report read failures for unknown media candidates")
+  func directoryImportReportsUnknownCandidateReadFailure() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let albumRoot = fixture.inputRoot.appendingPathComponent("Unknown Failure", isDirectory: true)
+    try FileManager.default.createDirectory(at: albumRoot, withIntermediateDirectories: true)
+    try Data("playable-audio".utf8).write(to: albumRoot.appendingPathComponent("01.flac"))
+    try Data("possibly-audio".utf8).write(to: albumRoot.appendingPathComponent("02.custom"))
+
+    let repository = InMemoryLibraryRepository()
+    let importer = try fixture.makeImporter(
+      repository: repository,
+      probe: FailingCandidateProbe(pathExtension: "custom", error: .readFailed)
+    )
+    let events = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [albumRoot]
+    )))
+    let result = try completedResult(in: events)
+
+    #expect(result.imported == 0)
+    #expect(result.failed == 1)
+    #expect(try await repository.tracks(
+      matching: TrackQuery(sourceID: .local),
+      page: try LibraryPageRequest(limit: LibraryPageRequest.maximumLimit)
+    ).elements.isEmpty)
+  }
+
+  @Test("Musepack probe failures are not treated as unknown sidecars")
+  func musepackProbeFailureIsReported() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let albumRoot = fixture.inputRoot.appendingPathComponent("Musepack Failure", isDirectory: true)
+    try FileManager.default.createDirectory(at: albumRoot, withIntermediateDirectories: true)
+    try Data("playable-audio".utf8).write(to: albumRoot.appendingPathComponent("01.flac"))
+    try Data("damaged-musepack".utf8).write(to: albumRoot.appendingPathComponent("02.mpc"))
+
+    let importer = try fixture.makeImporter(
+      repository: InMemoryLibraryRepository(),
+      probe: FailingCandidateProbe(pathExtension: "mpc", error: .corruptedMedia)
+    )
+    let events = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [albumRoot]
+    )))
+
+    #expect(try completedResult(in: events).failed == 1)
+  }
+
   @Test("CUE references to an undecodable unknown asset fail strictly")
   func cueReferenceToUnknownAssetFailsStrictly() async throws {
     let fixture = try Fixture()
@@ -447,6 +496,104 @@ struct LocalMediaAdapterInitialTests {
     #expect(discs.map(\.id) == [try #require(first.track.discProjection?.id)])
   }
 
+  @Test("CUE identity hints recover only an unambiguous object without file resource IDs")
+  func cueIdentityHintRequiresUnambiguousFallback() throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let root = fixture.inputRoot.appendingPathComponent("CUE Identity Fallback", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let audioURL = root.appendingPathComponent("image.flac")
+    let cueURL = root.appendingPathComponent("album.cue")
+    try Data("identity-fallback-audio".utf8).write(to: audioURL)
+    try Data("""
+    TITLE "Identity Fallback"
+    FILE "image.flac" WAVE
+      TRACK 01 AUDIO
+        TITLE "First"
+        INDEX 01 00:00:00
+      TRACK 02 AUDIO
+        TITLE "Second"
+        INDEX 01 00:01:00
+    """.utf8).write(to: cueURL)
+
+    let audioFile = ImportFile(url: audioURL, folderPath: nil)
+    let cueFile = ImportFile(url: cueURL, folderPath: nil)
+    let bundle = FolderImportBundle(
+      rootURL: root,
+      resources: [
+        FolderImportResource(file: audioFile, kind: .mediaCandidate),
+        FolderImportResource(file: cueFile, kind: .cue)
+      ]
+    )
+    let probe = MediaProbeResult(
+      audioTracks: [ProbedAudioTrack(index: 0, codec: "flac")],
+      duration: .seconds(30)
+    )
+    func asset(_ byte: Character) -> PreparedLocalMediaAsset {
+      let hash = String(repeating: String(byte), count: 64)
+      return PreparedLocalMediaAsset(
+        file: audioFile,
+        stagedURL: audioURL,
+        contentHash: hash,
+        assetID: MediaAssetID(sourceID: .local, externalID: "sha256-\(hash)"),
+        probe: probe,
+        metadata: RawMediaMetadata(albumArtist: "Fixture Artist"),
+        folderArtwork: nil
+      )
+    }
+    let planner = LocalMediaBundlePlanner(cueFileResourceIdentity: { _ in nil })
+    let firstPlan = try planner.plan(
+      bundle: bundle,
+      assets: [asset("a")],
+      importID: UUID()
+    )
+    let firstTracks = firstPlan.normalizedTracks.map(\.track)
+    let firstVariants = firstPlan.variantsByItemID
+    let firstIDs = Set(firstTracks.map(\.id))
+    #expect(firstVariants.values.allSatisfy { $0.sourceIdentityHint != nil })
+
+    let refreshedPlan = try planner.plan(
+      bundle: bundle,
+      assets: [asset("b")],
+      existingCUETracks: firstTracks,
+      existingCUEVariants: firstVariants,
+      importID: UUID()
+    )
+    #expect(Set(refreshedPlan.itemIDs) == firstIDs)
+    #expect(refreshedPlan.normalizedTracks.allSatisfy {
+      $0.track.assetID == asset("b").assetID
+    })
+
+    let duplicateObjectID = String(repeating: "f", count: 64)
+    let duplicateTracks = try firstTracks.map { track -> Track in
+      let suffix = try #require(track.id.externalID.range(of: "-f", options: .backwards))
+      let externalID = "cue-\(duplicateObjectID)\(track.id.externalID[suffix.lowerBound...])"
+      return copyTrack(
+        track,
+        id: MediaItemID(sourceID: .local, externalID: externalID),
+        logicalTrackID: LogicalTrackID("local:\(externalID)")
+      )
+    }
+    let duplicateVariants = Dictionary(uniqueKeysWithValues: duplicateTracks.map { track in
+      (track.id, TrackVariant(
+        id: track.id,
+        logicalTrackID: track.logicalTrackID,
+        assetID: track.assetID,
+        selection: track.playbackSelection,
+        sourceIdentityHint: firstVariants.values.first?.sourceIdentityHint
+      ))
+    })
+    #expect(throws: LocalMediaError.metadataFailed) {
+      _ = try planner.plan(
+        bundle: bundle,
+        assets: [asset("b")],
+        existingCUETracks: firstTracks + duplicateTracks,
+        existingCUEVariants: firstVariants.merging(duplicateVariants) { current, _ in current },
+        importID: UUID()
+      )
+    }
+  }
+
   @Test("Directory bundles commit all tracks atomically and reimport idempotently")
   func directoryBundleIsAtomicAndIdempotent() async throws {
     let fixture = try Fixture()
@@ -522,6 +669,156 @@ struct LocalMediaAdapterInitialTests {
     #expect(artworkResult.failed == 0)
     #expect(repairedTrack.artworkID != nil)
     #expect(await repository.applyAttemptCount() == 2)
+  }
+
+  @Test("CUE cover refresh writes album artwork while preserving a custom track cover")
+  func cueCoverRefreshWritesAlbumArtworkWithCustomTrackCover() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let albumRoot = fixture.inputRoot.appendingPathComponent("CUE Cover Refresh", isDirectory: true)
+    try FileManager.default.createDirectory(at: albumRoot, withIntermediateDirectories: true)
+    try Data("cue-cover-refresh-audio".utf8)
+      .write(to: albumRoot.appendingPathComponent("image.flac"))
+    try Data("""
+    TITLE "CUE Cover Refresh"
+    FILE "image.flac" WAVE
+      TRACK 01 AUDIO
+        TITLE "First"
+        INDEX 01 00:00:00
+    """.utf8).write(to: albumRoot.appendingPathComponent("album.cue"))
+
+    let store = try LibraryPersistenceStore(configuration: .inMemory)
+    let library = SwiftDataLibraryRepository(store: store)
+    let importer = try LocalMediaImporter(
+      configuration: fixture.configuration,
+      probe: FixedProbe(),
+      metadataReader: NoArtworkMetadataReader(),
+      libraryRepository: library
+    )
+    let initialEvents = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [albumRoot]
+    )))
+    let itemID = try #require(persistedItemID(in: initialEvents))
+    let initialTrack = try #require(try await library.track(id: itemID))
+    let albumID = try #require(initialTrack.albumID)
+    #expect(try await library.album(id: albumID)?.artwork == nil)
+
+    let customArtwork = ArtworkReference(
+      id: ArtworkID("custom-track-cover"),
+      variants: [.original],
+      preferredVariant: .original
+    )
+    try await library.apply(LibraryTransaction(
+      idempotencyKey: "install-custom-cue-track-cover",
+      mutations: [
+        .upsert(.artwork(customArtwork)),
+        .upsert(.track(copyTrack(initialTrack, artwork: customArtwork)))
+      ]
+    ))
+    try validPNGData().write(to: albumRoot.appendingPathComponent("cover.png"))
+
+    let refreshEvents = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [albumRoot]
+    )))
+    let refreshedTrack = try #require(try await library.track(id: itemID))
+    let refreshedAlbum = try #require(try await library.album(id: albumID))
+    let albumArtworkID = try #require(refreshedAlbum.artworkID)
+
+    #expect(try completedResult(in: refreshEvents).imported == 1)
+    #expect(refreshedTrack.artwork == customArtwork)
+    #expect(albumArtworkID != customArtwork.id)
+    let source = try fixture.makeSource()
+    guard case .localFile(let artworkURL)? = try await source.artwork(for: albumArtworkID) else {
+      Issue.record("Refreshed album artwork must resolve from managed storage")
+      await store.close()
+      return
+    }
+    #expect(FileManager.default.fileExists(atPath: artworkURL.path))
+    await store.close()
+  }
+
+  @Test("Single-file repair only writes artwork referenced by the merged track")
+  func singleFileRepairDoesNotPersistDiscardedSourceArtwork() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let audioURL = fixture.inputRoot.appendingPathComponent("single-artwork-repair.mp3")
+    try Data("single-artwork-repair-audio".utf8).write(to: audioURL)
+
+    let repository = InMemoryLibraryRepository()
+    let initialImporter = try LocalMediaImporter(
+      configuration: fixture.configuration,
+      probe: FixedProbe(),
+      metadataReader: NoArtworkMetadataReader(),
+      libraryRepository: repository
+    )
+    let initialEvents = try await collect(initialImporter.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [audioURL]
+    )))
+    let itemID = try #require(persistedItemID(in: initialEvents))
+    let source = try fixture.makeSource()
+    guard case .localFile(let managedURL) = try await source.resolve(itemID) else {
+      Issue.record("Imported media must resolve to a managed local file")
+      return
+    }
+    try FileManager.default.removeItem(at: managedURL)
+
+    let firstSourceArtwork = Data("source-artwork-one".utf8)
+    let firstRepairImporter = try LocalMediaImporter(
+      configuration: fixture.configuration,
+      probe: FixedProbe(),
+      metadataReader: ArtworkMetadataReader(data: firstSourceArtwork),
+      libraryRepository: repository
+    )
+    let firstRepairEvents = try await collect(firstRepairImporter.importMedia(
+      MediaImportRequest(importID: UUID(), urls: [audioURL])
+    ))
+    let firstRepairTrack = try #require(await repository.track(id: itemID))
+    let firstArtworkID = try #require(firstRepairTrack.artworkID)
+    #expect(try completedResult(in: firstRepairEvents).imported == 1)
+    #expect(firstArtworkID == ArtworkID(
+      "sha256-\(MusicContentIdentity.sha256Hex(firstSourceArtwork))"
+    ))
+
+    let customArtwork = ArtworkReference(
+      id: ArtworkID("custom-single-file-cover"),
+      variants: [.original],
+      preferredVariant: .original
+    )
+    try await repository.apply(LibraryTransaction(
+      idempotencyKey: "install-single-file-custom-cover",
+      mutations: [
+        .upsert(.artwork(customArtwork)),
+        .upsert(.track(copyTrack(firstRepairTrack, artwork: customArtwork)))
+      ]
+    ))
+    try FileManager.default.removeItem(at: managedURL)
+
+    let secondSourceArtwork = Data("source-artwork-two".utf8)
+    let secondRepairImporter = try LocalMediaImporter(
+      configuration: fixture.configuration,
+      probe: FixedProbe(),
+      metadataReader: ArtworkMetadataReader(data: secondSourceArtwork),
+      libraryRepository: repository
+    )
+    let secondRepairEvents = try await collect(secondRepairImporter.importMedia(
+      MediaImportRequest(importID: UUID(), urls: [audioURL])
+    ))
+    let repairedTrack = try #require(await repository.track(id: itemID))
+
+    #expect(try completedResult(in: secondRepairEvents).imported == 1)
+    #expect(repairedTrack.artwork == customArtwork)
+    let artworkFiles = try FileManager.default.contentsOfDirectory(
+      at: fixture.configuration.managedRoot.appendingPathComponent("artwork", isDirectory: true),
+      includingPropertiesForKeys: nil,
+      options: [.skipsHiddenFiles]
+    )
+    #expect(artworkFiles.map(\.lastPathComponent) == [firstArtworkID.rawValue + ".bin"])
+    #expect(!artworkFiles.contains {
+      $0.lastPathComponent.hasPrefix("sha256-\(MusicContentIdentity.sha256Hex(secondSourceArtwork))")
+    })
   }
 
   @Test("Separate bundle imports merge album and disc track counts")
@@ -969,6 +1266,23 @@ struct LocalMediaAdapterInitialTests {
     let firstIDs = Set(persistedItemIDs(in: firstEvents))
     #expect(firstResult.imported == 2)
     #expect(firstIDs.count == 2)
+    let originalTracks = try await repository.tracks(
+      matching: TrackQuery(sourceID: .local),
+      page: try LibraryPageRequest(limit: LibraryPageRequest.maximumLimit)
+    ).elements.sorted { ($0.trackNumber ?? 0) < ($1.trackNumber ?? 0) }
+    let firstTrack = try #require(originalTracks.first)
+    let originalAlbumID = try #require(firstTrack.albumID)
+    let originalVariant = try #require(try await repository.trackVariant(id: firstTrack.id))
+    #expect(originalVariant.sourceMetadataRevision != nil)
+    #expect(originalVariant.sourceMetadata?.title == "First")
+    try await repository.apply(LibraryTransaction(
+      idempotencyKey: "install-cue-user-metadata-overrides",
+      mutations: [.upsert(.track(copyTrack(
+        firstTrack,
+        title: "Manual First",
+        isFavorite: true
+      )))]
+    ))
 
     try Data("""
 
@@ -980,7 +1294,7 @@ struct LocalMediaAdapterInitialTests {
         INDEX 01 00:00:00
       TRACK 02 AUDIO
         TITLE "Second Revised"
-        INDEX 01 00:01:00
+        INDEX 01 00:02:00
     """.utf8).write(to: cueURL)
 
     let secondEvents = try await collect(importer.importMedia(MediaImportRequest(
@@ -993,11 +1307,267 @@ struct LocalMediaAdapterInitialTests {
       page: try LibraryPageRequest(limit: LibraryPageRequest.maximumLimit)
     )
 
-    #expect(secondResult.imported == 0)
-    #expect(secondResult.skipped == 2)
+    #expect(secondResult.imported == 2)
+    #expect(secondResult.skipped == 0)
     #expect(secondResult.failed == 0)
     #expect(Set(tracks.elements.map(\.id)) == firstIDs)
     #expect(tracks.elements.count == 2)
+    let revisedTracks = tracks.elements.sorted { ($0.trackNumber ?? 0) < ($1.trackNumber ?? 0) }
+    #expect(revisedTracks.map(\.title) == ["Manual First", "Second Revised"])
+    #expect(revisedTracks[0].isFavorite)
+    #expect(revisedTracks.allSatisfy { $0.albumID != originalAlbumID })
+    #expect(revisedTracks[0].playbackSelection.range?.end == .seconds(2))
+    #expect(revisedTracks[1].playbackSelection.range?.start == .seconds(2))
+  }
+
+  @Test("CUE source snapshots use the final aggregated album metadata")
+  func cueSourceSnapshotsUseFinalAggregatedAlbumMetadata() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let albumRoot = fixture.inputRoot.appendingPathComponent("CUE Compilation", isDirectory: true)
+    try FileManager.default.createDirectory(at: albumRoot, withIntermediateDirectories: true)
+    try Data("cue-compilation-audio".utf8).write(to: albumRoot.appendingPathComponent("image.flac"))
+    let cueURL = albumRoot.appendingPathComponent("album.cue")
+    try Data("""
+    TITLE "Original Compilation"
+    FILE "image.flac" WAVE
+      TRACK 01 AUDIO
+        TITLE "First"
+        PERFORMER "Artist One"
+        INDEX 01 00:00:00
+      TRACK 02 AUDIO
+        TITLE "Second"
+        PERFORMER "Artist Two"
+        INDEX 01 00:01:00
+    """.utf8).write(to: cueURL)
+
+    let repository = InMemoryLibraryRepository()
+    let importer = try fixture.makeImporter(repository: repository)
+    let firstEvents = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [albumRoot]
+    )))
+    let firstItemID = try #require(persistedItemIDs(in: firstEvents).first)
+    let firstTrack = try #require(try await repository.track(id: firstItemID))
+    let originalAlbumID = try #require(firstTrack.albumID)
+    let originalAlbum = try #require(try await repository.album(id: originalAlbumID))
+    let originalVariant = try #require(try await repository.trackVariant(id: firstTrack.id))
+
+    #expect(originalAlbum.albumType == .compilation)
+    #expect(originalVariant.sourceMetadata?.album == AlbumSourceMetadataSnapshot(
+      album: originalAlbum
+    ))
+
+    try Data("""
+    TITLE "Revised Compilation"
+    FILE "image.flac" WAVE
+      TRACK 01 AUDIO
+        TITLE "First"
+        PERFORMER "Artist One"
+        INDEX 01 00:00:00
+      TRACK 02 AUDIO
+        TITLE "Second"
+        PERFORMER "Artist Two"
+        INDEX 01 00:01:00
+    """.utf8).write(to: cueURL)
+    let secondEvents = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [albumRoot]
+    )))
+    let refreshedTracks = try await repository.tracks(
+      matching: TrackQuery(sourceID: .local),
+      page: try LibraryPageRequest(limit: LibraryPageRequest.maximumLimit)
+    ).elements
+    let refreshedAlbumID = try #require(refreshedTracks.first?.albumID)
+    let refreshedAlbum = try #require(try await repository.album(id: refreshedAlbumID))
+    let refreshedItemID = try #require(refreshedTracks.first?.id)
+    let refreshedVariant = try #require(try await repository.trackVariant(id: refreshedItemID))
+
+    #expect(try completedResult(in: secondEvents).imported == 2)
+    #expect(refreshedAlbumID != originalAlbum.id)
+    #expect(refreshedAlbum.title == "Revised Compilation")
+    #expect(refreshedAlbum.albumType == .compilation)
+    #expect(refreshedVariant.sourceMetadata?.album == AlbumSourceMetadataSnapshot(
+      album: refreshedAlbum
+    ))
+  }
+
+  @Test("Moving a CUE folder preserves its item IDs")
+  func movingCUEFolderPreservesItemIDs() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let originalRoot = fixture.inputRoot.appendingPathComponent("Original CUE", isDirectory: true)
+    let movedRoot = fixture.inputRoot.appendingPathComponent("Moved CUE", isDirectory: true)
+    try FileManager.default.createDirectory(at: originalRoot, withIntermediateDirectories: true)
+    try Data("movable-cue-audio".utf8).write(to: originalRoot.appendingPathComponent("image.flac"))
+    try Data("""
+    TITLE "Movable CUE"
+    FILE "image.flac" WAVE
+      TRACK 01 AUDIO
+        TITLE "First"
+        INDEX 01 00:00:00
+      TRACK 02 AUDIO
+        TITLE "Second"
+        INDEX 01 00:01:00
+    """.utf8).write(to: originalRoot.appendingPathComponent("album.cue"))
+
+    let repository = InMemoryLibraryRepository()
+    let importer = try fixture.makeImporter(repository: repository)
+    let firstEvents = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [originalRoot]
+    )))
+    let firstIDs = Set(persistedItemIDs(in: firstEvents))
+
+    try FileManager.default.moveItem(at: originalRoot, to: movedRoot)
+    let secondEvents = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [movedRoot]
+    )))
+    let tracks = try await repository.tracks(
+      matching: TrackQuery(sourceID: .local),
+      page: try LibraryPageRequest(limit: LibraryPageRequest.maximumLimit)
+    )
+
+    #expect(try completedResult(in: secondEvents).failed == 0)
+    #expect(Set(tracks.elements.map(\.id)) == firstIDs)
+    #expect(tracks.elements.count == 2)
+  }
+
+  @Test("Changing CUE audio content preserves item IDs and user state")
+  func changingCUEAudioContentPreservesItemIDsAndUserState() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let albumRoot = fixture.inputRoot.appendingPathComponent("Replaced CUE Audio", isDirectory: true)
+    try FileManager.default.createDirectory(at: albumRoot, withIntermediateDirectories: true)
+    let audioURL = albumRoot.appendingPathComponent("image.flac")
+    try Data("cue-audio-revision-one".utf8).write(to: audioURL)
+    try Data("""
+    TITLE "Stable Audio Album"
+    FILE "image.flac" WAVE
+      TRACK 01 AUDIO
+        TITLE "First"
+        INDEX 01 00:00:00
+      TRACK 02 AUDIO
+        TITLE "Second"
+        INDEX 01 00:01:00
+    """.utf8).write(to: albumRoot.appendingPathComponent("album.cue"))
+
+    let repository = InMemoryLibraryRepository()
+    let importer = try fixture.makeImporter(repository: repository)
+    let firstEvents = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [albumRoot]
+    )))
+    let firstIDs = Set(persistedItemIDs(in: firstEvents))
+    let firstTracks = try await repository.tracks(
+      matching: TrackQuery(sourceID: .local),
+      page: try LibraryPageRequest(limit: LibraryPageRequest.maximumLimit)
+    ).elements.sorted { ($0.trackNumber ?? 0) < ($1.trackNumber ?? 0) }
+    let originalAssetID = try #require(firstTracks.first?.assetID)
+    try await repository.apply(LibraryTransaction(
+      idempotencyKey: "install-cue-audio-revision-user-state",
+      mutations: [.upsert(.track(copyTrack(
+        try #require(firstTracks.first),
+        title: "Manual Audio Title",
+        isFavorite: true
+      )))]
+    ))
+
+    try Data("cue-audio-revision-two-with-new-bytes".utf8).write(to: audioURL)
+    let secondEvents = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [albumRoot]
+    )))
+    let refreshed = try await repository.tracks(
+      matching: TrackQuery(sourceID: .local),
+      page: try LibraryPageRequest(limit: LibraryPageRequest.maximumLimit)
+    ).elements.sorted { ($0.trackNumber ?? 0) < ($1.trackNumber ?? 0) }
+
+    #expect(try completedResult(in: secondEvents).imported == 2)
+    #expect(Set(refreshed.map(\.id)) == firstIDs)
+    #expect(refreshed.first?.assetID != originalAssetID)
+    #expect(refreshed.first?.title == "Manual Audio Title")
+    #expect(refreshed.first?.isFavorite == true)
+  }
+
+  @Test("Legacy content-hash CUE IDs migrate without overwriting metadata")
+  func legacyCUEIDsMigrateWithoutOverwritingMetadata() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let albumRoot = fixture.inputRoot.appendingPathComponent("Legacy CUE", isDirectory: true)
+    try FileManager.default.createDirectory(at: albumRoot, withIntermediateDirectories: true)
+    try Data("legacy-cue-audio".utf8).write(to: albumRoot.appendingPathComponent("image.flac"))
+    let cueURL = albumRoot.appendingPathComponent("album.cue")
+    let originalCUEData = Data("""
+    TITLE "Legacy Album"
+    FILE "image.flac" WAVE
+      TRACK 01 AUDIO
+        TITLE "First"
+        INDEX 01 00:00:00
+      TRACK 02 AUDIO
+        TITLE "Second"
+        INDEX 01 00:01:00
+    """.utf8)
+    try originalCUEData.write(to: cueURL)
+
+    let persistenceStore = try LibraryPersistenceStore(configuration: .inMemory)
+    let repository = SwiftDataLibraryRepository(store: persistenceStore)
+    let importer = try fixture.makeImporter(repository: repository)
+    let firstEvents = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [albumRoot]
+    )))
+    let currentIDs = Set(persistedItemIDs(in: firstEvents))
+    let currentTracks = try await repository.tracks(
+      matching: TrackQuery(sourceID: .local),
+      page: try LibraryPageRequest(limit: LibraryPageRequest.maximumLimit)
+    ).elements
+    let legacyObjectID = MusicContentIdentity.sha256Hex(originalCUEData)
+    let legacyTracks = try currentTracks.map { track -> Track in
+      let suffixRange = try #require(track.id.externalID.range(of: "-f", options: .backwards))
+      let externalID = "cue-\(legacyObjectID)\(track.id.externalID[suffixRange.lowerBound...])"
+      return copyTrack(
+        track,
+        id: MediaItemID(sourceID: .local, externalID: externalID),
+        logicalTrackID: LogicalTrackID("local:\(externalID)"),
+        isFavorite: track.trackNumber == 1
+      )
+    }
+    try await repository.apply(LibraryTransaction(
+      idempotencyKey: "install-legacy-cue-records",
+      mutations: legacyTracks.map { .upsert(.track($0)) }
+    ))
+    try await repository.remove(currentIDs)
+
+    try Data("""
+    TITLE "Legacy Album Revised"
+    FILE "image.flac" WAVE
+      TRACK 01 AUDIO
+        TITLE "First Revised"
+        INDEX 01 00:00:00
+      TRACK 02 AUDIO
+        TITLE "Second Revised"
+        INDEX 01 00:02:00
+    """.utf8).write(to: cueURL)
+    let secondEvents = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [albumRoot]
+    )))
+    let refreshed = try await repository.tracks(
+      matching: TrackQuery(sourceID: .local),
+      page: try LibraryPageRequest(limit: LibraryPageRequest.maximumLimit)
+    ).elements.sorted { ($0.trackNumber ?? 0) < ($1.trackNumber ?? 0) }
+    let expectedLegacyIDs = Set(legacyTracks.map(\.id))
+
+    #expect(try completedResult(in: secondEvents).imported == 2)
+    #expect(Set(refreshed.map(\.id)) == expectedLegacyIDs)
+    #expect(refreshed.map(\.title) == ["First", "Second"])
+    #expect(refreshed[0].isFavorite)
+    #expect(refreshed[0].playbackSelection.range?.end == .seconds(2))
+    let migratedVariant = try #require(try await repository.trackVariant(id: refreshed[0].id))
+    #expect(migratedVariant.sourceMetadataRevision != nil)
+    #expect(migratedVariant.sourceMetadata != nil)
   }
 
   @Test("CUE removal keeps a shared asset until its last logical track is removed")
@@ -1227,6 +1797,120 @@ struct LocalMediaAdapterInitialTests {
       metadata: RawMediaMetadata(title: "No Default")
     )
     #expect(normalized.track.playbackSelection.audioStream == nil)
+  }
+
+  @Test("Reimport clears a legacy forced audio stream without a declared default")
+  func reimportRepairsLegacyForcedAudioStream() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let albumRoot = fixture.inputRoot.appendingPathComponent("Legacy Stream Album", isDirectory: true)
+    try FileManager.default.createDirectory(at: albumRoot, withIntermediateDirectories: true)
+    let input = albumRoot.appendingPathComponent("legacy-stream.mka")
+    try Data("legacy-multi-stream-audio".utf8).write(to: input)
+    let repository = InMemoryLibraryRepository()
+    let importer = try fixture.makeImporter(
+      repository: repository,
+      probe: MultipleAudioStreamWithoutDefaultProbe()
+    )
+    let firstEvents = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [albumRoot]
+    )))
+    let itemID = try #require(persistedItemID(in: firstEvents))
+    let imported = try #require(try await repository.track(id: itemID))
+    let albumID = try #require(imported.albumID)
+    let importedAlbum = try #require(try await repository.album(id: albumID))
+    let manualAlbum = Album(
+      id: importedAlbum.id,
+      title: "Manual Legacy Album",
+      sortTitle: importedAlbum.sortTitle,
+      artistIDs: importedAlbum.artistIDs,
+      artwork: importedAlbum.artwork,
+      releaseYear: importedAlbum.releaseYear,
+      trackCount: importedAlbum.trackCount,
+      albumType: importedAlbum.albumType
+    )
+    let legacySelection = AudioStreamSelection(
+      streamID: AudioStreamID("stream-one"),
+      fallbackSignature: AudioStreamSignature(codec: "aac", indexHint: 0)
+    )
+    try await repository.apply(LibraryTransaction(
+      idempotencyKey: "install-legacy-audio-selection",
+      mutations: [
+        .upsert(.album(manualAlbum)),
+        .upsert(.track(copyTrack(
+          imported,
+          playbackSelection: PlaybackSelection(audioStream: legacySelection),
+          title: "Manual Legacy Stream",
+          isFavorite: true
+        )))
+      ]
+    ))
+
+    let secondEvents = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [albumRoot]
+    )))
+    let repaired = try #require(try await repository.track(id: itemID))
+
+    #expect(try completedResult(in: secondEvents).imported == 1)
+    #expect(repaired.playbackSelection.audioStream == nil)
+    #expect(repaired.title == "Manual Legacy Stream")
+    #expect(repaired.isFavorite)
+    #expect(try await repository.album(id: albumID)?.title == "Manual Legacy Album")
+    let repairedRelease = try #require((await repository.appliedTransactions).last?.mutations.compactMap {
+      mutation -> AlbumRelease? in
+      guard case .upsert(.albumRelease(let value)) = mutation else { return nil }
+      return value
+    }.last)
+    #expect(repairedRelease.title == "Manual Legacy Album")
+  }
+
+  @Test("Reimport replaces a legacy forced stream with the newly detected default")
+  func reimportUsesNewlyDetectedDefaultForLegacyForcedStream() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let input = fixture.inputRoot.appendingPathComponent("legacy-stream-new-default.mka")
+    try Data("legacy-stream-new-default-audio".utf8).write(to: input)
+    let repository = InMemoryLibraryRepository()
+    let legacyImporter = try fixture.makeImporter(
+      repository: repository,
+      probe: MultipleAudioStreamWithoutDefaultProbe()
+    )
+    let firstEvents = try await collect(legacyImporter.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [input]
+    )))
+    let itemID = try #require(persistedItemID(in: firstEvents))
+    let imported = try #require(try await repository.track(id: itemID))
+    let legacySelection = AudioStreamSelection(
+      streamID: AudioStreamID("stream-one"),
+      fallbackSignature: AudioStreamSignature(codec: "aac", indexHint: 0)
+    )
+    try await repository.apply(LibraryTransaction(
+      idempotencyKey: "install-legacy-audio-selection-before-default-detection",
+      mutations: [.upsert(.track(copyTrack(
+        imported,
+        playbackSelection: PlaybackSelection(audioStream: legacySelection),
+        title: "Manual Default Repair Title",
+        isFavorite: true
+      )))]
+    ))
+
+    let refreshedImporter = try fixture.makeImporter(
+      repository: repository,
+      probe: MultipleAudioStreamProbe()
+    )
+    let secondEvents = try await collect(refreshedImporter.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [input]
+    )))
+    let repaired = try #require(try await repository.track(id: itemID))
+
+    #expect(try completedResult(in: secondEvents).imported == 1)
+    #expect(repaired.playbackSelection.audioStream?.streamID == AudioStreamID("stream-main"))
+    #expect(repaired.title == "Manual Default Repair Title")
+    #expect(repaired.isFavorite)
   }
 
   @Test("Malformed probed stream values are normalized without domain precondition failures")
@@ -3208,6 +3892,70 @@ private struct UnknownSidecarProbe: MediaProbing {
   }
 }
 
+private struct FailingCandidateProbe: MediaProbing {
+  let pathExtension: String
+  let error: MediaProbeError
+
+  func probe(_ resource: PlaybackResource) async throws -> MediaProbeResult {
+    if case .localFile(let url) = resource,
+       url.pathExtension.caseInsensitiveCompare(pathExtension) == .orderedSame
+    {
+      throw MediaSourceError.probeFailed(error)
+    }
+    return try await FixedProbe().probe(resource)
+  }
+}
+
+private struct MultipleAudioStreamWithoutDefaultProbe: MediaProbing {
+  func probe(_ resource: PlaybackResource) async throws -> MediaProbeResult {
+    _ = resource
+    return MediaProbeResult(
+      audioTracks: [
+        ProbedAudioTrack(index: 0, stableID: "stream-one", codec: "aac"),
+        ProbedAudioTrack(index: 1, stableID: "stream-two", codec: "aac")
+      ],
+      container: "matroska",
+      duration: .seconds(30)
+    )
+  }
+}
+
+private func copyTrack(
+  _ value: Track,
+  id: MediaItemID? = nil,
+  logicalTrackID: LogicalTrackID? = nil,
+  playbackSelection: PlaybackSelection? = nil,
+  title: String? = nil,
+  artwork: ArtworkReference? = nil,
+  isFavorite: Bool? = nil
+) -> Track {
+  Track(
+    id: id ?? value.id,
+    logicalTrackID: logicalTrackID ?? value.logicalTrackID,
+    assetID: value.assetID,
+    playbackSelection: playbackSelection ?? value.playbackSelection,
+    title: title ?? value.title,
+    sortTitle: title ?? value.sortTitle,
+    albumID: value.albumID,
+    artistIDs: value.artistIDs,
+    genreIDs: value.genreIDs,
+    trackNumber: value.trackNumber,
+    trackTotal: value.trackTotal,
+    discNumber: value.discNumber,
+    discTotal: value.discTotal,
+    fileName: value.fileName,
+    folderPath: value.folderPath,
+    duration: value.duration,
+    technicalInfo: value.technicalInfo,
+    year: value.year,
+    comment: value.comment,
+    lyrics: value.lyrics,
+    artwork: artwork ?? value.artwork,
+    isFavorite: isFavorite ?? value.isFavorite,
+    statistics: value.statistics
+  )
+}
+
 private struct SourceMutatingProbe: MediaProbing {
   let sourceURL: URL
 
@@ -3297,8 +4045,24 @@ private struct NoArtworkMetadataReader: MetadataReading {
   }
 }
 
+private struct ArtworkMetadataReader: MetadataReading {
+  let data: Data
+
+  func readMetadata(from resource: PlaybackResource) async throws -> RawMediaMetadata {
+    _ = resource
+    return RawMediaMetadata(
+      title: "Fixture song",
+      artist: "Fixture artist",
+      album: "Fixture album",
+      artworks: [RawArtwork(data: data, mimeType: "image/png")]
+    )
+  }
+}
+
 private final actor InMemoryLibraryRepository: LibraryRepository {
   private var tracks: [MediaItemID: Track] = [:]
+  private var albums: [AlbumID: Album] = [:]
+  private var variants: [MediaItemID: TrackVariant] = [:]
   private var artworks: [ArtworkID: ArtworkReference] = [:]
   private var applyAttempts = 0
   private(set) var appliedTransactions: [LibraryTransaction] = []
@@ -3321,7 +4085,7 @@ private final actor InMemoryLibraryRepository: LibraryRepository {
   }
 
   func album(id: AlbumID) async throws -> Album? {
-    nil
+    albums[id]
   }
 
   func artist(id: ArtistID) async throws -> Artist? {
@@ -3330,6 +4094,10 @@ private final actor InMemoryLibraryRepository: LibraryRepository {
 
   func artwork(id: ArtworkID) async throws -> ArtworkReference? {
     artworks[id]
+  }
+
+  func trackVariant(id: MediaItemID) async throws -> TrackVariant? {
+    variants[id]
   }
 
   func isArtworkReferenced(_ artworkID: ArtworkID) async throws -> Bool {
@@ -3379,6 +4147,21 @@ private final actor InMemoryLibraryRepository: LibraryRepository {
       switch upsert {
       case .track(let track):
         tracks[track.id] = track
+        let previousVariant = variants[track.id]
+        variants[track.id] = TrackVariant(
+          id: track.id,
+          logicalTrackID: track.logicalTrackID,
+          assetID: track.assetID,
+          selection: track.playbackSelection,
+          availability: previousVariant?.availability ?? .available,
+          sourceIdentityHint: previousVariant?.sourceIdentityHint,
+          sourceMetadataRevision: previousVariant?.sourceMetadataRevision,
+          sourceMetadata: previousVariant?.sourceMetadata
+        )
+      case .album(let album):
+        albums[album.id] = album
+      case .trackVariant(let variant):
+        variants[variant.id] = variant
       case .artwork(let artwork):
         artworks[artwork.id] = artwork
       default:
@@ -3420,6 +4203,7 @@ private final actor InMemoryLibraryRepository: LibraryRepository {
   func remove(_ itemIDs: Set<MediaItemID>) async throws {
     for itemID in itemIDs {
       tracks[itemID] = nil
+      variants[itemID] = nil
     }
   }
 

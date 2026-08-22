@@ -2896,12 +2896,23 @@ public actor LibraryPersistenceStore {
             context.insert(try LocalMediaGraphRecordMapper.makeAsset(asset))
         }
 
-        let variant = track.trackVariantProjection
-        let variantKey = PersistenceKey.item(variant.id)
+        let projectedVariant = track.trackVariantProjection
+        let variantKey = PersistenceKey.item(projectedVariant.id)
         if let record = try fetch(TrackVariantRecord.self).first(where: { $0.storageKey == variantKey }) {
+            let previousVariant = try LocalMediaGraphRecordMapper.variant(from: record)
+            let variant = TrackVariant(
+                id: track.id,
+                logicalTrackID: track.logicalTrackID,
+                assetID: track.assetID,
+                selection: track.playbackSelection,
+                availability: previousVariant.availability,
+                sourceIdentityHint: previousVariant.sourceIdentityHint,
+                sourceMetadataRevision: previousVariant.sourceMetadataRevision,
+                sourceMetadata: previousVariant.sourceMetadata
+            )
             try LocalMediaGraphRecordMapper.update(record, from: variant)
         } else {
-            context.insert(try LocalMediaGraphRecordMapper.makeVariant(variant))
+            context.insert(try LocalMediaGraphRecordMapper.makeVariant(projectedVariant))
         }
 
         if let disc = track.discProjection {

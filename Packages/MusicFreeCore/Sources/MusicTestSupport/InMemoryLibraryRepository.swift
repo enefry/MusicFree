@@ -423,7 +423,17 @@ public actor InMemoryLibraryRepository: LibraryRepository, PlaybackHistoryReposi
                         )
                     }
                     if !explicitVariantIDs.contains(value.id) {
-                        nextTrackVariants[value.id] = value.trackVariantProjection
+                        let previousVariant = nextTrackVariants[value.id]
+                        nextTrackVariants[value.id] = TrackVariant(
+                            id: value.id,
+                            logicalTrackID: value.logicalTrackID,
+                            assetID: value.assetID,
+                            selection: value.playbackSelection,
+                            availability: previousVariant?.availability ?? .available,
+                            sourceIdentityHint: previousVariant?.sourceIdentityHint,
+                            sourceMetadataRevision: previousVariant?.sourceMetadataRevision,
+                            sourceMetadata: previousVariant?.sourceMetadata
+                        )
                     }
                     if !explicitAssetIDs.contains(value.assetID) {
                         nextMediaAssets[value.assetID] = value.mediaAssetProjection

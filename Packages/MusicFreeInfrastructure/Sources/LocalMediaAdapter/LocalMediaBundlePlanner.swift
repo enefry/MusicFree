@@ -20,6 +20,12 @@ struct LocalMediaBundlePlan: Sendable {
   let structuralMutations: [LibraryMutation]
 
   var itemIDs: [MediaItemID] { normalizedTracks.map(\.itemID) }
+  var variantsByItemID: [MediaItemID: TrackVariant] {
+    structuralMutations.reduce(into: [:]) { result, mutation in
+      guard case .upsert(.trackVariant(let variant)) = mutation else { return }
+      result[variant.id] = variant
+    }
+  }
 
   func transaction(
     including includedItemIDs: Set<MediaItemID>,
@@ -84,8 +90,27 @@ struct LocalMediaBundlePlan: Sendable {
   }
 }
 
+private struct CUETrackIdentityKey: Hashable {
+  let fileOrdinal: Int
+  let trackNumber: Int
+}
+
+private struct ExistingCUEObject {
+  let objectID: String
+  let tracks: [CUETrackIdentityKey: Track]
+  let sourceIdentityHint: String?
+}
+
 @available(macOS 13.0, iOS 16.0, *)
 struct LocalMediaBundlePlanner: Sendable {
+  private let cueFileResourceIdentity: @Sendable (URL) -> String?
+
+  init(
+    cueFileResourceIdentity: @escaping @Sendable (URL) -> String? = Self.fileResourceIdentity
+  ) {
+    self.cueFileResourceIdentity = cueFileResourceIdentity
+  }
+
   private struct PlannedTrack {
     let asset: PreparedLocalMediaAsset
     let itemID: MediaItemID
@@ -97,6 +122,8 @@ struct LocalMediaBundlePlanner: Sendable {
     var albumType: AlbumType?
     let releaseFolder: String
     let discTitle: String?
+    let sourceIdentityHint: String?
+    let sourceMetadataRevision: String?
   }
 
   private struct ReleaseGroupKey: Hashable {
@@ -107,24 +134,27 @@ struct LocalMediaBundlePlanner: Sendable {
   func plan(
     bundle: FolderImportBundle,
     assets: [PreparedLocalMediaAsset],
+    existingCUETracks: [Track] = [],
+    existingCUEVariants: [MediaItemID: TrackVariant] = [:],
     importID: UUID
   ) throws -> LocalMediaBundlePlan {
     let assetsByURL = Dictionary(uniqueKeysWithValues: assets.map {
       ($0.file.url.standardizedFileURL, $0)
     })
     var referencedURLs = Set<URL>()
-    var cueOwnerByAsset: [URL: String] = [:]
+    var cueOwnerByAsset: [URL: URL] = [:]
     var planned: [PlannedTrack] = []
+    let existingCUEObjects = existingCUEObjects(
+      from: existingCUETracks,
+      variants: existingCUEVariants
+    )
 
     for cueFile in bundle.cueFiles {
       let cueData = try readCue(cueFile.url)
-      // The CUE file is the logical object; its metadata is a mutable
-      // revision. Keep track IDs tied to the object's stable source identity
-      // so title/performer/encoding edits do not orphan user state.
-      let cueObjectID = stableCueObjectID(for: cueFile.url)
       let sheet = try CUESheetParser().parse(data: cueData)
       var resolvedByPath: [String: PreparedLocalMediaAsset] = [:]
       var durations: [String: Duration] = [:]
+      var resolvedAssets: [PreparedLocalMediaAsset] = []
       for file in sheet.files {
         let resolvedURL = try CUEReferencedFileResolver().resolve(
           file,
@@ -134,13 +164,39 @@ struct LocalMediaBundlePlanner: Sendable {
         guard let asset = assetsByURL[resolvedURL], let duration = asset.probe.duration else {
           throw CUESheetError.missingAssetDuration
         }
-        if let existingOwner = cueOwnerByAsset[resolvedURL], existingOwner != cueObjectID {
-          throw LocalMediaError.metadataFailed
-        }
-        cueOwnerByAsset[resolvedURL] = cueObjectID
         referencedURLs.insert(resolvedURL)
         resolvedByPath[file.path.lowercased()] = asset
         durations[file.path.lowercased()] = duration
+        resolvedAssets.append(asset)
+      }
+
+      let generatedObjectID = stableCueObjectID(
+        for: cueFile.url,
+        resolvedAssets: resolvedAssets
+      )
+      let sourceIdentityHint = cueSourceIdentityHint(
+        cueURL: cueFile.url,
+        sheet: sheet
+      )
+      let cueObjectID = try compatibleCueObjectID(
+        generatedObjectID: generatedObjectID,
+        legacyObjectID: MusicContentIdentity.sha256Hex(cueData),
+        sourceIdentityHint: sourceIdentityHint,
+        sheet: sheet,
+        resolvedByPath: resolvedByPath,
+        existingObjects: existingCUEObjects
+      )
+      let sourceMetadataRevision = cueSourceMetadataRevision(
+        cueData: cueData,
+        resolvedAssets: resolvedAssets
+      )
+      let cueOwnerURL = cueFile.url.standardizedFileURL
+      for asset in resolvedAssets {
+        let resolvedURL = asset.file.url.standardizedFileURL
+        if let existingOwner = cueOwnerByAsset[resolvedURL], existingOwner != cueOwnerURL {
+          throw LocalMediaError.metadataFailed
+        }
+        cueOwnerByAsset[resolvedURL] = cueOwnerURL
       }
 
       let segments = try sheet.segments(assetDurations: durations)
@@ -172,7 +228,9 @@ struct LocalMediaBundlePlanner: Sendable {
           discTotal: nil,
           albumType: nil,
           releaseFolder: folder.path,
-          discTitle: folder.discTitle
+          discTitle: folder.discTitle,
+          sourceIdentityHint: sourceIdentityHint,
+          sourceMetadataRevision: sourceMetadataRevision
         ))
       }
     }
@@ -189,7 +247,9 @@ struct LocalMediaBundlePlanner: Sendable {
         discTotal: nil,
         albumType: nil,
         releaseFolder: folder.path,
-        discTitle: folder.discTitle
+        discTitle: folder.discTitle,
+        sourceIdentityHint: nil,
+        sourceMetadataRevision: nil
       ))
     }
 
@@ -359,6 +419,10 @@ struct LocalMediaBundlePlanner: Sendable {
       mutations.append(.upsert(.album(album)))
       mutations.append(.upsert(.albumRelease(album.releaseProjection)))
     }
+    let sourceAlbumsByID = mutations.reduce(into: [AlbumID: Album]()) { result, mutation in
+      guard case .upsert(.album(let album)) = mutation else { return }
+      result[album.id] = album
+    }
 
     var assetByID: [MediaAssetID: MediaAsset] = [:]
     var discByID: [DiscID: Disc] = [:]
@@ -366,7 +430,20 @@ struct LocalMediaBundlePlanner: Sendable {
       let track = media.track
       assetByID[track.assetID] = track.mediaAssetProjection
       mutations.append(.upsert(.logicalTrack(track.logicalTrackProjection)))
-      mutations.append(.upsert(.trackVariant(track.trackVariantProjection)))
+      let sourceRevision = plannedByID[media.itemID]?.sourceMetadataRevision
+      let sourceIdentityHint = plannedByID[media.itemID]?.sourceIdentityHint
+      let sourceAlbum = track.albumID.flatMap { sourceAlbumsByID[$0] }
+      mutations.append(.upsert(.trackVariant(TrackVariant(
+        id: track.id,
+        logicalTrackID: track.logicalTrackID,
+        assetID: track.assetID,
+        selection: track.playbackSelection,
+        sourceIdentityHint: sourceIdentityHint,
+        sourceMetadataRevision: sourceRevision,
+        sourceMetadata: sourceRevision.map { _ in
+          TrackSourceMetadataSnapshot(track: track, album: sourceAlbum)
+        }
+      ))))
       guard let releaseID = track.albumID.map(AlbumReleaseID.init(legacyAlbumID:)) else {
         continue
       }
@@ -513,10 +590,157 @@ struct LocalMediaBundlePlanner: Sendable {
     }
   }
 
-  private func stableCueObjectID(for url: URL) -> String {
-    let canonicalPath = url.resolvingSymlinksInPath().standardizedFileURL.path
-      .lowercased()
-    return MusicContentIdentity.compositeToken(["local-cue-v1", canonicalPath])
+  private func stableCueObjectID(
+    for url: URL,
+    resolvedAssets: [PreparedLocalMediaAsset]
+  ) -> String {
+    if let resourceIdentity = cueFileResourceIdentity(url) {
+      return MusicContentIdentity.compositeToken([
+        "local-cue-v2-resource",
+        resourceIdentity
+      ])
+    }
+    return MusicContentIdentity.compositeToken(
+      ["local-cue-v2-assets"] + resolvedAssets.map(\.assetID.externalID)
+    )
+  }
+
+  private static func fileResourceIdentity(for url: URL) -> String? {
+    guard let values = try? url.resourceValues(forKeys: [.fileResourceIdentifierKey]),
+          let identifier = values.fileResourceIdentifier,
+          let data = try? NSKeyedArchiver.archivedData(
+            withRootObject: identifier,
+            requiringSecureCoding: true
+          )
+    else { return nil }
+    return data.base64EncodedString()
+  }
+
+  private func cueSourceIdentityHint(
+    cueURL: URL,
+    sheet: CUESheet
+  ) -> String {
+    MusicContentIdentity.compositeToken(
+      ["local-cue-identity-hint-v1", cueURL.lastPathComponent.lowercased()]
+        + sheet.files.map {
+          $0.path.replacingOccurrences(of: "\\", with: "/").lowercased()
+        }
+    )
+  }
+
+  private func cueSourceMetadataRevision(
+    cueData: Data,
+    resolvedAssets: [PreparedLocalMediaAsset]
+  ) -> String {
+    var components = [
+      "local-cue-source-v1",
+      MusicContentIdentity.sha256Hex(cueData)
+    ]
+    for asset in resolvedAssets {
+      components.append(asset.assetID.externalID)
+      components.append(asset.folderArtwork.map {
+        MusicContentIdentity.sha256Hex($0.data)
+      } ?? "no-folder-artwork")
+    }
+    return MusicContentIdentity.compositeToken(components)
+  }
+
+  private func existingCUEObjects(
+    from tracks: [Track],
+    variants: [MediaItemID: TrackVariant]
+  ) -> [String: ExistingCUEObject] {
+    let grouped = Dictionary(grouping: tracks.compactMap { track -> (String, CUETrackIdentityKey, Track)? in
+      guard let identity = cueIdentity(from: track.id.externalID) else { return nil }
+      return (identity.objectID, identity.key, track)
+    }, by: { $0.0 })
+    return grouped.reduce(into: [:]) { result, entry in
+      var values: [CUETrackIdentityKey: Track] = [:]
+      var duplicateKey = false
+      for (_, key, track) in entry.value {
+        if values.updateValue(track, forKey: key) != nil {
+          duplicateKey = true
+          break
+        }
+      }
+      if !duplicateKey {
+        let hints = Set(entry.value.compactMap { variants[$0.2.id]?.sourceIdentityHint })
+        result[entry.key] = ExistingCUEObject(
+          objectID: entry.key,
+          tracks: values,
+          sourceIdentityHint: hints.count == 1 ? hints.first : nil
+        )
+      }
+    }
+  }
+
+  private func cueIdentity(
+    from externalID: String
+  ) -> (objectID: String, key: CUETrackIdentityKey)? {
+    let components = externalID.split(separator: "-", omittingEmptySubsequences: false)
+    guard components.count == 4,
+          components[0] == "cue",
+          components[1].count == 64,
+          components[1].allSatisfy(\.isHexDigit),
+          components[2].first == "f",
+          components[3].first == "t",
+          let fileOrdinal = Int(components[2].dropFirst()),
+          let trackNumber = Int(components[3].dropFirst()),
+          fileOrdinal > 0,
+          trackNumber > 0
+    else { return nil }
+    return (
+      String(components[1]),
+      CUETrackIdentityKey(fileOrdinal: fileOrdinal, trackNumber: trackNumber)
+    )
+  }
+
+  private func compatibleCueObjectID(
+    generatedObjectID: String,
+    legacyObjectID: String,
+    sourceIdentityHint: String,
+    sheet: CUESheet,
+    resolvedByPath: [String: PreparedLocalMediaAsset],
+    existingObjects: [String: ExistingCUEObject]
+  ) throws -> String {
+    var expected: [CUETrackIdentityKey: MediaAssetID] = [:]
+    for (fileIndex, file) in sheet.files.enumerated() {
+      guard let asset = resolvedByPath[file.path.lowercased()] else { continue }
+      for track in file.tracks {
+        expected[CUETrackIdentityKey(
+          fileOrdinal: fileIndex + 1,
+          trackNumber: track.number
+        )] = asset.assetID
+      }
+    }
+
+    func isCompatible(_ object: ExistingCUEObject) -> Bool {
+      let sharedKeys = Set(object.tracks.keys).intersection(expected.keys)
+      guard !sharedKeys.isEmpty else { return false }
+      return sharedKeys.allSatisfy { key in
+        object.tracks[key]?.assetID == expected[key]
+      }
+    }
+
+    if existingObjects[generatedObjectID] != nil {
+      return generatedObjectID
+    }
+    if existingObjects[legacyObjectID] != nil {
+      return legacyObjectID
+    }
+    let assetCompatible = existingObjects.values.filter(isCompatible)
+    if assetCompatible.count == 1 {
+      return assetCompatible[0].objectID
+    }
+    if assetCompatible.count > 1 {
+      let hinted = assetCompatible.filter { $0.sourceIdentityHint == sourceIdentityHint }
+      guard hinted.count == 1 else { throw LocalMediaError.metadataFailed }
+      return hinted[0].objectID
+    }
+    let hinted = existingObjects.values.filter {
+      $0.sourceIdentityHint == sourceIdentityHint
+    }
+    guard hinted.count <= 1 else { throw LocalMediaError.metadataFailed }
+    return hinted.first?.objectID ?? generatedObjectID
   }
 
   private func releaseFolder(

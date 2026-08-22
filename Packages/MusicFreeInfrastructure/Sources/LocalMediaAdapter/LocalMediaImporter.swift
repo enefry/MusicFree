@@ -371,6 +371,16 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
     let existingDiscs: [DiscID: Disc]
   }
 
+  private struct SourceAwareImport: Sendable {
+    let transaction: LibraryTransaction
+    let tracksByItemID: [MediaItemID: Track]
+  }
+
+  private struct ExistingCUEState: Sendable {
+    let tracks: [Track]
+    let variants: [MediaItemID: TrackVariant]
+  }
+
   private let configuration: LocalMediaConfiguration
   private let coordinator: ImportCoordinator
   private let store: ManagedMediaStore
@@ -778,8 +788,8 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
             )
           ))
         } catch let error as LocalMediaError
-          where !Self.isLikelyAudioFile(file.url)
-            && (error == .unsupportedInput || error == .probeFailed)
+          where !Self.hasRecognizedAudioExtension(file.url)
+            && error == .unsupportedInput
         {
           // A directory can contain checksum files or other unknown
           // attachments. Ignore an unreferenced unknown file after probing;
@@ -795,9 +805,14 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
         throw LocalMediaError.unsupportedInput
       }
 
+      let existingCUEState = try await existingCUEState(
+        required: !bundle.cueFiles.isEmpty
+      )
       let plan = try LocalMediaBundlePlanner().plan(
         bundle: bundle,
         assets: assets,
+        existingCUETracks: existingCUEState.tracks,
+        existingCUEVariants: existingCUEState.variants,
         importID: request.importID
       )
       let preparedAssets = assets
@@ -831,15 +846,24 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
     var existingItemIDs = Set<MediaItemID>()
     var existingAssetIDsByItemID: [MediaItemID: MediaAssetID] = [:]
     var existingTracksByItemID: [MediaItemID: Track] = [:]
+    var existingVariantsByItemID: [MediaItemID: TrackVariant] = [:]
+    var existingAlbumsByID: [AlbumID: Album] = [:]
     do {
       for itemID in plan.itemIDs {
         if let track = try await libraryRepository.track(id: itemID) {
           existingItemIDs.insert(itemID)
           existingAssetIDsByItemID[itemID] = track.assetID
           existingTracksByItemID[itemID] = track
-        } else if let variant = try await libraryRepository.trackVariant(id: itemID) {
+        }
+        if let variant = try await libraryRepository.trackVariant(id: itemID) {
           existingItemIDs.insert(itemID)
-          existingAssetIDsByItemID[itemID] = variant.assetID
+          existingAssetIDsByItemID[itemID] = existingAssetIDsByItemID[itemID] ?? variant.assetID
+          existingVariantsByItemID[itemID] = variant
+        }
+      }
+      for albumID in Set(existingTracksByItemID.values.compactMap(\.albumID)).sorted() {
+        if let album = try await libraryRepository.album(id: albumID) {
+          existingAlbumsByID[albumID] = album
         }
       }
     } catch is CancellationError {
@@ -891,16 +915,33 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
       else { return nil }
       return media.itemID
     })
+    let plannedVariantsByItemID = plan.variantsByItemID
+    let sourceRefreshItemIDs = Set(plan.normalizedTracks.compactMap { media -> MediaItemID? in
+      guard existingItemIDs.contains(media.itemID),
+            let currentRevision = plannedVariantsByItemID[media.itemID]?.sourceMetadataRevision,
+            existingVariantsByItemID[media.itemID]?.sourceMetadataRevision != currentRevision
+      else { return nil }
+      return media.itemID
+    })
+    let audioSelectionRepairItemIDs = Set(plan.normalizedTracks.compactMap { media -> MediaItemID? in
+      guard let existingTrack = existingTracksByItemID[media.itemID],
+            Self.needsAudioSelectionRepair(existingTrack)
+      else { return nil }
+      return media.itemID
+    })
+    let repairOrRefreshItemIDs = repairItemIDs
+      .union(artworkRepairItemIDs)
+      .union(sourceRefreshItemIDs)
+      .union(audioSelectionRepairItemIDs)
     if request.duplicatePolicy == .report,
-       !existingItemIDs.subtracting(repairItemIDs.union(artworkRepairItemIDs)).isEmpty
+       !existingItemIDs.subtracting(repairOrRefreshItemIDs).isEmpty
     {
       throw LocalMediaError.duplicate
     }
 
     let includedItemIDs = Set(plan.itemIDs)
       .subtracting(existingItemIDs)
-      .union(repairItemIDs)
-      .union(artworkRepairItemIDs)
+      .union(repairOrRefreshItemIDs)
     guard !includedItemIDs.isEmpty else {
       return BundleOutcome(imported: 0, duplicate: 0, skipped: existingItemIDs.count)
     }
@@ -922,11 +963,36 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
         movedAssets.append((location, canonical.stagedURL))
       }
 
+      guard let baseTransaction = try plan.transaction(
+        including: includedItemIDs,
+        idempotencyKey: "local-bundle-\(request.importID.uuidString)"
+      ) else {
+        throw LocalMediaError.persistenceFailed
+      }
+      let sourceAwareImport = try Self.applyingSourceMetadataPolicy(
+        to: baseTransaction,
+        plannedTracks: plan.normalizedTracks
+          .filter { includedItemIDs.contains($0.itemID) }
+          .map(\.track),
+        existingTracks: existingTracksByItemID,
+        existingVariants: existingVariantsByItemID,
+        existingAlbums: existingAlbumsByID,
+        artworkRepairItemIDs: artworkRepairItemIDs,
+        audioSelectionRepairItemIDs: audioSelectionRepairItemIDs
+      )
+
+      let artworkIDsToPersist = Set(sourceAwareImport.transaction.mutations.compactMap {
+        mutation -> ArtworkID? in
+        guard case .upsert(.artwork(let artwork)) = mutation else { return nil }
+        return artwork.id
+      })
       var artworkByID: [ArtworkID: Data] = [:]
       for media in plan.normalizedTracks where includedItemIDs.contains(media.itemID) {
-        if let artworkID = media.artworkID, let artworkData = media.artworkData {
-          artworkByID[artworkID] = artworkData
-        }
+        guard let artworkID = media.artworkID,
+              artworkIDsToPersist.contains(artworkID),
+              let artworkData = media.artworkData
+        else { continue }
+        artworkByID[artworkID] = artworkData
       }
       for artworkID in artworkByID.keys.sorted() {
         guard let data = artworkByID[artworkID] else { continue }
@@ -934,21 +1000,13 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
         artworkClaims.append(artworkID)
       }
 
-      guard let baseTransaction = try plan.transaction(
-        including: includedItemIDs,
-        idempotencyKey: "local-bundle-\(request.importID.uuidString)"
-      ) else {
-        throw LocalMediaError.persistenceFailed
-      }
       let countedTransaction = try await transactionWithReconciledTrackCounts(
-        baseTransaction,
-        incomingTracks: plan.normalizedTracks
-          .filter { includedItemIDs.contains($0.itemID) }
-          .map(\.track),
+        sourceAwareImport.transaction,
+        incomingTracks: sourceAwareImport.tracksByItemID.values.sorted { $0.id < $1.id },
         knownExistingItemIDs: existingItemIDs
       )
       let existingLogicalTracks = try await existingLogicalTracks(
-        for: plan.normalizedTracks.map(\.track.logicalTrackID)
+        for: sourceAwareImport.tracksByItemID.values.map(\.logicalTrackID)
       )
       let transaction = try preservingUserPlaybackState(
         in: countedTransaction,
@@ -1056,13 +1114,21 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
         forExternalID: itemID.externalID
       )
       let existingTrack: Track?
+      let existingVariant: TrackVariant?
+      let existingAlbum: Album?
       let existingAssetID: MediaAssetID?
       do {
         existingTrack = try await libraryRepository.track(id: itemID)
+        existingVariant = try await libraryRepository.trackVariant(id: itemID)
+        if let albumID = existingTrack?.albumID {
+          existingAlbum = try await libraryRepository.album(id: albumID)
+        } else {
+          existingAlbum = nil
+        }
         if let existingTrack {
           existingAssetID = existingTrack.assetID
         } else {
-          existingAssetID = try await libraryRepository.trackVariant(id: itemID)?.assetID
+          existingAssetID = existingVariant?.assetID
         }
       } catch is CancellationError {
         throw CancellationError()
@@ -1080,7 +1146,7 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
           throw LocalMediaError.destinationConflict
         }
 
-        if alreadyImported {
+        if alreadyImported, !Self.needsAudioSelectionRepair(existingTrack) {
           switch request.duplicatePolicy {
           case .skip:
             await staging.remove(staged)
@@ -1140,14 +1206,32 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
       let existingLogicalTracks = try await existingLogicalTracks(
         for: [normalized.track.logicalTrackID]
       )
+      let artworkRepairItemIDs: Set<MediaItemID> = {
+        guard let existingTrack,
+              existingTrack.artwork == nil,
+              normalized.artworkID != nil,
+              normalized.artworkData != nil
+        else { return [] }
+        return [itemID]
+      }()
+      let sourceAwareImport = try Self.applyingSourceMetadataPolicy(
+        to: normalized.transaction,
+        plannedTracks: [normalized.track],
+        existingTracks: existingTrack.map { [itemID: $0] } ?? [:],
+        existingVariants: existingVariant.map { [itemID: $0] } ?? [:],
+        existingAlbums: existingAlbum.map { [$0.id: $0] } ?? [:],
+        artworkRepairItemIDs: artworkRepairItemIDs,
+        audioSelectionRepairItemIDs: Self.needsAudioSelectionRepair(existingTrack)
+          ? [itemID] : []
+      )
       let transaction = try preservingUserPlaybackState(
-        in: normalized.transaction,
+        in: sourceAwareImport.transaction,
         existingTracks: existingTrack.map { [itemID: $0] } ?? [:],
         existingLogicalTracks: existingLogicalTracks
       )
       let countedTransaction = try await transactionWithReconciledTrackCounts(
         transaction,
-        incomingTracks: [normalized.track],
+        incomingTracks: sourceAwareImport.tracksByItemID.values.sorted { $0.id < $1.id },
         knownExistingItemIDs: existingAssetID == nil ? [] : [itemID]
       )
 
@@ -1157,7 +1241,13 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
           externalID: normalized.itemID.externalID
         )
       }
+      let artworkIDsToPersist = Set(sourceAwareImport.transaction.mutations.compactMap {
+        mutation -> ArtworkID? in
+        guard case .upsert(.artwork(let artwork)) = mutation else { return nil }
+        return artwork.id
+      })
       if let artworkID = normalized.artworkID,
+         artworkIDsToPersist.contains(artworkID),
          let artworkData = normalized.artworkData
       {
         _ = try await store.beginImportedArtworkWrite(artworkData, artworkID: artworkID)
@@ -1214,6 +1304,40 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
       }
     }
     return result
+  }
+
+  private func existingCUEState(
+    required: Bool
+  ) async throws -> ExistingCUEState {
+    guard required else { return ExistingCUEState(tracks: [], variants: [:]) }
+    do {
+      var tracks: [Track] = []
+      var variants: [MediaItemID: TrackVariant] = [:]
+      var request = try LibraryPageRequest(limit: LibraryPageRequest.maximumLimit)
+      while true {
+        let page = try await libraryRepository.tracks(
+          matching: TrackQuery(sourceID: .local),
+          page: request
+        )
+        let cueTracks = page.elements.filter {
+          Self.isCUEItemID($0.id)
+        }
+        tracks.append(contentsOf: cueTracks)
+        for track in cueTracks {
+          if let variant = try await libraryRepository.trackVariant(id: track.id) {
+            variants[track.id] = variant
+          }
+        }
+        guard let next = try page.nextPage(limit: LibraryPageRequest.maximumLimit) else {
+          return ExistingCUEState(tracks: tracks, variants: variants)
+        }
+        request = next
+      }
+    } catch is CancellationError {
+      throw CancellationError()
+    } catch {
+      throw LocalMediaError.persistenceFailed
+    }
   }
 
   private func transactionWithReconciledTrackCounts(
@@ -1470,6 +1594,278 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
     )
   }
 
+  private static func isCUEItemID(_ itemID: MediaItemID) -> Bool {
+    itemID.sourceID == .local && itemID.externalID.hasPrefix("cue-")
+  }
+
+  private static func needsAudioSelectionRepair(_ track: Track?) -> Bool {
+    guard let track,
+          track.playbackSelection.audioStream != nil,
+          let streams = track.technicalInfo?.audioStreams,
+          streams.count > 1
+    else { return false }
+    return !streams.contains(where: \.isDefault)
+  }
+
+  private static func applyingSourceMetadataPolicy(
+    to transaction: LibraryTransaction,
+    plannedTracks: [Track],
+    existingTracks: [MediaItemID: Track],
+    existingVariants: [MediaItemID: TrackVariant],
+    existingAlbums: [AlbumID: Album],
+    artworkRepairItemIDs: Set<MediaItemID>,
+    audioSelectionRepairItemIDs: Set<MediaItemID>
+  ) throws -> SourceAwareImport {
+    var tracksByItemID: [MediaItemID: Track] = [:]
+    var protectedAlbumIDs = Set<AlbumID>()
+    var protectedArtistIDs = Set<ArtistID>()
+    var protectedGenreIDs = Set<GenreID>()
+
+    for sourceTrack in plannedTracks {
+      guard let existingTrack = existingTracks[sourceTrack.id] else {
+        tracksByItemID[sourceTrack.id] = sourceTrack
+        continue
+      }
+      let merged = mergingSourceMetadata(
+        sourceTrack: sourceTrack,
+        existingTrack: existingTrack,
+        previousSource: existingVariants[sourceTrack.id]?.sourceMetadata,
+        existingAlbum: existingTrack.albumID.flatMap { existingAlbums[$0] },
+        forceSourceArtwork: artworkRepairItemIDs.contains(sourceTrack.id),
+        forceSourceAudioSelection: audioSelectionRepairItemIDs.contains(sourceTrack.id)
+      )
+      tracksByItemID[sourceTrack.id] = merged
+      let previousSource = existingVariants[sourceTrack.id]?.sourceMetadata
+      let protectsAlbumEntity = (
+        previousSource == nil
+          || existingTrack.albumID.flatMap { existingAlbums[$0] }
+            .map(AlbumSourceMetadataSnapshot.init(album:)) != previousSource?.album
+      )
+      if protectsAlbumEntity,
+         merged.albumID == existingTrack.albumID,
+         let albumID = merged.albumID
+      {
+        protectedAlbumIDs.insert(albumID)
+      }
+      protectedArtistIDs.formUnion(Set(merged.artistIDs).intersection(existingTrack.artistIDs))
+      protectedGenreIDs.formUnion(Set(merged.genreIDs).intersection(existingTrack.genreIDs))
+    }
+
+    let albumIDs = Set(tracksByItemID.values.compactMap(\.albumID))
+    let releaseIDs = Set(albumIDs.map(AlbumReleaseID.init(legacyAlbumID:)))
+    let discIDs = Set(tracksByItemID.values.compactMap { $0.discProjection?.id })
+    let sourceAlbums = transaction.mutations.reduce(into: [AlbumID: Album]()) { result, mutation in
+      guard case .upsert(.album(let album)) = mutation,
+            albumIDs.contains(album.id)
+      else { return }
+      if protectedAlbumIDs.contains(album.id) {
+        result[album.id] = existingAlbums[album.id]
+      } else {
+        result[album.id] = album
+      }
+    }
+    var artistIDs = Set(tracksByItemID.values.flatMap(\.artistIDs))
+    artistIDs.formUnion(sourceAlbums.values.flatMap(\.artistIDs))
+    let genreIDs = Set(tracksByItemID.values.flatMap(\.genreIDs))
+    var artworkIDs = Set(tracksByItemID.values.compactMap(\.artworkID))
+    artworkIDs.formUnion(sourceAlbums.values.compactMap(\.artworkID))
+    let sourceReleases = transaction.mutations.compactMap { mutation -> AlbumRelease? in
+      guard case .upsert(.albumRelease(let release)) = mutation,
+            releaseIDs.contains(release.id)
+      else { return nil }
+      return release
+    }
+    let groupIDs = Set(sourceReleases.compactMap(\.groupID))
+    let collectionIDs = Set(transaction.mutations.compactMap { mutation -> LibraryCollectionID? in
+      guard case .upsert(.collectionMember(let member)) = mutation,
+            releaseIDs.contains(member.releaseID)
+      else { return nil }
+      return member.collectionID
+    })
+    let tracksByLogicalID = Dictionary(uniqueKeysWithValues: tracksByItemID.values.map {
+      ($0.logicalTrackID, $0)
+    })
+
+    var mutations: [LibraryMutation] = []
+    for mutation in transaction.mutations {
+      switch mutation {
+      case .upsert(.track(let track)):
+        guard let merged = tracksByItemID[track.id] else { continue }
+        mutations.append(.upsert(.track(merged)))
+      case .upsert(.logicalTrack(let logicalTrack)):
+        guard let merged = tracksByLogicalID[logicalTrack.id] else { continue }
+        mutations.append(.upsert(.logicalTrack(merged.logicalTrackProjection)))
+      case .upsert(.trackVariant(let variant)):
+        guard let merged = tracksByItemID[variant.id] else { continue }
+        mutations.append(.upsert(.trackVariant(TrackVariant(
+          id: merged.id,
+          logicalTrackID: merged.logicalTrackID,
+          assetID: merged.assetID,
+          selection: merged.playbackSelection,
+          availability: variant.availability,
+          sourceIdentityHint: variant.sourceIdentityHint,
+          sourceMetadataRevision: variant.sourceMetadataRevision,
+          sourceMetadata: variant.sourceMetadata
+        ))))
+      case .upsert(.album(let album)):
+        guard let mergedAlbum = sourceAlbums[album.id] else { continue }
+        mutations.append(.upsert(.album(mergedAlbum)))
+      case .upsert(.artist(let artist)):
+        guard artistIDs.contains(artist.id), !protectedArtistIDs.contains(artist.id) else { continue }
+        mutations.append(mutation)
+      case .upsert(.genre(let genre)):
+        guard genreIDs.contains(genre.id), !protectedGenreIDs.contains(genre.id) else { continue }
+        mutations.append(mutation)
+      case .upsert(.artwork(let artwork)):
+        guard artworkIDs.contains(artwork.id) else { continue }
+        mutations.append(mutation)
+      case .upsert(.albumRelease(let release)):
+        guard releaseIDs.contains(release.id) else { continue }
+        if let albumID = release.legacyAlbumID,
+           protectedAlbumIDs.contains(albumID),
+           let existingAlbum = existingAlbums[albumID]
+        {
+          mutations.append(.upsert(.albumRelease(existingAlbum.releaseProjection)))
+        } else {
+          mutations.append(mutation)
+        }
+      case .upsert(.disc(let disc)):
+        guard discIDs.contains(disc.id) else { continue }
+        mutations.append(mutation)
+      case .upsert(.albumGroup(let group)):
+        guard groupIDs.contains(group.id) else { continue }
+        mutations.append(mutation)
+      case .upsert(.collection(let collection)):
+        guard collectionIDs.contains(collection.id) else { continue }
+        mutations.append(mutation)
+      case .upsert(.collectionMember(let member)):
+        guard collectionIDs.contains(member.collectionID),
+              releaseIDs.contains(member.releaseID)
+        else { continue }
+        mutations.append(mutation)
+      case .relation(.setAlbum(let trackID, _)):
+        guard let track = tracksByItemID[trackID] else { continue }
+        mutations.append(.relation(.setAlbum(trackID: trackID, albumID: track.albumID)))
+      case .relation(.setArtists(let trackID, _)):
+        guard let track = tracksByItemID[trackID] else { continue }
+        mutations.append(.relation(.setArtists(trackID: trackID, artistIDs: track.artistIDs)))
+      case .relation(.setGenres(let trackID, _)):
+        guard let track = tracksByItemID[trackID] else { continue }
+        mutations.append(.relation(.setGenres(trackID: trackID, genreIDs: track.genreIDs)))
+      case .relation(.setArtwork(let trackID, _)):
+        guard let track = tracksByItemID[trackID] else { continue }
+        mutations.append(.relation(.setArtwork(trackID: trackID, artworkID: track.artworkID)))
+      default:
+        mutations.append(mutation)
+      }
+    }
+    return SourceAwareImport(
+      transaction: try LibraryTransaction(
+        idempotencyKey: transaction.idempotencyKey,
+        expectedRevision: transaction.expectedRevision,
+        mutations: mutations
+      ),
+      tracksByItemID: tracksByItemID
+    )
+  }
+
+  private static func mergingSourceMetadata(
+    sourceTrack: Track,
+    existingTrack: Track,
+    previousSource: TrackSourceMetadataSnapshot?,
+    existingAlbum: Album?,
+    forceSourceArtwork: Bool,
+    forceSourceAudioSelection: Bool
+  ) -> Track {
+    let preserveExistingAlbum: Bool
+    if let previousSource {
+      preserveExistingAlbum = existingAlbum.map(AlbumSourceMetadataSnapshot.init(album:))
+        != previousSource.album
+    } else {
+      preserveExistingAlbum = true
+    }
+    let audioSelection: AudioStreamSelection?
+    if forceSourceAudioSelection {
+      audioSelection = sourceTrack.playbackSelection.audioStream
+    } else if let previousSource {
+      audioSelection = existingTrack.playbackSelection.audioStream
+        == previousSource.playbackSelection.audioStream
+        ? sourceTrack.playbackSelection.audioStream
+        : existingTrack.playbackSelection.audioStream
+    } else {
+      audioSelection = existingTrack.playbackSelection.audioStream
+    }
+    let playbackSelection = PlaybackSelection(
+      range: sourceTrack.playbackSelection.range,
+      audioStream: audioSelection
+    )
+
+    guard let previousSource else {
+      return Track(
+        id: sourceTrack.id,
+        logicalTrackID: sourceTrack.logicalTrackID,
+        assetID: sourceTrack.assetID,
+        playbackSelection: playbackSelection,
+        title: existingTrack.title,
+        sortTitle: existingTrack.sortTitle,
+        albumID: existingTrack.albumID,
+        artistIDs: existingTrack.artistIDs,
+        genreIDs: existingTrack.genreIDs,
+        trackNumber: existingTrack.trackNumber,
+        trackTotal: existingTrack.trackTotal,
+        discNumber: existingTrack.discNumber,
+        discTotal: existingTrack.discTotal,
+        fileName: sourceTrack.fileName,
+        folderPath: sourceTrack.folderPath,
+        duration: sourceTrack.duration,
+        technicalInfo: sourceTrack.technicalInfo,
+        year: existingTrack.year,
+        comment: existingTrack.comment,
+        lyrics: existingTrack.lyrics,
+        artwork: forceSourceArtwork ? sourceTrack.artwork : existingTrack.artwork,
+        isFavorite: existingTrack.isFavorite,
+        statistics: existingTrack.statistics
+      )
+    }
+
+    return Track(
+      id: sourceTrack.id,
+      logicalTrackID: sourceTrack.logicalTrackID,
+      assetID: sourceTrack.assetID,
+      playbackSelection: playbackSelection,
+      title: existingTrack.title == previousSource.title ? sourceTrack.title : existingTrack.title,
+      sortTitle: existingTrack.sortTitle == previousSource.sortTitle
+        ? sourceTrack.sortTitle : existingTrack.sortTitle,
+      albumID: !preserveExistingAlbum && existingTrack.albumID == previousSource.albumID
+        ? sourceTrack.albumID : existingTrack.albumID,
+      artistIDs: existingTrack.artistIDs == previousSource.artistIDs
+        ? sourceTrack.artistIDs : existingTrack.artistIDs,
+      genreIDs: existingTrack.genreIDs == previousSource.genreIDs
+        ? sourceTrack.genreIDs : existingTrack.genreIDs,
+      trackNumber: existingTrack.trackNumber == previousSource.trackNumber
+        ? sourceTrack.trackNumber : existingTrack.trackNumber,
+      trackTotal: existingTrack.trackTotal == previousSource.trackTotal
+        ? sourceTrack.trackTotal : existingTrack.trackTotal,
+      discNumber: existingTrack.discNumber == previousSource.discNumber
+        ? sourceTrack.discNumber : existingTrack.discNumber,
+      discTotal: existingTrack.discTotal == previousSource.discTotal
+        ? sourceTrack.discTotal : existingTrack.discTotal,
+      fileName: sourceTrack.fileName,
+      folderPath: sourceTrack.folderPath,
+      duration: sourceTrack.duration,
+      technicalInfo: sourceTrack.technicalInfo,
+      year: existingTrack.year == previousSource.year ? sourceTrack.year : existingTrack.year,
+      comment: existingTrack.comment == previousSource.comment
+        ? sourceTrack.comment : existingTrack.comment,
+      lyrics: existingTrack.lyrics == previousSource.lyrics
+        ? sourceTrack.lyrics : existingTrack.lyrics,
+      artwork: forceSourceArtwork || existingTrack.artwork == previousSource.artwork
+        ? sourceTrack.artwork : existingTrack.artwork,
+      isFavorite: existingTrack.isFavorite,
+      statistics: existingTrack.statistics
+    )
+  }
+
   private static func mapProbeError(_ error: MediaSourceError) -> LocalMediaError {
     switch error {
     case .cancelled:
@@ -1582,10 +1978,10 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
     return MediaSourceError.importFailed(.unknown)
   }
 
-  private static func isLikelyAudioFile(_ url: URL) -> Bool {
+  private static func hasRecognizedAudioExtension(_ url: URL) -> Bool {
     switch url.pathExtension.lowercased() {
     case "aac", "ac3", "aif", "aiff", "alac", "ape", "caf", "dts", "flac",
-      "m4a", "m4b", "mka", "mp3", "oga", "ogg", "opus", "wav", "webm", "wma", "wv":
+      "m4a", "m4b", "mka", "mp3", "mpc", "oga", "ogg", "opus", "wav", "webm", "wma", "wv":
       return true
     default:
       return false

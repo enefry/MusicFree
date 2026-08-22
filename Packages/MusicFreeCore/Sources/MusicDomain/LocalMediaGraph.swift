@@ -167,6 +167,69 @@ public enum TrackVariantAvailability: String, Codable, Equatable, Hashable, Send
     case unsupported
 }
 
+/// Source-owned metadata captured when a variant is imported.
+///
+/// The snapshot lets a later source refresh distinguish untouched source
+/// values from library metadata that the user or an enrichment provider has
+/// changed. Playback statistics and favorites are intentionally excluded.
+@available(macOS 13.0, iOS 16.0, *)
+public struct AlbumSourceMetadataSnapshot: Codable, Equatable, Hashable, Sendable {
+    public let id: AlbumID
+    public let title: String
+    public let sortTitle: String?
+    public let artistIDs: [ArtistID]
+    public let artwork: ArtworkReference?
+    public let releaseYear: Int?
+    public let albumType: AlbumType?
+
+    public init(album: Album) {
+        id = album.id
+        title = album.title
+        sortTitle = album.sortTitle
+        artistIDs = album.artistIDs
+        artwork = album.artwork
+        releaseYear = album.releaseYear
+        albumType = album.albumType
+    }
+}
+
+@available(macOS 13.0, iOS 16.0, *)
+public struct TrackSourceMetadataSnapshot: Codable, Equatable, Hashable, Sendable {
+    public let playbackSelection: PlaybackSelection
+    public let title: String
+    public let sortTitle: String?
+    public let albumID: AlbumID?
+    public let artistIDs: [ArtistID]
+    public let genreIDs: [GenreID]
+    public let trackNumber: Int?
+    public let trackTotal: Int?
+    public let discNumber: Int?
+    public let discTotal: Int?
+    public let year: Int?
+    public let comment: String?
+    public let lyrics: TrackLyrics?
+    public let artwork: ArtworkReference?
+    public let album: AlbumSourceMetadataSnapshot?
+
+    public init(track: Track, album: Album? = nil) {
+        playbackSelection = track.playbackSelection
+        title = track.title
+        sortTitle = track.sortTitle
+        albumID = track.albumID
+        artistIDs = track.artistIDs
+        genreIDs = track.genreIDs
+        trackNumber = track.trackNumber
+        trackTotal = track.trackTotal
+        discNumber = track.discNumber
+        discTotal = track.discTotal
+        year = track.year
+        comment = track.comment
+        lyrics = track.lyrics
+        artwork = track.artwork
+        self.album = album.map(AlbumSourceMetadataSnapshot.init(album:))
+    }
+}
+
 @available(macOS 13.0, iOS 16.0, *)
 public struct TrackVariant: Codable, Equatable, Hashable, Identifiable, Sendable {
     public let id: MediaItemID
@@ -174,13 +237,21 @@ public struct TrackVariant: Codable, Equatable, Hashable, Identifiable, Sendable
     public let assetID: MediaAssetID
     public let selection: PlaybackSelection
     public let availability: TrackVariantAvailability
+    /// Opaque, non-path source hint used only to rediscover a moved or replaced source object.
+    public let sourceIdentityHint: String?
+    /// Opaque provider revision for the source metadata snapshot.
+    public let sourceMetadataRevision: String?
+    public let sourceMetadata: TrackSourceMetadataSnapshot?
 
     public init(
         id: MediaItemID,
         logicalTrackID: LogicalTrackID,
         assetID: MediaAssetID,
         selection: PlaybackSelection = .wholeFile,
-        availability: TrackVariantAvailability = .available
+        availability: TrackVariantAvailability = .available,
+        sourceIdentityHint: String? = nil,
+        sourceMetadataRevision: String? = nil,
+        sourceMetadata: TrackSourceMetadataSnapshot? = nil
     ) {
         precondition(id.sourceID == assetID.sourceID, "TrackVariant and MediaAsset must share a source")
         self.id = id
@@ -188,6 +259,9 @@ public struct TrackVariant: Codable, Equatable, Hashable, Identifiable, Sendable
         self.assetID = assetID
         self.selection = selection
         self.availability = availability
+        self.sourceIdentityHint = musicDomainOptionalText(sourceIdentityHint)
+        self.sourceMetadataRevision = musicDomainOptionalText(sourceMetadataRevision)
+        self.sourceMetadata = sourceMetadata
     }
 }
 

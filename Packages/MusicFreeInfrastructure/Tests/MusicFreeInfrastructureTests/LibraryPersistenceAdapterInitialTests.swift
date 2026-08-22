@@ -284,6 +284,54 @@ func localMediaGraphRoundTripAndSharedAssetPruning() async throws {
     await store.close()
 }
 
+@Test("track-only updates preserve explicit source metadata snapshots")
+func trackOnlyUpdatesPreserveSourceMetadataSnapshots() async throws {
+    let store = try LibraryPersistenceStore(configuration: .inMemory)
+    let library = SwiftDataLibraryRepository(store: store)
+    let itemID = MediaItemID(sourceID: .local, externalID: "cue-source-snapshot-f1-t1")
+    let assetID = MediaAssetID(sourceID: .local, externalID: "sha256-source-snapshot")
+    let sourceTrack = Track(
+        id: itemID,
+        logicalTrackID: LogicalTrackID("local:cue-source-snapshot-f1-t1"),
+        assetID: assetID,
+        title: "Source Title"
+    )
+    let sourceVariant = TrackVariant(
+        id: itemID,
+        logicalTrackID: sourceTrack.logicalTrackID,
+        assetID: assetID,
+        sourceIdentityHint: "cue-identity-hint-one",
+        sourceMetadataRevision: "cue-revision-one",
+        sourceMetadata: TrackSourceMetadataSnapshot(track: sourceTrack)
+    )
+    try await library.apply(try LibraryTransaction(
+        idempotencyKey: "install-source-metadata-snapshot",
+        mutations: [
+            .upsert(.track(sourceTrack)),
+            .upsert(.trackVariant(sourceVariant))
+        ]
+    ))
+
+    let editedTrack = Track(
+        id: sourceTrack.id,
+        logicalTrackID: sourceTrack.logicalTrackID,
+        assetID: sourceTrack.assetID,
+        playbackSelection: sourceTrack.playbackSelection,
+        title: "Manual Title"
+    )
+    try await library.apply(try LibraryTransaction(
+        idempotencyKey: "edit-track-without-variant",
+        mutations: [.upsert(.track(editedTrack))]
+    ))
+
+    let persistedVariant = try #require(try await library.trackVariant(id: itemID))
+    #expect(persistedVariant.sourceIdentityHint == "cue-identity-hint-one")
+    #expect(persistedVariant.sourceMetadataRevision == "cue-revision-one")
+    #expect(persistedVariant.sourceMetadata?.title == "Source Title")
+    #expect(try await library.track(id: itemID)?.title == "Manual Title")
+    await store.close()
+}
+
 @Test("explicit local graph mutations persist release, disc, and collection atomically")
 func explicitLocalGraphTransactionRoundTripsCollectionStructure() async throws {
     let store = try LibraryPersistenceStore(configuration: .inMemory)
