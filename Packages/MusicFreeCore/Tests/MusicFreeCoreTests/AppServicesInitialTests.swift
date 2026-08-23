@@ -1907,6 +1907,58 @@ func appServicesGeneratesShuffleOrder() async throws {
 }
 
 @MainActor
+@Test("Now Playing queue position follows the persisted shuffle order")
+func appServicesPublishesShuffledNowPlayingQueuePosition() async throws {
+    let itemIDs = [
+        MediaItemID(sourceID: .local, externalID: "now-playing-shuffle-first"),
+        MediaItemID(sourceID: .local, externalID: "now-playing-shuffle-second"),
+        MediaItemID(sourceID: .local, externalID: "now-playing-shuffle-third"),
+    ]
+    let entries = itemIDs.enumerated().map { index, itemID in
+        PlaybackQueueEntry(
+            id: UUID(uuidString: String(
+                format: "00000000-0000-0000-0000-%012d",
+                430 + index
+            ))!,
+            itemID: itemID
+        )
+    }
+    let shuffledIDs = [entries[2].id, entries[1].id, entries[0].id]
+    let nowPlaying = FakeNowPlayingPublisher()
+    let container = try AppServiceContainer(
+        dependencies: AppDependencies(
+            mediaSources: [TestSource()],
+            libraryRepository: TestLibraryRepository(
+                tracks: itemIDs.map { Track(id: $0, title: $0.externalID) }
+            ),
+            playbackQueueRepository: TestQueueRepository(
+                value: PlaybackQueueSnapshot(
+                    entries: entries,
+                    currentEntryID: entries[1].id,
+                    shuffleMode: .on,
+                    shuffleSeed: 42,
+                    shuffleOrder: shuffledIDs
+                )
+            ),
+            playbackEngine: TestPlaybackEngine(capabilities: []),
+            nowPlaying: nowPlaying,
+            systemCapabilities: SystemIntegrationCapabilitySnapshot(
+                platform: .iOS,
+                capabilities: [.nowPlaying]
+            )
+        )
+    )
+    _ = try await container.start()
+
+    await container.playback.send(.play(itemID: itemIDs[1]))
+
+    let snapshot = try #require(nowPlaying.currentSnapshot)
+    #expect(snapshot.queuePosition == 1)
+    #expect(snapshot.queueCount == 3)
+    await container.stop()
+}
+
+@MainActor
 @Test("Deleting the current track clears the live playback snapshot")
 func appServicesDeletionClearsPlaybackSnapshot() async throws {
     let itemID = MediaItemID(sourceID: .local, externalID: "delete-playing")

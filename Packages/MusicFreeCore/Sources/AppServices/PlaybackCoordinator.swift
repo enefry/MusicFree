@@ -1476,7 +1476,8 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
         }
         let date = await clock.now()
         guard snapshot == snapshotValue else { return }
-        let queueIndex = snapshot.queue.entries.firstIndex {
+        let orderedQueue = orderedEntries()
+        let queueIndex = orderedQueue.firstIndex {
             $0.id == snapshot.queue.currentEntryID
         }
         let artwork: NowPlayingArtworkReference?
@@ -1509,7 +1510,7 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
             isPlaying: snapshot.phase == .playing,
             rate: snapshot.effectiveEffects.rate,
             queuePosition: queueIndex,
-            queueCount: snapshot.queue.entries.isEmpty ? nil : snapshot.queue.entries.count,
+            queueCount: orderedQueue.isEmpty ? nil : orderedQueue.count,
             artwork: artwork,
             updatedAt: date
         )

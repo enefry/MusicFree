@@ -27,6 +27,7 @@ public struct DiscogsAPIConfiguration: Sendable, Equatable {
         let normalizedToken = Self.normalizedSecret(token)
         guard let scheme = baseURL.scheme?.lowercased(),
               scheme == "http" || scheme == "https",
+              scheme == "https" || normalizedToken == nil,
               baseURL.host != nil,
               baseURL.query == nil,
               baseURL.fragment == nil,
@@ -277,7 +278,8 @@ public actor DiscogsMetadataProvider: MetadataEnrichmentProviding {
         guard let artworkURL = artworkURLs[candidate.catalogID] else { return nil }
         let request = try makeRequest(
             url: artworkURL,
-            accept: "image/*"
+            accept: "image/*",
+            includeToken: false
         )
         guard let data = try await perform(
             request,
@@ -406,7 +408,8 @@ public actor DiscogsMetadataProvider: MetadataEnrichmentProviding {
 
     private func makeRequest(
         url: URL,
-        accept: String
+        accept: String,
+        includeToken: Bool = true
     ) throws -> URLRequest {
         guard url.scheme != nil, url.host != nil else {
             throw MetadataEnrichmentError.requestFailed(
@@ -421,7 +424,7 @@ public actor DiscogsMetadataProvider: MetadataEnrichmentProviding {
         request.httpMethod = "GET"
         request.setValue(configuration.userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue(accept, forHTTPHeaderField: "Accept")
-        if let token = configuration.token {
+        if includeToken, let token = configuration.token {
             request.setValue("Discogs token=\(token)", forHTTPHeaderField: "Authorization")
         }
         return request

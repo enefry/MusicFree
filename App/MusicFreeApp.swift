@@ -10,7 +10,7 @@ struct MusicFreeApp: App {
         #endif
         print("Temp: \(NSTemporaryDirectory())")
         if let document = NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true).first {
-            let keepFile = "\(document)/put_music_file_here_to_auto_import.txt"
+            let keepFile = "\(document)/\(AppDocumentsScanner.automaticImportPlaceholderFileName)"
             if !FileManager.default.fileExists(atPath: keepFile) {
                 FileManager.default.createFile(atPath: keepFile, contents: nil)
             }

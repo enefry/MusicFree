@@ -1167,6 +1167,23 @@ func documentsScannerTracksSnapshotChanges() async throws {
     #expect(await importer.requestCount == 3)
 }
 
+@Test("Documents scanner ignores the app-created auto-import placeholder")
+func documentsScannerIgnoresAutoImportPlaceholder() async throws {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("MusicFreeScannerPlaceholderTests-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try Data().write(
+        to: root.appendingPathComponent(AppDocumentsScanner.automaticImportPlaceholderFileName)
+    )
+    let importer = RecordingImportService()
+    let scanner = AppDocumentsScanner(documentsURL: root, importer: importer)
+
+    #expect(try await scanner.scanIfNeeded() == nil)
+    #expect(await importer.requestCount == 0)
+}
+
 @Test("Documents scanner retries a snapshot that had failed files")
 func documentsScannerRetriesFailedSnapshot() async throws {
     let root = FileManager.default.temporaryDirectory

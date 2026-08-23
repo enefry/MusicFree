@@ -20,6 +20,10 @@ enum AppDocumentsScannerError: Error, LocalizedError, Sendable {
 /// same import boundary used by the document picker.
 actor AppDocumentsScanner {
     private static let snapshotSchemaVersion = 2
+    static let automaticImportPlaceholderFileName = "put_music_file_here_to_auto_import.txt"
+    private static let ignoredFileNames: Set<String> = [
+        automaticImportPlaceholderFileName,
+    ]
 
     private struct Entry: Codable, Equatable, Sendable {
         let relativePath: String
@@ -201,6 +205,7 @@ actor AppDocumentsScanner {
                 continue
             }
             guard values.isRegularFile == true else { continue }
+            guard !Self.ignoredFileNames.contains(url.lastPathComponent) else { continue }
 
             let path = url.standardizedFileURL.path
             guard path.hasPrefix(rootPath + "/") else { continue }

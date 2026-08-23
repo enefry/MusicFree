@@ -1560,10 +1560,50 @@ struct NowPlayingView: View {
     }
 
     private var playerBackdrop: some View {
-        // REGRESSION GUARD: Now Playing is intentionally a solid dark surface.
-        // Artwork remains visible in the album-art elements only; do not add a
-        // full-screen cover blur here or in the system presentation background.
-        Color.black
+        // REGRESSION GUARD: this artwork surface belongs to the moving Sheet
+        // content. Do not move it to RootScene or the Sheet presentation
+        // background. A fixed backdrop makes the interactive dismissal look
+        // like a black rectangle sliding over the presenting page instead of
+        // exposing that page as the Sheet moves.
+        GeometryReader { geometry in
+            ZStack {
+                // Keep a dark fallback in the moving content layer. The clear
+                // presentation background still exposes the presenting page
+                // during dismissal, while this fallback keeps white controls
+                // readable before artwork is available.
+                Color.black.opacity(0.94)
+
+                if let image = artworkLoader.image {
+                    image
+                        .resizable()
+                        .scaledToFill()
+                        .frame(
+                            width: geometry.size.width,
+                            height: geometry.size.height
+                        )
+                        .blur(radius: 42)
+                        .scaleEffect(1.24)
+                        .opacity(0.92)
+
+                    LinearGradient(
+                        stops: [
+                            .init(color: .black.opacity(0.08), location: 0),
+                            .init(color: .black.opacity(0.10), location: 0.12),
+                            .init(color: .black.opacity(0.24), location: 0.54),
+                            .init(color: .black.opacity(0.48), location: 1),
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                }
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+            .clipped()
+        }
+        // The Sheet view is clipped by the presentation observer above. This
+        // lets the artwork cover the resting safe areas while guaranteeing
+        // that a native drag exposes the presenting page across the whole
+        // revealed region.
         .ignoresSafeArea()
         .allowsHitTesting(false)
         .accessibilityHidden(true)

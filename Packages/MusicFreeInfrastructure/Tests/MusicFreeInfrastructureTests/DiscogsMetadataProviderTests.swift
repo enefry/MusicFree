@@ -128,6 +128,10 @@ struct DiscogsMetadataProviderTests {
             searchRequest.value(forHTTPHeaderField: "Accept") ==
                 "application/vnd.discogs.v2.discogs+json"
         )
+        let artworkRequest = try #require(capturedRequests.last)
+        #expect(artworkRequest.value(forHTTPHeaderField: "Authorization") == nil)
+        #expect(artworkRequest.value(forHTTPHeaderField: "User-Agent") == "MyMusicTests/1.0")
+        #expect(artworkRequest.value(forHTTPHeaderField: "Accept") == "image/*")
     }
 
     @Test("Discogs sends the leading bracket title variant first")
@@ -231,6 +235,19 @@ struct DiscogsMetadataProviderTests {
         )
         #expect(anonymous.minimumRequestInterval == 60.0 / 25.0)
         #expect(authenticated.minimumRequestInterval == 1.0)
+        #expect(
+            DiscogsAPIConfiguration(
+                baseURL: URL(string: "http://api.discogs.test")!,
+                userAgent: "MyMusicTests/1.0",
+                token: "test-token"
+            ) == nil
+        )
+        #expect(
+            DiscogsAPIConfiguration(
+                baseURL: URL(string: "http://api.discogs.test")!,
+                userAgent: "MyMusicTests/1.0"
+            ) != nil
+        )
     }
 
     private func makeProvider() throws -> DiscogsMetadataProvider {
