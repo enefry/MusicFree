@@ -6,7 +6,7 @@ import MusicDomain
 import OSLog
 
 /// Runtime configuration for the Discogs metadata service documented in
-/// `Docs/music-metadata-server-api/API.md`.
+/// `Docs/Integrations/music-metadata-server-api/API.md`.
 ///
 /// The base URL is intentionally supplied by the app bundle instead of being
 /// hard-coded here. The public documentation uses an example hostname, not a

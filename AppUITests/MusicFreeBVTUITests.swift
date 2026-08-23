@@ -86,13 +86,15 @@ final class MusicFreeBVTUITests: XCTestCase {
         tapTab("Settings", in: app)
         waitForSettingsForm(in: app)
 
-        let refreshButton = app.buttons.matching(
-            NSPredicate(format: "identifier == 'settings.storage.refresh' AND enabled == true")
-        ).firstMatch
-        XCTAssertTrue(scrollToElement(refreshButton, in: app))
-        refreshButton.tap()
-        XCTAssertTrue(app.staticTexts["Media files"].waitForExistence(timeout: 10))
-        XCTAssertFalse(app.staticTexts["Could not load settings"].exists)
+        let storageMaintenance = app.descendants(matching: .any)[
+            "settings.storage.maintenance"
+        ].firstMatch
+        XCTAssertTrue(scrollToElement(storageMaintenance, in: app))
+        storageMaintenance.tap()
+        let maintenanceForm = app.descendants(matching: .any)[
+            "settings.storage.maintenance.form"
+        ].firstMatch
+        XCTAssertTrue(maintenanceForm.waitForExistence(timeout: 10))
 
         let pruningSwitch = app.switches["settings.storage.autoPrune"]
         XCTAssertTrue(scrollToElement(pruningSwitch, in: app))
@@ -239,6 +241,15 @@ final class MusicFreeBVTUITests: XCTestCase {
     ) {
         tapTab("Settings", in: app)
         waitForSettingsForm(in: app)
+        let storageMaintenance = app.descendants(matching: .any)[
+            "settings.storage.maintenance"
+        ].firstMatch
+        XCTAssertTrue(scrollToElement(storageMaintenance, in: app))
+        storageMaintenance.tap()
+        let maintenanceForm = app.descendants(matching: .any)[
+            "settings.storage.maintenance.form"
+        ].firstMatch
+        XCTAssertTrue(maintenanceForm.waitForExistence(timeout: 10))
         let pruningSwitch = app.switches["settings.storage.autoPrune"]
         XCTAssertTrue(scrollToElement(pruningSwitch, in: app))
         XCTAssertEqual(String(describing: pruningSwitch.value ?? ""), expectedValue)

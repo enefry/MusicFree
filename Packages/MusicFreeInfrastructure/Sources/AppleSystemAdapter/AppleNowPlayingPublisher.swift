@@ -112,6 +112,11 @@ enum PlatformNowPlayingArtworkFactory {
 private final class PlatformNowPlayingInfoClient: AppleNowPlayingInfoClient {
 #if canImport(MediaPlayer)
     private let center = MPNowPlayingInfoCenter.default()
+    // REGRESSION GUARD: the coordinator publishes progress frequently. Reuse
+    // the same MediaPlayer artwork object while its bytes are unchanged so
+    // the system does not treat every progress tick as a new cover image.
+    private var cachedArtworkData: Data?
+    private var cachedArtwork: MPMediaItemArtwork?
 
     func publish(_ info: AppleNowPlayingInfo) throws {
         var values: [String: Any] = [
@@ -135,8 +140,21 @@ private final class PlatformNowPlayingInfoClient: AppleNowPlayingInfoClient {
         if let queueCount = info.queueCount {
             values[MPNowPlayingInfoPropertyPlaybackQueueCount] = queueCount
         }
-        if let artwork = PlatformNowPlayingArtworkFactory.make(from: info.artworkData) {
-            values[MPMediaItemPropertyArtwork] = artwork
+        // REGRESSION GUARD: assigning `nowPlayingInfo` replaces the complete
+        // dictionary. Every progress publication must therefore carry the
+        // last known artwork; omitting it makes the lock-screen artwork
+        // disappear even when the song has not changed.
+        if let artworkData = info.artworkData {
+            if cachedArtworkData != artworkData {
+                cachedArtworkData = artworkData
+                cachedArtwork = PlatformNowPlayingArtworkFactory.make(from: artworkData)
+            }
+            if let cachedArtwork {
+                values[MPMediaItemPropertyArtwork] = cachedArtwork
+            }
+        } else {
+            cachedArtworkData = nil
+            cachedArtwork = nil
         }
 
         center.nowPlayingInfo = values
@@ -165,9 +183,22 @@ private final class PlatformNowPlayingInfoClient: AppleNowPlayingInfoClient {
 
 @MainActor
 public final class AppleNowPlayingPublisher: NowPlayingPublishing {
+    private struct ArtworkPublicationKey: Equatable {
+        let itemID: MediaItemID
+        let artworkID: ArtworkID?
+        let hasProvider: Bool
+    }
+
     private let client: any AppleNowPlayingInfoClient
     private let artworkProvider: NowPlayingArtworkProvider
-    private var publicationSerial: UInt64 = 0
+    private var artworkRequestSerial: UInt64 = 0
+    // REGRESSION GUARD: playback progress changes much more often than
+    // artwork identity. Keep the bytes in the publisher so a progress-only
+    // update can rebuild the complete system metadata without clearing the
+    // cover. Do not make this cache follow `NowPlayingSnapshot` equality:
+    // elapsed time and `updatedAt` intentionally change on every tick.
+    private var artworkPublicationKey: ArtworkPublicationKey?
+    private var cachedArtworkData: Data?
 
     public private(set) var currentSnapshot: NowPlayingSnapshot?
     public private(set) var lastError: AppleSystemAdapterError?
@@ -186,31 +217,68 @@ public final class AppleNowPlayingPublisher: NowPlayingPublishing {
     }
 
     public func publish(_ snapshot: NowPlayingSnapshot) {
-        publicationSerial &+= 1
-        let serial = publicationSerial
         currentSnapshot = snapshot
-        artworkProvider.cancel()
 
-        publishInfo(makeInfo(for: snapshot, artworkData: nil))
+        let nextArtworkKey = Self.artworkPublicationKey(for: snapshot)
+        let artworkIdentityChanged = artworkPublicationKey != nextArtworkKey
 
-        guard let artwork = snapshot.artwork, artwork.provider != nil else {
+        if artworkIdentityChanged {
+            // REGRESSION GUARD: cancel and reload only when the song/artwork
+            // identity changes. Cancelling here for every position event
+            // creates the visible "no cover -> cover" loop on the system
+            // Now Playing surface and can starve slow artwork providers.
+            artworkRequestSerial &+= 1
+            artworkProvider.cancel()
+            artworkPublicationKey = nextArtworkKey
+            cachedArtworkData = nil
+        }
+
+        // Keep the current cover in every complete metadata replacement. The
+        // first publication for a new song may legitimately have no artwork
+        // yet; subsequent progress publications must reuse the cache above.
+        publishInfo(
+            makeInfo(
+                for: snapshot,
+                artworkData: cachedArtworkData
+            )
+        )
+
+        guard artworkIdentityChanged,
+              let artwork = snapshot.artwork,
+              artwork.provider != nil
+        else {
             return
         }
 
+        let requestSerial = artworkRequestSerial
         artworkProvider.request(artwork) { [weak self] data in
             guard let self,
-                  self.publicationSerial == serial,
-                  self.currentSnapshot == snapshot
+                  self.artworkRequestSerial == requestSerial,
+                  self.artworkPublicationKey == nextArtworkKey,
+                  let latestSnapshot = self.currentSnapshot,
+                  Self.artworkPublicationKey(for: latestSnapshot) == nextArtworkKey
             else {
                 return
             }
-            self.publishInfo(self.makeInfo(for: snapshot, artworkData: data))
+
+            self.cachedArtworkData = data
+            // Use the latest progress snapshot when the asynchronous artwork
+            // request completes. The request belongs to the artwork key, not
+            // to the particular 100 ms progress snapshot that started it.
+            self.publishInfo(
+                self.makeInfo(
+                    for: latestSnapshot,
+                    artworkData: data
+                )
+            )
         }
     }
 
     public func clear() {
-        publicationSerial &+= 1
+        artworkRequestSerial &+= 1
         artworkProvider.cancel()
+        artworkPublicationKey = nil
+        cachedArtworkData = nil
         currentSnapshot = nil
 
         do {
@@ -229,6 +297,16 @@ public final class AppleNowPlayingPublisher: NowPlayingPublishing {
 
     public func dispose() {
         clear()
+    }
+
+    private static func artworkPublicationKey(
+        for snapshot: NowPlayingSnapshot
+    ) -> ArtworkPublicationKey {
+        ArtworkPublicationKey(
+            itemID: snapshot.itemID,
+            artworkID: snapshot.artwork?.artworkID,
+            hasProvider: snapshot.artwork?.provider != nil
+        )
     }
 
     private func makeInfo(

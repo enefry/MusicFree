@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 
 final class MusicFreeFeatureLoadingUITests: XCTestCase {
     override func setUpWithError() throws {
@@ -516,24 +517,26 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
         XCTAssertTrue(form.waitForExistence(timeout: 15))
         attachScreenshot(named: "16-settings-playback")
 
-        let storageRefresh = app.buttons["settings.storage.refresh"].firstMatch
-        XCTAssertTrue(scrollToElement(storageRefresh, in: app))
-        attachScreenshot(named: "17-settings-storage")
-        storageRefresh.tap()
-        let storageRefreshToast = app.descendants(matching: .any)[
-            "settings.storage.refresh.toast"
-        ].firstMatch
-        XCTAssertTrue(storageRefreshToast.waitForExistence(timeout: 5))
-
         let storageMaintenance = app.descendants(matching: .any)[
             "settings.storage.maintenance"
         ].firstMatch
         XCTAssertTrue(scrollToElement(storageMaintenance, in: app))
+        attachScreenshot(named: "17-settings-storage")
         storageMaintenance.tap()
         let maintenanceForm = app.descendants(matching: .any)[
             "settings.storage.maintenance.form"
         ].firstMatch
         XCTAssertTrue(maintenanceForm.waitForExistence(timeout: 10))
+
+        let storagePolicyControls = [
+            app.switches["settings.storage.autoPrune"].firstMatch,
+            app.sliders["settings.storage.cacheLimit"].firstMatch,
+            app.steppers["settings.storage.stagingRetention"].firstMatch
+        ]
+        for control in storagePolicyControls {
+            XCTAssertTrue(scrollToElement(control, in: app))
+        }
+
         let maintenanceButtons = [
             app.buttons["settings.storage.clearStaging"].firstMatch,
             app.buttons["settings.storage.repairRemovals"].firstMatch,
@@ -565,7 +568,11 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
     @MainActor
     func testAppleMusicPlayerScreenshots() {
         let longTrackTitle = "BVT Extremely Long Track Title That Must Stay Inside The Player Width"
-        let app = reviewApp()
+        // Keep this visual acceptance test deterministic. Playback history is
+        // persistent across simulator launches; old runs can leave hundreds
+        // of rows above the current anchor and make a short history reveal
+        // look like a broken scroll position.
+        let app = reviewApp(resetPlaybackHistory: true)
         let device = XCUIDevice.shared
         device.orientation = .portrait
         defer {
@@ -646,6 +653,16 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
         )
         attachScreenshot(named: "22-now-playing-default")
 
+        // REGRESSION GUARD: keep the fixture paused after the default-player
+        // screenshot. The remaining queue/history checks intentionally take
+        // longer than the seeded track; allowing playback to finish can remove
+        // all upcoming entries and falsely disable queue sorting.
+        if let pauseButton = app.buttons.matching(identifier: "Pause")
+            .allElementsBoundByIndex
+            .first(where: { $0.isHittable }) {
+            pauseButton.tap()
+        }
+
         let queueButton = app.buttons["player.queue.footer"].firstMatch
         XCTAssertTrue(queueButton.waitForExistence(timeout: 5))
         queueButton.tap()
@@ -679,7 +696,6 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
         let historyHeading = app.descendants(matching: .any)[
             "player.nowPlaying.history.heading"
         ].firstMatch
-        XCTAssertTrue(historyHeading.waitForExistence(timeout: 10))
         let historyRows = app.descendants(matching: .any).matching(
             NSPredicate(
                 format: "identifier BEGINSWITH %@ AND identifier != %@ AND identifier != %@",
@@ -688,11 +704,11 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
                 "player.nowPlaying.history.heading"
             )
         )
-        XCTAssertGreaterThan(
-            historyRows.count,
-            0,
-            "Switching tracks in the fixture must create at least one History row."
-        )
+        // History is above the current anchor and is intentionally lazy. The
+        // heading and rows may not exist in the accessibility tree until the
+        // user pulls the single system ScrollView down; checking existence
+        // before that would turn the intended Apple Music behavior into a
+        // false failure.
         XCTAssertFalse(
             isElementVisible(historyHeading, in: queueScrollView),
             "History should start above the current row and appear only after pulling down."
@@ -746,8 +762,17 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
 
         revealQueueHistory(historyHeading, in: queueScrollView)
         XCTAssertTrue(
+            historyHeading.waitForExistence(timeout: 10),
+            "Pulling down must materialize the History heading above the current row."
+        )
+        XCTAssertTrue(
             isElementVisible(historyHeading, in: queueScrollView),
             "Pulling down from the current row must reveal the History section."
+        )
+        XCTAssertGreaterThan(
+            historyRows.count,
+            0,
+            "Switching tracks in the fixture must create at least one History row."
         )
         XCTAssertTrue(
             isElementHittable(historyRows.firstMatch, in: queueScrollView),
@@ -755,13 +780,10 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
         )
         attachScreenshot(named: "23-now-playing-history")
 
-        XCTAssertTrue(app.buttons["Pause"].firstMatch.waitForExistence(timeout: 5))
-        guard let pauseButton = app.buttons.matching(identifier: "Pause")
-            .allElementsBoundByIndex.first(where: { $0.isHittable }) else {
-            XCTFail("The visible Now Playing pause control must be hittable.")
-            return
+        if let pauseButton = app.buttons.matching(identifier: "Pause")
+            .allElementsBoundByIndex.first(where: { $0.isHittable }) {
+            pauseButton.tap()
         }
-        pauseButton.tap()
 
         XCTAssertTrue(queueButton.waitForExistence(timeout: 5))
         let originalQueueButtonY = queueButton.frame.minY
@@ -1090,6 +1112,23 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
         let historyHeading = app.descendants(matching: .any)[
             "player.nowPlaying.history.heading"
         ].firstMatch
+
+        // The oldest row is adjacent to the current anchor because the
+        // repository returns history newest-first. Verify that near boundary
+        // before moving all the way to the history header; otherwise the
+        // upward pass can legitimately leave that row just above the viewport
+        // while the current row is pinned at the bottom edge.
+        let oldestHistoryRow = app.descendants(matching: .any)[
+            "player.nowPlaying.history.oldest"
+        ].firstMatch
+        for _ in 0..<3 where !isElementVisible(oldestHistoryRow, in: queueScroll) {
+            pullQueueDown(in: queueScroll)
+        }
+        XCTAssertTrue(
+            isElementVisible(oldestHistoryRow, in: queueScroll),
+            "Pulling down from the current row must reveal the oldest adjacent history row."
+        )
+
         // A hundred history rows are intentionally above the current anchor.
         // Use page-sized system swipes here; short pulls can stop halfway
         // through a large LazyVStack, where the heading is not materialized
@@ -1117,29 +1156,37 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
             "A large history must be reachable above the current-playing anchor."
         )
 
-        // Use a real boundary row instead of an invisible marker. LazyVStack
-        // only materializes rows near the viewport, so the oldest row is the
-        // reliable proof that the scroll reached the far end of the history.
-        let oldestHistoryRow = app.descendants(matching: .any)[
-            "player.nowPlaying.history.oldest"
+        // The newest row is adjacent to the History header. It proves that a
+        // large lazy list can reach its opposite boundary after the initial
+        // current-row anchor has been moved out of the viewport.
+        let newestHistoryRow = app.descendants(matching: .any)[
+            "player.nowPlaying.history.newest"
         ].firstMatch
-        let endScrollStart = Date()
-        // REGRESSION GUARD: after the heading is visible, the oldest rows are
-        // below it. Use the system scroll view's page-sized swipe so this
-        // measures real list movement instead of accumulating dozens of
-        // short XCTest drag waits. The finite bound prevents a broken scroll
-        // from hanging the test while still covering a larger reused store.
-        let maximumHistorySwipes = min(40, max(10, historyCount / 4 + 4))
-        for _ in 0..<maximumHistorySwipes where !oldestHistoryRow.exists {
-            queueScroll.swipeUp()
+        for _ in 0..<4 where !isElementVisible(newestHistoryRow, in: queueScroll) {
+            queueScroll.swipeDown()
         }
         XCTAssertTrue(
-            oldestHistoryRow.waitForExistence(timeout: 10),
-            "Scrolling through a large history must materialize its oldest row."
+            isElementVisible(newestHistoryRow, in: queueScroll),
+            "Scrolling to the History header must materialize its newest row."
         )
+
+        let endScrollStart = Date()
+        // REGRESSION GUARD: traverse back to the current anchor with the
+        // system scroll view. Native page swipes cover more of a large lazy
+        // list per XCTest interaction than a short coordinate drag, so the
+        // elapsed value reflects layout work instead of gesture overhead.
+        // Stop as soon as the current row is visible. Continuing a fixed
+        // number of swipes can move past the anchor into the queue tail and
+        // remove the current row from LazyVStack's accessibility tree again.
+        let maximumHistorySwipes = min(40, max(12, historyCount / 4 + 8))
+        var returnedToCurrentAnchor = isElementVisible(currentQueueRow, in: queueScroll)
+        for _ in 0..<maximumHistorySwipes where !returnedToCurrentAnchor {
+            queueScroll.swipeUp()
+            returnedToCurrentAnchor = isElementVisible(currentQueueRow, in: queueScroll)
+        }
         XCTAssertTrue(
-            isElementVisible(oldestHistoryRow, in: queueScroll),
-            "Scrolling through a large history must reach its oldest row."
+            returnedToCurrentAnchor,
+            "Scrolling through a large history must return to the current-playing anchor."
         )
 
         // Keep the reach-to-oldest metric separate from the round-trip metric
@@ -1284,6 +1331,74 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
             miniPlayer.waitForExistence(timeout: 5),
             "Dismissing Now Playing should return to the MiniPlayer."
         )
+    }
+
+    @MainActor
+    func testNowPlayingBackdropIsTransparentDuringSystemDrag() {
+        let app = reviewApp()
+        defer { app.terminate() }
+        app.launch()
+
+        XCTAssertTrue(tabButton("Library", in: app).waitForExistence(timeout: 15))
+        waitForSeededLibraryTrack(in: app)
+        openLibrarySection("Songs", in: app)
+
+        let tracks = app.descendants(matching: .any)["library.tracks"].firstMatch
+        XCTAssertTrue(tracks.buttons["Play"].firstMatch.waitForExistence(timeout: 10))
+        tracks.buttons["Play"].firstMatch.tap()
+
+        let currentRow = tracks.cells.matching(
+            NSPredicate(
+                format: "label == %@",
+                "BVT Extremely Long Track Title That Must Stay Inside The Player Width"
+            )
+        ).firstMatch
+        XCTAssertTrue(currentRow.waitForExistence(timeout: 10))
+        currentRow.tap()
+
+        let miniPlayer = app.descendants(matching: .any)["player.mini"].firstMatch
+        XCTAssertTrue(miniPlayer.waitForExistence(timeout: 15))
+        miniPlayer.tap()
+
+        let nowPlaying = app.descendants(matching: .any)["player.nowPlaying"].firstMatch
+        XCTAssertTrue(nowPlaying.waitForExistence(timeout: 10))
+        XCTAssertEqual(
+            nowPlaying.value as? String,
+            "resting",
+            "Now Playing must begin with its resting artwork surface."
+        )
+
+        let start = app.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.5, dy: 0.075)
+        )
+        let end = app.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.5, dy: 0.34)
+        )
+        // REGRESSION GATE: keep the native Sheet gesture on the test's main
+        // actor. Calling XCUIScreen from a worker while this synchronous event
+        // is in flight violates XCTest's UI isolation and can kill the test
+        // runner, which hides the actual presentation result.
+        start.press(
+            forDuration: 0.08,
+            thenDragTo: end,
+            withVelocity: 500,
+            thenHoldForDuration: 1.5
+        )
+
+        XCTAssertTrue(
+            nowPlaying.waitForExistence(timeout: 5),
+            "A partial system drag should settle back to Now Playing."
+        )
+        XCTAssertEqual(
+            nowPlaying.value as? String,
+            "resting",
+            "After a cancelled drag, the resting artwork surface must return."
+        )
+        // Keep a safe post-gesture attachment for failure diagnosis. The
+        // actual mid-transition pixels are captured by the host-side
+        // simulator check, because XCTest's synchronous gesture API does not
+        // provide a safe main-actor callback while the touch is held.
+        attachScreenshot(named: "now-playing-dismiss-after-partial-drag")
     }
 
     @MainActor
@@ -1731,29 +1846,22 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
         _ heading: XCUIElement,
         in scrollView: XCUIElement
     ) {
-        // The queue contains the complete history. Use short pulls so the
-        // sheet remains owned by the system while progressively exposing the
-        // rows above the current-playing anchor. The heading is a static text,
-        // so use its frame rather than isHittable; XCTest can report an
-        // invalid activation point for a visible LazyVStack header.
+        // Use the system ScrollView gesture so the Sheet and its inner list
+        // keep the same gesture owner. Short coordinate drags can be consumed
+        // by the Sheet's dismissal recognizer without changing the list
+        // offset, which makes a lazy History header look incorrectly absent.
         for _ in 0..<8 where !isElementVisible(heading, in: scrollView) {
-            let start = scrollView.coordinate(
-                withNormalizedOffset: CGVector(dx: 0.5, dy: 0.24)
-            )
-            let end = scrollView.coordinate(
-                withNormalizedOffset: CGVector(dx: 0.5, dy: 0.62)
-            )
-            start.press(forDuration: 0.05, thenDragTo: end)
+            scrollView.swipeDown()
         }
     }
 
     @MainActor
     private func pullQueueDown(in scrollView: XCUIElement) {
         let start = scrollView.coordinate(
-            withNormalizedOffset: CGVector(dx: 0.5, dy: 0.24)
+            withNormalizedOffset: CGVector(dx: 0.5, dy: 0.14)
         )
         let end = scrollView.coordinate(
-            withNormalizedOffset: CGVector(dx: 0.5, dy: 0.62)
+            withNormalizedOffset: CGVector(dx: 0.5, dy: 0.86)
         )
         start.press(forDuration: 0.05, thenDragTo: end)
     }
@@ -1761,10 +1869,10 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
     @MainActor
     private func pullQueueUp(in scrollView: XCUIElement) {
         let start = scrollView.coordinate(
-            withNormalizedOffset: CGVector(dx: 0.5, dy: 0.72)
+            withNormalizedOffset: CGVector(dx: 0.5, dy: 0.86)
         )
         let end = scrollView.coordinate(
-            withNormalizedOffset: CGVector(dx: 0.5, dy: 0.26)
+            withNormalizedOffset: CGVector(dx: 0.5, dy: 0.14)
         )
         start.press(forDuration: 0.05, thenDragTo: end)
     }

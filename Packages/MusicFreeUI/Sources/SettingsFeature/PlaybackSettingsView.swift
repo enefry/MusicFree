@@ -8,10 +8,25 @@ import SwiftUI
 struct PlaybackSettingsView: View {
     @Bindable var viewModel: SettingsViewModel
     let sleepTimerServing: (any SleepTimerServing)?
+    @State private var isRateSliderExpanded = false
 
     var body: some View {
         Section(L("播放偏好")) {
-            rateControl
+            baseRateControl
+            if isRateSliderExpanded {
+                HStack {
+                    Slider(
+                        value: rateBinding,
+                        in: PlaybackRate.minimumValue ... PlaybackRate.maximumValue,
+                        step: 0.25,
+                        onEditingChanged: handleRateEditingChanged
+                    )
+                    .disabled(viewModel.isSaving)
+                    .accessibilityLabel(Text(L("默认播放速度")))
+                    .accessibilityValue(Text(rateText))
+                    .accessibilityIdentifier("settings.playback.rate")
+                }.padding(.leading, MusicFreeSpacingTokens.xLarge)
+            }
             sleepTimerLink
             equalizerLink
 
@@ -34,32 +49,29 @@ struct PlaybackSettingsView: View {
         .accessibilityIdentifier("settings.playback.sleepTimer.entry")
     }
 
-    private var rateControl: some View {
-        VStack(alignment: .leading, spacing: MusicFreeSpacingTokens.small) {
-            HStack {
-                Text(L("默认播放速度"))
-                Spacer(minLength: MusicFreeSpacingTokens.medium)
-                Text(rateText)
-                    .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
-                    .monospacedDigit()
+    private var baseRateControl: some View {
+        HStack {
+            Text(L("默认播放速度"))
+            Spacer(minLength: MusicFreeSpacingTokens.medium)
+            Text(rateText)
+                .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
+                .monospacedDigit()
+            Button {
+                withAnimation {
+                    isRateSliderExpanded.toggle()
+                }
+            } label: {
+                Image(systemName: isRateSliderExpanded ? "chevron.up.circle" : "chevron.down.circle")
+                    .font(MusicFreeTypographyTokens.body)
             }
-
-            Slider(
-                value: rateBinding,
-                in: PlaybackRate.minimumValue ... PlaybackRate.maximumValue,
-                step: 0.25,
-                onEditingChanged: handleRateEditingChanged
-            )
-            .disabled(viewModel.isSaving)
-            .accessibilityLabel(Text(L("默认播放速度")))
-            .accessibilityValue(Text(rateText))
-            .accessibilityIdentifier("settings.playback.rate")
-
-            capabilityNote(
-                isSupported: viewModel.supportsVariableRate,
-                message: L("当前播放引擎未启用变速播放，保存的速度会在支持后生效。")
-            )
+            .foregroundStyle(MusicFreeColorTokens.accent)
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .accessibilityIdentifier("settings.playback.rate.collapse")
         }
+        .accessibilityLabel(Text(L("默认播放速度")))
+        .accessibilityValue(Text(rateText))
+        .accessibilityIdentifier("settings.playback.rate.entry")
+        .transition(.opacity)
     }
 
     private var equalizerLink: some View {
@@ -104,6 +116,4 @@ struct PlaybackSettingsView: View {
                 .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
         }
     }
-
-
 }

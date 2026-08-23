@@ -16,7 +16,6 @@ public struct SettingsScene<AdditionsContent: View>: View {
     @Binding private var appearance: MusicFreeAppearance
     @Binding private var language: MusicFreeLanguage
     @State private var viewModel: SettingsViewModel
-    @State private var storageRefreshToast: StorageRefreshToast?
 
     @MainActor
     init(
@@ -181,24 +180,6 @@ public struct SettingsScene<AdditionsContent: View>: View {
         .task {
             await viewModel.load()
         }
-        .overlay(alignment: .bottom) {
-            if let storageRefreshToast {
-                StorageRefreshToastView(toast: storageRefreshToast)
-                    .padding(.horizontal, MusicFreeSpacingTokens.large)
-                    .padding(.bottom, MusicFreeSpacingTokens.large)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                    .allowsHitTesting(false)
-            }
-        }
-        .animation(.easeInOut(duration: 0.2), value: storageRefreshToast?.id)
-        .task(id: storageRefreshToast?.id) {
-            guard storageRefreshToast != nil else { return }
-            try? await Task.sleep(for: .seconds(2))
-            guard !Task.isCancelled else { return }
-            withAnimation(.easeInOut(duration: 0.2)) {
-                storageRefreshToast = nil
-            }
-        }
     }
 
     private func settingsForm(viewModel: SettingsViewModel) -> some View {
@@ -219,6 +200,14 @@ public struct SettingsScene<AdditionsContent: View>: View {
             }
 
             Section(L("外观")) {
+
+                if !appIconOptions.isEmpty {
+                    AppIconSettingsView(
+                        options: appIconOptions,
+                        provider: appIconProvider
+                    )
+                }
+
                 Picker(L("应用语言"), selection: $language) {
                     ForEach(MusicFreeLanguage.allCases) { option in
                         Text(option.title).tag(option)
@@ -235,13 +224,6 @@ public struct SettingsScene<AdditionsContent: View>: View {
                 }
                 .pickerStyle(.menu)
                 .accessibilityIdentifier("settings.appearance")
-
-                if !appIconOptions.isEmpty {
-                    AppIconSettingsView(
-                        options: appIconOptions,
-                        provider: appIconProvider
-                    )
-                }
             }
 
             PlaybackSettingsView(
@@ -253,37 +235,7 @@ public struct SettingsScene<AdditionsContent: View>: View {
                 metadataServerEnabled: metadataServerEnabled,
                 lyricsEnabled: lyricsEnabled
             )
-            StorageSettingsView(
-                viewModel: viewModel,
-                onRefreshCompleted: { succeeded in
-                    presentStorageRefreshToast(succeeded: succeeded)
-                }
-            )
-
-            Section(L("隐私")) {
-                NavigationLink {
-                    PrivacySettingsView(
-                        viewModel: viewModel,
-                        metadataServerEnabled: metadataServerEnabled,
-                        lyricsEnabled: lyricsEnabled
-                    )
-                } label: {
-                    Label(L("隐私与联网服务"), systemImage: "hand.raised.shield")
-                }
-                .accessibilityIdentifier("settings.privacy")
-            }
-
-#if DEBUG
-            Section(L("调试")) {
-                Button(role: .destructive) {
-                    viewModel.resetAllPrivacy()
-                } label: {
-                    Label(L("重置全部隐私"), systemImage: "arrow.counterclockwise")
-                }
-                .disabled(viewModel.isSaving)
-                .accessibilityIdentifier("settings.debug.resetAllPrivacy")
-            }
-#endif
+            StorageSettingsView(viewModel: viewModel)
 
             Section(L("关于")) {
                 NavigationLink {
@@ -292,6 +244,26 @@ public struct SettingsScene<AdditionsContent: View>: View {
                     Label(L("版本与第三方许可"), systemImage: "info.circle")
                 }
                 .accessibilityIdentifier("settings.about")
+                NavigationLink {
+                    PrivacySettingsView(
+                        viewModel: viewModel,
+                        metadataServerEnabled: metadataServerEnabled,
+                        lyricsEnabled: lyricsEnabled
+                    )
+                } label: {
+                    Label(L("隐私与联网服务"), systemImage: "hand.raised.circle")
+                }
+                .accessibilityIdentifier("settings.privacy")
+
+                #if DEBUG
+                    Button(role: .destructive) {
+                        viewModel.resetAllPrivacy()
+                    } label: {
+                        Label(L("重置全部隐私(DEBUG Only)"), systemImage: "arrow.counterclockwise")
+                    }
+                    .disabled(viewModel.isSaving)
+                    .accessibilityIdentifier("settings.debug.resetAllPrivacy")
+                #endif
 
                 NavigationLink {
                     SettingsDiagnosticsView(
@@ -343,15 +315,6 @@ public struct SettingsScene<AdditionsContent: View>: View {
             return L("将删除已完成处理的隔离副本，并保留 pending 隔离文件；清理后的副本不能恢复。")
         case nil:
             return L("操作只处理应用生成的缓存或已记录的维护事务，不会删除资料库媒体文件。")
-        }
-    }
-
-    @MainActor
-    private func presentStorageRefreshToast(succeeded: Bool) {
-        withAnimation(.easeInOut(duration: 0.2)) {
-            storageRefreshToast = StorageRefreshToast(
-                result: succeeded ? .succeeded : .failed
-            )
         }
     }
 }

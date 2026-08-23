@@ -140,9 +140,6 @@ struct RootScene: View {
         .sheet(item: $router.presented) { presentation in
             presentedView(for: presentation)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            // Scope the player appearance to the system presentation. The
-            // underlying scene keeps its existing appearance after dismissal.
-            .preferredColorScheme(.dark)
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
             // Let the system coordinate the sheet's dismiss gesture with
@@ -150,13 +147,19 @@ struct RootScene: View {
             .presentationContentInteraction(.scrolls)
             .interactiveDismissDisabled(false)
             .presentationCornerRadius(0)
+            // REGRESSION GUARD: the system Sheet surface must be explicitly
+            // clear. The Now Playing content owns its resting surface and
+            // moves with the Sheet; when the user drags it down, the exposed
+            // area must reveal the presenting page in its current appearance.
+            // A default/material presentation surface hides that animation
+            // behind a black or artwork-filled rectangle.
             .presentationBackground {
-                // REGRESSION GUARD: Now Playing intentionally uses a stable
-                // dark surface. Do not reintroduce an artwork backdrop here;
-                // a second background layer can leak through the system-sheet
-                // safe area and make the page change color while switching
-                // between Artwork, Queue, and Lyrics.
-                Color.black.ignoresSafeArea()
+                // The presentation surface must stay transparent across the
+                // safe areas. Now Playing owns its resting artwork surface;
+                // during the native Sheet drag that surface moves with the
+                // Sheet and is clipped at its moving boundary, so the
+                // presenting page remains visible behind the animation.
+                Color.clear.ignoresSafeArea()
             }
         }
     }
@@ -378,10 +381,14 @@ struct RootScene: View {
                         artworkServing: services.artworkServing,
                         library: services.libraryServing,
                         lyricsServing: lyricsEnabled ? services.lyrics : nil,
-                        rendersBackdrop: false
+                        // The artwork backdrop belongs to the moving Now
+                        // Playing content. The Sheet presentation surface
+                        // remains clear so dragging it down exposes the
+                        // presenting page instead of leaving a fixed color.
+                        rendersBackdrop: true
                     )
                 } else {
-                    PlayerScene(serving: PlayerStore(), rendersBackdrop: false)
+                    PlayerScene(serving: PlayerStore(), rendersBackdrop: true)
                 }
             }
             .toolbarBackground(.hidden, for: .navigationBar)

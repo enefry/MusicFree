@@ -74,6 +74,35 @@ struct VLCKitPlaybackAdapterInitialTests {
     )
   }
 
+  @MainActor
+  @Test("Buffering debounce commits once after a sustained request")
+  func bufferingDebounceCommitsOnceAfterDelay() async throws {
+    let debouncer = VLCPlaybackDebouncer(delayNanoseconds: 20_000_000)
+    let probe = DebounceProbe()
+
+    debouncer.schedule { probe.commitCount += 1 }
+    debouncer.schedule { probe.commitCount += 1 }
+
+    #expect(probe.commitCount == 0)
+    try await Task.sleep(for: .milliseconds(80))
+    #expect(probe.commitCount == 1)
+    #expect(!debouncer.isPending)
+  }
+
+  @MainActor
+  @Test("Playing recovery cancels a pending buffering transition")
+  func bufferingDebounceCanBeCancelled() async throws {
+    let debouncer = VLCPlaybackDebouncer(delayNanoseconds: 40_000_000)
+    let probe = DebounceProbe()
+
+    debouncer.schedule { probe.commitCount += 1 }
+    debouncer.cancel()
+
+    try await Task.sleep(for: .milliseconds(80))
+    #expect(probe.commitCount == 0)
+    #expect(!debouncer.isPending)
+  }
+
   @Test("Natural stopping and stopped states have terminal mapping")
   func terminalMapping() {
     let itemID = MediaItemID(sourceID: .local, externalID: "track-1")
@@ -537,6 +566,11 @@ struct VLCKitPlaybackAdapterInitialTests {
     #expect(engine.state.position == range.duration)
     #expect(engine.state.duration == range.duration)
   }
+}
+
+@MainActor
+private final class DebounceProbe {
+  var commitCount = 0
 }
 
 @MainActor

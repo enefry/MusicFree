@@ -211,6 +211,92 @@ func injectedNowPlayingBoundary() {
     #expect(publisher.currentSnapshot == nil)
 }
 
+@Test("Now Playing progress updates retain the current artwork")
+@MainActor
+func nowPlayingProgressUpdatesRetainArtwork() async {
+    let client = RecordingNowPlayingClient()
+    let artworkSource = BlockingNowPlayingArtworkSource()
+    let artworkProvider = NowPlayingArtworkProvider()
+    let publisher = AppleNowPlayingPublisher(
+        client: client,
+        artworkProvider: artworkProvider
+    )
+    let itemID = MediaItemID(sourceID: .local, externalID: "track-artwork-stability")
+    let artworkID = ArtworkID("cover-artwork-stability")
+    let artworkData = Data([0x01, 0x02, 0x03])
+
+    let firstSnapshot = NowPlayingSnapshot(
+        itemID: itemID,
+        title: "Track",
+        duration: .seconds(120),
+        elapsed: .seconds(1),
+        isPlaying: true,
+        rate: 1,
+        artwork: NowPlayingArtworkReference(
+            id: artworkID,
+            provider: artworkSource
+        ),
+        updatedAt: Date(timeIntervalSince1970: 1)
+    )
+    let progressSnapshot = NowPlayingSnapshot(
+        itemID: itemID,
+        title: "Track",
+        duration: .seconds(120),
+        elapsed: .seconds(2),
+        isPlaying: true,
+        rate: 1,
+        artwork: NowPlayingArtworkReference(
+            id: artworkID,
+            provider: artworkSource
+        ),
+        updatedAt: Date(timeIntervalSince1970: 2)
+    )
+
+    publisher.publish(firstSnapshot)
+    for _ in 0..<20 {
+        if await artworkSource.requestCount > 0 {
+            break
+        }
+        await Task.yield()
+    }
+    #expect(await artworkSource.requestCount == 1)
+
+    // A progress tick must not cancel the in-flight request or start a second
+    // request for the same song/artwork identity.
+    publisher.publish(progressSnapshot)
+    #expect(await artworkSource.requestCount == 1)
+    #expect(client.published.last?.artworkData == nil)
+
+    await artworkSource.release(artworkData)
+    for _ in 0..<20 {
+        if client.published.last?.artworkData == artworkData {
+            break
+        }
+        await Task.yield()
+    }
+    #expect(client.published.last?.artworkData == artworkData)
+
+    // Once loaded, later progress publications must carry the same artwork
+    // instead of replacing the system metadata with an artwork-less value.
+    publisher.publish(
+        NowPlayingSnapshot(
+            itemID: itemID,
+            title: "Track",
+            duration: .seconds(120),
+            elapsed: .seconds(3),
+            isPlaying: true,
+            rate: 1,
+            artwork: NowPlayingArtworkReference(
+                id: artworkID,
+                provider: artworkSource
+            ),
+            updatedAt: Date(timeIntervalSince1970: 3)
+        )
+    )
+    #expect(client.published.last?.artworkData == artworkData)
+    #expect(await artworkSource.requestCount == 1)
+}
+
 #if os(iOS) && canImport(MediaPlayer)
 @Test("Now Playing artwork request handler supports a background queue")
 @MainActor
@@ -287,5 +373,22 @@ private final class RecordingNowPlayingClient: AppleNowPlayingInfoClient {
 
     func clear() throws {
         clearCount += 1
+    }
+}
+
+private actor BlockingNowPlayingArtworkSource: NowPlayingArtworkProviding {
+    private var continuation: CheckedContinuation<Data?, Never>?
+    private(set) var requestCount = 0
+
+    func artworkData() async throws -> Data? {
+        requestCount += 1
+        return await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func release(_ data: Data) {
+        continuation?.resume(returning: data)
+        continuation = nil
     }
 }

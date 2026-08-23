@@ -3,11 +3,16 @@ import MusicDomain
 import SafariServices
 import SettingsAPI
 import SwiftUI
+import WebKit
 
 enum PrivacyPolicyURLs {
     static let app = URL(
         string: "https://github.com/enefry/MusicFree/blob/main/Docs/PRIVACY_POLICY_v1.1.0.md"
     )!
+}
+
+enum PrivacyPolicyHTMLResources {
+    static let lrclib = "PRIVACY_POLICY_LRCLIB"
 }
 
 private struct SafariDestination: Identifiable {
@@ -45,6 +50,126 @@ private struct SafariServiceLink: View {
     }
 }
 
+private struct LocalHTMLServiceLink: View {
+    let title: String
+    let resourceName: String
+    @State private var isPresented = false
+
+    var body: some View {
+        Button {
+            isPresented = true
+        } label: {
+            Label(title, systemImage: "doc.text")
+        }
+        .sheet(isPresented: $isPresented) {
+            LocalHTMLPolicySheet(
+                title: title,
+                resourceName: resourceName
+            )
+            .presentationDetents([.large])
+        }
+    }
+}
+
+private struct LocalHTMLPolicySheet: View {
+    let title: String
+    let resourceName: String
+    @State private var externalDestination: SafariDestination?
+
+    var body: some View {
+        NavigationStack {
+            LocalHTMLPolicyView(resourceName: resourceName) { url in
+                externalDestination = SafariDestination(url: url)
+            }
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .sheet(item: $externalDestination) { destination in
+            SafariServiceView(url: destination.url)
+                .ignoresSafeArea()
+                .presentationDetents([.large])
+        }
+    }
+}
+
+private struct LocalHTMLPolicyView: View {
+    let resourceName: String
+    let onOpenExternalURL: (URL) -> Void
+
+    var body: some View {
+        if let url = Bundle.module.url(
+            forResource: resourceName,
+            withExtension: "html"
+        ) {
+            LocalHTMLWebView(
+                url: url,
+                onOpenExternalURL: onOpenExternalURL
+            )
+        } else {
+            ContentUnavailableView(
+                L("无法加载本地隐私说明"),
+                systemImage: "doc.questionmark"
+            )
+        }
+    }
+}
+
+private struct LocalHTMLWebView: UIViewRepresentable {
+    let url: URL
+    let onOpenExternalURL: (URL) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onOpenExternalURL: onOpenExternalURL)
+    }
+
+    func makeUIView(context: Context) -> WKWebView {
+        let webView = WKWebView(frame: .zero)
+        webView.navigationDelegate = context.coordinator
+        webView.isOpaque = false
+        webView.backgroundColor = .clear
+        webView.scrollView.backgroundColor = .clear
+        webView.loadFileURL(
+            url,
+            allowingReadAccessTo: url.deletingLastPathComponent()
+        )
+        return webView
+    }
+
+    func updateUIView(_ webView: WKWebView, context: Context) {}
+
+    @MainActor
+    final class Coordinator: NSObject, WKNavigationDelegate {
+        private let onOpenExternalURL: (URL) -> Void
+
+        init(onOpenExternalURL: @escaping (URL) -> Void) {
+            self.onOpenExternalURL = onOpenExternalURL
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            decidePolicyFor navigationAction: WKNavigationAction,
+            decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
+        ) {
+            guard let url = navigationAction.request.url else {
+                decisionHandler(.allow)
+                return
+            }
+
+            guard !url.isFileURL else {
+                decisionHandler(.allow)
+                return
+            }
+
+            if ["http", "https"].contains(url.scheme?.lowercased()) {
+                onOpenExternalURL(url)
+                decisionHandler(.cancel)
+            } else {
+                decisionHandler(.allow)
+            }
+        }
+    }
+}
+
 struct PrivacyProviderDescriptor: Identifiable, Equatable {
     let id: String
     let title: String
@@ -52,6 +177,25 @@ struct PrivacyProviderDescriptor: Identifiable, Equatable {
     let data: String
     let purpose: String
     let policyURL: URL?
+    let localHTMLResourceName: String?
+
+    init(
+        id: String,
+        title: String,
+        service: String,
+        data: String,
+        purpose: String,
+        policyURL: URL?,
+        localHTMLResourceName: String? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.service = service
+        self.data = data
+        self.purpose = purpose
+        self.policyURL = policyURL
+        self.localHTMLResourceName = localHTMLResourceName
+    }
 }
 
 enum PrivacyProviderCatalog {
@@ -100,7 +244,8 @@ enum PrivacyProviderCatalog {
                 service: "LRCLIB API",
                 data: L("歌曲名称、艺人，以及可选的专辑和时长。"),
                 purpose: L("查询歌词。"),
-                policyURL: URL(string: "https://lrclib.net/privacy")
+                policyURL: nil,
+                localHTMLResourceName: PrivacyPolicyHTMLResources.lrclib
             )
         default:
             return PrivacyProviderDescriptor(
@@ -154,6 +299,7 @@ struct PrivacyDisclosureView: View {
                         providerContent(descriptor)
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
                 .padding(MusicFreeSpacingTokens.large)
             }
             .navigationTitle(L("隐私与联网服务"))
@@ -162,16 +308,23 @@ struct PrivacyDisclosureView: View {
                 HStack(spacing: MusicFreeSpacingTokens.small) {
                     Button(role: .cancel, action: onDecline) {
                         Label(L("不同意"), systemImage: "xmark")
+                            .frame(width: nil, height: 40, alignment: .center)
+                            .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
+                    .controlSize(.regular)
                     .accessibilityIdentifier("settings.privacyDisclosure.decline")
 
                     Button(action: onAccept) {
                         Label(L("同意并继续"), systemImage: "checkmark")
+                            .frame(width: nil, height: 40, alignment: .center)
+                            .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
+                    .controlSize(.regular)
                     .accessibilityIdentifier("settings.privacyDisclosure.accept")
                 }
+                .frame(maxWidth: .infinity)
                 .padding(.horizontal, MusicFreeSpacingTokens.large)
                 .padding(.vertical, MusicFreeSpacingTokens.small)
                 .background(.bar)
@@ -202,6 +355,18 @@ struct PrivacyDisclosureView: View {
     private func providerContent(
         _ descriptor: PrivacyProviderDescriptor
     ) -> some View {
+        PrivacyProviderContentView(descriptor: descriptor)
+            .frame(
+                maxWidth: .infinity,
+                alignment: .topLeading
+            )
+    }
+}
+
+private struct PrivacyProviderContentView: View {
+    let descriptor: PrivacyProviderDescriptor
+
+    var body: some View {
         VStack(alignment: .leading, spacing: MusicFreeSpacingTokens.medium) {
             Text(descriptor.title)
                 .font(MusicFreeTypographyTokens.sectionTitle)
@@ -212,13 +377,27 @@ struct PrivacyDisclosureView: View {
 
             Text(L("关闭 Provider 后不再发送新的请求；已经由第三方服务接收的请求日志由其隐私政策管理。"))
 
-            if let policyURL = descriptor.policyURL {
+            if let localHTMLResourceName = descriptor.localHTMLResourceName {
+                if descriptor.id == LyricsProviderID.lrclib.rawValue {
+                    Text(L("LRCLIB 未提供官方隐私协议；以下是应用提供的 Provider 隐私说明。"))
+                        .font(MusicFreeTypographyTokens.secondary)
+                        .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
+                }
+
+                LocalHTMLServiceLink(
+                    title: descriptor.id == LyricsProviderID.lrclib.rawValue
+                        ? L("查看应用提供的 LRCLIB 隐私说明")
+                        : L("查看服务隐私政策"),
+                    resourceName: localHTMLResourceName
+                )
+            } else if let policyURL = descriptor.policyURL {
                 SafariServiceLink(
                     title: L("查看服务隐私政策"),
                     url: policyURL
                 )
             }
         }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
     private func privacyRow(_ title: String, _ value: String) -> some View {
@@ -233,37 +412,69 @@ struct PrivacyDisclosureView: View {
 
 struct PrivacyProviderDetailsView: View {
     let descriptor: PrivacyProviderDescriptor
+    @Bindable var viewModel: SettingsViewModel
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: MusicFreeSpacingTokens.large) {
-                Text(descriptor.title)
-                    .font(MusicFreeTypographyTokens.sectionTitle)
-
-                detailRow(L("服务"), descriptor.service)
-                detailRow(L("发送信息"), descriptor.data)
-                detailRow(L("用途"), descriptor.purpose)
-
-                if let policyURL = descriptor.policyURL {
-                    SafariServiceLink(
-                        title: L("查看服务隐私政策"),
-                        url: policyURL
-                    )
-                }
+                PrivacyProviderContentView(descriptor: descriptor)
+                providerConsentContent
             }
             .padding(MusicFreeSpacingTokens.large)
         }
         .navigationTitle(L("服务说明"))
         .navigationBarTitleDisplayMode(.inline)
+        .accessibilityIdentifier("settings.privacy.provider.details.\(descriptor.id)")
     }
 
-    private func detailRow(_ title: String, _ value: String) -> some View {
+    private var providerConsentContent: some View {
         VStack(alignment: .leading, spacing: MusicFreeSpacingTokens.xSmall) {
-            Text(title)
-                .font(MusicFreeTypographyTokens.secondary)
-                .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
-            Text(value)
+            Divider()
+
+            Text(L("Provider 隐私协议"))
+                .font(MusicFreeTypographyTokens.sectionTitle)
+
+            if !viewModel.isPrivacyPolicyAccepted {
+                Text(L("请先同意应用隐私政策，才能启用此 Provider。"))
+                    .font(MusicFreeTypographyTokens.secondary)
+                    .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
+            }
+
+            if isProviderPolicyAccepted {
+                Label(L("Provider 隐私协议已同意"), systemImage: "checkmark.shield")
+                    .foregroundStyle(MusicFreeColorTokens.accent)
+
+                Button(role: .destructive) {
+                    viewModel.revokeProviderPrivacy(for: descriptor.id)
+                } label: {
+                    Label(L("撤回"), systemImage: "hand.raised")
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .accessibilityIdentifier(
+                    "settings.privacy.provider.\(descriptor.id).revoke"
+                )
+            } else {
+                Button {
+                    viewModel.acceptProviderPrivacy(for: descriptor.id)
+                } label: {
+                    Label(L("同意"), systemImage: "checkmark")
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .disabled(!viewModel.isPrivacyPolicyAccepted)
+                .accessibilityIdentifier(
+                    "settings.privacy.provider.\(descriptor.id).accept"
+                )
+            }
         }
+    }
+
+    private var isProviderPolicyAccepted: Bool {
+        viewModel.settings.importPreferences.privacyPreferences
+            .isProviderPolicyAccepted(descriptor.id)
     }
 }
 
@@ -308,26 +519,22 @@ struct PrivacySettingsView: View {
 
             Section {
                 ForEach(providerDescriptors) { descriptor in
-                    VStack(alignment: .leading, spacing: MusicFreeSpacingTokens.small) {
-                        NavigationLink {
-                            PrivacyProviderDetailsView(descriptor: descriptor)
-                        } label: {
-                            HStack(spacing: MusicFreeSpacingTokens.small) {
-                                Label(descriptor.title, systemImage: "network")
-                                Spacer(minLength: MusicFreeSpacingTokens.small)
-                                Text(providerConsentStatus(for: descriptor))
-                                    .font(MusicFreeTypographyTokens.caption)
-                                    .foregroundStyle(
-                                        isProviderPolicyAccepted(descriptor)
-                                            ? MusicFreeColorTokens.accent
-                                            : MusicFreeColorTokens.foregroundSecondary
-                                    )
-                            }
-                        }
-
-                        HStack {
+                    NavigationLink {
+                        PrivacyProviderDetailsView(
+                            descriptor: descriptor,
+                            viewModel: viewModel
+                        )
+                    } label: {
+                        HStack(spacing: MusicFreeSpacingTokens.small) {
+                            Label(descriptor.title, systemImage: "network")
                             Spacer(minLength: MusicFreeSpacingTokens.small)
-                            providerConsentButton(for: descriptor)
+                            Text(providerConsentStatus(for: descriptor))
+                                .font(MusicFreeTypographyTokens.caption)
+                                .foregroundStyle(
+                                    isProviderPolicyAccepted(descriptor)
+                                        ? MusicFreeColorTokens.accent
+                                        : MusicFreeColorTokens.foregroundSecondary
+                                )
                         }
                     }
                     .accessibilityIdentifier("settings.privacy.provider.\(descriptor.id)")
@@ -385,31 +592,5 @@ struct PrivacySettingsView: View {
         for descriptor: PrivacyProviderDescriptor
     ) -> String {
         isProviderPolicyAccepted(descriptor) ? L("已确认") : L("未确认")
-    }
-
-    @ViewBuilder
-    private func providerConsentButton(
-        for descriptor: PrivacyProviderDescriptor
-    ) -> some View {
-        if isProviderPolicyAccepted(descriptor) {
-            Button(role: .destructive) {
-                viewModel.revokeProviderPrivacy(for: descriptor.id)
-            } label: {
-                Label(L("撤回"), systemImage: "hand.raised")
-            }
-            .accessibilityIdentifier(
-                "settings.privacy.provider.\(descriptor.id).revoke"
-            )
-        } else {
-            Button {
-                viewModel.acceptProviderPrivacy(for: descriptor.id)
-            } label: {
-                Label(L("同意"), systemImage: "checkmark")
-            }
-            .disabled(!viewModel.isPrivacyPolicyAccepted)
-            .accessibilityIdentifier(
-                "settings.privacy.provider.\(descriptor.id).accept"
-            )
-        }
     }
 }

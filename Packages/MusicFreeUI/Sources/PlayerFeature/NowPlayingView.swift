@@ -6,6 +6,7 @@ import LibraryAPI
 import MusicDomain
 import PlaybackAPI
 import SwiftUI
+import UIKit
 
 enum NowPlayingSurface: Equatable {
     case artwork
@@ -101,6 +102,309 @@ private enum NowPlayingLayoutMetrics {
 
 private let nowPlayingCurrentQueueAnchor = "player.nowPlaying.current.anchor"
 
+// REGRESSION GUARD: SwiftUI layout coordinates do not track the UIKit Sheet's
+// interactive transform. Observe the system presentation lifecycle instead of
+// adding a second drag recognizer or updating state on every frame.
+private struct NowPlayingPresentationTransitionObserver: UIViewControllerRepresentable {
+    let onMovementChanged: @MainActor (Bool) -> Void
+
+    func makeUIViewController(context: Context) -> NowPlayingPresentationObserverViewController {
+        NowPlayingPresentationObserverViewController(
+            onMovementChanged: onMovementChanged
+        )
+    }
+
+    func updateUIViewController(
+        _ uiViewController: NowPlayingPresentationObserverViewController,
+        context: Context
+    ) {
+        uiViewController.onMovementChanged = onMovementChanged
+        uiViewController.connectIfNeeded()
+    }
+}
+
+@MainActor
+private final class NowPlayingPresentationDelegateProxy: NSObject,
+    UIAdaptivePresentationControllerDelegate {
+    weak var downstream: (any UIAdaptivePresentationControllerDelegate)?
+    weak var observer: NowPlayingPresentationObserverViewController?
+
+    func presentationControllerShouldDismiss(
+        _ presentationController: UIPresentationController
+    ) -> Bool {
+        downstream?.presentationControllerShouldDismiss?(presentationController) ?? true
+    }
+
+    func presentationControllerWillDismiss(
+        _ presentationController: UIPresentationController
+    ) {
+        observer?.presentationControllerWillDismiss(presentationController)
+        downstream?.presentationControllerWillDismiss?(presentationController)
+    }
+
+    func presentationControllerDidDismiss(
+        _ presentationController: UIPresentationController
+    ) {
+        observer?.presentationControllerDidDismiss(presentationController)
+        downstream?.presentationControllerDidDismiss?(presentationController)
+    }
+
+    func presentationControllerDidAttemptToDismiss(
+        _ presentationController: UIPresentationController
+    ) {
+        observer?.presentationControllerDidAttemptToDismiss(presentationController)
+        downstream?.presentationControllerDidAttemptToDismiss?(presentationController)
+    }
+
+    func presentationController(
+        _ presentationController: UIPresentationController,
+        willPresentWithAdaptiveStyle adaptiveStyle: UIModalPresentationStyle,
+        transitionCoordinator: (any UIViewControllerTransitionCoordinator)?
+    ) {
+        downstream?.presentationController?(
+            presentationController,
+            willPresentWithAdaptiveStyle: adaptiveStyle,
+            transitionCoordinator: transitionCoordinator
+        )
+    }
+}
+
+@MainActor
+private final class NowPlayingPresentationObserverViewController: UIViewController {
+    var onMovementChanged: (@MainActor (Bool) -> Void)?
+
+    private weak var observedPresentationController: UIPresentationController?
+    private var delegateProxy: NowPlayingPresentationDelegateProxy?
+    private var presentationFrameDisplayLink: CADisplayLink?
+    private weak var clippedPresentedView: UIView?
+    private var originalPresentedViewClipsToBounds: Bool?
+    private var originalPresentedViewBackgroundColor: UIColor?
+    private var originalPresentedViewIsOpaque = false
+    private var hasPresentedViewAppearanceSnapshot = false
+    private var restingPresentedMinY: CGFloat?
+    private var isMoving = false
+
+    init(onMovementChanged: @escaping @MainActor (Bool) -> Void) {
+        self.onMovementChanged = onMovementChanged
+        super.init(nibName: nil, bundle: nil)
+        view.backgroundColor = .clear
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func didMove(toParent parent: UIViewController?) {
+        super.didMove(toParent: parent)
+        if parent == nil {
+            stopPresentationFrameObservation()
+            detach(from: observedPresentationController)
+            return
+        }
+        connectIfNeeded()
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        connectIfNeeded()
+        restingPresentedMinY = currentPresentedMinY
+        startPresentationFrameObservation()
+        setMoving(false)
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        stopPresentationFrameObservation()
+    }
+
+    func connectIfNeeded() {
+        guard let presentationController = presentationControllerInHierarchy else {
+            return
+        }
+
+        if observedPresentationController !== presentationController {
+            detach(from: observedPresentationController)
+            observedPresentationController = presentationController
+        }
+
+        if let delegateProxy {
+            if presentationController.delegate !== delegateProxy {
+                delegateProxy.downstream = presentationController.delegate
+                presentationController.delegate = delegateProxy
+            }
+        } else {
+            let proxy = NowPlayingPresentationDelegateProxy()
+            proxy.downstream = presentationController.delegate
+            proxy.observer = self
+            delegateProxy = proxy
+            presentationController.delegate = proxy
+        }
+
+        enforcePresentedViewClipping()
+    }
+
+    private var presentationControllerInHierarchy: UIPresentationController? {
+        var controller: UIViewController? = self
+        while let current = controller {
+            if let presentationController = current.presentationController {
+                return presentationController
+            }
+            controller = current.parent
+        }
+        return nil
+    }
+
+    private func detach(from presentationController: UIPresentationController?) {
+        restorePresentedViewClipping()
+
+        guard let presentationController,
+              let delegateProxy,
+              presentationController.delegate === delegateProxy else {
+            delegateProxy?.observer = nil
+            delegateProxy = nil
+            return
+        }
+
+        presentationController.delegate = delegateProxy.downstream
+        delegateProxy.observer = nil
+        self.delegateProxy = nil
+    }
+
+    private func enforcePresentedViewClipping() {
+        guard let presentedView = observedPresentationController?.presentedView else {
+            return
+        }
+
+        if clippedPresentedView !== presentedView {
+            restorePresentedViewClipping()
+            clippedPresentedView = presentedView
+            originalPresentedViewClipsToBounds = presentedView.clipsToBounds
+            originalPresentedViewBackgroundColor = presentedView.backgroundColor
+            originalPresentedViewIsOpaque = presentedView.isOpaque
+            hasPresentedViewAppearanceSnapshot = true
+        }
+
+        // REGRESSION GUARD: the artwork backdrop belongs to the moving Sheet
+        // content. The system must clip that content at the moving boundary;
+        // the presentation surface itself must stay transparent so the
+        // presenting page is visible as soon as the Sheet moves away.
+        presentedView.clipsToBounds = true
+        presentedView.backgroundColor = .clear
+        presentedView.isOpaque = false
+    }
+
+    private func restorePresentedViewClipping() {
+        if let clippedPresentedView,
+           let originalPresentedViewClipsToBounds {
+            clippedPresentedView.clipsToBounds = originalPresentedViewClipsToBounds
+        }
+        if hasPresentedViewAppearanceSnapshot,
+           let clippedPresentedView {
+            clippedPresentedView.backgroundColor = originalPresentedViewBackgroundColor
+            clippedPresentedView.isOpaque = originalPresentedViewIsOpaque
+        }
+        clippedPresentedView = nil
+        originalPresentedViewClipsToBounds = nil
+        originalPresentedViewBackgroundColor = nil
+        originalPresentedViewIsOpaque = false
+        hasPresentedViewAppearanceSnapshot = false
+    }
+
+    func presentationControllerWillDismiss(
+        _ presentationController: UIPresentationController
+    ) {
+        setMoving(true)
+
+        // A canceled interactive Sheet transition does not call
+        // presentationControllerDidDismiss. The transition coordinator is the
+        // system callback that distinguishes cancellation from completion.
+        presentationController.presentedViewController.transitionCoordinator?
+            .notifyWhenInteractionChanges { [weak self] context in
+                guard let self else { return }
+                if context.isCancelled {
+                    self.setMoving(false)
+                }
+            }
+    }
+
+    func presentationControllerDidDismiss(
+        _ presentationController: UIPresentationController
+    ) {
+        setMoving(false)
+    }
+
+    func presentationControllerDidAttemptToDismiss(
+        _ presentationController: UIPresentationController
+    ) {
+        setMoving(false)
+    }
+
+    private var currentPresentedMinY: CGFloat? {
+        guard let presentationController = observedPresentationController,
+              let containerView = presentationController.containerView,
+              let presentedView = presentationController.presentedView else {
+            return nil
+        }
+
+        let frame = presentedView.convert(presentedView.bounds, to: containerView)
+        guard frame.minY.isFinite else { return nil }
+        return frame.minY
+    }
+
+    private func startPresentationFrameObservation() {
+        guard presentationFrameDisplayLink == nil else { return }
+
+        // UIKit applies the Sheet's interactive transform outside SwiftUI's
+        // layout tree. CADisplayLink observes that system transform, but the
+        // callback only changes SwiftUI state when the moving/resting edge
+        // changes; it never publishes per-frame layout state.
+        let displayLink = CADisplayLink(
+            target: self,
+            selector: #selector(observePresentationFrame)
+        )
+        displayLink.add(to: .main, forMode: .common)
+        presentationFrameDisplayLink = displayLink
+    }
+
+    private func stopPresentationFrameObservation() {
+        presentationFrameDisplayLink?.invalidate()
+        presentationFrameDisplayLink = nil
+        restingPresentedMinY = nil
+    }
+
+    @objc private func observePresentationFrame() {
+        enforcePresentedViewClipping()
+        guard let minY = currentPresentedMinY else { return }
+
+        if restingPresentedMinY == nil {
+            restingPresentedMinY = minY
+            return
+        }
+
+        guard let restingMinY = restingPresentedMinY else { return }
+
+        // A smaller value is a layout/rotation adjustment while resting. Keep
+        // the baseline current so only a downward native Sheet movement hides
+        // the artwork layer.
+        if minY < restingMinY - 2 {
+            restingPresentedMinY = minY
+            if isMoving {
+                setMoving(false)
+            }
+            return
+        }
+
+        let threshold: CGFloat = isMoving ? 2 : 6
+        setMoving(minY > restingMinY + threshold)
+    }
+
+    private func setMoving(_ moving: Bool) {
+        guard isMoving != moving else { return }
+        isMoving = moving
+        onMovementChanged?(moving)
+    }
+}
+
 enum NowPlayingHeaderMetadata {
     static func title(_ title: String?) -> String? {
         guard let title else { return nil }
@@ -167,9 +471,9 @@ struct NowPlayingView: View {
     @State private var activeHistorySessionID: UUID?
     @State private var historyActionErrorMessage: String?
     @State private var isHistoryClearConfirmationPresented = false
-    @State private var hasAppliedQueueInitialScrollPosition = false
-    @State private var queueScrollGeneration = 0
+    @State private var queueScrollPosition: String?
     @State private var queueHasUserScrolled = false
+    @State private var isPresentationMoving = false
 
     init(
         viewModel: PlayerViewModel,
@@ -182,7 +486,7 @@ struct NowPlayingView: View {
     ) {
         self.viewModel = viewModel
         self.onShowQueue = onShowQueue
-        self._isMoreActionsPresented = isMoreActionsPresented
+        _isMoreActionsPresented = isMoreActionsPresented
         self.artworkServing = artworkServing
         self.library = library
         self.lyricsServing = lyricsServing
@@ -197,13 +501,15 @@ struct NowPlayingView: View {
 
     var body: some View {
         ZStack {
-            // REGRESSION GUARD: the system player sheet owns the stable dark
-            // surface. Keep this view transparent when rendersBackdrop is
-            // false so a presentation transition cannot add a second layer.
+            // REGRESSION GUARD: this surface belongs to the moving Now Playing
+            // content, not to the system Sheet presentation background. Keep
+            // it mounted while the native Sheet moves; the UIKit observer
+            // clips the moving content at the Sheet boundary. Removing this
+            // subtree during an interactive transition causes a visible
+            // blank/black frame and makes the system animation look abrupt.
             if rendersBackdrop {
                 playerBackdrop
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .ignoresSafeArea()
             }
 
             Group {
@@ -224,7 +530,7 @@ struct NowPlayingView: View {
                     }
                 case .playing, .paused, .stopped:
                     playbackContent
-                case .failed(let error):
+                case let .failed(error):
                     ErrorStateView(
                         title: L("播放失败"),
                         message: playerErrorMessage(error),
@@ -241,11 +547,14 @@ struct NowPlayingView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(
-            rendersBackdrop
-                ? Color.black.ignoresSafeArea()
-                : Color.clear.ignoresSafeArea()
-        )
+        .background {
+            NowPlayingPresentationTransitionObserver { moving in
+                guard isPresentationMoving != moving else { return }
+                isPresentationMoving = moving
+            }
+            .frame(width: 1, height: 1)
+            .allowsHitTesting(false)
+        }
         .overlay {
             if isMoreActionsPresented {
                 moreActionsOverlay
@@ -256,10 +565,16 @@ struct NowPlayingView: View {
                 .frame(width: 1, height: 1)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(Text(L("正在播放")))
+                .accessibilityValue(
+                    Text(isPresentationMoving ? "moving" : "resting")
+                )
                 .accessibilityIdentifier("player.nowPlaying")
                 .allowsHitTesting(false)
         }
-        .onAppear { viewModel.start() }
+        .onAppear {
+            isPresentationMoving = false
+            viewModel.start()
+        }
         .onDisappear { viewModel.stop() }
         .task(id: artworkKey) {
             await artworkLoader.load(
@@ -284,14 +599,14 @@ struct NowPlayingView: View {
             favoriteController.load(itemID: viewModel.snapshot.currentItemID)
         }
         .onChange(of: viewModel.snapshot.currentItemID) { _, _ in
-            resetQueueInitialScrollPosition(reanchor: true)
+            reanchorQueuePosition()
         }
         .onChange(of: viewModel.snapshot.queue.currentEntryID) { _, _ in
-            resetQueueInitialScrollPosition(reanchor: true)
+            reanchorQueuePosition()
         }
         .onChange(of: surface) { _, surface in
             if surface == .queue {
-                resetQueueInitialScrollPosition(reanchor: true)
+                reanchorQueuePosition()
             }
         }
         .confirmationDialog(
@@ -575,7 +890,7 @@ struct NowPlayingView: View {
                     image: artworkLoader.image,
                     accessibilityLabel: currentArtworkID == nil ? L("暂无封面") : L("封面"),
                     fillsAvailableWidth: true,
-                    cornerRadius: 0
+                    cornerRadius: 8
                 )
             }
             .frame(width: dimension, height: dimension)
@@ -655,7 +970,7 @@ struct NowPlayingView: View {
                 image: artworkLoader.image,
                 accessibilityLabel: currentArtworkID == nil ? L("暂无封面") : L("封面"),
                 fillsAvailableWidth: true,
-                cornerRadius: 12
+                cornerRadius: 8
             )
             .frame(
                 width: NowPlayingLayoutMetrics.headerArtworkSize,
@@ -677,7 +992,7 @@ struct NowPlayingView: View {
                     Text(artist)
                         .font(.body)
                         .foregroundStyle(playerForegroundSecondary)
-                    .lineLimit(1)
+                        .lineLimit(1)
                 }
             }
             // Keep the title in the remaining width when the system Sheet
@@ -733,56 +1048,65 @@ struct NowPlayingView: View {
     private func queueSurface(contentWidth: CGFloat, surfaceHeight: CGFloat) -> some View {
         let historyItems = displayedHistoryItems
 
-        return ScrollViewReader { proxy in
-            ScrollView(.vertical) {
-                // Keep one system-coordinated scroll container. The lazy stack
-                // is required for large history snapshots; adding a nested
-                // ScrollView or a second drag state machine regresses sheet
-                // dismissal and can make the transition flash or hang.
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    queueHistoryHeader(
-                        contentWidth: contentWidth,
-                        historyCount: historyItems.count
-                    )
-                        .padding(.bottom, 24)
+        return ScrollView(.vertical) {
+            // Keep one system-coordinated scroll container. The lazy stack is
+            // required for large history snapshots; adding a nested ScrollView
+            // or a second drag state machine regresses sheet dismissal and can
+            // make the transition flash or hang.
+            LazyVStack(alignment: .leading, spacing: 0) {
+                queueHistoryHeader(
+                    contentWidth: contentWidth,
+                    historyCount: historyItems.count
+                )
+                .padding(.bottom, 24)
 
-                    if historyLoader.failureMessage != nil {
-                        Button {
-                            Task { await historyLoader.load() }
-                        } label: {
-                            Label(L("载入失败，点击重试"), systemImage: "arrow.clockwise")
-                                .font(.subheadline.weight(.medium))
-                                .foregroundStyle(playerForegroundSecondary)
-                                .frame(
-                                    width: contentWidth,
-                                    height: NowPlayingLayoutMetrics.historyRowHeight,
-                                    alignment: .leading
-                                )
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(historyLoader.state == .loading)
+                if historyLoader.failureMessage != nil {
+                    Button {
+                        Task { await historyLoader.load() }
+                    } label: {
+                        Label(L("载入失败，点击重试"), systemImage: "arrow.clockwise")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(playerForegroundSecondary)
+                            .frame(
+                                width: contentWidth,
+                                height: NowPlayingLayoutMetrics.historyRowHeight,
+                                alignment: .leading
+                            )
                     }
+                    .buttonStyle(.plain)
+                    .disabled(historyLoader.state == .loading)
+                }
 
-                    switch historyLoader.state {
-                    case .idle, .loading:
-                        HStack(spacing: 10) {
-                            ProgressView()
-                                .tint(playerForegroundSecondary)
-                            Text(L("正在载入播放历史"))
-                                .font(.subheadline)
-                                .foregroundStyle(playerForegroundSecondary)
-                        }
+                switch historyLoader.state {
+                case .idle, .loading:
+                    HStack(spacing: 10) {
+                        ProgressView()
+                            .tint(playerForegroundSecondary)
+                        Text(L("正在载入播放历史"))
+                            .font(.subheadline)
+                            .foregroundStyle(playerForegroundSecondary)
+                    }
+                    .frame(
+                        width: contentWidth,
+                        height: NowPlayingLayoutMetrics.historyRowHeight,
+                        alignment: .leading
+                    )
+                case .failed:
+                    if historyLoader.failureMessage == nil {
+                        historyRetryRow
+                    }
+                case .empty:
+                    Text(L("暂无播放历史"))
+                        .font(.subheadline)
+                        .foregroundStyle(playerForegroundSecondary)
                         .frame(
                             width: contentWidth,
                             height: NowPlayingLayoutMetrics.historyRowHeight,
                             alignment: .leading
                         )
-                    case .failed:
-                        if historyLoader.failureMessage == nil {
-                            historyRetryRow
-                        }
-                    case .empty:
-                        Text(L("暂无播放历史"))
+                case .loaded:
+                    if historyItems.isEmpty {
+                        Text(L("当前歌曲尚未形成历史记录"))
                             .font(.subheadline)
                             .foregroundStyle(playerForegroundSecondary)
                             .frame(
@@ -790,75 +1114,70 @@ struct NowPlayingView: View {
                                 height: NowPlayingLayoutMetrics.historyRowHeight,
                                 alignment: .leading
                             )
-                    case .loaded:
-                        if historyItems.isEmpty {
-                            Text(L("当前歌曲尚未形成历史记录"))
-                                .font(.subheadline)
-                                .foregroundStyle(playerForegroundSecondary)
-                                .frame(
-                                    width: contentWidth,
-                                    height: NowPlayingLayoutMetrics.historyRowHeight,
-                                    alignment: .leading
-                                )
-                        } else {
-                            // REGRESSION GUARD: keep history rows as direct
-                            // LazyVStack children. Wrapping this ForEach in a
-                            // composite history view makes large snapshots an
-                            // eager block and causes endpoint scrolling stalls.
-                            ForEach(historyItems) { item in
-                                nowPlayingHistoryRow(
-                                    item,
-                                    contentWidth: contentWidth,
-                                    isNewest: item.id == historyItems.first?.id,
-                                    isOldest: item.id == historyItems.last?.id
-                                )
-                            }
+                    } else {
+                        // REGRESSION GUARD: keep history rows as direct
+                        // LazyVStack children. Wrapping this ForEach in a
+                        // composite history view makes large snapshots an
+                        // eager block and causes endpoint scrolling stalls.
+                        ForEach(historyItems) { item in
+                            nowPlayingHistoryRow(
+                                item,
+                                contentWidth: contentWidth,
+                                isNewest: item.id == historyItems.first?.id,
+                                isOldest: item.id == historyItems.last?.id
+                            )
+                            // Keep the row identity explicit at the same
+                            // level as scrollTargetLayout. Relying only on
+                            // ForEach's implicit identity can leave a far-end
+                            // lazy row out of the accessibility tree after a
+                            // long native scroll on iOS 26.
+                            .id(item.id)
                         }
                     }
-
-                    currentPlayingContent(contentWidth: contentWidth)
-                        .padding(.bottom, 28)
-
-                    queueModeControls(contentWidth: contentWidth)
-                        .padding(.bottom, 28)
-
-                    continuePlayingContent(contentWidth: contentWidth)
-                        .padding(.bottom, 24)
-
-                    queueScrollTailSpacer(
-                        contentWidth: contentWidth,
-                        surfaceHeight: surfaceHeight
-                    )
                 }
-                .frame(width: contentWidth, alignment: .top)
-                .padding(.top, 8)
-                .padding(.bottom, 24)
-                .scrollTargetLayout()
+
+                currentPlayingContent(contentWidth: contentWidth)
+                    .padding(.bottom, 28)
+
+                queueModeControls(contentWidth: contentWidth)
+                    .padding(.bottom, 28)
+
+                continuePlayingContent(contentWidth: contentWidth)
+                    .padding(.bottom, 24)
+
+                queueScrollTailSpacer(
+                    contentWidth: contentWidth,
+                    surfaceHeight: surfaceHeight
+                )
             }
-            .scrollIndicators(.hidden)
-            .scrollBounceBehavior(.basedOnSize)
-            .accessibilityIdentifier("player.nowPlaying.upperScroll")
-            .onAppear {
-                // REGRESSION GUARD: entering the queue is a new navigation
-                // intent. Always place the current row at the viewport top;
-                // history remains immediately above it and is revealed only
-                // when the user pulls the system scroll view downward.
-                resetQueueInitialScrollPosition(reanchor: true)
-                applyInitialQueueScrollPosition(using: proxy)
-            }
-            .onChange(of: historyLoader.state) { _, state in
-                guard state != .loading, !queueHasUserScrolled else { return }
-                resetQueueInitialScrollPosition()
-                applyInitialQueueScrollPosition(using: proxy)
-            }
-            .onChange(of: queueAnchorKey) { _, _ in
-                resetQueueInitialScrollPosition(reanchor: true)
-                applyInitialQueueScrollPosition(using: proxy)
-            }
-            .onScrollPhaseChange { _, phase in
-                if phase == .tracking || phase == .interacting {
-                    queueHasUserScrolled = true
-                }
+            .frame(width: contentWidth, alignment: .top)
+            .padding(.top, 8)
+            .padding(.bottom, 24)
+            .scrollTargetLayout()
+        }
+        .scrollPosition(id: $queueScrollPosition, anchor: .top)
+        .scrollIndicators(.hidden)
+        .scrollBounceBehavior(.basedOnSize)
+        .accessibilityIdentifier("player.nowPlaying.upperScroll")
+        .onAppear {
+            // REGRESSION GUARD: entering the queue is a new navigation intent.
+            // Native scrollPosition keeps the current row at the viewport top;
+            // history remains immediately above it and is revealed only when
+            // the user pulls the system scroll view downward.
+            queueHasUserScrolled = false
+            queueScrollPosition = nowPlayingCurrentQueueAnchor
+        }
+        .onChange(of: historyLoader.state) { _, state in
+            guard state != .loading, !queueHasUserScrolled else { return }
+            queueScrollPosition = nowPlayingCurrentQueueAnchor
+        }
+        .onChange(of: queueAnchorKey) { _, _ in
+            queueHasUserScrolled = false
+            queueScrollPosition = nowPlayingCurrentQueueAnchor
+        }
+        .onScrollPhaseChange { _, phase in
+            if phase == .tracking || phase == .interacting {
+                queueHasUserScrolled = true
             }
         }
         .frame(width: contentWidth, height: surfaceHeight, alignment: .top)
@@ -1002,8 +1321,8 @@ struct NowPlayingView: View {
             boundaryAccessibilityIdentifier: isNewest
                 ? "player.nowPlaying.history.newest"
                 : isOldest
-                    ? "player.nowPlaying.history.oldest"
-                    : nil,
+                ? "player.nowPlaying.history.oldest"
+                : nil,
             onSelect: {
                 guard activeHistoryAction == nil else { return }
                 selectedHistoryItem = item
@@ -1141,9 +1460,9 @@ struct NowPlayingView: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-                Image(systemName: systemImage)
-                    .font(.title3.weight(.semibold))
-                    .frame(width: width, height: 40)
+            Image(systemName: systemImage)
+                .font(.title3.weight(.semibold))
+                .frame(width: width, height: 40)
                 .background(
                     isSelected ? playerSelectedControlFill : playerControlFill,
                     in: Capsule(style: .continuous)
@@ -1302,7 +1621,7 @@ struct NowPlayingView: View {
                     get: { Double(viewModel.displayedVolume) },
                     set: { viewModel.updateVolume(Float($0)) }
                 ),
-                in: 0...1,
+                in: 0 ... 1,
                 accessibilityLabel: L("音量"),
                 accessibilityValue: {
                     "\(Int((viewModel.displayedVolume * 100).rounded()))%"
@@ -1369,7 +1688,7 @@ struct NowPlayingView: View {
                     get: { PlayerFormatting.seconds(viewModel.displayedPosition) },
                     set: { viewModel.updateSeeking(to: .seconds($0)) }
                 ),
-                in: 0...max(PlayerFormatting.seconds(viewModel.duration ?? .zero), 1),
+                in: 0 ... max(PlayerFormatting.seconds(viewModel.duration ?? .zero), 1),
                 accessibilityLabel: L("播放进度"),
                 accessibilityValue: {
                     "\(PlayerFormatting.duration(viewModel.displayedPosition)) / "
@@ -1399,9 +1718,10 @@ struct NowPlayingView: View {
 
                 if viewModel.snapshot.phase == .paused {
                     Label(L("已暂停"), systemImage: "speaker.slash.fill")
-                        .font(.caption.weight(.semibold))
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 7)
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .lineLimit(1)
                         .background(playerControlFill, in: Capsule(style: .continuous))
                 }
 
@@ -1414,6 +1734,7 @@ struct NowPlayingView: View {
                     )
                 )
             }
+            .frame(height: 24)
             .font(.caption.monospacedDigit())
             .foregroundStyle(playerForegroundSecondary)
             .accessibilityHidden(true)
@@ -1479,7 +1800,7 @@ struct NowPlayingView: View {
                     get: { Double(viewModel.displayedVolume) },
                     set: { viewModel.updateVolume(Float($0)) }
                 ),
-                in: 0...1,
+                in: 0 ... 1,
                 accessibilityLabel: L("音量"),
                 accessibilityValue: {
                     "\(Int((viewModel.displayedVolume * 100).rounded()))%"
@@ -1673,7 +1994,7 @@ struct NowPlayingView: View {
         if let duration = currentTrack.duration ?? viewModel.snapshot.duration {
             let components = duration.components
             durationSeconds = Double(components.seconds)
-                + Double(components.attoseconds) / 1_000_000_000_000_000_000
+                + Double(components.attoseconds) / 1000000000000000000
         } else {
             durationSeconds = nil
         }
@@ -1711,39 +2032,9 @@ struct NowPlayingView: View {
         viewModel.snapshot.queue.currentEntryID?.uuidString ?? "none"
     }
 
-    private func resetQueueInitialScrollPosition(reanchor: Bool = false) {
-        hasAppliedQueueInitialScrollPosition = false
-        queueScrollGeneration &+= 1
-        if reanchor {
-            queueHasUserScrolled = false
-        }
-    }
-
-    private func applyInitialQueueScrollPosition(using proxy: ScrollViewProxy) {
-        guard !hasAppliedQueueInitialScrollPosition,
-              !queueHasUserScrolled,
-              viewModel.snapshot.queue.currentEntryID != nil
-        else { return }
-
-        hasAppliedQueueInitialScrollPosition = true
-        let expectedGeneration = queueScrollGeneration
-        proxy.scrollTo(nowPlayingCurrentQueueAnchor, anchor: .top)
-        Task { @MainActor in
-            // LazyVStack may not have materialized the target row during the
-            // first appearance callback. Give layout a few run-loop turns so
-            // the system scroll position is applied to the real row.
-            for delay in [0, 80_000_000, 220_000_000, 600_000_000] {
-                if delay > 0 {
-                    try? await Task.sleep(nanoseconds: UInt64(delay))
-                } else {
-                    await Task.yield()
-                }
-                guard expectedGeneration == queueScrollGeneration,
-                      !Task.isCancelled
-                else { return }
-                proxy.scrollTo(nowPlayingCurrentQueueAnchor, anchor: .top)
-            }
-        }
+    private func reanchorQueuePosition() {
+        queueHasUserScrolled = false
+        queueScrollPosition = nowPlayingCurrentQueueAnchor
     }
 
     private func beginHistoryAction(
@@ -1877,125 +2168,6 @@ struct NowPlayingView: View {
     }
 }
 
-/// Shares one decoded player artwork between the presenting underlay and the
-/// system sheet presentation background. Keeping this state above both view
-/// instances prevents a transition frame from showing different fallbacks.
-@MainActor
-public final class PlayerPresentationBackdropStore: ObservableObject {
-    @Published public private(set) var image: Image?
-
-    private let artworkLoader = ArtworkImageLoader()
-    private var observationTask: Task<Void, Never>?
-    private var artworkTask: Task<Void, Never>?
-    private var artworkKey = ""
-
-    public init() {}
-
-    public func start(
-        playback: any PlaybackServing,
-        artworkServing: any ArtworkServing
-    ) {
-        guard observationTask == nil else { return }
-
-        apply(
-            playback.snapshot,
-            artworkServing: artworkServing
-        )
-        observationTask = Task { [weak self] in
-            for await nextSnapshot in playback.makeSnapshotStream() {
-                guard !Task.isCancelled else { return }
-                self?.apply(nextSnapshot, artworkServing: artworkServing)
-            }
-        }
-    }
-
-    private func apply(
-        _ nextSnapshot: PlaybackSessionSnapshot,
-        artworkServing: any ArtworkServing
-    ) {
-        // REGRESSION GUARD: playback snapshots include progress updates. Do
-        // not publish or retain those high-frequency values in the root view;
-        // doing so rebuilds the TabView bottom accessory while it is settling
-        // and can produce an invalid Mini Player hit frame. Only the artwork
-        // image below is presentation state and may invalidate the UI.
-        let nextArtworkKey = "\(nextSnapshot.currentItemID?.sourceID.rawValue ?? ""):\(nextSnapshot.currentItem?.artworkID?.rawValue ?? "")"
-        guard artworkKey != nextArtworkKey else { return }
-
-        artworkKey = nextArtworkKey
-        artworkTask?.cancel()
-        artworkTask = Task { [weak self] in
-            guard let self else { return }
-            await self.artworkLoader.load(
-                artworkID: nextSnapshot.currentItem?.artworkID,
-                sourceID: nextSnapshot.currentItemID?.sourceID,
-                serving: artworkServing
-            )
-            guard !Task.isCancelled, self.artworkKey == nextArtworkKey else {
-                return
-            }
-            self.image = self.artworkLoader.image
-        }
-    }
-}
-
-/// Paints the player artwork behind the system sheet's safe areas. The
-/// presentation background is separate from NowPlayingView's content bounds,
-/// so it can cover the status-bar region without participating in gestures.
-@MainActor
-public struct PlayerPresentationBackdrop: View {
-    @ObservedObject private var store: PlayerPresentationBackdropStore
-    private let presentationDimCompensation: Double
-
-    public init(
-        store: PlayerPresentationBackdropStore,
-        presentationDimCompensation: Double = 0
-    ) {
-        _store = ObservedObject(wrappedValue: store)
-        self.presentationDimCompensation = presentationDimCompensation
-    }
-
-    public var body: some View {
-        GeometryReader { geometry in
-            ZStack {
-                Color.black
-
-                if let image = store.image {
-                    image
-                        .resizable()
-                        .scaledToFill()
-                        .frame(
-                            width: geometry.size.width,
-                            height: geometry.size.height
-                        )
-                        .blur(radius: 42)
-                        .scaleEffect(1.24)
-                        .opacity(0.92)
-
-                    LinearGradient(
-                        stops: [
-                            .init(color: .black.opacity(0.08), location: 0),
-                            .init(color: .black.opacity(0.08), location: 0.10),
-                            .init(color: .black.opacity(0.20), location: 0.50),
-                            .init(color: .black.opacity(0.46), location: 1)
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                }
-
-                if presentationDimCompensation > 0 {
-                    Color.black.opacity(presentationDimCompensation)
-                }
-            }
-            .frame(width: geometry.size.width, height: geometry.size.height)
-            .clipped()
-        }
-        .ignoresSafeArea()
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
-    }
-}
-
 private struct NowPlayingHistoryRow: View {
     let item: PlaybackHistoryItem
     let artistNames: [ArtistID: String]
@@ -2013,7 +2185,7 @@ private struct NowPlayingHistoryRow: View {
                 - NowPlayingLayoutMetrics.headerContentSpacing
                 - (isPerformingAction
                     ? NowPlayingLayoutMetrics.queueRowActionWidth
-                        + NowPlayingLayoutMetrics.headerContentSpacing
+                    + NowPlayingLayoutMetrics.headerContentSpacing
                     : 0)
         )
 

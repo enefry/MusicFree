@@ -61,6 +61,13 @@ public final class VLCPlaybackEngine: PlaybackEngine, PlaybackAudioControlling {
     private var audioSelectionAppliedGeneration: PlaybackGeneration?
     private var eventContinuation: AsyncStream<PlaybackEvent>.Continuation?
 
+    // REGRESSION GUARD: libVLC may briefly report buffering <-> ready while a
+    // track starts. Delay only the transition into buffering so the Now Playing
+    // loading overlay cannot blink for transient callbacks; recovery remains
+    // immediate. Keep this in the engine so coordinator snapshots cannot bypass
+    // the guard by reading `engine.state` directly after play().
+    private let bufferingDebouncer: VLCPlaybackDebouncer
+
     #if canImport(VLCKit)
         private let library: VLCLibrary
         private var player: VLCMediaPlayer?
@@ -69,6 +76,7 @@ public final class VLCPlaybackEngine: PlaybackEngine, PlaybackAudioControlling {
 
     public init(configuration: VLCKitAdapterConfiguration) throws {
         self.configuration = configuration
+        bufferingDebouncer = VLCPlaybackDebouncer()
         state = .idle
         volume = 1
         isMuted = false
@@ -463,6 +471,11 @@ public final class VLCPlaybackEngine: PlaybackEngine, PlaybackAudioControlling {
             stopWasRequested: stopWasRequested,
             playbackStarted: playbackStarted
         ) {
+            if case let .phaseChanged(generation, itemID, .buffering) = mappedEvent {
+                guard let itemID else { continue }
+                scheduleBufferingTransition(generation: generation, itemID: itemID)
+                continue
+            }
             if case .ended = mappedEvent {
                 // libVLC 4 can report EOF as both Stopping and Stopped. The queue
                 // coordinator must receive one completion for one player generation.
@@ -477,6 +490,9 @@ public final class VLCPlaybackEngine: PlaybackEngine, PlaybackAudioControlling {
         switch event {
         case let .phaseChanged(generation, itemID, phase):
             guard generation == state.generation else { return }
+            if phase != .buffering {
+                bufferingDebouncer.cancel()
+            }
             state = PlaybackState(
                 phase: phase,
                 generation: generation,
@@ -522,6 +538,37 @@ public final class VLCPlaybackEngine: PlaybackEngine, PlaybackAudioControlling {
         }
     }
 
+    private func scheduleBufferingTransition(
+        generation: PlaybackGeneration,
+        itemID: MediaItemID
+    ) {
+        guard generation == state.generation,
+              let currentItemID = state.itemID,
+              currentItemID == itemID,
+              state.phase == .preparing || state.phase == .playing
+        else {
+            return
+        }
+
+        bufferingDebouncer.schedule { [weak self] in
+            guard let self,
+                  self.state.generation == generation,
+                  let currentItemID = self.state.itemID,
+                  currentItemID == itemID,
+                  self.state.phase == .preparing || self.state.phase == .playing
+            else {
+                return
+            }
+            self.apply(
+                .phaseChanged(
+                    generation: generation,
+                    itemID: itemID,
+                    phase: .buffering
+                )
+            )
+        }
+    }
+
     private func fail(
         _ error: PlaybackError,
         generation: PlaybackGeneration,
@@ -553,6 +600,7 @@ public final class VLCPlaybackEngine: PlaybackEngine, PlaybackAudioControlling {
     }
 
     private func teardownPlayer() {
+        bufferingDebouncer.cancel()
         #if canImport(VLCKit)
             player?.delegate = nil
             player?.stop()

@@ -64,6 +64,9 @@ let package = Package(
                 .product(name: "PlaybackAPI", package: "MusicFreeCore"),
                 .product(name: "SystemIntegrationAPI", package: "MusicFreeCore"),
                 .product(name: "AppServices", package: "MusicFreeCore")
+            ],
+            resources: [
+                .process("Resources")
             ]
         ),
         .testTarget(

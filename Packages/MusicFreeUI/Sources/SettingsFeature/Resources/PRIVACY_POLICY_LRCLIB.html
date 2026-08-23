@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <title>MyMusic: Local Player — LRCLIB Provider Privacy Disclosure v1.0.0</title>
+    <style>
+        :root {
+            color-scheme: light dark;
+            --background: #f2f2f7;
+            --card: #ffffff;
+            --text: #1c1c1e;
+            --secondary: #636366;
+            --separator: #d1d1d6;
+            --link: #007aff;
+            --notice: #fff7d6;
+            --notice-border: #f0c36b;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --background: #000000;
+                --card: #1c1c1e;
+                --text: #f2f2f7;
+                --secondary: #98989d;
+                --separator: #38383a;
+                --link: #0a84ff;
+                --notice: #332b16;
+                --notice-border: #8f6d2c;
+            }
+        }
+
+        html {
+            background: var(--background);
+        }
+
+        body {
+            margin: 0;
+            padding: 20px 16px 36px;
+            background: var(--background);
+            color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+            font-size: 16px;
+            line-height: 1.55;
+            -webkit-text-size-adjust: 100%;
+        }
+
+        main {
+            max-width: 760px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            margin: 0 0 8px;
+            font-size: 26px;
+            line-height: 1.2;
+            letter-spacing: -0.3px;
+        }
+
+        h2 {
+            margin: 28px 0 8px;
+            padding-top: 18px;
+            border-top: 1px solid var(--separator);
+            font-size: 20px;
+            line-height: 1.25;
+        }
+
+        p {
+            margin: 10px 0;
+        }
+
+        .effective {
+            margin-top: 0;
+            color: var(--secondary);
+            font-size: 14px;
+        }
+
+        .notice {
+            margin: 20px 0;
+            padding: 14px 16px;
+            border: 1px solid var(--notice-border);
+            border-radius: 12px;
+            background: var(--notice);
+        }
+
+        ul {
+            margin: 8px 0 12px;
+            padding-left: 24px;
+        }
+
+        li {
+            margin: 5px 0;
+        }
+
+        a {
+            color: var(--link);
+            text-decoration: none;
+        }
+
+        a:active {
+            opacity: 0.65;
+        }
+
+        code {
+            padding: 2px 5px;
+            border-radius: 5px;
+            background: color-mix(in srgb, var(--separator) 45%, transparent);
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+<main>
+    <h1>MyMusic: Local Player — LRCLIB Provider Privacy Disclosure v1.0.0</h1>
+    <p class="effective"><strong>Effective date:</strong> August 22, 2026</p>
+
+    <div class="notice">
+        <strong>Important notice</strong>
+        <p>
+            This document is an application-provided privacy disclosure for MyMusic: Local Player's optional use of the LRCLIB lyrics service. It is not a privacy policy issued by LRCLIB, does not represent LRCLIB, and cannot change how the LRCLIB service operates.
+        </p>
+        <p>
+            The app provides this disclosure because it does not have an official LRCLIB privacy-policy text to link to. The service may publish or change its own terms independently; users should review the latest information on the <a href="https://lrclib.net/">LRCLIB website</a> and its <a href="https://lrclib.net/docs/">API documentation</a> where available.
+        </p>
+    </div>
+
+    <h2>Service and purpose</h2>
+    <p>
+        LRCLIB is an optional lyrics Provider. When it is enabled and the app needs lyrics for a song, the app sends a lookup request to the LRCLIB API endpoint configured for the app build. The purpose is to find plain or synchronized lyrics for that song.
+    </p>
+    <p>
+        LRCLIB is disabled by default. The app requires acceptance of the application privacy policy and this Provider disclosure before enabling the Provider.
+    </p>
+
+    <h2>Information sent by the app</h2>
+    <p>Depending on the metadata available for the local song, the lookup request may include:</p>
+    <ul>
+        <li><code>track_name</code>: the song title;</li>
+        <li><code>artist_name</code>: the artist name;</li>
+        <li><code>album_name</code>: the album name, when available;</li>
+        <li><code>duration</code>: the duration in seconds, when available.</li>
+    </ul>
+    <p>
+        The app also sends the normal HTTP headers needed for the request, including <code>Accept: application/json</code> and the app User-Agent <code>MusicFree/1.0</code>.
+    </p>
+    <p>
+        The app does not intentionally send audio bytes, complete local file paths, the full music library, local account credentials, contacts, advertising identifiers, or an LRCLIB login credential. The app does not require an LRCLIB account or access token for this Provider.
+    </p>
+
+    <h2>Server and network information</h2>
+    <p>
+        The LRCLIB endpoint and ordinary network infrastructure can receive the request IP address, request time, User-Agent, connection metadata, and the query values listed above. The endpoint operator may log request URLs, which can contain song title, artist, album, and duration. The app does not control the operator's logs, retention period, security practices, or disclosure practices.
+    </p>
+    <p>
+        The app does not send these requests to the app developer's analytics or advertising systems. Failed, rate-limited, or otherwise unsuccessful requests may be represented in the app's local diagnostic log with their request URL and HTTP status; those local logs leave the device only if the user exports or shares them.
+    </p>
+
+    <h2>Local results and caching</h2>
+    <p>
+        Lyrics returned by LRCLIB may be saved in the app's local library so later playback can use the local result without repeating the online lookup. The app does not intentionally upload the saved lyrics or the local library to the app developer.
+    </p>
+
+    <h2>Consent and controls</h2>
+    <p>
+        The user can enable or disable LRCLIB in Settings. Disabling the Provider stops new LRCLIB requests from the app. It cannot delete request logs that the endpoint operator already received. Disabling the Provider also does not automatically delete lyrics already saved locally; those remain subject to the app's normal local-library deletion and storage controls.
+    </p>
+    <p>
+        The user can withdraw Provider consent at any time from the LRCLIB Provider detail page. Withdrawal also disables the Provider. The local player and locally stored media remain usable without accepting this disclosure or enabling LRCLIB.
+    </p>
+
+    <h2>Changes</h2>
+    <p>
+        If the app changes the information sent to LRCLIB or the purpose of the integration, this disclosure will be updated before the changed behavior is released. The version and effective date above will also be updated, and the app may request consent again.
+    </p>
+
+    <h2>Contact</h2>
+    <p>
+        For questions about how MyMusic: Local Player integrates LRCLIB, open an issue in the public <a href="https://github.com/enefry/MusicFree/issues">MusicFree GitHub Issues</a>. Please do not include passwords, private keys, or other sensitive personal information in a public issue.
+    </p>
+</main>
+</body>
+</html>

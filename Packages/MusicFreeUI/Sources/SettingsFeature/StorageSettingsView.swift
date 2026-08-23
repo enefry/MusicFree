@@ -42,14 +42,9 @@ enum CacheLimitSliderScale {
 
 struct StorageSettingsView: View {
     @Bindable var viewModel: SettingsViewModel
-    private let onRefreshCompleted: @MainActor (Bool) -> Void
 
-    init(
-        viewModel: SettingsViewModel,
-        onRefreshCompleted: @escaping @MainActor (Bool) -> Void = { _ in }
-    ) {
+    init(viewModel: SettingsViewModel) {
         _viewModel = Bindable(viewModel)
-        self.onRefreshCompleted = onRefreshCompleted
     }
 
     var body: some View {
@@ -73,28 +68,6 @@ struct StorageSettingsView: View {
                     .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
             }
 
-            Button {
-                Task { @MainActor in
-                    let succeeded = await viewModel.refreshStorageUsage()
-                    guard !Task.isCancelled else { return }
-                    onRefreshCompleted(succeeded)
-                }
-            } label: {
-                HStack {
-                    Label(L("刷新存储状态"), systemImage: "arrow.clockwise")
-                    Spacer()
-                    ProgressView()
-                        .controlSize(.small)
-                        .frame(width: 20, height: 20)
-                        .opacity(viewModel.isRefreshingStorage ? 1 : 0)
-                        .accessibilityHidden(!viewModel.isRefreshingStorage)
-                }
-            }
-            .accessibilityIdentifier("settings.storage.refresh")
-            // A refresh already in flight is coalesced by the view model, so
-            // keep this action reachable while the initial usage query runs.
-            .disabled(viewModel.isMaintainingStorage)
-
             NavigationLink {
                 StorageMaintenanceView(viewModel: viewModel)
             } label: {
@@ -107,7 +80,17 @@ struct StorageSettingsView: View {
             }
             .accessibilityIdentifier("settings.storage.maintenance")
         }
+    }
 
+    private func byteText(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+}
+
+private struct StoragePolicySection: View {
+    @Bindable var viewModel: SettingsViewModel
+
+    var body: some View {
         Section(L("存储策略")) {
             Toggle(L("自动整理缓存"), isOn: automaticPruningBinding)
                 .toggleStyle(MusicFreeSwitchToggleStyle())
@@ -198,69 +181,6 @@ struct StorageSettingsView: View {
             viewModel.endCacheLimitEditing()
         }
     }
-
-    private func byteText(_ bytes: Int64) -> String {
-        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
-    }
-}
-
-enum StorageRefreshResult: Equatable {
-    case succeeded
-    case failed
-}
-
-struct StorageRefreshToast: Identifiable, Equatable {
-    let id: UUID
-    let result: StorageRefreshResult
-
-    init(result: StorageRefreshResult) {
-        id = UUID()
-        self.result = result
-    }
-}
-
-struct StorageRefreshToastView: View {
-    let toast: StorageRefreshToast
-
-    var body: some View {
-        Label(message, systemImage: systemImage)
-            .font(.subheadline.weight(.medium))
-            .foregroundStyle(.white)
-            .multilineTextAlignment(.center)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, MusicFreeSpacingTokens.large)
-            .padding(.vertical, MusicFreeSpacingTokens.small)
-            .background(tint, in: Capsule(style: .continuous))
-            .shadow(color: .black.opacity(0.16), radius: 8, y: 3)
-            .accessibilityIdentifier("settings.storage.refresh.toast")
-    }
-
-    private var message: String {
-        switch toast.result {
-        case .succeeded:
-            return L("存储状态已更新")
-        case .failed:
-            return L("存储状态刷新失败，请稍后重试。")
-        }
-    }
-
-    private var systemImage: String {
-        switch toast.result {
-        case .succeeded:
-            return "checkmark.circle.fill"
-        case .failed:
-            return "exclamationmark.circle.fill"
-        }
-    }
-
-    private var tint: Color {
-        switch toast.result {
-        case .succeeded:
-            return MusicFreeColorTokens.positive
-        case .failed:
-            return MusicFreeColorTokens.destructive
-        }
-    }
 }
 
 struct StorageMaintenanceView: View {
@@ -268,6 +188,8 @@ struct StorageMaintenanceView: View {
 
     var body: some View {
         Form {
+            StoragePolicySection(viewModel: viewModel)
+
             Section(L("操作前请确认")) {
                 Label(
                     L("这些操作只处理应用生成的暂存、隔离文件和已记录的维护事务。"),
