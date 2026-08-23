@@ -48,5 +48,6 @@ separate release gates.
 
 The module interface baseline is defined in
 [`Docs/Architecture/MODULE_INTERFACES.md`](Docs/Architecture/MODULE_INTERFACES.md),
-and manual acceptance is defined in
-[`Docs/MANUAL_TEST_CASES.md`](Docs/MANUAL_TEST_CASES.md).
+and the documentation index is in [`Docs/README.md`](Docs/README.md). Manual
+acceptance is defined in
+[`Docs/Testing/MANUAL_TEST_CASES.md`](Docs/Testing/MANUAL_TEST_CASES.md).

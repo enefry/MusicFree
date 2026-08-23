@@ -53,7 +53,7 @@ The relevant third-party privacy policies are available from the in-app Provider
 - [Apple Privacy](https://www.apple.com/legal/privacy/)
 - [MetaBrainz Privacy](https://metabrainz.org/privacy) for MusicBrainz and Cover Art Archive
 - [Discogs Privacy Policy](https://support.discogs.com/hc/en-us/articles/360007522313-Privacy-Policy)
-- [LRCLIB Privacy](https://lrclib.net/privacy)
+- [LRCLIB Provider privacy disclosure (provided by this app)](PRIVACY_POLICY_LRCLIB.md) — LRCLIB does not issue this document
 - [Metadata Server Privacy](https://music.tools4me.win/privacy) for the app-configured Metadata Server deployment
 
 Third-party dependency and license notices are included in the app and in the source distribution under [`ThirdPartyNotices/`](../ThirdPartyNotices/).

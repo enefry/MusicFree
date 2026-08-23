@@ -5,19 +5,15 @@ Packages/*/.swiftpm/
 *.xcuserstate
 xcuserdata/
 
-# Keep local plans and generated validation notes out of the public checkout.
+# Keep project documentation visible; generated artifacts remain ignored below.
 *.md
 !README.md
 !Docs/
-!Docs/Architecture/
-!Docs/Architecture/MODULE_INTERFACES.md
-!Docs/MANUAL_TEST_CASES.md
-!Docs/LOCAL_PLAYER_FEATURE_REVIEW.md
-!Docs/VLCKIT_CAPABILITY_MATRIX.md
-!Docs/VLCKIT_FORMAT_MATRIX.md
-!Docs/APP_STORE_SUBMISSION.md
+!Docs/*.md
+!Docs/**/*.md
 !Docs/PRIVACY_POLICY.md
 !Docs/PRIVACY_POLICY_v1.1.0.md
+!Docs/PRIVACY_POLICY_LRCLIB.md
 !ThirdPartyNotices/
 !ThirdPartyNotices/*.md
 
@@ -51,4 +47,3 @@ Docs/UIReview-*/flow-*.png
 dist
 Design/AppStore
 Design/screenshot
-APP_STORE_SUBMISSION.md

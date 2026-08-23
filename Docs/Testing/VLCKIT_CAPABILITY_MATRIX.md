@@ -1,6 +1,6 @@
 # VLCKit capability matrix
 
-Last reviewed: 2026-08-15 (P1 metadata/lyrics alignment; physical-device rows remain unverified)
+Review snapshot: 2026-08-15 (P1 metadata/lyrics alignment; refresh before release; physical-device rows remain unverified)
 
 This matrix records what the current source and test evidence justify for the
 fixed source-control `VLCKit-SPM` release `4.0.0-audio.20260814.3` (revision

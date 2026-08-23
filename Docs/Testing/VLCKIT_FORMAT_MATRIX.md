@@ -1,6 +1,6 @@
 # VLCKit format matrix
 
-Last reviewed: 2026-08-10 (code alignment; no physical-device fixture run)
+Review snapshot: 2026-08-10 (code alignment; refresh before release; no physical-device fixture run)
 
 The app deliberately does not maintain a filename-extension allowlist. The
 fixed VLC binary parses the resource, and `VLCMediaProbe` accepts it only when
