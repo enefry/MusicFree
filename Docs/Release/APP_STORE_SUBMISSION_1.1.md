@@ -295,4 +295,4 @@ CFBundleDisplayName        = MyMusic
 - [Apple App Store Connect manage app privacy](https://developer.apple.com/help/app-store-connect/manage-app-information/manage-app-privacy)
 - [Apple App Store Connect screenshot specifications](https://developer.apple.com/help/app-store-connect/reference/app-information/screenshot-specifications/)
 - [Apple App Store Connect overview of export compliance](https://developer.apple.com/help/app-store-connect/manage-app-information/overview-of-export-compliance)
-- [Apple App Store Connect choose a build to submit](https://developer.apple.com/help/app-store-connect/manage-builds/choose-build-to-submit)
+- [Apple App Store Connect choose a build to submit](https://developer.apple.com/help/app-store-connect/manage-builds/choose-a-build-to-submit)

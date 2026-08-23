@@ -20,7 +20,7 @@
 | 问题 | [`Issues/`](Issues/ISSUES_AND_FIXES.md) | 问题、修复、验证边界和历史 Review |
 | 功能 | [`Features/`](Features/NOW_PLAYING_QUEUE_HISTORY.md) | 已落地功能的交互约定和回归约束 |
 | 测试 | [`Testing/`](Testing/README.md) | 手工用例、能力矩阵和格式验证矩阵 |
-| 发布 | [`Release/`](Release/APP_STORE_SUBMISSION.md) | App Store 材料与发布检查清单 |
+| 发布 | [`Release/APP_STORE_SUBMISSION_1.1.md`](Release/APP_STORE_SUBMISSION_1.1.md) | 1.1.x App Store 材料、商店文案与发布检查清单 |
 | 集成 | [`Integrations/`](Integrations/music-metadata-server-api/API.md) | Metadata Server 等外部服务的接口约定 |
 
 ## 当前保留的根级文档
