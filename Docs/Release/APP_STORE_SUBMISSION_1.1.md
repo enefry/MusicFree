@@ -2,9 +2,9 @@
 
 > 生成日期：2026-08-23
 >
-> 目标版本：`1.1.10`
+> 目标版本：`1.1.100`
 >
-> 当前源码构建配置：`1.1.10 (2026082207)`
+> 当前源码构建配置：`1.1.100 (2026082301)`
 >
 > 当前状态：资料已生成，但尚未达到可提交状态。最终 Archive、签名 entitlement、真机验收和 App Store Connect questionnaire 必须完成后才能提交。
 
@@ -14,10 +14,10 @@
 
 | 项目 | 当前证据 | 结论 |
 | --- | --- | --- |
-| 源码版本 | `basic_config.xcconfig`：`APP_VERSION = 1.1.10` | 目标版本为 1.1.10 |
-| 源码构建号 | `BUILD_VERSION = 2026082207` | 仅是当前配置，尚未证明已有对应 Archive/IPA |
-| 最近归档 | `1.1.6 (2026082203)` | 旧包，不得用于 1.1.10 提审 |
-| 最近 IPA | `1.1.9 (2026082206)` | 旧包，不得用于 1.1.10 提审 |
+| 源码版本 | `basic_config.xcconfig`：`APP_VERSION = 1.1.100` | 目标版本为 1.1.100 |
+| 源码构建号 | `BUILD_VERSION = 2026082301` | 仅是当前配置，尚未证明已有对应 Archive/IPA |
+| 最近归档 | `1.1.6 (2026082203)` | 旧包，不得用于当前 1.1.100 提审 |
+| 最近 IPA | `1.1.9 (2026082206)` | 旧包，不得用于当前 1.1.100 提审 |
 | MusicKit entitlement | 当前 `App/MusicFree.entitlements` 为空 | 必须在最终签名包中确认 capability/profile 后才能宣称 1.1 MusicKit 可用 |
 | Metadata Server | 当前配置为 `METADATA_SERVER_DISABLED` | 提审说明不得把 Metadata Server 写成已启用服务 |
 | 隐私政策 | `Docs/PRIVACY_POLICY_v1.1.0.md`，App 内 URL 已指向该版本 | 发布前确认公网 URL 无需登录即可访问 |
@@ -25,7 +25,7 @@
 
 ### 0.1 硬门禁
 
-- [ ] 用当前源码生成 `1.1.10 (2026082207)` 的 signed Release Archive 和 IPA。
+- [ ] 用当前源码生成 `1.1.100 (2026082301)` 的 signed Release Archive 和 IPA。
 - [ ] 检查 Archive 的 `CFBundleShortVersionString`、`CFBundleVersion`、Bundle ID 和签名 entitlement。
 - [ ] 如果本版本要宣称 MusicKit 元数据补充，最终包必须包含已批准的 MusicKit capability/profile，并完成真机授权、catalog 搜索和封面下载验证。
 - [ ] 若 MusicKit entitlement 尚未准备好，不能提交包含该功能承诺的 1.1 版本；应先修复签名配置或收窄版本范围。
@@ -43,8 +43,8 @@
 | Bundle ID | `win.tools4me.music` | 来自 `project.yml` |
 | Primary Category | `Music` | `public.app-category.music` |
 | Secondary Category | 留空，除非发布人确认 | 不从源码推断 |
-| Version | `1.1.10` | 来自当前 `APP_VERSION` |
-| Build | `2026082207` | 目标构建号；最终 Archive 后重新核对 |
+| Version | `1.1.100` | 来自当前 `APP_VERSION` |
+| Build | `2026082301` | 目标构建号；最终 Archive 后重新核对 |
 | Minimum OS | `iOS/iPadOS 26.0+` | 来自工程 deployment target |
 | Supported Devices | `iPhone and iPad` | `TARGETED_DEVICE_FAMILY = 1,2`；无 Apple Watch target |
 | Price / Availability | 待发布人填写 | 不由源码决定 |
@@ -115,7 +115,7 @@ Version 1.1 adds optional metadata and artwork enrichment for your local library
 MusicKit is used for catalog metadata and artwork only; it does not provide lyric text in this release.
 ```
 
-如果最终签名包没有 MusicKit entitlement，提交前必须删除最后一段的 MusicKit 宣称，并同步调整 1.1 版本范围；推荐先完成 entitlement 和真机门禁再使用这版文案。
+如果最终签名包没有 MusicKit entitlement，提交前必须删除最后一段的 MusicKit 宣称，并同步调整 1.1.100 版本范围；推荐先完成 entitlement 和真机门禁再使用这版文案。
 
 ## 3. App Review Information
 
@@ -213,12 +213,12 @@ Apple 要求 App Store Connect 的隐私回答覆盖 App 自身和集成的第�
 
 | 目标 | 资产位置 | 当前数量 | 提交前动作 |
 | --- | --- | ---: | --- |
-| iPhone 6.5-inch | [`../../Design/AppStore/iPhone-6.5-inch/`](../../Design/AppStore/iPhone-6.5-inch/) | 7 张 PNG | 用最终 1.1.10 Release 包重新确认 |
+| iPhone 6.5-inch | [`../../Design/AppStore/iPhone-6.5-inch/`](../../Design/AppStore/iPhone-6.5-inch/) | 8 张 PNG | 用最终 1.1.100 Release 包重新确认 |
 | iPad 12.9-inch | [`../../Design/AppStore/iPad-12.9-inch/`](../../Design/AppStore/iPad-12.9-inch/) | 5 张 PNG | 用最终 Release 包重新确认 |
-| iPhone App Preview | [`../../Design/AppStore/AppPreviews/`](../../Design/AppStore/AppPreviews/) | 3 个 MP4 | 确认内容与 1.1.10 功能一致 |
+| iPhone App Preview | [`../../Design/AppStore/AppPreviews/`](../../Design/AppStore/AppPreviews/) | 3 个 MP4 | 确认内容与 1.1.100 功能一致 |
 | 6.9-inch historical | [`../../Design/AppStore/6.9-inch/`](../../Design/AppStore/6.9-inch/) | 4 张 PNG | 仅作历史参考，不作为当前集 |
 
-当前素材包含 1.0/本地播放器场景，未证明已经覆盖 1.1 Provider 同意、扫描进度和元数据补充结果。若商店要突出 1.1 功能，应新增至少一张不含真实个人资料的 Provider 设置/扫描完成场景截图，并用最终 Release build 重新生成。
+当前素材包含本地播放器场景和一张 1.1 Provider 列表场景；仍未证明已经覆盖 Provider 同意、扫描进度和元数据补充结果。若商店要突出扫描能力，应再新增不含真实个人资料的扫描完成场景截图，并用最终 `1.1.100` Release build 重新生成。
 
 ### 5.2 截图门禁
 
@@ -250,8 +250,8 @@ PUBLISH_TF_NO_UPLOAD=1 ./publish_tf.sh
 上传前必须从新生成的 Archive/IPA 中读取并记录：
 
 ```text
-CFBundleShortVersionString = 1.1.10
-CFBundleVersion            = 2026082207 或归档脚本生成的新 build number
+CFBundleShortVersionString = 1.1.100
+CFBundleVersion            = 2026082301 或归档脚本生成的新 build number
 CFBundleIdentifier         = win.tools4me.music
 CFBundleDisplayName        = MyMusic
 ```

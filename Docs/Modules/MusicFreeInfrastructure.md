@@ -4,6 +4,8 @@
 
 `MusicFreeInfrastructure` 把 Core 的协议接到本地文件、SwiftData、UserDefaults 和 Apple 系统服务。它可以依赖 Core，但不应把实现细节反向带入 Core 或 UI。
 
+当前构建配置中 Metadata Server 通过 `METADATA_SERVER_DISABLED` 关闭；MusicKit、MusicBrainz、Discogs 和 LRCLIB 的源码适配器仍由 App 组装，但是否请求取决于 Provider 设置、隐私同意和运行时能力。
+
 ## Targets
 
 | Target | 功能 |

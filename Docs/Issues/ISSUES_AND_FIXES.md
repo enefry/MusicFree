@@ -29,6 +29,10 @@
 
 ## 3. 当前开放门槛
 
+- 当前源码配置已经切换到 `1.1.100 (2026082301)`；此前提审草稿中的 `1.1.1`、`1.1.10 / 2026082207` 不再是当前构建身份。
+- `METADATA_SERVER_FEATURE_FLAG = METADATA_SERVER_DISABLED`，当前包不得把 Metadata Server 宣称为可用线上能力。
+- `App/MusicFree.entitlements` 尚无 MusicKit capability；MusicKit 相关代码和 UI 不能替代签名包、授权和真实 catalog 验收。
+- `Scripts/check_architecture.sh` 在包含 `thirdpart/` vendored/reference 源码的 checkout 中会扫描到外部代码的 VLCKit/MediaPlayer import；应先区分扫描范围问题，不能直接把它当成 MusicFree App 架构违规。
 - 真实设备上的 AirPlay、蓝牙、后台播放、输出切换、中断恢复和长时间播放。
 - 固定 VLCKit 二进制的真实媒体格式矩阵；Simulator 或探针通过不能替代真机播放。
 - MusicKit entitlement/profile、授权、地区/订阅可用性、catalog 搜索和远程封面下载。

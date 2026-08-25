@@ -1,0 +1,8 @@
+
+[agent.env]
+# 强制智能体在通过 CLI 运行或生成编译脚本时，必须带上固定的本地缓存路径
+XCODEBUILD_CUSTOM_FLAGS = "-derivedDataPath ./.noindex/DerivedData"
+
+[agent.tool_restrictions]
+# 限制智能体只能在指定的低影响或带清理的模式下执行构建
+preferred_cache_path = "./.noindex/DerivedData"

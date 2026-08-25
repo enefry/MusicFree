@@ -18,7 +18,10 @@ MusicFree/
 ├── AppUITests/                       # 真实 App 入口 UI/BVT 测试
 ├── Scripts/                          # 架构检查、BVT 和归档版本脚本
 ├── Docs/                             # 工程、产品、问题、测试和发布文档
-├── ThirdPartyNotices/                # 第三方许可证和归属材料
+├── Design/                           # 图标、App Store 素材和参考设计
+├── ThirdPartyNotices/                # 随 App 打包的第三方许可证和归属材料
+├── thirdpart/                        # 本地参考/构建源码，不属于 MusicFree target
+├── dist/                             # 本地 Archive/IPA/导出结果，不是源码输入
 ├── project.yml                       # XcodeGen 工程与 target 定义
 └── basic_config.xcconfig             # 版本、构建号和应用配置
 ```
@@ -43,6 +46,7 @@ App ──> UI + Infrastructure + VLCKit Adapter + Core API
 - `App` 是 composition root，负责组装具体实现并将服务注入 UI。
 
 详细的 public API、并发、错误、持久化和删除事务边界见 [`MODULE_INTERFACES.md`](MODULE_INTERFACES.md)。
+当前版本、feature flag 和发布门禁见 [`../PROJECT_STATUS.md`](../PROJECT_STATUS.md)。
 
 ## 3. Package 与 target
 
@@ -67,3 +71,4 @@ App ──> UI + Infrastructure + VLCKit Adapter + Core API
 - App UI/BVT 验证从真实 App 入口出发的导航、持久化和关键交互。
 - AirPlay、蓝牙、长时间播放、媒体格式和 MusicKit 授权必须在真实设备/真实服务上单独验收。
 - 任何文档不得把编译成功或 Simulator 测试通过写成完整发布通过。
+- `Scripts/check_architecture.sh` 目前按仓库范围扫描 Swift 源码；若 checkout 含有 `thirdpart/` 参考源码，它可能报告 vendor 内的导入为违规。该结果需要先区分“应用源码架构问题”和“扫描范围问题”。

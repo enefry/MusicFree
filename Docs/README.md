@@ -4,17 +4,19 @@
 
 ## 推荐阅读顺序
 
-1. [工程结构](Architecture/PROJECT_STRUCTURE.md)：了解 App、Swift Package、target 和依赖方向。
-2. [模块功能说明](Modules/README.md)：按模块查看职责和边界。
-3. [版本功能需求](Versions/README.md)：查看 1.0.0 和 1.1.0 的产品范围与验收条件。
-4. [问题及修复](Issues/ISSUES_AND_FIXES.md)：查看当前问题、修复结果和未关闭验收门槛。
-5. [测试与验证](Testing/README.md)：执行手工验收和检查媒体/VLCKit能力边界。
+1. [当前项目状态](PROJECT_STATUS.md)：确认版本、当前开关、已接通能力和发布门禁。
+2. [工程结构](Architecture/PROJECT_STRUCTURE.md)：了解 App、Swift Package、target 和依赖方向。
+3. [模块功能说明](Modules/README.md)：按模块查看职责和边界。
+4. [版本功能需求](Versions/README.md)：查看 1.0.0 和 1.1.0 的产品范围与验收条件。
+5. [问题及修复](Issues/ISSUES_AND_FIXES.md)：查看当前问题、修复结果和未关闭验收门槛。
+6. [测试与验证](Testing/README.md)：执行自动化/手工验收和检查媒体/VLCKit能力边界。
 
 ## 文档分类
 
 | 分类 | 入口 | 内容 |
 | --- | --- | --- |
 | 架构 | [`Architecture/`](Architecture/PROJECT_STRUCTURE.md) | 工程结构、接口基线和多数据源路线图 |
+| 状态 | [`PROJECT_STATUS.md`](PROJECT_STATUS.md) | 当前构建身份、生产入口、限制和发布门禁 |
 | 模块 | [`Modules/`](Modules/README.md) | Core、Infrastructure、VLCKit Adapter、UI 和 App 的功能描述 |
 | 版本 | [`Versions/`](Versions/README.md) | 1.0.0 与 1.1.0 功能需求 |
 | 问题 | [`Issues/`](Issues/ISSUES_AND_FIXES.md) | 问题、修复、验证边界和历史 Review |

@@ -1,49 +1,5 @@
-.DS_Store
-DerivedData/
-Packages/*/.build/
-Packages/*/.swiftpm/
-*.xcuserstate
-xcuserdata/
-
-# Keep project documentation visible; generated artifacts remain ignored below.
-*.md
-!README.md
-!Docs/
-!Docs/*.md
-!Docs/**/*.md
-!Docs/PRIVACY_POLICY.md
-!Docs/PRIVACY_POLICY_v1.1.0.md
-!Docs/PRIVACY_POLICY_LRCLIB.md
-!ThirdPartyNotices/
-!ThirdPartyNotices/*.md
-
-# Xcode test results and local temporary output can contain machine metadata.
-*.xcresult
-*.xcresult/
-*.resultbundle
-.resultbundle/
-.tmp-*
-
-# Intermediate screenshots from UI automation runs.
-Docs/UIReview-*/flow-*.png
-
-# Keep shared project metadata even if a developer's global ignore excludes it.
-!MusicFree.xcodeproj/xcshareddata/
-!MusicFree.xcodeproj/xcshareddata/**
-
-# The app pins the exact VLCKit binary release even if a global ignore excludes lockfiles.
-!Packages/MusicFreeVLCKit/Package.resolved
-
-# Local UI reference assets are kept outside version control.
-参考UI/
-
-**/*.zip
-**/*.mp3
-**/*.wav
-**/*.flac
-.build
-.codex
-.noindex
-dist
 Design/AppStore
 Design/screenshot
+dist
+thirdpart/参考UI
+archive_and_push.sh
