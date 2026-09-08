@@ -1,0 +1,13 @@
+packages:
+  MusicFreeDebugSupport:
+    path: Packages/MusicFreeDebugSupport
+
+targets:
+  MusicFree:
+    settings:
+      base:
+        MUSICFREE_DEBUG_SUPPORT_ENABLED: YES
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) $(METADATA_SERVER_FEATURE_FLAG) $(LYRICS_FEATURE_FLAG) MUSICFREE_DEBUG_SUPPORT"
+    dependencies:
+      - package: MusicFreeDebugSupport
+        product: MusicFreeDebugSupport

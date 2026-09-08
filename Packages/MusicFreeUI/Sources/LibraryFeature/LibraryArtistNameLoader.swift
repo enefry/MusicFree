@@ -5,7 +5,7 @@ import MusicDomain
 enum LibraryArtistNameLoader {
     static func load(
         artistIDs: Set<ArtistID>,
-        sourceID: MediaSourceID,
+        sourceID: MediaSourceID? = nil,
         from library: any LibraryServing
     ) async throws -> [ArtistID: String] {
         guard !artistIDs.isEmpty else { return [:] }

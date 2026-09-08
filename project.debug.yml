@@ -1,0 +1,6 @@
+# Optional developer project. It enables Pulse/Lookin only for Debug builds;
+# the release validation script intentionally rejects Release builds generated
+# from this overlay. The checked-in project is always generated from project.yml.
+include:
+  - path: project.yml
+  - path: project.debug-support-overlay.yml

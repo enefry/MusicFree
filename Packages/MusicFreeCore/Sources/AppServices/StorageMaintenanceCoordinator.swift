@@ -62,28 +62,11 @@ internal actor StorageMaintenanceCoordinator: StorageMaintenanceServing {
 
     func enforceAutomaticPruning(_ preferences: StoragePreferences) async throws {
         guard let adapter else { return }
-        var firstFailure: Error?
-        if preferences.automaticallyPruneCache {
-            do {
-                _ = try await adapter.pruneCache(
-                    to: preferences.cacheLimit,
-                    retainingStagingFor: preferences.stagingRetention
-                )
-            } catch is CancellationError {
-                throw CancellationError()
-            } catch {
-                firstFailure = error
-            }
-        }
-        do {
-            _ = try await adapter.pruneOrphanedArtwork()
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch {
-            firstFailure = firstFailure ?? error
-        }
-        if let firstFailure {
-            throw firstFailure
-        }
+        try await adapter.performAutomaticMaintenance(
+            cacheLimit: preferences.automaticallyPruneCache
+                ? preferences.cacheLimit
+                : nil,
+            retainingStagingFor: preferences.stagingRetention
+        )
     }
 }

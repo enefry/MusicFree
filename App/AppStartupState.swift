@@ -116,7 +116,7 @@ enum AppStartupState: Equatable, Sendable {
     var systemImage: String {
         switch self {
         case .loading:
-            "ellipsis.circle"
+            "music.quarternote.3"
         case .ready:
             "music.note.list"
         case let .degraded(issues), let .recoveryRequired(issues):

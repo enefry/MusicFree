@@ -14,12 +14,46 @@ public enum LibraryLoadState: Equatable, Sendable {
     case failed(message: String)
 }
 
+/// Keeps a picked URL's sandbox authorization alive.
+///
+/// The document picker's URLs must stay authorized for the whole import, not
+/// just for the delegate callback: the importer enumerates and copies files from
+/// a detached task long after the picker is gone. The scope also lives on the
+/// exact URL object the picker delivered, because a derived copy loses it.
+private final class PickedURLAccess {
+    private let url: URL
+    private var didStart: Bool
+
+    init(url: URL) {
+        self.url = url
+        didStart = url.startAccessingSecurityScopedResource()
+    }
+
+    func stop() {
+        guard didStart else { return }
+        url.stopAccessingSecurityScopedResource()
+        didStart = false
+    }
+
+    deinit {
+        stop()
+    }
+}
+
 /// Owns library query tasks, pagination cursors, search generations, selection,
 /// navigation and import task lifetime on the main actor.
 @MainActor
 public final class LibraryViewModel: ObservableObject {
+    private static let importLogger = MusicLogger(
+        subsystem: "com.musicfree.app",
+        category: "library-import"
+    )
     @Published public var selection: LibrarySection
     @Published public private(set) var searchText = ""
+    @Published public private(set) var searchTracks: [Track] = []
+    @Published public private(set) var searchAlbums: [Album] = []
+    @Published public private(set) var searchArtists: [Artist] = []
+    @Published public private(set) var searchState: LibraryLoadState = .idle
     @Published public private(set) var albumSortDescriptor: AlbumSortDescriptor = .default
     @Published public private(set) var tracks: [Track] = []
     @Published public private(set) var favoriteTracks: [Track] = []
@@ -37,12 +71,15 @@ public final class LibraryViewModel: ObservableObject {
     @Published public private(set) var paginationErrors: [LibrarySection: String] = [:]
     @Published public private(set) var navigationPath: [LibraryDestination] = []
     @Published public private(set) var importState: LibraryImportState = .idle
+    @Published public private(set) var importFailures: [LibraryImportFailure] = []
     @Published public private(set) var isSearchDebouncing = false
 
     let library: any AppServices.LibraryServing
     private let importer: (any AppServices.ImportServing)?
+    private let initialPreparation: (@MainActor @Sendable () async -> Void)?
     private let refreshPreparation: (@MainActor @Sendable () async -> Void)?
     private let pageSize: Int
+    private let searchResultLimit: Int
     private let searchDebounceNanoseconds: UInt64
 
     private var nextCursors: [LibrarySection: LibraryCursor?] = [:]
@@ -50,9 +87,14 @@ public final class LibraryViewModel: ObservableObject {
     private var activeLoadTokens: [LibrarySection: UInt64] = [:]
     private var loadTasks: [LibrarySection: Task<Void, Never>] = [:]
     private var searchTask: Task<Void, Never>?
+    private var searchRefreshPending = false
     private var importTask: Task<Void, Never>?
     private var overviewTask: Task<Void, Never>?
+    private var overviewRefreshTask: Task<Void, Never>?
     private var changeTask: Task<Void, Never>?
+    private var trackRefreshTask: Task<Void, Never>?
+    private var pendingTrackRefreshIDs: Set<MediaItemID> = []
+    private var pendingTrackRefreshIncludesDeletions = false
     private var initialPreparationTask: Task<Void, Never>?
     private var currentImportID: UUID?
     private var initialPreparationFinished = false
@@ -71,16 +113,26 @@ public final class LibraryViewModel: ObservableObject {
     public init(
         library: any AppServices.LibraryServing,
         importer: (any AppServices.ImportServing)? = nil,
+        initialPreparation: (@MainActor @Sendable () async -> Void)? = nil,
         refreshPreparation: (@MainActor @Sendable () async -> Void)? = nil,
         selection: LibrarySection = .tracks,
-        pageSize: Int = 50,
+        // Local libraries are normally small enough for one fetch. Keeping a
+        // large bounded page removes the visible 50-row loading cadence while
+        // retaining a safety valve for unusually large libraries.
+        pageSize: Int = 500,
+        searchResultLimit: Int = 100,
         searchDebounceNanoseconds: UInt64 = 250_000_000
     ) {
         self.library = library
         self.importer = importer
+        self.initialPreparation = initialPreparation
         self.refreshPreparation = refreshPreparation
         self.selection = selection
         self.pageSize = min(max(1, pageSize), LibraryPageRequest.maximumLimit)
+        self.searchResultLimit = min(
+            max(1, searchResultLimit),
+            LibraryPageRequest.maximumLimit
+        )
         self.searchDebounceNanoseconds = searchDebounceNanoseconds
         self.states = Dictionary(uniqueKeysWithValues: LibrarySection.allCases.map { ($0, .idle) })
     }
@@ -90,7 +142,9 @@ public final class LibraryViewModel: ObservableObject {
         searchTask?.cancel()
         importTask?.cancel()
         overviewTask?.cancel()
+        overviewRefreshTask?.cancel()
         changeTask?.cancel()
+        trackRefreshTask?.cancel()
         initialPreparationTask?.cancel()
         favoriteTasks.values.forEach { $0.cancel() }
     }
@@ -141,7 +195,7 @@ public final class LibraryViewModel: ObservableObject {
             return
         }
 
-        let preparation = refreshPreparation
+        let preparation = initialPreparation ?? refreshPreparation
         let task = Task { @MainActor in
             if let preparation {
                 await preparation()
@@ -162,8 +216,7 @@ public final class LibraryViewModel: ObservableObject {
     public func load(section: LibrarySection? = nil, reset: Bool = true) {
         startLoad(
             section: section ?? selection,
-            reset: reset,
-            expectedSearchGeneration: searchGeneration
+            reset: reset
         )
     }
 
@@ -172,8 +225,7 @@ public final class LibraryViewModel: ObservableObject {
         guard hasNextPage(for: section), !isLoading(section) else { return }
         startLoad(
             section: section,
-            reset: false,
-            expectedSearchGeneration: searchGeneration
+            reset: false
         )
     }
 
@@ -186,6 +238,11 @@ public final class LibraryViewModel: ObservableObject {
     public func refreshCurrentSection() {
         cancelLoad(for: selection)
         load(section: selection, reset: true)
+    }
+
+    public func refresh(section: LibrarySection) {
+        cancelLoad(for: section)
+        load(section: section, reset: true)
     }
 
     public func toggleFavorite(_ track: Track) {
@@ -249,10 +306,19 @@ public final class LibraryViewModel: ObservableObject {
     public func removeDeletedTracks(_ itemIDs: Set<MediaItemID>) {
         guard !itemIDs.isEmpty else { return }
 
-        tracks.removeAll { itemIDs.contains($0.id) }
-        favoriteTracks.removeAll { itemIDs.contains($0.id) }
-        recentTracks.removeAll { itemIDs.contains($0.id) }
-        playbackHistory.removeAll { itemIDs.contains($0.track.id) }
+        let nextTracks = tracks.filter { !itemIDs.contains($0.id) }
+        if nextTracks != tracks { tracks = nextTracks }
+        let nextFavorites = favoriteTracks.filter { !itemIDs.contains($0.id) }
+        if nextFavorites != favoriteTracks { favoriteTracks = nextFavorites }
+        let nextRecent = recentTracks.filter { !itemIDs.contains($0.id) }
+        if nextRecent != recentTracks { recentTracks = nextRecent }
+        let nextSearchTracks = searchTracks.filter { !itemIDs.contains($0.id) }
+        if nextSearchTracks != searchTracks { searchTracks = nextSearchTracks }
+        let nextHistory = playbackHistory.filter { !itemIDs.contains($0.track.id) }
+        if nextHistory != playbackHistory { playbackHistory = nextHistory }
+        if searchState == .loaded, searchTracks.isEmpty, searchAlbums.isEmpty {
+            searchState = .empty
+        }
 
         for itemID in itemIDs {
             favoriteRequests[itemID] = nil
@@ -323,16 +389,20 @@ public final class LibraryViewModel: ObservableObject {
         changeObservationID = nil
         changeTask?.cancel()
         changeTask = nil
+        trackRefreshTask?.cancel()
+        trackRefreshTask = nil
+        pendingTrackRefreshIDs.removeAll()
+        pendingTrackRefreshIncludesDeletions = false
     }
 
     public func select(_ section: LibrarySection) {
         guard selection != section else { return }
 
         let previousSection = selection
+        if !navigationPath.isEmpty {
+            navigationPath.removeAll(keepingCapacity: true)
+        }
         selection = section
-        searchTask?.cancel()
-        searchTask = nil
-        isSearchDebouncing = false
         cancelLoad(for: previousSection)
     }
 
@@ -340,43 +410,108 @@ public final class LibraryViewModel: ObservableObject {
         guard text != searchText else { return }
 
         searchText = text
+        searchRefreshPending = false
+        scheduleSearch(
+            for: text,
+            delay: searchDebounceNanoseconds,
+            clearsResults: true
+        )
+    }
+
+    public func retrySearch() {
+        searchRefreshPending = false
+        scheduleSearch(for: searchText, delay: 0, clearsResults: true)
+    }
+
+    private func scheduleSearch(
+        for text: String,
+        delay: UInt64,
+        clearsResults: Bool
+    ) {
         searchGeneration &+= 1
         searchTask?.cancel()
         searchTask = nil
-        cancelLoad(for: selection)
+        if clearsResults {
+            searchTracks.removeAll(keepingCapacity: true)
+            searchAlbums.removeAll(keepingCapacity: true)
+            searchArtists.removeAll(keepingCapacity: true)
+        }
 
         let normalizedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedText.isEmpty else {
             isSearchDebouncing = false
-            load(section: selection, reset: true)
+            searchState = .idle
             return
         }
 
         isSearchDebouncing = true
+        searchState = .loading
         let generation = searchGeneration
-        let section = selection
-        let delay = searchDebounceNanoseconds
+        let searchResultLimit = searchResultLimit
+        let service = library
         searchTask = Task { @MainActor [weak self] in
             do {
                 if delay > 0 {
                     try await Task.sleep(nanoseconds: delay)
                 }
                 guard let self,
-                      self.searchGeneration == generation,
-                      self.selection == section
+                      self.searchGeneration == generation
                 else { return }
                 self.isSearchDebouncing = false
-                self.startLoad(
-                    section: section,
-                    reset: true,
-                    expectedSearchGeneration: generation
+
+                let results = try await service.searchLibrary(
+                    LibrarySearchRequest(
+                        searchText: normalizedText,
+                        sourceID: .local,
+                        limit: searchResultLimit
+                    )
                 )
+
+                guard !Task.isCancelled,
+                      self.searchGeneration == generation
+                else { return }
+                self.searchTracks = results.tracks.map(self.favoriteAdjusted)
+                self.searchAlbums = results.albums
+                self.searchArtists = results.artists
+                self.searchState = self.searchTracks.isEmpty && self.searchAlbums.isEmpty
+                    ? .empty
+                    : .loaded
             } catch is CancellationError {
                 // A newer query owns the next search task.
             } catch {
-                // Task.sleep has no other expected failure; keep the current query intact.
+                guard let self,
+                      self.searchGeneration == generation
+                else { return }
+                self.isSearchDebouncing = false
+                self.searchState = .failed(message: self.message(for: error))
             }
+            guard let self,
+                  self.searchGeneration == generation
+            else { return }
+            self.searchTask = nil
+            guard self.searchRefreshPending else { return }
+            self.searchRefreshPending = false
+            self.scheduleSearch(
+                for: self.searchText,
+                delay: self.searchDebounceNanoseconds,
+                clearsResults: false
+            )
         }
+    }
+
+    private func scheduleSearchRefreshAfterLibraryChange() {
+        guard !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return
+        }
+        guard searchTask == nil else {
+            searchRefreshPending = true
+            return
+        }
+        scheduleSearch(
+            for: searchText,
+            delay: searchDebounceNanoseconds,
+            clearsResults: false
+        )
     }
 
     public func navigate(to destination: LibraryDestination) {
@@ -389,15 +524,41 @@ public final class LibraryViewModel: ObservableObject {
     }
 
     func updateNavigationPath(_ path: [LibraryDestination]) {
+        guard navigationPath != path else { return }
         navigationPath = path
     }
 
     public func startImport(urls: [URL]) async {
-        guard let importer,
-              !urls.isEmpty,
-              importTask == nil,
-              importState.isIdle
-        else { return }
+        guard let importer else {
+            Self.importLogger.error("import rejected reason=missing_importer")
+            return
+        }
+        guard !urls.isEmpty else {
+            Self.importLogger.error("import rejected reason=empty_selection")
+            return
+        }
+        if importTask != nil {
+            switch importState {
+            case .importing, .awaitingConfirmation, .cancelling:
+                Self.importLogger.warning("import rejected reason=already_active_task")
+                return
+            case .idle, .completed, .failed:
+                // The terminal event can reach the UI before the stream
+                // consumer gets its final scheduling turn. The service has
+                // already closed the import session, so release this stale
+                // UI-side task reference and allow an immediate retry.
+                importTask = nil
+            }
+        }
+        switch importState {
+        case .idle, .completed, .failed:
+            // A previous terminal result must not block a new picker import.
+            // Starting a new request replaces the old result below.
+            break
+        case .importing, .awaitingConfirmation, .cancelling:
+            Self.importLogger.warning("import rejected reason=already_active_state")
+            return
+        }
 
         let request = MediaImportRequest(
             importID: UUID(),
@@ -406,46 +567,91 @@ public final class LibraryViewModel: ObservableObject {
             // executable first-version policy: skip an existing hash. The
             // settings enum reserves replacement/duplicate-copy semantics
             // until the library model can represent them safely.
-            duplicatePolicy: .skip
+            duplicatePolicy: .skip,
+            allowsFolderFailureConfirmation: true
         )
         currentImportID = request.importID
+        importFailures = []
+        Self.importLogger.info(
+            "import request started id=\(request.importID.uuidString) inputCount=\(urls.count)"
+        )
         importState = .importing(ImportEventMapper.initialSnapshot(for: request))
+
+        // Held until the import stream terminates; see `PickedURLAccess`.
+        let accesses = urls.map(PickedURLAccess.init(url:))
 
         let stream: AsyncThrowingStream<MediaImportEvent, Error>
         do {
             stream = try await importer.start(request)
+            Self.importLogger.debug("import service accepted id=\(request.importID.uuidString)")
         } catch {
+            Self.importLogger.error(
+                "import service start failed id=\(request.importID.uuidString) error=\(String(describing: error))"
+            )
+            accesses.forEach { $0.stop() }
             importState = .failed(message(for: error))
             currentImportID = nil
             return
         }
 
         importTask = Task { @MainActor [weak self] in
+            defer { accesses.forEach { $0.stop() } }
             do {
                 var receivedTerminalEvent = false
                 for try await event in stream {
                     guard let self, !Task.isCancelled else { return }
+                    if case .itemFailed(_, let url, let error) = event {
+                        Self.importLogger.error(
+                            "import item failed id=\(event.importID.uuidString) file=\(url.lastPathComponent) code=\(error.diagnosticCode)"
+                        )
+                    } else if case .confirmationRequired = event {
+                        Self.importLogger.info(
+                            "import confirmation event received id=\(event.importID.uuidString)"
+                        )
+                    } else if case .completed(_, let result) = event {
+                        Self.importLogger.info(
+                            "import completed id=\(result.importID.uuidString) imported=\(result.imported) duplicate=\(result.duplicate) skipped=\(result.skipped) failed=\(result.failed)"
+                        )
+                    } else if case .cancelled(_, let result) = event {
+                        Self.importLogger.warning(
+                            "import cancelled id=\(result.importID.uuidString) imported=\(result.imported) failed=\(result.failed)"
+                        )
+                    }
                     self.applyImportEvent(event)
+                    if case .confirmationRequired = event {
+                        Self.importLogger.info(
+                            "import state updated id=\(event.importID.uuidString) awaitingConfirmation=\(self.importState.confirmationProgress != nil) failureCount=\(self.importState.confirmationProgress?.failures.count ?? 0)"
+                        )
+                    }
                     receivedTerminalEvent = event.isTerminal
                 }
                 guard let self, !Task.isCancelled else { return }
+                guard self.currentImportID == request.importID else { return }
                 self.importTask = nil
                 guard !receivedTerminalEvent else { return }
                 self.importState = .failed(L("导入服务提前结束，未返回结果。"))
             } catch is CancellationError {
                 // Explicit cancellation is represented by the service's cancelled event.
             } catch {
-                self?.importTask = nil
-                self?.importState = .failed(self?.message(for: error) ?? L("import.failed.message"))
+                Self.importLogger.error(
+                    "import stream failed id=\(request.importID.uuidString) error=\(String(describing: error))"
+                )
+                guard let self, self.currentImportID == request.importID else { return }
+                self.importTask = nil
+                self.importState = .failed(self.message(for: error))
             }
         }
     }
 
     public func cancelImport() {
-        guard case .importing(let progress) = importState,
-              let importer,
-              let importID = currentImportID
-        else { return }
+        guard let importer, let importID = currentImportID else { return }
+        let progress: ImportProgressSnapshot
+        switch importState {
+        case .importing(let value), .awaitingConfirmation(let value):
+            progress = value
+        case .idle, .cancelling, .completed, .failed:
+            return
+        }
 
         importState = .cancelling(progress)
         Task { @MainActor [weak self] in
@@ -456,19 +662,33 @@ public final class LibraryViewModel: ObservableObject {
         }
     }
 
+    public func continueImport() {
+        guard case .awaitingConfirmation = importState,
+              let importer,
+              let importID = currentImportID
+        else { return }
+
+        if case .awaitingConfirmation(let progress) = importState {
+            importState = .importing(progress)
+        }
+        Task { await importer.continueImport(importID) }
+    }
+
     public func dismissImport() {
         switch importState {
-        case .importing, .cancelling:
+        case .importing, .awaitingConfirmation, .cancelling:
             cancelImport()
         case .idle, .completed, .failed:
             importTask?.cancel()
             importTask = nil
             currentImportID = nil
+            importFailures = []
             importState = .idle
         }
     }
 
     public func handlePickerFailure(_ message: String) {
+        importFailures = []
         importState = .failed(message.isEmpty ? L("无法打开文件选择器。") : message)
     }
 
@@ -518,8 +738,7 @@ public final class LibraryViewModel: ObservableObject {
 
     private func startLoad(
         section: LibrarySection,
-        reset: Bool,
-        expectedSearchGeneration: UInt64
+        reset: Bool
     ) {
         guard activeLoadTokens[section] == nil else { return }
 
@@ -558,8 +777,7 @@ public final class LibraryViewModel: ObservableObject {
                         page,
                         to: section,
                         reset: reset,
-                        token: token,
-                        searchGeneration: expectedSearchGeneration
+                        token: token
                     )
                 case .albums:
                     let page = try await service.browseAlbums(matching: query.albums, page: request)
@@ -568,8 +786,7 @@ public final class LibraryViewModel: ObservableObject {
                         page,
                         to: section,
                         reset: reset,
-                        token: token,
-                        searchGeneration: expectedSearchGeneration
+                        token: token
                     )
                 case .artists:
                     let page = try await service.browseArtists(matching: query.artists, page: request)
@@ -578,8 +795,7 @@ public final class LibraryViewModel: ObservableObject {
                         page,
                         to: section,
                         reset: reset,
-                        token: token,
-                        searchGeneration: expectedSearchGeneration
+                        token: token
                     )
                 case .genres:
                     let page = try await service.browseGenres(matching: query.genres, page: request)
@@ -588,8 +804,7 @@ public final class LibraryViewModel: ObservableObject {
                         page,
                         to: section,
                         reset: reset,
-                        token: token,
-                        searchGeneration: expectedSearchGeneration
+                        token: token
                     )
                 case .folders:
                     let page = try await service.browseFolders(page: request)
@@ -598,8 +813,7 @@ public final class LibraryViewModel: ObservableObject {
                         page,
                         to: section,
                         reset: reset,
-                        token: token,
-                        searchGeneration: expectedSearchGeneration
+                        token: token
                     )
                 case .recent:
                     let page = try await service.recentHistory(page: request)
@@ -608,8 +822,7 @@ public final class LibraryViewModel: ObservableObject {
                         page,
                         to: section,
                         reset: reset,
-                        token: token,
-                        searchGeneration: expectedSearchGeneration
+                        token: token
                     )
                 }
             } catch is CancellationError {
@@ -618,8 +831,7 @@ public final class LibraryViewModel: ObservableObject {
                 self?.apply(
                     error,
                     to: section,
-                    token: token,
-                    searchGeneration: expectedSearchGeneration
+                    token: token
                 )
             }
             self?.finishLoad(section: section, token: token)
@@ -628,22 +840,18 @@ public final class LibraryViewModel: ObservableObject {
     }
 
     private func query(for section: LibrarySection) -> LibraryQuerySet {
-        let text = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let searchText = text.isEmpty ? nil : text
         let favorite: LibraryFavoriteFilter = section == .favorites ? .favorite : .any
         return LibraryQuerySet(
             tracks: TrackQuery(
-                searchText: searchText,
                 sourceID: .local,
                 favorite: favorite
             ),
             albums: AlbumQuery(
-                searchText: searchText,
                 sourceID: .local,
                 sort: albumSortDescriptor
             ),
-            artists: ArtistQuery(searchText: searchText, sourceID: .local),
-            genres: GenreQuery(searchText: searchText, sourceID: .local)
+            artists: ArtistQuery(sourceID: .local),
+            genres: GenreQuery(sourceID: .local)
         )
     }
 
@@ -651,10 +859,9 @@ public final class LibraryViewModel: ObservableObject {
         _ page: LibraryPage<Track>,
         to section: LibrarySection,
         reset: Bool,
-        token: UInt64,
-        searchGeneration: UInt64
+        token: UInt64
     ) {
-        guard canApply(section: section, token: token, searchGeneration: searchGeneration) else { return }
+        guard canApply(section: section, token: token) else { return }
         let elements = page.elements.map(favoriteAdjusted)
         switch section {
         case .favorites:
@@ -682,11 +889,10 @@ public final class LibraryViewModel: ObservableObject {
         _ page: LibraryPage<PlaybackHistoryItem>,
         to section: LibrarySection,
         reset: Bool,
-        token: UInt64,
-        searchGeneration: UInt64
+        token: UInt64
     ) {
         guard section == .recent,
-              canApply(section: section, token: token, searchGeneration: searchGeneration)
+              canApply(section: section, token: token)
         else { return }
 
         let elements = page.elements.map { item in
@@ -704,10 +910,9 @@ public final class LibraryViewModel: ObservableObject {
         _ page: LibraryPage<Album>,
         to section: LibrarySection,
         reset: Bool,
-        token: UInt64,
-        searchGeneration: UInt64
+        token: UInt64
     ) {
-        guard canApply(section: section, token: token, searchGeneration: searchGeneration) else { return }
+        guard canApply(section: section, token: token) else { return }
         if reset { albums.removeAll(keepingCapacity: true) }
         albums = mergeUnique(albums, with: page.elements, by: \.id)
         nextCursors[section] = page.nextCursor
@@ -719,10 +924,9 @@ public final class LibraryViewModel: ObservableObject {
         _ page: LibraryPage<Artist>,
         to section: LibrarySection,
         reset: Bool,
-        token: UInt64,
-        searchGeneration: UInt64
+        token: UInt64
     ) {
-        guard canApply(section: section, token: token, searchGeneration: searchGeneration) else { return }
+        guard canApply(section: section, token: token) else { return }
         if reset { artists.removeAll(keepingCapacity: true) }
         artists = mergeUnique(artists, with: page.elements, by: \.id)
         nextCursors[section] = page.nextCursor
@@ -734,10 +938,9 @@ public final class LibraryViewModel: ObservableObject {
         _ page: LibraryPage<Genre>,
         to section: LibrarySection,
         reset: Bool,
-        token: UInt64,
-        searchGeneration: UInt64
+        token: UInt64
     ) {
-        guard canApply(section: section, token: token, searchGeneration: searchGeneration) else { return }
+        guard canApply(section: section, token: token) else { return }
         if reset { genres.removeAll(keepingCapacity: true) }
         genres = mergeUnique(genres, with: page.elements, by: \.id)
         nextCursors[section] = page.nextCursor
@@ -749,10 +952,9 @@ public final class LibraryViewModel: ObservableObject {
         _ page: LibraryPage<LibraryFolder>,
         to section: LibrarySection,
         reset: Bool,
-        token: UInt64,
-        searchGeneration: UInt64
+        token: UInt64
     ) {
-        guard canApply(section: section, token: token, searchGeneration: searchGeneration) else { return }
+        guard canApply(section: section, token: token) else { return }
         if reset { folders.removeAll(keepingCapacity: true) }
         folders = mergeUnique(folders, with: page.elements, by: \.id)
         nextCursors[section] = page.nextCursor
@@ -763,10 +965,9 @@ public final class LibraryViewModel: ObservableObject {
     private func apply(
         _ error: Error,
         to section: LibrarySection,
-        token: UInt64,
-        searchGeneration: UInt64
+        token: UInt64
     ) {
-        guard canApply(section: section, token: token, searchGeneration: searchGeneration) else { return }
+        guard canApply(section: section, token: token) else { return }
         let message = message(for: error)
         if itemsCount(for: section) == 0 {
             states[section] = .failed(message: message)
@@ -777,10 +978,9 @@ public final class LibraryViewModel: ObservableObject {
 
     private func canApply(
         section: LibrarySection,
-        token: UInt64,
-        searchGeneration: UInt64
+        token: UInt64
     ) -> Bool {
-        activeLoadTokens[section] == token && self.searchGeneration == searchGeneration
+        activeLoadTokens[section] == token
     }
 
     private func finishLoad(section: LibrarySection, token: UInt64) {
@@ -836,14 +1036,22 @@ public final class LibraryViewModel: ObservableObject {
         switch event {
         case .completed(_, let result), .cancelled(_, let result):
             importState = .completed(result)
+        case .confirmationRequired:
+            guard let progress = importState.progress else { return }
+            let updated = ImportEventMapper.apply(event, to: progress)
+            importFailures = updated.failures
+            importState = .awaitingConfirmation(updated)
         case .discovered, .hashing, .probing, .copying, .persisting, .itemFailed:
             guard let progress = importState.progress else { return }
             let updated = ImportEventMapper.apply(event, to: progress)
+            importFailures = updated.failures
             switch importState {
             case .cancelling:
                 importState = .cancelling(updated)
             case .importing:
                 importState = .importing(updated)
+            case .awaitingConfirmation:
+                importState = .awaitingConfirmation(updated)
             case .idle, .completed, .failed:
                 break
             }
@@ -859,32 +1067,243 @@ public final class LibraryViewModel: ObservableObject {
             .artwork,
             .deletions
         ]
-        if change.categories.contains(.playbackHistory),
-           change.categories.isDisjoint(with: contentCategories) {
-            cancelLoad(for: .recent)
-            nextCursors[.recent] = nil
-            paginationErrors[.recent] = nil
-            if selection == .recent {
-                load(section: .recent, reset: true)
-            } else {
-                states[.recent] = .idle
-            }
-            return
+        let categories = change.categories
+        let affected = change.affectedIDs
+
+        if categories.contains(.playbackHistory) {
+            invalidateOrReload(.recent)
         }
 
-        guard !change.categories.isDisjoint(with: contentCategories) else { return }
+        let trackCategories: Set<LibraryChangeCategory> = [
+            .tracks,
+            .artwork,
+            .deletions
+        ]
+        if !affected.trackIDs.isEmpty && !categories.isDisjoint(with: trackCategories) {
+            queueTrackRefresh(
+                ids: affected.trackIDs,
+                includesDeletions: categories.contains(.deletions)
+            )
+        } else if !categories.isDisjoint(with: trackCategories) {
+            // A producer without typed IDs may still have introduced or
+            // removed rows. Refresh only the active track-like section and
+            // leave other sections untouched until they are selected.
+            if selection == .tracks || selection == .favorites || selection == .recent {
+                invalidateOrReload(selection)
+            }
+        }
 
-        for section in LibrarySection.allCases {
-            cancelLoad(for: section)
-            nextCursors[section] = nil
-            paginationErrors[section] = nil
-            if section != selection {
+        if !affected.albumIDs.isEmpty || categories.contains(.albums) {
+            invalidateOrReload(.albums)
+        }
+        if !affected.artistIDs.isEmpty || categories.contains(.artists) {
+            invalidateOrReload(.artists)
+        }
+        if !affected.genreIDs.isEmpty || categories.contains(.genres) {
+            invalidateOrReload(.genres)
+        }
+        if categories.contains(.deletions) {
+            invalidateOrReload(.folders)
+        }
+
+        if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           !categories.isDisjoint(with: contentCategories) {
+            scheduleSearchRefreshAfterLibraryChange()
+        }
+
+        guard !categories.isDisjoint(with: contentCategories),
+              overviewState != .idle
+        else { return }
+        scheduleOverviewRefresh()
+    }
+
+    private func invalidateOrReload(_ section: LibrarySection) {
+        let known = state(for: section) != .idle || itemsCount(for: section) > 0
+        guard known else { return }
+
+        cancelLoad(for: section)
+        if section == selection {
+            load(section: section, reset: true)
+        } else {
+            // Keep the old value for any still-attached controller, but mark
+            // it stale so the next visit performs a first-page query.
+            if states[section] != .idle {
                 states[section] = .idle
             }
         }
+    }
 
-        load(section: selection, reset: true)
-        refreshOverview()
+    private func scheduleOverviewRefresh() {
+        overviewRefreshTask?.cancel()
+        overviewRefreshTask = Task { @MainActor [weak self] in
+            do {
+                // Metadata imports commonly emit one commit per item. Delay
+                // the overview query until that burst settles.
+                try await Task.sleep(nanoseconds: 200_000_000)
+                guard let self, !Task.isCancelled else { return }
+                self.overviewRefreshTask = nil
+                self.refreshOverview()
+            } catch is CancellationError {
+                // A newer change owns the coalescing window.
+            } catch {
+                // Task.sleep has no other expected failure.
+            }
+        }
+    }
+
+    private func queueTrackRefresh(
+        ids: Set<MediaItemID>,
+        includesDeletions: Bool
+    ) {
+        pendingTrackRefreshIDs.formUnion(ids)
+        pendingTrackRefreshIncludesDeletions =
+            pendingTrackRefreshIncludesDeletions || includesDeletions
+        guard trackRefreshTask == nil else { return }
+
+        trackRefreshTask = Task { @MainActor [weak self] in
+            do {
+                // Coalesce per-item metadata commits without delaying the
+                // normal empty-section refresh path.
+                try await Task.sleep(nanoseconds: 30_000_000)
+                guard let self, !Task.isCancelled else { return }
+
+                let ids = self.pendingTrackRefreshIDs
+                let includesDeletions = self.pendingTrackRefreshIncludesDeletions
+                self.pendingTrackRefreshIDs.removeAll()
+                self.pendingTrackRefreshIncludesDeletions = false
+                let service = self.library
+
+                let results = await withTaskGroup(
+                    of: TrackRefreshResult.self,
+                    returning: [TrackRefreshResult].self
+                ) { group in
+                    for id in ids {
+                        group.addTask {
+                            do {
+                                return TrackRefreshResult(
+                                    id: id,
+                                    track: try await service.track(id: id),
+                                    succeeded: true
+                                )
+                            } catch {
+                                return TrackRefreshResult(
+                                    id: id,
+                                    track: nil,
+                                    succeeded: false
+                                )
+                            }
+                        }
+                    }
+
+                    var values: [TrackRefreshResult] = []
+                    values.reserveCapacity(ids.count)
+                    for await result in group {
+                        values.append(result)
+                    }
+                    return values
+                }
+
+                var needsTracksReload = false
+                var needsFavoritesReload = false
+                var needsRecentReload = false
+
+                for result in results {
+                    if let track = result.track {
+                        let wasCached = self.hasCachedTrack(track.id)
+                        self.applyTrackUpdate(track)
+                        if !wasCached {
+                            needsTracksReload = self.state(for: .tracks) != .idle
+                            needsFavoritesReload = self.state(for: .favorites) != .idle
+                            needsRecentReload = self.state(for: .recent) != .idle
+                        }
+                    } else if result.succeeded && includesDeletions {
+                        self.removeDeletedTrack(result.id)
+                    }
+                }
+
+                // A newly imported track is not appended to every cached
+                // collection. Invalidate each already-known section once per
+                // coalesced burst so its own query decides membership/order.
+                if needsTracksReload { self.invalidateOrReload(.tracks) }
+                if needsFavoritesReload { self.invalidateOrReload(.favorites) }
+                if needsRecentReload { self.invalidateOrReload(.recent) }
+
+                self.trackRefreshTask = nil
+                if !self.pendingTrackRefreshIDs.isEmpty {
+                    self.queueTrackRefresh(ids: [], includesDeletions: false)
+                }
+            } catch is CancellationError {
+                guard let self else { return }
+                self.trackRefreshTask = nil
+            } catch {
+                guard let self else { return }
+                self.trackRefreshTask = nil
+            }
+        }
+    }
+
+    private func hasCachedTrack(_ itemID: MediaItemID) -> Bool {
+        tracks.contains(where: { $0.id == itemID })
+            || favoriteTracks.contains(where: { $0.id == itemID })
+            || recentTracks.contains(where: { $0.id == itemID })
+            || searchTracks.contains(where: { $0.id == itemID })
+            || playbackHistory.contains(where: { $0.track.id == itemID })
+    }
+
+    @discardableResult
+    private func applyTrackUpdate(_ track: Track) -> Bool {
+        var didChange = false
+
+        if let index = tracks.firstIndex(where: { $0.id == track.id }),
+           tracks[index] != track {
+            tracks[index] = track
+            didChange = true
+        }
+        if let index = recentTracks.firstIndex(where: { $0.id == track.id }),
+           recentTracks[index] != track {
+            recentTracks[index] = track
+            didChange = true
+        }
+        if let index = searchTracks.firstIndex(where: { $0.id == track.id }),
+           searchTracks[index] != track {
+            searchTracks[index] = track
+            didChange = true
+        }
+
+        var updatedHistory = playbackHistory
+        var historyChanged = false
+        for index in updatedHistory.indices where updatedHistory[index].track.id == track.id {
+            let updated = updatedHistory[index].replacingTrack(track)
+            if updatedHistory[index] != updated {
+                updatedHistory[index] = updated
+                historyChanged = true
+            }
+        }
+        if historyChanged {
+            playbackHistory = updatedHistory
+            didChange = true
+        }
+
+        if let index = favoriteTracks.firstIndex(where: { $0.id == track.id }) {
+            if favoriteTracks[index] != track {
+                favoriteTracks[index] = track
+                didChange = true
+            }
+        } else if track.isFavorite,
+                  (state(for: .favorites) == .loaded || state(for: .favorites) == .empty),
+                  tracks.contains(where: { $0.id == track.id }) {
+            // Only add a newly-favorite item to an already-loaded favorites
+            // section when the item is also present in the loaded track cache.
+            favoriteTracks.append(track)
+            didChange = true
+        }
+
+        if !track.isFavorite,
+           favoriteTracks.contains(where: { $0.id == track.id }) {
+            favoriteTracks.removeAll { $0.id == track.id }
+            didChange = true
+        }
+        return didChange
     }
 
     private func runFavoriteMutations(for itemID: MediaItemID) async {
@@ -916,6 +1335,7 @@ public final class LibraryViewModel: ObservableObject {
         }
         if let visible = tracks.first(where: { $0.id == track.id })
             ?? recentTracks.first(where: { $0.id == track.id })
+            ?? searchTracks.first(where: { $0.id == track.id })
             ?? favoriteTracks.first(where: { $0.id == track.id }) {
             return visible.isFavorite
         }
@@ -923,18 +1343,32 @@ public final class LibraryViewModel: ObservableObject {
     }
 
     private func applyFavorite(_ track: Track) {
-        tracks = tracks.map { $0.id == track.id ? track : $0 }
-        recentTracks = recentTracks.map { $0.id == track.id ? track : $0 }
-        playbackHistory = playbackHistory.map { item in
-            item.track.id == track.id ? item.replacingTrack(track) : item
+        if let index = tracks.firstIndex(where: { $0.id == track.id }) {
+            tracks[index] = track
+        }
+        if let index = recentTracks.firstIndex(where: { $0.id == track.id }) {
+            recentTracks[index] = track
+        }
+        if let index = searchTracks.firstIndex(where: { $0.id == track.id }) {
+            searchTracks[index] = track
+        }
+
+        var updatedHistory = playbackHistory
+        var historyChanged = false
+        for index in updatedHistory.indices where updatedHistory[index].track.id == track.id {
+            updatedHistory[index] = updatedHistory[index].replacingTrack(track)
+            historyChanged = true
+        }
+        if historyChanged {
+            playbackHistory = updatedHistory
         }
         if track.isFavorite {
             if let index = favoriteTracks.firstIndex(where: { $0.id == track.id }) {
                 favoriteTracks[index] = track
-            } else {
+            } else if state(for: .favorites) != .idle {
                 favoriteTracks.append(track)
             }
-        } else {
+        } else if favoriteTracks.contains(where: { $0.id == track.id }) {
             favoriteTracks.removeAll { $0.id == track.id }
         }
     }
@@ -988,6 +1422,12 @@ private struct LibraryQuerySet {
     let albums: AlbumQuery
     let artists: ArtistQuery
     let genres: GenreQuery
+}
+
+private struct TrackRefreshResult: Sendable {
+    let id: MediaItemID
+    let track: Track?
+    let succeeded: Bool
 }
 
 private func mergeUnique<Element, ID: Hashable>(

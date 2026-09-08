@@ -1,4 +1,5 @@
 import Foundation
+import MusicDomain
 
 struct ImportFile: Sendable {
   let url: URL
@@ -6,7 +7,22 @@ struct ImportFile: Sendable {
 }
 
 struct ImportFileEnumerator: Sendable {
+  private static let logger = MusicLogger(
+    subsystem: "com.musicfree.app",
+    category: "local-media-import"
+  )
+
   let configuration: LocalMediaConfiguration
+
+  /// Enumeration failures are almost always sandbox authorization problems, and
+  /// the mapped `LocalMediaError` hides that. Log the underlying `NSError` so a
+  /// device report still names the real cause.
+  private static func logFailure(_ stage: String, url: URL, error: Error) {
+    let nsError = error as NSError
+    logger.error(
+      "enumeration step failed stage=\(stage) domain=\(nsError.domain) code=\(nsError.code) name=\(url.lastPathComponent)"
+    )
+  }
 
   func enumerate(_ inputURL: URL) throws -> [ImportFile] {
     guard inputURL.isFileURL else {
@@ -15,7 +31,13 @@ struct ImportFileEnumerator: Sendable {
 
     let fileManager = FileManager.default
     let rootURL = inputURL.standardizedFileURL
-    let rootValues = try rootURL.resourceValues(forKeys: [.isDirectoryKey])
+    let rootValues: URLResourceValues
+    do {
+      rootValues = try rootURL.resourceValues(forKeys: [.isDirectoryKey])
+    } catch {
+      Self.logFailure("root", url: rootURL, error: error)
+      throw LocalMediaError.inaccessibleInput
+    }
     let folderRoot = rootValues.isDirectory == true ? rootURL : nil
     var files: [ImportFile] = []
     var pending: [(URL, Int)] = [(inputURL.standardizedFileURL, 0)]
@@ -34,6 +56,7 @@ struct ImportFileEnumerator: Sendable {
           .fileSizeKey,
         ])
       } catch {
+        Self.logFailure("attributes", url: url, error: error)
         throw LocalMediaError.enumerationFailed
       }
 
@@ -67,6 +90,7 @@ struct ImportFileEnumerator: Sendable {
             options: []
           ).sorted { $0.path < $1.path }
         } catch {
+          Self.logFailure("contents", url: url, error: error)
           throw LocalMediaError.enumerationFailed
         }
         pending.append(contentsOf: children.reversed().map { ($0, depth + 1) })
@@ -104,6 +128,6 @@ struct ImportFileEnumerator: Sendable {
     guard !folderComponents.isEmpty,
           folderComponents.allSatisfy({ $0 != "." && $0 != ".." })
     else { return nil }
-    return folderComponents.joined(separator: "/")
+    return MetadataTextRepair.repair(folderComponents.joined(separator: "/"))
   }
 }

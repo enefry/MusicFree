@@ -12,8 +12,10 @@ public struct PlaylistDraft: Codable, Sendable {
         sortName: String? = nil,
         artworkID: ArtworkID? = nil
     ) {
-        self.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.sortName = sortName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.name = MetadataTextRepair.repair(name)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        self.sortName = sortName.map { MetadataTextRepair.repair($0) }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
         self.artworkID = artworkID
     }
 }

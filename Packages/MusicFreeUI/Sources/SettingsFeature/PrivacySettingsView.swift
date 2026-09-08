@@ -1,4 +1,5 @@
 import DesignSystem
+import MediaSourceAPI
 import MusicDomain
 import SafariServices
 import SettingsAPI
@@ -7,7 +8,7 @@ import WebKit
 
 enum PrivacyPolicyURLs {
     static let app = URL(
-        string: "https://github.com/enefry/MusicFree/blob/main/Docs/PRIVACY_POLICY_v1.1.0.md"
+        string: "https://github.com/enefry/MusicFree/blob/main/Docs/PRIVACY_POLICY_v1.2.0.md"
     )!
 }
 
@@ -336,10 +337,10 @@ struct PrivacyDisclosureView: View {
 
     private var applicationContent: some View {
         VStack(alignment: .leading, spacing: MusicFreeSpacingTokens.medium) {
-            Text(L("应用隐私政策 v1.1.0"))
+            Text(L("应用隐私政策 v1.2.0"))
                 .font(MusicFreeTypographyTokens.sectionTitle)
 
-            Text(L("本地播放器的基本播放功能不需要联网。元数据和歌词服务属于可选的第三方服务，所有 Provider 默认关闭。"))
+            Text(L("本地播放器的基本播放功能不需要联网。DS Audio、Google Drive、元数据和歌词都属于可选的第三方服务，所有 Provider 默认关闭。"))
 
             Text(L("同意后，应用才会在你开启 Provider 时向对应服务发送歌曲匹配信息。应用不会主动上传音频文件、完整文件路径或整个音乐库。"))
 
@@ -478,44 +479,152 @@ struct PrivacyProviderDetailsView: View {
     }
 }
 
-struct PrivacySettingsView: View {
+private struct OnlineSourcePrivacyDetailsView: View {
+    let configuration: OnlineSourceConfiguration
     @Bindable var viewModel: SettingsViewModel
-    let metadataServerEnabled: Bool
-    let lyricsEnabled: Bool
+    @State private var isRevokeConfirmationPresented = false
+
+    private var currentConfiguration: OnlineSourceConfiguration {
+        viewModel.onlineSourceConfigurations.first {
+            $0.sourceID == configuration.sourceID
+        } ?? configuration
+    }
+
+    private var isPolicyAccepted: Bool {
+        currentConfiguration.privacyPolicyVersion
+            == currentConfiguration.providerKind.defaultPrivacyPolicyVersion
+    }
 
     var body: some View {
         List {
             Section {
-                if viewModel.isPrivacyPolicyAccepted {
-                    Label(L("应用隐私政策已同意"), systemImage: "checkmark.shield")
+                Label(
+                    currentConfiguration.displayName,
+                    systemImage: onlineSourceProviderSymbol(
+                        currentConfiguration.providerKind
+                    )
+                )
+            } header: {
+                Text(L("来源"))
+            }
+
+            Section {
+                privacyRow(L("来源类型"), onlineSourceProviderTitle(currentConfiguration.providerKind))
+                privacyRow(L("协议版本"), currentConfiguration.providerKind.defaultPrivacyPolicyVersion)
+                privacyRow(L("会发送的数据"), privacyDataDescription)
+                privacyRow(L("使用目的"), privacyPurposeDescription)
+            } header: {
+                Text(L("来源级隐私协议"))
+            }
+
+            Section {
+                if isPolicyAccepted {
+                    Label(L("来源隐私协议已同意"), systemImage: "checkmark.shield")
                         .foregroundStyle(MusicFreeColorTokens.accent)
 
                     Button(role: .destructive) {
-                        viewModel.revokeOnlinePrivacy()
+                        isRevokeConfirmationPresented = true
                     } label: {
-                        Label(L("撤回同意并关闭联网服务"), systemImage: "hand.raised")
+                        Label(L("撤销并停用此来源"), systemImage: "hand.raised")
                     }
-                    .accessibilityIdentifier("settings.privacy.application.revoke")
+                    .disabled(viewModel.isSaving)
+                    .accessibilityIdentifier(
+                        "settings.privacy.onlineSource.\(configuration.sourceID.rawValue).revoke"
+                    )
                 } else {
-                    Text(L("未同意应用隐私政策时，元数据和歌词 Provider 不会发起网络请求。"))
+                    Text(L("首次进入此来源时会弹出协议；同意后才能浏览、试听或导入。"))
                         .font(MusicFreeTypographyTokens.secondary)
                         .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
 
                     Button {
-                        viewModel.acceptPrivacyPolicy()
+                        viewModel.acceptOnlineSourcePrivacy(
+                            configuration.sourceID,
+                            policyVersion: currentConfiguration.providerKind.defaultPrivacyPolicyVersion
+                        )
                     } label: {
-                        Label(L("同意应用隐私政策"), systemImage: "checkmark.shield")
+                        Label(L("同意此来源隐私协议"), systemImage: "checkmark")
                     }
-                    .accessibilityIdentifier("settings.privacy.application.accept")
+                    .disabled(viewModel.isSaving || !viewModel.isPrivacyPolicyAccepted)
+                    .accessibilityIdentifier(
+                        "settings.privacy.onlineSource.\(configuration.sourceID.rawValue).accept"
+                    )
                 }
-
-                SafariServiceLink(
-                    title: L("查看完整隐私政策"),
-                    url: PrivacyPolicyURLs.app
-                )
             } header: {
-                Text(L("应用隐私政策"))
+                Text(L("同意状态"))
+            } footer: {
+                Text(L("撤销后立即停止此来源的新请求并清除来源级同意；已经导入本地的媒体不会删除。"))
             }
+        }
+        .navigationTitle(currentConfiguration.displayName)
+        .navigationBarTitleDisplayMode(.inline)
+        .accessibilityIdentifier(
+            "settings.privacy.onlineSource.\(configuration.sourceID.rawValue).details"
+        )
+        .confirmationDialog(
+            L("撤销来源隐私协议？"),
+            isPresented: $isRevokeConfirmationPresented,
+            titleVisibility: .visible
+        ) {
+            Button(L("撤销并停用"), role: .destructive) {
+                viewModel.revokeOnlineSourcePrivacy(configuration.sourceID)
+            }
+            .accessibilityIdentifier(
+                "settings.privacy.onlineSource.\(configuration.sourceID.rawValue).revoke.confirm"
+            )
+            Button(L("取消"), role: .cancel) {}
+        } message: {
+            Text(
+                L("撤销“\(currentConfiguration.displayName)”后会停止此来源的新请求并清除来源级同意；已经导入本地的媒体不会删除。")
+            )
+        }
+    }
+
+    private var privacyDataDescription: String {
+        switch currentConfiguration.providerKind {
+        case .dsAudio:
+            L("你填写的 DS Audio 地址、账号和本次登录所需的认证信息，以及浏览、搜索、下载和临时试听所需的音频目录数据。验证码只在本次验证期间使用。")
+        case .googleDrive:
+            L("Google OAuth 会话和 Google Drive 文件目录、文件大小及下载所需的临时访问信息。令牌只存放在系统 Keychain；1.2.0 不进行 Google Drive 在线试听。")
+        case .baiduPan:
+            L("百度网盘来源配置和 Provider 实现实际需要的数据。当前版本未提供可用的百度网盘适配器。")
+        case .gateway:
+            L("网关 Provider 实现声明的目录和访问数据。当前版本未提供可用的网关适配器。")
+        }
+    }
+
+    private var privacyPurposeDescription: String {
+        switch currentConfiguration.providerKind {
+        case .dsAudio:
+            L("仅用于浏览来源目录、搜索音频、下载并导入本地媒体库，以及临时试听。")
+        case .googleDrive:
+            L("仅用于浏览 Google Drive 音频文件、下载并导入本地媒体库。")
+        case .baiduPan, .gateway:
+            L("仅用于未来 Provider 支持的在线源功能。")
+        }
+    }
+
+    private func privacyRow(_ title: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: MusicFreeSpacingTokens.xSmall) {
+            Text(title)
+                .font(MusicFreeTypographyTokens.caption)
+                .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
+            Text(value)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+struct PrivacySettingsView: View {
+    @Bindable var viewModel: SettingsViewModel
+    let metadataServerEnabled: Bool
+    let lyricsEnabled: Bool
+    @State private var isApplicationPrivacyRevokeConfirmationPresented = false
+
+    var body: some View {
+        List {
+            applicationPrivacySection
+            onlineSourceAvailabilitySection
+            onlineSourcePrivacySection
 
             Section {
                 ForEach(providerDescriptors) { descriptor in
@@ -545,8 +654,198 @@ struct PrivacySettingsView: View {
                 Text(L("Provider 同意独立保存；撤回后会同时关闭对应 Provider，未启用的 Provider 不会发起请求。"))
             }
         }
-        .navigationTitle(L("隐私与联网"))
+        .navigationTitle(L("隐私与联网服务"))
         .navigationBarTitleDisplayMode(.inline)
+        .confirmationDialog(
+            L("撤回应用隐私政策？"),
+            isPresented: $isApplicationPrivacyRevokeConfirmationPresented,
+            titleVisibility: .visible
+        ) {
+            Button(L("撤回并关闭所有在线源"), role: .destructive) {
+                viewModel.revokeOnlinePrivacy()
+            }
+            .accessibilityIdentifier("settings.privacy.application.revoke.confirm")
+            Button(L("取消"), role: .cancel) {}
+        } message: {
+            Text(L("这会撤销应用级同意，同时撤销并停用所有在线源；来源配置和已经导入本地的媒体会保留。"))
+        }
+    }
+
+    @ViewBuilder
+    private var applicationPrivacySection: some View {
+        Section {
+            if viewModel.isPrivacyPolicyAccepted {
+                Label(L("应用隐私政策已同意"), systemImage: "checkmark.shield")
+                    .foregroundStyle(MusicFreeColorTokens.accent)
+
+                Button(role: .destructive) {
+                    isApplicationPrivacyRevokeConfirmationPresented = true
+                } label: {
+                    Label(L("撤回同意并关闭联网服务"), systemImage: "hand.raised")
+                }
+                .accessibilityIdentifier("settings.privacy.application.revoke")
+            } else {
+                Text(L("未同意应用隐私政策时，元数据、歌词和在线源都不会发起网络请求。"))
+                    .font(MusicFreeTypographyTokens.secondary)
+                    .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
+
+                Button {
+                    viewModel.acceptPrivacyPolicy()
+                } label: {
+                    Label(L("同意应用隐私政策"), systemImage: "checkmark.shield")
+                }
+                .accessibilityIdentifier("settings.privacy.application.accept")
+            }
+
+            SafariServiceLink(
+                title: L("查看完整隐私政策"),
+                url: PrivacyPolicyURLs.app
+            )
+        } header: {
+            Text(L("应用隐私政策"))
+        } footer: {
+            Text(L("首次进入在线源时会单独弹出应用级协议；这里用于查看和撤回同意。撤回后会同时停用所有在线源。"))
+        }
+    }
+
+    @ViewBuilder
+    private var onlineSourceAvailabilitySection: some View {
+        Section {
+            Toggle(
+                L("启用在线源服务"),
+                isOn: Binding(
+                    get: { viewModel.isPrivacyPolicyAccepted && viewModel.isOnlineSourcesEnabled },
+                    set: { viewModel.setOnlineSourcesEnabled($0) }
+                )
+            )
+            .disabled(viewModel.isSaving || !viewModel.isPrivacyPolicyAccepted)
+            .accessibilityValue(onlineSourcesAvailabilityStatus)
+            .accessibilityIdentifier("settings.privacy.onlineSources.toggle")
+
+            if !viewModel.isPrivacyPolicyAccepted {
+                Text(L("请先同意应用隐私政策，在线源服务会保持关闭。"))
+                    .font(MusicFreeTypographyTokens.secondary)
+                    .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
+            }
+
+            if viewModel.onlineSourceConfigurations.isEmpty {
+                Text(L("还没有配置在线源。请从在线源 Tab 添加来源。"))
+                    .font(MusicFreeTypographyTokens.secondary)
+                    .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
+            } else {
+                ForEach(viewModel.onlineSourceConfigurations, id: \.sourceID) { configuration in
+                    Toggle(
+                        isOn: Binding(
+                            get: {
+                                viewModel.onlineSourceConfigurations
+                                    .first(where: { $0.sourceID == configuration.sourceID })?
+                                    .isEnabled == true
+                            },
+                            set: { viewModel.setOnlineSourceEnabled(configuration.sourceID, $0) }
+                        )
+                    ) {
+                        VStack(alignment: .leading, spacing: MusicFreeSpacingTokens.xSmall) {
+                            Text(configuration.displayName)
+                            Text(onlineSourceProviderTitle(configuration.providerKind))
+                                .font(MusicFreeTypographyTokens.caption)
+                                .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
+                            Text(sourceAvailabilityStatus(configuration))
+                                .font(MusicFreeTypographyTokens.caption)
+                                .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
+                        }
+                    }
+                    .disabled(
+                        viewModel.isSaving
+                            || !viewModel.isPrivacyPolicyAccepted
+                            || !isOnlineSourcePrivacyAccepted(configuration)
+                    )
+                    .accessibilityIdentifier(
+                        "settings.privacy.onlineSource.\(configuration.sourceID.rawValue).enabled"
+                    )
+                }
+            }
+        } header: {
+            Text(L("在线源可用性"))
+        } footer: {
+            Text(L("总开关控制在线源服务；每个来源还可以独立启用或关闭。已经导入本地的媒体不受影响。"))
+        }
+    }
+
+    @ViewBuilder
+    private var onlineSourcePrivacySection: some View {
+        Section {
+            if viewModel.onlineSourceConfigurations.isEmpty {
+                Text(L("添加来源后，这里会显示每个来源独立的隐私协议状态。"))
+                    .font(MusicFreeTypographyTokens.secondary)
+                    .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
+            } else {
+                ForEach(viewModel.onlineSourceConfigurations, id: \.sourceID) { configuration in
+                    NavigationLink {
+                        OnlineSourcePrivacyDetailsView(
+                            configuration: configuration,
+                            viewModel: viewModel
+                        )
+                    } label: {
+                        HStack(spacing: MusicFreeSpacingTokens.small) {
+                            Label(
+                                configuration.displayName,
+                                systemImage: onlineSourceProviderSymbol(
+                                    configuration.providerKind
+                                )
+                            )
+                            Spacer(minLength: MusicFreeSpacingTokens.small)
+                            Text(
+                                isOnlineSourcePrivacyAccepted(configuration)
+                                    ? L("已同意")
+                                    : L("待同意")
+                            )
+                                .font(MusicFreeTypographyTokens.caption)
+                                .foregroundStyle(
+                                    isOnlineSourcePrivacyAccepted(configuration)
+                                        ? MusicFreeColorTokens.accent
+                                        : MusicFreeColorTokens.foregroundSecondary
+                                )
+                        }
+                    }
+                    .accessibilityIdentifier(
+                        "settings.privacy.onlineSource.\(configuration.sourceID.rawValue).privacy"
+                    )
+                }
+            }
+        } header: {
+            Text(L("在线源隐私协议"))
+        } footer: {
+            Text(L("每个来源单独保存同意状态。点击来源查看协议详情并撤销；撤销某个来源会立即停用它，撤销应用隐私协议会同时清除所有来源同意。"))
+        }
+    }
+
+    private var onlineSourcesAvailabilityStatus: String {
+        guard viewModel.isPrivacyPolicyAccepted else {
+            return L("需要先同意应用隐私政策")
+        }
+        return viewModel.isOnlineSourcesEnabled ? L("已开启") : L("已关闭")
+    }
+
+    private func sourceAvailabilityStatus(
+        _ configuration: OnlineSourceConfiguration
+    ) -> String {
+        guard viewModel.isPrivacyPolicyAccepted else {
+            return L("需要先同意应用隐私政策")
+        }
+        guard isOnlineSourcePrivacyAccepted(configuration) else {
+            return L("需要先同意来源隐私协议")
+        }
+        if configuration.isEnabled {
+            return viewModel.isOnlineSourcesEnabled ? L("已启用") : L("已启用，但总开关已关闭")
+        }
+        return L("已关闭")
+    }
+
+    private func isOnlineSourcePrivacyAccepted(
+        _ configuration: OnlineSourceConfiguration
+    ) -> Bool {
+        configuration.privacyPolicyVersion
+            == configuration.providerKind.defaultPrivacyPolicyVersion
     }
 
     private var providerDescriptors: [PrivacyProviderDescriptor] {
@@ -592,5 +891,23 @@ struct PrivacySettingsView: View {
         for descriptor: PrivacyProviderDescriptor
     ) -> String {
         isProviderPolicyAccepted(descriptor) ? L("已确认") : L("未确认")
+    }
+}
+
+private func onlineSourceProviderTitle(_ providerKind: OnlineProviderKind) -> String {
+    switch providerKind {
+    case .dsAudio: return "DS Audio"
+    case .googleDrive: return "Google Drive"
+    case .baiduPan: return L("百度网盘")
+    case .gateway: return L("网关")
+    }
+}
+
+private func onlineSourceProviderSymbol(_ providerKind: OnlineProviderKind) -> String {
+    switch providerKind {
+    case .dsAudio: return "waveform"
+    case .googleDrive: return "externaldrive"
+    case .baiduPan: return "cloud"
+    case .gateway: return "network"
     }
 }

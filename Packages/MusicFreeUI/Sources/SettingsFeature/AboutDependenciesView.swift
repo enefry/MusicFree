@@ -1,5 +1,7 @@
 import DesignSystem
+import MusicDomain
 import SwiftUI
+import UIKit
 
 struct AboutDependenciesView: View {
     let provider: any SettingsReleaseInfoProviding
@@ -125,9 +127,15 @@ struct AboutDependenciesView: View {
 struct SettingsDiagnosticsView: View {
     let provider: any SettingsDiagnosticsProviding
     let lastFailure: SettingsFeatureFailure?
+    @Bindable var settingsViewModel: SettingsViewModel
 
     @State private var snapshot = SettingsDiagnosticsSnapshot()
     @State private var isLoading = true
+    @State private var logStatus = MusicLogger.fileLogStatus()
+    @State private var isPreparingLogShare = false
+    @State private var shareURL: URL?
+    @State private var shareErrorMessage: String?
+    @State private var isShowingShareError = false
 
     var body: some View {
         Group {
@@ -142,7 +150,33 @@ struct SettingsDiagnosticsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task {
             snapshot = await provider.diagnostics()
+            refreshLogStatus()
             isLoading = false
+        }
+        .onChange(of: settingsViewModel.isFileLoggingEnabled) { _, _ in
+            refreshLogStatus()
+        }
+        .sheet(
+            isPresented: Binding(
+                get: { shareURL != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        shareURL = nil
+                    }
+                }
+            )
+        ) {
+            if let shareURL {
+                SettingsLogShareSheet(fileURL: shareURL)
+            }
+        }
+        .alert(
+            L("无法分享日志文件"),
+            isPresented: $isShowingShareError
+        ) {
+            Button(L("确定"), role: .cancel) {}
+        } message: {
+            Text(shareErrorMessage ?? L("暂无可分享的日志文件"))
         }
     }
 
@@ -156,6 +190,50 @@ struct SettingsDiagnosticsView: View {
                         .font(MusicFreeTypographyTokens.caption.monospaced())
                         .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
                 }
+            }
+
+            Section(L("文件日志")) {
+                Toggle(
+                    L("启用文件日志"),
+                    isOn: Binding(
+                        get: { settingsViewModel.isFileLoggingEnabled },
+                        set: { settingsViewModel.setFileLoggingEnabled($0) }
+                    )
+                )
+                .disabled(settingsViewModel.isLoading || settingsViewModel.isSaving)
+                .accessibilityIdentifier("settings.diagnostics.fileLogging")
+
+                LabeledContent(
+                    L("文件大小"),
+                    value: ByteCountFormatter.string(
+                        fromByteCount: logStatus.byteCount,
+                        countStyle: .file
+                    )
+                )
+                LabeledContent(
+                    L("滚动上限"),
+                    value: ByteCountFormatter.string(
+                        fromByteCount: logStatus.maximumByteCount,
+                        countStyle: .file
+                    )
+                )
+                LabeledContent(L("文件位置"), value: MusicLogger.fileName)
+
+                Button {
+                    Task { await prepareLogShare() }
+                } label: {
+                    if isPreparingLogShare {
+                        Label(L("正在准备日志文件"), systemImage: "hourglass")
+                    } else {
+                        Label(L("分享日志文件"), systemImage: "square.and.arrow.up")
+                    }
+                }
+                .disabled(!logStatus.isAvailable || isPreparingLogShare)
+                .accessibilityIdentifier("settings.diagnostics.shareFileLog")
+
+                Text(L("按大小滚动，最多保留当前文件和 1 个归档文件。"))
+                .font(MusicFreeTypographyTokens.caption)
+                .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
             }
 
             Section(L("记录")) {
@@ -180,4 +258,51 @@ struct SettingsDiagnosticsView: View {
             }
         }
     }
+
+    private func refreshLogStatus() {
+        logStatus = MusicLogger.fileLogStatus()
+    }
+
+    private func prepareLogShare() async {
+        guard !isPreparingLogShare else { return }
+
+        isPreparingLogShare = true
+        defer { isPreparingLogShare = false }
+
+        await MusicLogger.flushFileLog()
+        refreshLogStatus()
+
+        guard let fileURL = logStatus.fileURL, logStatus.byteCount > 0 else {
+            shareErrorMessage = L("暂无可分享的日志文件")
+            isShowingShareError = true
+            return
+        }
+        shareURL = fileURL
+    }
+}
+
+private struct SettingsLogShareSheet: UIViewControllerRepresentable {
+    let fileURL: URL
+
+    func makeUIViewController(context _: Context) -> UIActivityViewController {
+        let controller = UIActivityViewController(
+            activityItems: [fileURL],
+            applicationActivities: nil
+        )
+        if let popover = controller.popoverPresentationController {
+            popover.sourceView = controller.view
+            popover.sourceRect = CGRect(
+                x: controller.view.bounds.midX,
+                y: controller.view.bounds.midY,
+                width: 1,
+                height: 1
+            )
+        }
+        return controller
+    }
+
+    func updateUIViewController(
+        _: UIActivityViewController,
+        context _: Context
+    ) {}
 }

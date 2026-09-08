@@ -141,6 +141,28 @@ private func acceptedPrivacy(for providerIDs: [String]) -> PrivacyPreferences {
 }
 
 @MainActor
+@Test("File logging toggle persists and survives unrelated settings changes")
+func settingsFeaturePersistsFileLoggingToggle() async {
+    let store = SettingsFeatureTestStore()
+    let viewModel = SettingsViewModel(store: store)
+
+    await viewModel.load()
+    viewModel.setFileLoggingEnabled(true)
+    await viewModel.waitForPendingWork()
+    await settleSettingsFeature()
+
+    #expect(viewModel.isFileLoggingEnabled)
+    #expect(store.current.loggingPreferences.isFileLoggingEnabled)
+
+    viewModel.setReplayGain(.track)
+    await viewModel.waitForPendingWork()
+    await settleSettingsFeature()
+
+    #expect(viewModel.isFileLoggingEnabled)
+    #expect(store.current.loggingPreferences.isFileLoggingEnabled)
+}
+
+@MainActor
 private final class SettingsAppIconTestProvider: SettingsAppIconProviding {
     var supportsAlternateIcons = true
     var alternateIconName: String?

@@ -44,6 +44,11 @@ struct FolderImportBundle: Sendable {
 struct FolderImportBundleAnalyzer: Sendable {
   func analyze(inputURL: URL, files: [ImportFile]) throws -> FolderImportBundle {
     let rootURL = try bundleRoot(for: inputURL)
+    return try analyze(rootURL: rootURL, files: files)
+  }
+
+  func analyze(rootURL: URL, files: [ImportFile]) throws -> FolderImportBundle {
+    let rootURL = rootURL.standardizedFileURL
     let resources = files.map { file in
       FolderImportResource(file: file, kind: classify(file.url))
     }

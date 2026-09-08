@@ -1,7 +1,6 @@
 import Foundation
 import LibraryAPI
 import MusicDomain
-import OSLog
 import SettingsAPI
 
 /// AppServices owns the enrichment queue so imports and settings do not keep
@@ -24,7 +23,7 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
     private let clock: any AppClock
     private let operationGate = MetadataEnrichmentOperationGate()
 
-    private static let logger = Logger(
+    private static let logger = MusicLogger(
         subsystem: "com.musicfree.app",
         category: "metadata-enrichment"
     )
@@ -84,7 +83,7 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
         snapshotContinuations[subscriptionID] = continuation
         continuation.yield(snapshot())
         Self.logger.debug(
-            "snapshot subscriber connected id=\(subscriptionID.uuidString, privacy: .public) subscribers=\(self.snapshotContinuations.count, privacy: .public)"
+            "snapshot subscriber connected id=\(subscriptionID.uuidString) subscribers=\(self.snapshotContinuations.count)"
         )
         continuation.onTermination = { @Sendable [weak self] _ in
             Task { await self?.removeSnapshotSubscription(subscriptionID) }
@@ -261,9 +260,77 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
         startQueueWorkerIfNeeded()
     }
 
+    func refresh(itemIDs: Set<MediaItemID>) async throws -> MetadataEnrichmentRefreshResult {
+        try await refresh(itemIDs: itemIDs, albumName: nil, progress: nil)
+    }
+
+    func refresh(
+        itemIDs: Set<MediaItemID>,
+        albumName: String?,
+        progress: (@Sendable (MetadataEnrichmentRefreshProgress) -> Void)?
+    ) async throws -> MetadataEnrichmentRefreshResult {
+        guard !itemIDs.isEmpty else {
+            return MetadataEnrichmentRefreshResult(total: 0)
+        }
+        guard enabled, !enabledProviderIDs().isEmpty, libraryRepository != nil else {
+            throw MetadataEnrichmentError.unavailable
+        }
+
+        var matched = 0
+        var noMatch = 0
+        var ambiguous = 0
+        var failed = 0
+        var skipped = 0
+        let sortedItemIDs = itemIDs.sorted { $0.externalID < $1.externalID }
+
+        progress?(MetadataEnrichmentRefreshProgress(total: sortedItemIDs.count))
+
+        for itemID in sortedItemIDs {
+            try Task.checkCancellation()
+            switch await process(
+                itemID: itemID,
+                forceRecheck: true,
+                refreshExistingFields: true,
+                albumNameOverride: albumName
+            ) {
+            case .matched:
+                matched += 1
+            case .noMatch:
+                noMatch += 1
+            case .ambiguous:
+                ambiguous += 1
+            case .failed:
+                failed += 1
+            case .skipped:
+                skipped += 1
+            case .cancelled:
+                throw CancellationError()
+            }
+            progress?(MetadataEnrichmentRefreshProgress(
+                total: sortedItemIDs.count,
+                processed: matched + noMatch + ambiguous + failed + skipped,
+                matched: matched,
+                noMatch: noMatch,
+                ambiguous: ambiguous,
+                failed: failed,
+                skipped: skipped,
+                currentItemID: itemID
+            ))
+        }
+
+        return MetadataEnrichmentRefreshResult(
+            total: sortedItemIDs.count,
+            matched: matched,
+            noMatch: noMatch,
+            ambiguous: ambiguous,
+            failed: failed,
+            skipped: skipped
+        )
+    }
+
     func startScan() {
         Self.logger.info(
-            "scan requested enabled=\(self.enabled, privacy: .public) status=\(self.scan.status.rawValue, privacy: .public) providers=\(self.enabledProviderIDs().count, privacy: .public)"
+            "scan requested enabled=\(self.enabled) status=\(self.scan.status.rawValue) providers=\(self.enabledProviderIDs().count)"
         )
         guard enabled, !enabledProviderIDs().isEmpty, libraryRepository != nil else {
             scan = MetadataEnrichmentScanSnapshot(
@@ -292,13 +359,13 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
     func cancelScan() async {
         guard let task = scanTask else {
             Self.logger.debug(
-                "cancel requested but no scan worker exists status=\(self.scan.status.rawValue, privacy: .public)"
+                "cancel requested but no scan worker exists status=\(self.scan.status.rawValue)"
             )
             return
         }
 
         Self.logger.info(
-            "cancel requested processed=\(self.scan.processed, privacy: .public)/\(self.scan.total, privacy: .public) current=\(self.scan.currentTitle ?? "-", privacy: .public)"
+            "cancel requested processed=\(self.scan.processed)/\(self.scan.total) current=\(self.scan.currentTitle ?? "-")"
         )
         task.cancel()
         if scan.status == .scanning {
@@ -315,7 +382,7 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
             Self.logger.info("cancel state published status=cancelled")
         }
         await task.value
-        Self.logger.info("cancel worker finished status=\(self.scan.status.rawValue, privacy: .public)")
+        Self.logger.info("cancel worker finished status=\(self.scan.status.rawValue)")
     }
 
     private func performScan() async {
@@ -337,7 +404,7 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
                 )
                 tracks.append(contentsOf: page.elements)
                 Self.logger.debug(
-                    "library page loaded page=\(pageIndex, privacy: .public) count=\(page.elements.count, privacy: .public) total=\(tracks.count, privacy: .public) hasNext=\(page.hasNextPage, privacy: .public)"
+                    "library page loaded page=\(pageIndex) count=\(page.elements.count) total=\(tracks.count) hasNext=\(page.hasNextPage)"
                 )
                 guard let nextPage = try page.nextPage(
                     limit: LibraryPageRequest.maximumLimit
@@ -354,7 +421,7 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
             )
             publish()
             Self.logger.info(
-                "library pagination completed tracks=\(tracks.count, privacy: .public)"
+                "library pagination completed tracks=\(tracks.count)"
             )
 
             for (index, track) in tracks.enumerated() {
@@ -362,7 +429,7 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
                 guard enabled else { throw CancellationError() }
                 let trackStartedAt = Date()
                 Self.logger.info(
-                    "track begin index=\(index + 1, privacy: .public)/\(tracks.count, privacy: .public) item=\(track.id.externalID, privacy: .public) title=\(track.title, privacy: .public)"
+                    "track begin index=\(index + 1)/\(tracks.count) item=\(track.id.externalID) title=\(track.title)"
                 )
                 scan = MetadataEnrichmentScanSnapshot(
                     status: .scanning,
@@ -381,7 +448,7 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
                 let outcome = await process(itemID: track.id, forceRecheck: true)
                 let outcomeCode = Self.itemOutcomeCode(outcome)
                 Self.logger.info(
-                    "track end index=\(index + 1, privacy: .public)/\(tracks.count, privacy: .public) item=\(track.id.externalID, privacy: .public) outcome=\(outcomeCode, privacy: .public) elapsed=\(Date().timeIntervalSince(trackStartedAt), privacy: .public)"
+                    "track end index=\(index + 1)/\(tracks.count) item=\(track.id.externalID) outcome=\(outcomeCode) elapsed=\(Date().timeIntervalSince(trackStartedAt))"
                 )
                 try Task.checkCancellation()
                 guard enabled else { throw CancellationError() }
@@ -423,7 +490,7 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
                 failed: scan.failed
             )
             Self.logger.info(
-                "scan worker completed processed=\(self.scan.processed, privacy: .public) matched=\(self.scan.matched, privacy: .public) noMatch=\(self.scan.noMatch, privacy: .public) ambiguous=\(self.scan.ambiguous, privacy: .public) failed=\(self.scan.failed, privacy: .public) elapsed=\(Date().timeIntervalSince(scanStartedAt), privacy: .public)"
+                "scan worker completed processed=\(self.scan.processed) matched=\(self.scan.matched) noMatch=\(self.scan.noMatch) ambiguous=\(self.scan.ambiguous) failed=\(self.scan.failed) elapsed=\(Date().timeIntervalSince(scanStartedAt))"
             )
         } catch is CancellationError {
             scan = MetadataEnrichmentScanSnapshot(
@@ -436,7 +503,7 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
                 failed: scan.failed
             )
             Self.logger.info(
-                "scan worker cancelled processed=\(self.scan.processed, privacy: .public)/\(self.scan.total, privacy: .public) elapsed=\(Date().timeIntervalSince(scanStartedAt), privacy: .public)"
+                "scan worker cancelled processed=\(self.scan.processed)/\(self.scan.total) elapsed=\(Date().timeIntervalSince(scanStartedAt))"
             )
         } catch {
             scan = MetadataEnrichmentScanSnapshot(
@@ -450,7 +517,7 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
                 errorCode: Self.errorCode(error)
             )
             Self.logger.error(
-                "scan worker failed code=\(Self.errorCode(error), privacy: .public) processed=\(self.scan.processed, privacy: .public)/\(self.scan.total, privacy: .public)"
+                "scan worker failed code=\(Self.errorCode(error)) processed=\(self.scan.processed)/\(self.scan.total)"
             )
         }
 
@@ -481,13 +548,17 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
 
     private func process(
         itemID: MediaItemID,
-        forceRecheck: Bool = false
+        forceRecheck: Bool = false,
+        refreshExistingFields: Bool = false,
+        albumNameOverride: String? = nil
     ) async -> ItemOutcome {
         let acquired = await operationGate.enter()
         guard acquired else { return .cancelled }
         let outcome = await processSerialized(
             itemID: itemID,
-            forceRecheck: forceRecheck
+            forceRecheck: forceRecheck,
+            refreshExistingFields: refreshExistingFields,
+            albumNameOverride: albumNameOverride
         )
         await operationGate.leave()
         return outcome
@@ -495,7 +566,9 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
 
     private func processSerialized(
         itemID: MediaItemID,
-        forceRecheck: Bool
+        forceRecheck: Bool,
+        refreshExistingFields: Bool,
+        albumNameOverride: String?
     ) async -> ItemOutcome {
         guard enabled, let repository = libraryRepository else {
             return .cancelled
@@ -506,7 +579,12 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
             guard let track = try await repository.track(id: itemID) else {
                 return .skipped
             }
-            let query = try await makeQuery(for: track, repository: repository)
+            let query = try await makeQuery(
+                for: track,
+                repository: repository,
+                refreshExistingFields: refreshExistingFields,
+                albumNameOverride: albumNameOverride
+            )
             guard let searchTerm = query.searchTerm, !searchTerm.isEmpty else {
                 return .noMatch
             }
@@ -522,17 +600,17 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
                 try Task.checkCancellation()
                 guard let provider = providers[providerID] else {
                     Self.logger.error(
-                        "provider missing item=\(itemID.externalID, privacy: .public) provider=\(providerID.rawValue, privacy: .public)"
+                        "provider missing item=\(itemID.externalID) provider=\(providerID.rawValue)"
                     )
                     continue
                 }
                 Self.logger.info(
-                    "provider begin item=\(itemID.externalID, privacy: .public) provider=\(providerID.rawValue, privacy: .public)"
+                    "provider begin item=\(itemID.externalID) provider=\(providerID.rawValue)"
                 )
                 let authorization = await provider.authorizationStatus()
                 guard authorization == .authorized else {
                     Self.logger.debug(
-                        "provider skipped item=\(itemID.externalID, privacy: .public) provider=\(providerID.rawValue, privacy: .public) authorization=\(authorization.rawValue, privacy: .public)"
+                        "provider skipped item=\(itemID.externalID) provider=\(providerID.rawValue) authorization=\(authorization.rawValue)"
                     )
                     continue
                 }
@@ -547,16 +625,17 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
                         query: query,
                         providerID: providerID,
                         provider: provider,
-                        forceRecheck: forceRecheck
+                        forceRecheck: forceRecheck,
+                        refreshExistingFields: refreshExistingFields
                     )
                 } catch {
                     Self.logger.error(
-                        "provider error item=\(itemID.externalID, privacy: .public) provider=\(providerID.rawValue, privacy: .public) code=\(Self.errorCode(error), privacy: .public)"
+                        "provider error item=\(itemID.externalID) provider=\(providerID.rawValue) code=\(Self.errorCode(error))"
                     )
                     throw error
                 }
                 Self.logger.info(
-                    "provider end item=\(itemID.externalID, privacy: .public) provider=\(providerID.rawValue, privacy: .public) outcome=\(Self.itemOutcomeCode(providerOutcome), privacy: .public) elapsed=\(Date().timeIntervalSince(providerStartedAt), privacy: .public)"
+                    "provider end item=\(itemID.externalID) provider=\(providerID.rawValue) outcome=\(Self.itemOutcomeCode(providerOutcome)) elapsed=\(Date().timeIntervalSince(providerStartedAt))"
                 )
                 switch providerOutcome {
                 case .matched:
@@ -602,7 +681,8 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
         query: MetadataEnrichmentQuery,
         providerID: MetadataProviderID,
         provider: any MetadataEnrichmentProviding,
-        forceRecheck: Bool
+        forceRecheck: Bool,
+        refreshExistingFields: Bool
     ) async throws -> ItemOutcome {
         let previous = try await recordRepository?.record(
             for: itemID,
@@ -612,7 +692,7 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
         let now = await clock.now()
         if sameQuery, let previous {
             switch previous.status {
-            case .matched:
+            case .matched where !forceRecheck:
                 let artworkStillNeedsRetry = query.missingFields.contains(.artwork)
                     && !previous.updatedFields.contains(.artwork)
                 if !artworkStillNeedsRetry {
@@ -680,26 +760,26 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
             do {
                 let searchStartedAt = Date()
                 Self.logger.info(
-                    "provider search begin item=\(itemID.externalID, privacy: .public) provider=\(providerID.rawValue, privacy: .public) attempt=\(attemptCount, privacy: .public)"
+                    "provider search begin item=\(itemID.externalID) provider=\(providerID.rawValue) attempt=\(attemptCount)"
                 )
                 candidates = try await provider.search(query)
                 try Task.checkCancellation()
                 guard enabled else { throw CancellationError() }
                 finalError = nil
                 Self.logger.info(
-                    "provider search end item=\(itemID.externalID, privacy: .public) provider=\(providerID.rawValue, privacy: .public) attempt=\(attemptCount, privacy: .public) candidates=\(candidates.count, privacy: .public) elapsed=\(Date().timeIntervalSince(searchStartedAt), privacy: .public)"
+                    "provider search end item=\(itemID.externalID) provider=\(providerID.rawValue) attempt=\(attemptCount) candidates=\(candidates.count) elapsed=\(Date().timeIntervalSince(searchStartedAt))"
                 )
                 break
             } catch is CancellationError {
                 Self.logger.info(
-                    "provider search cancelled item=\(itemID.externalID, privacy: .public) provider=\(providerID.rawValue, privacy: .public) attempt=\(attemptCount, privacy: .public)"
+                    "provider search cancelled item=\(itemID.externalID) provider=\(providerID.rawValue) attempt=\(attemptCount)"
                 )
                 throw CancellationError()
             } catch let error as MetadataEnrichmentError {
                 finalError = error
                 let delay = Self.retryDelay(for: error, attempt: attemptCount)
                 Self.logger.error(
-                    "provider search failed item=\(itemID.externalID, privacy: .public) provider=\(providerID.rawValue, privacy: .public) attempt=\(attemptCount, privacy: .public) code=\(Self.errorCode(error), privacy: .public) retryDelay=\(delay ?? 0, privacy: .public)"
+                    "provider search failed item=\(itemID.externalID) provider=\(providerID.rawValue) attempt=\(attemptCount) code=\(Self.errorCode(error)) retryDelay=\(delay ?? 0)"
                 )
                 guard attemptCount < 3, let delay else { break }
                 let retryAt = attemptDate.addingTimeInterval(delay)
@@ -720,7 +800,7 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
             } catch {
                 finalError = .requestFailed(code: "provider_failed", httpStatus: nil)
                 Self.logger.error(
-                    "provider search failed item=\(itemID.externalID, privacy: .public) provider=\(providerID.rawValue, privacy: .public) attempt=\(attemptCount, privacy: .public) code=provider_failed"
+                    "provider search failed item=\(itemID.externalID) provider=\(providerID.rawValue) attempt=\(attemptCount) code=provider_failed"
                 )
                 break
             }
@@ -745,13 +825,13 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
                 )
             )
             Self.logger.error(
-                "provider finished without match item=\(itemID.externalID, privacy: .public) provider=\(providerID.rawValue, privacy: .public) code=\(Self.errorCode(finalError), privacy: .public) attempts=\(attemptCount, privacy: .public)"
+                "provider finished without match item=\(itemID.externalID) provider=\(providerID.rawValue) code=\(Self.errorCode(finalError)) attempts=\(attemptCount)"
             )
             return .failed
         }
 
         Self.logger.debug(
-            "provider matching item=\(itemID.externalID, privacy: .public) provider=\(providerID.rawValue, privacy: .public) candidates=\(candidates.count, privacy: .public)"
+            "provider matching item=\(itemID.externalID) provider=\(providerID.rawValue) candidates=\(candidates.count)"
         )
         switch MetadataEnrichmentMatcher.match(query: query, candidates: candidates) {
         case .noMatch:
@@ -766,7 +846,7 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
                 )
             )
             Self.logger.info(
-                "provider match result item=\(itemID.externalID, privacy: .public) provider=\(providerID.rawValue, privacy: .public) result=no_match candidates=\(candidates.count, privacy: .public)"
+                "provider match result item=\(itemID.externalID) provider=\(providerID.rawValue) result=no_match candidates=\(candidates.count)"
             )
             return .noMatch
         case .ambiguous:
@@ -781,7 +861,7 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
                 )
             )
             Self.logger.info(
-                "provider match result item=\(itemID.externalID, privacy: .public) provider=\(providerID.rawValue, privacy: .public) result=ambiguous candidates=\(candidates.count, privacy: .public)"
+                "provider match result item=\(itemID.externalID) provider=\(providerID.rawValue) result=ambiguous candidates=\(candidates.count)"
             )
             return .ambiguous
         case .matched(let matchedCandidate):
@@ -790,7 +870,7 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
             if query.missingFields.contains(.artwork), candidate.artworkData == nil {
                 do {
                     Self.logger.info(
-                        "artwork download begin item=\(itemID.externalID, privacy: .public) provider=\(providerID.rawValue, privacy: .public) catalog=\(candidate.catalogID, privacy: .public)"
+                        "artwork download begin item=\(itemID.externalID) provider=\(providerID.rawValue) catalog=\(candidate.catalogID)"
                     )
                     let artworkData = try await provider.artworkData(for: candidate)
                     candidate = Self.replacingArtwork(
@@ -801,11 +881,11 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
                         artworkErrorCode = "artwork_unavailable"
                     }
                     Self.logger.info(
-                        "artwork download end item=\(itemID.externalID, privacy: .public) provider=\(providerID.rawValue, privacy: .public) available=\(artworkData != nil, privacy: .public)"
+                        "artwork download end item=\(itemID.externalID) provider=\(providerID.rawValue) available=\(artworkData != nil)"
                     )
                 } catch is CancellationError {
                     Self.logger.info(
-                        "artwork download cancelled item=\(itemID.externalID, privacy: .public) provider=\(providerID.rawValue, privacy: .public)"
+                        "artwork download cancelled item=\(itemID.externalID) provider=\(providerID.rawValue)"
                     )
                     throw CancellationError()
                 } catch let error {
@@ -813,7 +893,7 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
                     // but it must remain visible in the durable retry record.
                     artworkErrorCode = Self.errorCode(error)
                     Self.logger.error(
-                        "artwork download failed item=\(itemID.externalID, privacy: .public) provider=\(providerID.rawValue, privacy: .public) code=\(Self.errorCode(error), privacy: .public)"
+                        "artwork download failed item=\(itemID.externalID) provider=\(providerID.rawValue) code=\(Self.errorCode(error))"
                     )
                 }
             }
@@ -823,25 +903,27 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
 
             let supplement = Self.supplement(
                 for: query,
-                candidate: candidate
+                candidate: candidate,
+                replaceExisting: refreshExistingFields
             )
             let updatedFields = Self.updatedFields(
                 for: query,
-                candidate: candidate
+                candidate: candidate,
+                replaceExisting: refreshExistingFields
             )
             Self.logger.info(
-                "library supplement begin item=\(itemID.externalID, privacy: .public) provider=\(providerID.rawValue, privacy: .public) fields=\(updatedFields.map(\.rawValue).sorted().joined(separator: ","), privacy: .public)"
+                "library supplement begin item=\(itemID.externalID) provider=\(providerID.rawValue) fields=\(updatedFields.map(\.rawValue).sorted().joined(separator: ","))"
             )
             do {
                 _ = try await library.supplementMetadata(supplement)
             } catch {
                 Self.logger.error(
-                    "library supplement failed item=\(itemID.externalID, privacy: .public) provider=\(providerID.rawValue, privacy: .public) code=\(Self.errorCode(error), privacy: .public)"
+                    "library supplement failed item=\(itemID.externalID) provider=\(providerID.rawValue) code=\(Self.errorCode(error))"
                 )
                 throw error
             }
             Self.logger.info(
-                "library supplement end item=\(itemID.externalID, privacy: .public) provider=\(providerID.rawValue, privacy: .public)"
+                "library supplement end item=\(itemID.externalID) provider=\(providerID.rawValue)"
             )
             await saveRecord(
                 MetadataEnrichmentRecord(
@@ -857,7 +939,7 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
                 )
             )
             Self.logger.info(
-                "provider match result item=\(itemID.externalID, privacy: .public) provider=\(providerID.rawValue, privacy: .public) result=matched catalog=\(candidate.catalogID, privacy: .public)"
+                "provider match result item=\(itemID.externalID) provider=\(providerID.rawValue) result=matched catalog=\(candidate.catalogID)"
             )
             return .matched
         }
@@ -865,7 +947,9 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
 
     private func makeQuery(
         for track: Track,
-        repository: any LibraryRepository
+        repository: any LibraryRepository,
+        refreshExistingFields: Bool = false,
+        albumNameOverride: String? = nil
     ) async throws -> MetadataEnrichmentQuery {
         let artistNames = try await resolvedArtistNames(track.artistIDs, repository: repository)
         let album: Album?
@@ -890,12 +974,15 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
         if track.trackNumber == nil { missingFields.insert(.trackNumber) }
         if track.discNumber == nil { missingFields.insert(.discNumber) }
         if track.artwork == nil { missingFields.insert(.artwork) }
+        if refreshExistingFields {
+            missingFields.formUnion(MetadataEnrichmentField.allCases)
+        }
 
         return MetadataEnrichmentQuery(
             itemID: track.id,
             title: track.title,
             artistName: artistNames.first,
-            albumName: album?.title,
+            albumName: albumNameOverride ?? album?.title,
             fileName: track.fileName,
             durationSeconds: track.duration.map(Self.durationSeconds),
             missingFields: missingFields,
@@ -934,7 +1021,7 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
             try await recordRepository?.save(record)
         } catch {
             Self.logger.error(
-                "record save failed item=\(record.itemID.externalID, privacy: .public) provider=\(record.provider.rawValue, privacy: .public) status=\(record.status.rawValue, privacy: .public) code=\(Self.errorCode(error), privacy: .public)"
+                "record save failed item=\(record.itemID.externalID) provider=\(record.provider.rawValue) status=\(record.status.rawValue) code=\(Self.errorCode(error))"
             )
         }
     }
@@ -955,7 +1042,7 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
 
     private func cancelRunningWork() async {
         Self.logger.info(
-            "cancelling active work scan=\(self.scanTask != nil, privacy: .public) queue=\(self.queueTask != nil, privacy: .public)"
+            "cancelling active work scan=\(self.scanTask != nil) queue=\(self.queueTask != nil)"
         )
         scanTask?.cancel()
         queueTask?.cancel()
@@ -981,7 +1068,7 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
     private func publish() {
         let value = snapshot()
         Self.logger.debug(
-            "snapshot published status=\(value.scan.status.rawValue, privacy: .public) processed=\(value.scan.processed, privacy: .public)/\(value.scan.total, privacy: .public) current=\(value.scan.currentTitle ?? "-", privacy: .public) subscribers=\(self.snapshotContinuations.count, privacy: .public)"
+            "snapshot published status=\(value.scan.status.rawValue) processed=\(value.scan.processed)/\(value.scan.total) current=\(value.scan.currentTitle ?? "-") subscribers=\(self.snapshotContinuations.count)"
         )
         for continuation in snapshotContinuations.values {
             continuation.yield(value)
@@ -991,7 +1078,7 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
     private func removeSnapshotSubscription(_ id: UUID) {
         snapshotContinuations.removeValue(forKey: id)
         Self.logger.debug(
-            "snapshot subscriber disconnected id=\(id.uuidString, privacy: .public) subscribers=\(self.snapshotContinuations.count, privacy: .public)"
+            "snapshot subscriber disconnected id=\(id.uuidString) subscribers=\(self.snapshotContinuations.count)"
         )
     }
 
@@ -1047,36 +1134,39 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
 
     private static func supplement(
         for query: MetadataEnrichmentQuery,
-        candidate: MetadataEnrichmentCandidate
+        candidate: MetadataEnrichmentCandidate,
+        replaceExisting: Bool
     ) -> TrackMetadataSupplement {
         TrackMetadataSupplement(
             itemID: query.itemID,
-            title: query.missingFields.contains(.title) ? candidate.title : nil,
-            artistName: query.missingFields.contains(.artist) ? candidate.artistName : nil,
-            albumArtistName: query.missingFields.contains(.albumArtist) ? candidate.albumArtistName : nil,
-            albumName: query.missingFields.contains(.album) ? candidate.albumName : nil,
-            genreName: query.missingFields.contains(.genre) ? candidate.genreName : nil,
-            trackNumber: query.missingFields.contains(.trackNumber) ? candidate.trackNumber : nil,
-            discNumber: query.missingFields.contains(.discNumber) ? candidate.discNumber : nil,
-            year: query.missingFields.contains(.year) ? candidate.year : nil,
-            artworkData: query.missingFields.contains(.artwork) ? candidate.artworkData : nil
+            title: replaceExisting || query.missingFields.contains(.title) ? candidate.title : nil,
+            artistName: replaceExisting || query.missingFields.contains(.artist) ? candidate.artistName : nil,
+            albumArtistName: replaceExisting || query.missingFields.contains(.albumArtist) ? candidate.albumArtistName : nil,
+            albumName: replaceExisting || query.missingFields.contains(.album) ? candidate.albumName : nil,
+            genreName: replaceExisting || query.missingFields.contains(.genre) ? candidate.genreName : nil,
+            trackNumber: replaceExisting || query.missingFields.contains(.trackNumber) ? candidate.trackNumber : nil,
+            discNumber: replaceExisting || query.missingFields.contains(.discNumber) ? candidate.discNumber : nil,
+            year: replaceExisting || query.missingFields.contains(.year) ? candidate.year : nil,
+            artworkData: replaceExisting || query.missingFields.contains(.artwork) ? candidate.artworkData : nil,
+            replaceExisting: replaceExisting
         )
     }
 
     private static func updatedFields(
         for query: MetadataEnrichmentQuery,
-        candidate: MetadataEnrichmentCandidate
+        candidate: MetadataEnrichmentCandidate,
+        replaceExisting: Bool
     ) -> Set<MetadataEnrichmentField> {
         var fields = Set<MetadataEnrichmentField>()
-        if query.missingFields.contains(.title), !candidate.title.isEmpty { fields.insert(.title) }
-        if query.missingFields.contains(.artist), candidate.artistName != nil { fields.insert(.artist) }
-        if query.missingFields.contains(.albumArtist), candidate.albumArtistName != nil { fields.insert(.albumArtist) }
-        if query.missingFields.contains(.album), candidate.albumName != nil { fields.insert(.album) }
-        if query.missingFields.contains(.genre), candidate.genreName != nil { fields.insert(.genre) }
-        if query.missingFields.contains(.trackNumber), candidate.trackNumber != nil { fields.insert(.trackNumber) }
-        if query.missingFields.contains(.discNumber), candidate.discNumber != nil { fields.insert(.discNumber) }
-        if query.missingFields.contains(.year), candidate.year != nil { fields.insert(.year) }
-        if query.missingFields.contains(.artwork), candidate.artworkData != nil { fields.insert(.artwork) }
+        if (replaceExisting || query.missingFields.contains(.title)), !candidate.title.isEmpty { fields.insert(.title) }
+        if (replaceExisting || query.missingFields.contains(.artist)), candidate.artistName != nil { fields.insert(.artist) }
+        if (replaceExisting || query.missingFields.contains(.albumArtist)), candidate.albumArtistName != nil { fields.insert(.albumArtist) }
+        if (replaceExisting || query.missingFields.contains(.album)), candidate.albumName != nil { fields.insert(.album) }
+        if (replaceExisting || query.missingFields.contains(.genre)), candidate.genreName != nil { fields.insert(.genre) }
+        if (replaceExisting || query.missingFields.contains(.trackNumber)), candidate.trackNumber != nil { fields.insert(.trackNumber) }
+        if (replaceExisting || query.missingFields.contains(.discNumber)), candidate.discNumber != nil { fields.insert(.discNumber) }
+        if (replaceExisting || query.missingFields.contains(.year)), candidate.year != nil { fields.insert(.year) }
+        if (replaceExisting || query.missingFields.contains(.artwork)), candidate.artworkData != nil { fields.insert(.artwork) }
         return fields
     }
 

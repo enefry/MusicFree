@@ -20,6 +20,7 @@ final class PlayerViewModel: ObservableObject {
   private var pendingSeekPosition: Duration?
   private var pendingSeekGeneration: PlaybackGeneration?
   private var pendingVolume: Float?
+  private var hasObservedPlayingPhase: Bool
 
   init(
     serving: any PlaybackServing,
@@ -27,7 +28,8 @@ final class PlayerViewModel: ObservableObject {
     autoStart: Bool = true
   ) {
     self.serving = serving
-    self.snapshot = serving.snapshot
+    let initialSnapshot = serving.snapshot
+    self.snapshot = initialSnapshot
 
     let resolvedAudioServing = audioServing
       ?? (serving as? any PlaybackAudioServing)
@@ -35,6 +37,7 @@ final class PlayerViewModel: ObservableObject {
     self.audioServing = resolvedAudioServing
     self.volume = resolvedAudioServing.volume
     self.isMuted = resolvedAudioServing.isMuted
+    self.hasObservedPlayingPhase = initialSnapshot.phase == .playing
 
     if autoStart {
       start()
@@ -81,11 +84,39 @@ final class PlayerViewModel: ObservableObject {
     snapshot.currentItem?.artist
   }
 
+  /// Indicates that the current generation/item has reached audible playback.
+  /// Position is not a reliable signal because a restored position can be
+  /// non-zero before playback starts, while a short buffering callback can
+  /// still report zero after audio has already begun.
+  var hasStartedPlayback: Bool {
+    hasObservedPlayingPhase
+  }
+
+  /// A preparing snapshot can expose the selected item ID before its display
+  /// metadata is resolved. The player surfaces should remain present during
+  /// that short handoff instead of presenting the empty state.
+  var hasCurrentPlaybackContent: Bool {
+    guard snapshot.currentItemID != nil else { return false }
+    if snapshot.currentItem != nil {
+      return true
+    }
+
+    // A selected item without display metadata is only content-bearing while
+    // the session is still resolving or reporting its terminal error. Do not
+    // keep an empty Now Playing surface alive for an idle/stopped snapshot.
+    switch snapshot.phase {
+    case .preparing, .buffering, .playing, .paused, .failed:
+      return true
+    case .idle, .stopped:
+      return false
+    }
+  }
+
   /// The MiniPlayer represents an active single-track session. A stopped
   /// coordinator intentionally retains the current item for later resume, so
   /// checking only `currentItem` would leave the MiniPlayer visible after stop.
   var isMiniPlayerVisible: Bool {
-    guard snapshot.currentItem != nil,
+    guard hasCurrentPlaybackContent,
           snapshot.queue.currentEntryID != nil,
           snapshot.queue.currentItemID != nil else {
       return false
@@ -213,6 +244,17 @@ final class PlayerViewModel: ObservableObject {
        nextSnapshot.phase != .preparing,
        nextSnapshot.phase != .failed {
       return false
+    }
+
+    let generationChanged = nextSnapshot.generation != snapshot.generation
+    let itemChanged = nextSnapshot.currentItemID != snapshot.currentItemID
+    let reenteredPreparing = nextSnapshot.phase == .preparing
+      && snapshot.phase != .preparing
+    if generationChanged || itemChanged || reenteredPreparing {
+      hasObservedPlayingPhase = false
+    }
+    if nextSnapshot.phase == .playing {
+      hasObservedPlayingPhase = true
     }
 
     snapshot = nextSnapshot

@@ -1,0 +1,8 @@
+// Copy this file to GoogleDriveOAuth.local.xcconfig and replace the values.
+// The copied file is ignored by Git and is not packaged into the app.
+
+GOOGLE_DRIVE_OAUTH_ENABLED = YES
+GOOGLE_DRIVE_OAUTH_CLIENT_ID = REPLACE_WITH_CLIENT_ID.apps.googleusercontent.com
+GOOGLE_DRIVE_OAUTH_REVERSED_CLIENT_ID = com.googleusercontent.apps.REPLACE_WITH_CLIENT_ID
+GOOGLE_DRIVE_OAUTH_URL_SCHEME = $(GOOGLE_DRIVE_OAUTH_REVERSED_CLIENT_ID)
+GOOGLE_DRIVE_OAUTH_REDIRECT_URL = $(GOOGLE_DRIVE_OAUTH_URL_SCHEME):/oauth2redirect/google

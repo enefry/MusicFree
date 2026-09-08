@@ -206,7 +206,8 @@ public actor MetadataServerLyricsProvider: LyricsProviding {
         ]
         guard let rawLyrics = rawCandidates.compactMap({ (value: String?) -> String? in
             guard let value else { return nil }
-            let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            let normalized = MetadataTextRepair.repair(value)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             return normalized.isEmpty ? nil : normalized
         }).first else {
             return nil

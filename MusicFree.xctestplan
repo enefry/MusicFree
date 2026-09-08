@@ -1,0 +1,64 @@
+{
+  "configurations" : [
+    {
+      "id" : "2C0E6C17-2E4E-4D15-AF2B-4E36A22E9F41",
+      "name" : "Default",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "testTimeoutsEnabled" : false,
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:MusicFree.xcodeproj",
+      "identifier" : "7696EAFF038146ED3327A170",
+      "name" : "MusicFree"
+    }
+  },
+  "testTargets" : [
+    {
+      "target" : {
+        "containerPath" : "container:MusicFree.xcodeproj",
+        "identifier" : "F9D5BF181F0229205C3FF203",
+        "name" : "MusicFreeTests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:MusicFree.xcodeproj",
+        "identifier" : "D2E4A09954D6E689C2590031",
+        "name" : "MusicFreeUITests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:Packages/MusicFreeCore",
+        "identifier" : "MusicFreeCoreTests",
+        "name" : "MusicFreeCoreTests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:Packages/MusicFreeInfrastructure",
+        "identifier" : "MusicFreeInfrastructureTests",
+        "name" : "MusicFreeInfrastructureTests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:Packages/MusicFreeUI",
+        "identifier" : "MusicFreeUIFeatureTests",
+        "name" : "MusicFreeUIFeatureTests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:Packages/MusicFreeVLCKitAdapter",
+        "identifier" : "MusicFreeVLCKitAdapterTests",
+        "name" : "MusicFreeVLCKitAdapterTests"
+      }
+    }
+  ],
+  "version" : 1
+}

@@ -4,6 +4,108 @@ import Observation
 import SettingsAPI
 import SwiftUI
 
+public enum SettingsDestination: String, CaseIterable, Hashable, Identifiable, Sendable {
+    case general
+    case playback
+    case importing
+    case storage
+    case privacy
+    case about
+
+    public var id: Self { self }
+
+    public var title: String {
+        switch self {
+        case .general: L("settings.category.general")
+        case .playback: L("settings.category.playback")
+        case .importing: L("settings.category.importing")
+        case .storage: L("settings.category.storage")
+        case .privacy: L("settings.category.privacy")
+        case .about: L("settings.category.about")
+        }
+    }
+
+    public var systemImage: String {
+        switch self {
+        case .general: "gearshape"
+        case .playback: "play.circle"
+        case .importing: "square.and.arrow.down"
+        case .storage: "internaldrive"
+        case .privacy: "hand.raised.circle"
+        case .about: "info.circle"
+        }
+    }
+}
+
+public enum SettingsSceneLayout: Sendable {
+    case compact
+    case detail(SettingsDestination)
+}
+
+@MainActor
+@Observable
+public final class SettingsSceneModel {
+    let viewModel: SettingsViewModel
+
+    public init(
+        settingsServing: any SettingsServing,
+        storageMaintenance: (any StorageMaintenanceServing)? = nil,
+        metadataEnrichment: (any MetadataEnrichmentServing)? = nil,
+        lyricsServing: (any LyricsServing)? = nil
+    ) {
+        viewModel = SettingsViewModel(
+            store: AppServicesSettingsStore(
+                serving: settingsServing,
+                storageMaintenance: storageMaintenance
+            ),
+            metadataEnrichment: metadataEnrichment,
+            lyricsServing: lyricsServing
+        )
+    }
+
+    init(
+        store: any SettingsFeatureStore,
+        metadataEnrichment: (any MetadataEnrichmentServing)? = nil,
+        lyricsServing: (any LyricsServing)? = nil
+    ) {
+        viewModel = SettingsViewModel(
+            store: store,
+            metadataEnrichment: metadataEnrichment,
+            lyricsServing: lyricsServing
+        )
+    }
+}
+
+public struct SettingsSecondaryColumn: View {
+    @Binding private var selection: SettingsDestination
+
+    public init(selection: Binding<SettingsDestination>) {
+        _selection = selection
+    }
+
+    public var body: some View {
+        List(selection: optionalSelection) {
+            ForEach(SettingsDestination.allCases) { destination in
+                Label(destination.title, systemImage: destination.systemImage)
+                    .tag(destination)
+            }
+        }
+        .navigationTitle(L("设置"))
+        .accessibilityIdentifier("settings.categories")
+    }
+
+    private var optionalSelection: Binding<SettingsDestination?> {
+        Binding(
+            get: { selection },
+            set: { newValue in
+                if let newValue {
+                    selection = newValue
+                }
+            }
+        )
+    }
+}
+
 public struct SettingsScene<AdditionsContent: View>: View {
     private let releaseInfoProvider: any SettingsReleaseInfoProviding
     private let diagnosticsProvider: any SettingsDiagnosticsProviding
@@ -13,15 +115,19 @@ public struct SettingsScene<AdditionsContent: View>: View {
     private let metadataServerEnabled: Bool
     private let lyricsEnabled: Bool
     private let additionContent: AdditionsContent?
+    private let onNavigationChange: ((SettingsDestination?) -> Void)?
     @Binding private var appearance: MusicFreeAppearance
     @Binding private var language: MusicFreeLanguage
-    @State private var viewModel: SettingsViewModel
+    @Binding private var accentColor: Color
+    @State private var model: SettingsSceneModel
+    private let layout: SettingsSceneLayout
 
     @MainActor
     init(
         store: any SettingsFeatureStore,
         appearance: Binding<MusicFreeAppearance> = .constant(.system),
         language: Binding<MusicFreeLanguage> = .constant(.english),
+        accentColor: Binding<Color> = .constant(MusicFreeAccentColorStore.color),
         releaseInfoProvider: any SettingsReleaseInfoProviding,
         diagnosticsProvider: any SettingsDiagnosticsProviding,
         appIconOptions: [SettingsAppIconOption] = [],
@@ -31,6 +137,8 @@ public struct SettingsScene<AdditionsContent: View>: View {
         lyricsServing: (any LyricsServing)? = nil,
         metadataServerEnabled: Bool = true,
         lyricsEnabled: Bool = true,
+        onNavigationChange: ((SettingsDestination?) -> Void)? = nil,
+        layout: SettingsSceneLayout = .compact,
         @ViewBuilder additionContent: () -> AdditionsContent? = { nil }
     ) {
         self.releaseInfoProvider = releaseInfoProvider
@@ -40,13 +148,16 @@ public struct SettingsScene<AdditionsContent: View>: View {
         self.sleepTimerServing = sleepTimerServing
         self.metadataServerEnabled = metadataServerEnabled
         self.lyricsEnabled = lyricsEnabled
+        self.onNavigationChange = onNavigationChange
         _appearance = appearance
         _language = language
-        _viewModel = State(initialValue: SettingsViewModel(
+        _accentColor = accentColor
+        _model = State(initialValue: SettingsSceneModel(
             store: store,
             metadataEnrichment: metadataEnrichment,
             lyricsServing: lyricsServing
         ))
+        self.layout = layout
         self.additionContent = additionContent()
     }
 
@@ -57,6 +168,7 @@ public struct SettingsScene<AdditionsContent: View>: View {
         storageMaintenance: (any StorageMaintenanceServing)? = nil,
         appearance: Binding<MusicFreeAppearance> = .constant(.system),
         language: Binding<MusicFreeLanguage> = .constant(.english),
+        accentColor: Binding<Color> = .constant(MusicFreeAccentColorStore.color),
         releaseInfoProvider: any SettingsReleaseInfoProviding = EmptySettingsReleaseInfoProvider(),
         diagnosticsProvider: any SettingsDiagnosticsProviding = EmptySettingsDiagnosticsProvider(),
         appIconOptions: [SettingsAppIconOption] = [],
@@ -66,6 +178,8 @@ public struct SettingsScene<AdditionsContent: View>: View {
         lyricsServing: (any LyricsServing)? = nil,
         metadataServerEnabled: Bool = true,
         lyricsEnabled: Bool = true,
+        onNavigationChange: ((SettingsDestination?) -> Void)? = nil,
+        layout: SettingsSceneLayout = .compact,
         @ViewBuilder additionContent: () -> AdditionsContent? = { nil }
     ) {
         self.releaseInfoProvider = releaseInfoProvider
@@ -75,18 +189,54 @@ public struct SettingsScene<AdditionsContent: View>: View {
         self.sleepTimerServing = sleepTimerServing
         self.metadataServerEnabled = metadataServerEnabled
         self.lyricsEnabled = lyricsEnabled
+        self.onNavigationChange = onNavigationChange
         _appearance = appearance
         _language = language
-        _viewModel = State(initialValue: SettingsViewModel(
-            store: AppServicesSettingsStore(
-                serving: settingsServing,
-                storageMaintenance: storageMaintenance
-            ),
+        _accentColor = accentColor
+        _model = State(initialValue: SettingsSceneModel(
+            settingsServing: settingsServing,
+            storageMaintenance: storageMaintenance,
             metadataEnrichment: metadataEnrichment,
             lyricsServing: lyricsServing
         ))
+        self.layout = layout
         self.additionContent = additionContent()
     }
+
+    @MainActor
+    public init(
+        model: SettingsSceneModel,
+        layout: SettingsSceneLayout,
+        appearance: Binding<MusicFreeAppearance> = .constant(.system),
+        language: Binding<MusicFreeLanguage> = .constant(.english),
+        accentColor: Binding<Color> = .constant(MusicFreeAccentColorStore.color),
+        releaseInfoProvider: any SettingsReleaseInfoProviding = EmptySettingsReleaseInfoProvider(),
+        diagnosticsProvider: any SettingsDiagnosticsProviding = EmptySettingsDiagnosticsProvider(),
+        appIconOptions: [SettingsAppIconOption] = [],
+        appIconProvider: any SettingsAppIconProviding = EmptySettingsAppIconProvider(),
+        sleepTimerServing: (any SleepTimerServing)? = nil,
+        metadataServerEnabled: Bool = true,
+        lyricsEnabled: Bool = true,
+        onNavigationChange: ((SettingsDestination?) -> Void)? = nil,
+        @ViewBuilder additionContent: () -> AdditionsContent? = { nil }
+    ) {
+        self.releaseInfoProvider = releaseInfoProvider
+        self.diagnosticsProvider = diagnosticsProvider
+        self.appIconOptions = appIconOptions
+        self.appIconProvider = appIconProvider
+        self.sleepTimerServing = sleepTimerServing
+        self.metadataServerEnabled = metadataServerEnabled
+        self.lyricsEnabled = lyricsEnabled
+        self.onNavigationChange = onNavigationChange
+        _appearance = appearance
+        _language = language
+        _accentColor = accentColor
+        _model = State(initialValue: model)
+        self.layout = layout
+        self.additionContent = additionContent()
+    }
+
+    private var viewModel: SettingsViewModel { model.viewModel }
 
     /// Compatibility initializer for package graph checks and previews.
     @MainActor
@@ -95,6 +245,7 @@ public struct SettingsScene<AdditionsContent: View>: View {
             store: UnconfiguredSettingsStore(),
             appearance: .constant(.system),
             language: .constant(.english),
+            accentColor: .constant(MusicFreeAccentColorStore.color),
             releaseInfoProvider: EmptySettingsReleaseInfoProvider(),
             diagnosticsProvider: EmptySettingsDiagnosticsProvider(),
             appIconOptions: [],
@@ -133,10 +284,23 @@ public struct SettingsScene<AdditionsContent: View>: View {
                 }
                 .padding(.bottom, MusicFreeSpacingTokens.xLarge)
             case .loaded:
-                settingsForm(viewModel: viewModel)
+                switch layout {
+                case .compact:
+                    settingsForm(viewModel: viewModel)
+                case .detail(let destination):
+                    settingsDetailForm(destination, viewModel: viewModel)
+                }
             }
         }
-        .navigationTitle(L("设置"))
+        .navigationTitle(sceneTitle)
+        .onAppear {
+            switch layout {
+            case .compact:
+                onNavigationChange?(nil)
+            case .detail(let destination):
+                onNavigationChange?(destination)
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -182,6 +346,13 @@ public struct SettingsScene<AdditionsContent: View>: View {
         }
     }
 
+    private var sceneTitle: String {
+        switch layout {
+        case .compact: L("设置")
+        case .detail(let destination): destination.title
+        }
+    }
+
     private func settingsForm(viewModel: SettingsViewModel) -> some View {
         Form {
             if let failure = viewModel.lastFailure {
@@ -224,52 +395,57 @@ public struct SettingsScene<AdditionsContent: View>: View {
                 }
                 .pickerStyle(.menu)
                 .accessibilityIdentifier("settings.appearance")
+
+                ColorPicker(
+                    L("强调色"),
+                    selection: $accentColor,
+                    supportsOpacity: false
+                )
+                .accessibilityIdentifier("settings.accentColor")
             }
 
             PlaybackSettingsView(
                 viewModel: viewModel,
-                sleepTimerServing: sleepTimerServing
+                sleepTimerServing: sleepTimerServing,
+                onNavigate: { destination in
+                    onNavigationChange?(destination)
+                }
             )
             ImportSettingsView(
                 viewModel: viewModel,
                 metadataServerEnabled: metadataServerEnabled,
-                lyricsEnabled: lyricsEnabled
+                lyricsEnabled: lyricsEnabled,
+                onNavigate: { destination in
+                    onNavigationChange?(destination)
+                }
             )
-            StorageSettingsView(viewModel: viewModel)
+            StorageSettingsView(
+                viewModel: viewModel,
+                onNavigate: { destination in
+                    onNavigationChange?(destination)
+                }
+            )
+            privacySettingsSection(viewModel: viewModel)
 
             Section(L("关于")) {
                 NavigationLink {
-                    AboutDependenciesView(provider: releaseInfoProvider, settingsViewModel: self.viewModel)
+                    AboutDependenciesView(
+                        provider: releaseInfoProvider,
+                        settingsViewModel: self.viewModel
+                    )
+                    .onAppear { onNavigationChange?(.about) }
                 } label: {
                     Label(L("版本与第三方许可"), systemImage: "info.circle")
                 }
                 .accessibilityIdentifier("settings.about")
-                NavigationLink {
-                    PrivacySettingsView(
-                        viewModel: viewModel,
-                        metadataServerEnabled: metadataServerEnabled,
-                        lyricsEnabled: lyricsEnabled
-                    )
-                } label: {
-                    Label(L("隐私与联网服务"), systemImage: "hand.raised.circle")
-                }
-                .accessibilityIdentifier("settings.privacy")
-
-                #if DEBUG
-                    Button(role: .destructive) {
-                        viewModel.resetAllPrivacy()
-                    } label: {
-                        Label(L("重置全部隐私(DEBUG Only)"), systemImage: "arrow.counterclockwise")
-                    }
-                    .disabled(viewModel.isSaving)
-                    .accessibilityIdentifier("settings.debug.resetAllPrivacy")
-                #endif
 
                 NavigationLink {
                     SettingsDiagnosticsView(
                         provider: diagnosticsProvider,
-                        lastFailure: viewModel.lastFailure
+                        lastFailure: viewModel.lastFailure,
+                        settingsViewModel: self.viewModel
                     )
+                    .onAppear { onNavigationChange?(.about) }
                 } label: {
                     Label(L("诊断信息"), systemImage: "stethoscope")
                 }
@@ -294,6 +470,162 @@ public struct SettingsScene<AdditionsContent: View>: View {
         .accessibilityIdentifier("settings.form")
         .scrollContentBackground(.hidden)
         .background(MusicFreeColorTokens.backgroundGrouped)
+    }
+
+    @ViewBuilder
+    private func settingsDetailForm(
+        _ destination: SettingsDestination,
+        viewModel: SettingsViewModel
+    ) -> some View {
+        if destination == .privacy {
+            PrivacySettingsView(
+                viewModel: viewModel,
+                metadataServerEnabled: metadataServerEnabled,
+                lyricsEnabled: lyricsEnabled
+            )
+        } else {
+            Form {
+                switch destination {
+                case .general:
+                    appearanceSection
+                    if let additionContent {
+                        Section { additionContent }
+                    }
+                case .playback:
+                    PlaybackSettingsView(
+                        viewModel: viewModel,
+                        sleepTimerServing: sleepTimerServing,
+                        onNavigate: { destination in
+                            onNavigationChange?(destination)
+                        }
+                    )
+                case .importing:
+                    ImportSettingsView(
+                        viewModel: viewModel,
+                        metadataServerEnabled: metadataServerEnabled,
+                        lyricsEnabled: lyricsEnabled,
+                        onNavigate: { destination in
+                            onNavigationChange?(destination)
+                        }
+                    )
+                case .storage:
+                    StorageSettingsView(
+                        viewModel: viewModel,
+                        onNavigate: { destination in
+                            onNavigationChange?(destination)
+                        }
+                    )
+                    Section {
+                        Button(role: .destructive) {
+                            viewModel.requestReset()
+                        } label: {
+                            Label(L("恢复默认设置"), systemImage: "arrow.counterclockwise")
+                        }
+                        .disabled(viewModel.isSaving)
+                        .accessibilityIdentifier("settings.reset")
+                    }
+                case .privacy:
+                    EmptyView()
+                case .about:
+                    aboutSection(viewModel: viewModel)
+                }
+            }
+            .navigationTitle(destination.title)
+            .accessibilityIdentifier("settings.detail.\(destination.rawValue)")
+            .scrollContentBackground(.hidden)
+            .background(MusicFreeColorTokens.backgroundGrouped)
+        }
+    }
+
+    @ViewBuilder
+    private var appearanceSection: some View {
+        Section(L("外观")) {
+            if !appIconOptions.isEmpty {
+                AppIconSettingsView(
+                    options: appIconOptions,
+                    provider: appIconProvider
+                )
+            }
+
+            Picker(L("应用语言"), selection: $language) {
+                ForEach(MusicFreeLanguage.allCases) { option in
+                    Text(option.title).tag(option)
+                }
+            }
+            .pickerStyle(.menu)
+            .accessibilityIdentifier("settings.language")
+
+            Picker(L("配色"), selection: $appearance) {
+                ForEach(MusicFreeAppearance.allCases) { option in
+                    Label(option.title, systemImage: option.systemImage)
+                        .tag(option)
+                }
+            }
+            .pickerStyle(.menu)
+            .accessibilityIdentifier("settings.appearance")
+
+            ColorPicker(
+                L("强调色"),
+                selection: $accentColor,
+                supportsOpacity: false
+            )
+            .accessibilityIdentifier("settings.accentColor")
+        }
+    }
+
+    @ViewBuilder
+    private func aboutSection(viewModel: SettingsViewModel) -> some View {
+        Section(L("关于")) {
+            NavigationLink {
+                AboutDependenciesView(
+                    provider: releaseInfoProvider,
+                    settingsViewModel: self.viewModel
+                )
+                .onAppear { onNavigationChange?(.about) }
+            } label: {
+                Label(L("版本与第三方许可"), systemImage: "info.circle")
+            }
+            .accessibilityIdentifier("settings.about")
+
+            NavigationLink {
+                SettingsDiagnosticsView(
+                    provider: diagnosticsProvider,
+                    lastFailure: viewModel.lastFailure,
+                    settingsViewModel: self.viewModel
+                )
+                .onAppear { onNavigationChange?(.about) }
+            } label: {
+                Label(L("诊断信息"), systemImage: "stethoscope")
+            }
+            .accessibilityIdentifier("settings.diagnostics")
+        }
+    }
+
+    @ViewBuilder
+    private func privacySettingsSection(viewModel: SettingsViewModel) -> some View {
+        Section(L("隐私与联网服务")) {
+            NavigationLink {
+                PrivacySettingsView(
+                    viewModel: viewModel,
+                    metadataServerEnabled: metadataServerEnabled,
+                    lyricsEnabled: lyricsEnabled
+                )
+                .onAppear { onNavigationChange?(.privacy) }
+            } label: {
+                Label(L("隐私与联网服务"), systemImage: "hand.raised.circle")
+            }
+            .accessibilityIdentifier("settings.privacy")
+
+            #if DEBUG
+                Button(role: .destructive) {
+                    viewModel.resetAllPrivacy()
+                } label: {
+                    Label(L("重置全部隐私(DEBUG Only)"), systemImage: "arrow.counterclockwise")
+                }
+                .disabled(viewModel.isSaving)
+                .accessibilityIdentifier("settings.debug.resetAllPrivacy")
+            #endif
+        }
     }
 
     private var maintenanceConfirmationTitle: String {

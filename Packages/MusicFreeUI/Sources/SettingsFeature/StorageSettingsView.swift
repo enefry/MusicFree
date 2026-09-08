@@ -42,9 +42,14 @@ enum CacheLimitSliderScale {
 
 struct StorageSettingsView: View {
     @Bindable var viewModel: SettingsViewModel
+    let onNavigate: ((SettingsDestination) -> Void)?
 
-    init(viewModel: SettingsViewModel) {
+    init(
+        viewModel: SettingsViewModel,
+        onNavigate: ((SettingsDestination) -> Void)? = nil
+    ) {
         _viewModel = Bindable(viewModel)
+        self.onNavigate = onNavigate
     }
 
     var body: some View {
@@ -70,6 +75,7 @@ struct StorageSettingsView: View {
 
             NavigationLink {
                 StorageMaintenanceView(viewModel: viewModel)
+                    .onAppear { onNavigate?(.storage) }
             } label: {
                 VStack(alignment: .leading, spacing: MusicFreeSpacingTokens.xSmall) {
                     Label(L("存储维护"), systemImage: "wrench.and.screwdriver")

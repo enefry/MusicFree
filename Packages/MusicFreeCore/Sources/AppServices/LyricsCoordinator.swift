@@ -1,7 +1,6 @@
 import Foundation
 import LibraryAPI
 import MusicDomain
-import OSLog
 import SettingsAPI
 
 /// Coordinates the ordered lyrics provider chain and keeps successful results
@@ -12,7 +11,7 @@ internal actor LyricsCoordinator: LyricsServing {
     private let library: any LibraryServing
     private var providerPreferences: [LyricsProviderPreference]
     private var privacyPreferences = PrivacyPreferences.defaults
-    private static let logger = Logger(
+    private static let logger = MusicLogger(
         subsystem: "com.musicfree.app",
         category: "lyrics-preload"
     )
@@ -118,7 +117,7 @@ internal actor LyricsCoordinator: LyricsServing {
         preloadContinuations[subscriptionID] = continuation
         continuation.yield(preload)
         Self.logger.debug(
-            "preload snapshot subscriber connected id=\(subscriptionID.uuidString, privacy: .public) subscribers=\(self.preloadContinuations.count, privacy: .public)"
+            "preload snapshot subscriber connected id=\(subscriptionID.uuidString) subscribers=\(self.preloadContinuations.count)"
         )
         continuation.onTermination = { @Sendable [weak self] _ in
             Task { await self?.removePreloadSubscription(subscriptionID) }
@@ -129,7 +128,7 @@ internal actor LyricsCoordinator: LyricsServing {
     func startPreload() async {
         guard !enabledProviders().isEmpty, preloadTask == nil else {
             Self.logger.debug(
-                "preload request ignored enabledProviders=\(self.enabledProviders().count, privacy: .public)"
+                "preload request ignored enabledProviders=\(self.enabledProviders().count)"
             )
             return
         }
@@ -155,7 +154,7 @@ internal actor LyricsCoordinator: LyricsServing {
     func cancelPreload() async {
         guard let task = preloadTask else {
             Self.logger.debug(
-                "preload cancel ignored status=\(self.preload.status.rawValue, privacy: .public)"
+                "preload cancel ignored status=\(self.preload.status.rawValue)"
             )
             return
         }
@@ -175,7 +174,7 @@ internal actor LyricsCoordinator: LyricsServing {
         }
         await task.value
         Self.logger.info(
-            "preload cancel completed status=\(self.preload.status.rawValue, privacy: .public) processed=\(self.preload.processed, privacy: .public)/\(self.preload.total, privacy: .public)"
+            "preload cancel completed status=\(self.preload.status.rawValue) processed=\(self.preload.processed)/\(self.preload.total)"
         )
     }
 
@@ -190,7 +189,7 @@ internal actor LyricsCoordinator: LyricsServing {
                 total: tracks.count
             )
             publishPreload()
-            Self.logger.info("preload library loaded tracks=\(tracks.count, privacy: .public)")
+            Self.logger.info("preload library loaded tracks=\(tracks.count)")
 
             guard tracks.contains(where: { $0.lyrics == nil }) else {
                 preload = LyricsPreloadSnapshot(
@@ -245,7 +244,7 @@ internal actor LyricsCoordinator: LyricsServing {
                     } catch {
                         failed += 1
                         Self.logger.error(
-                            "preload track failed item=\(track.id.externalID, privacy: .public) code=\(Self.errorCode(error), privacy: .public)"
+                            "preload track failed item=\(track.id.externalID) code=\(Self.errorCode(error))"
                         )
                     }
                 }
@@ -302,7 +301,7 @@ internal actor LyricsCoordinator: LyricsServing {
         preloadTask = nil
         publishPreload()
         Self.logger.info(
-            "preload finished status=\(self.preload.status.rawValue, privacy: .public) processed=\(self.preload.processed, privacy: .public)/\(self.preload.total, privacy: .public) downloaded=\(self.preload.downloaded, privacy: .public) cached=\(self.preload.cached, privacy: .public) noLyrics=\(self.preload.noLyrics, privacy: .public) failed=\(self.preload.failed, privacy: .public) elapsed=\(Date().timeIntervalSince(startedAt), privacy: .public)"
+            "preload finished status=\(self.preload.status.rawValue) processed=\(self.preload.processed)/\(self.preload.total) downloaded=\(self.preload.downloaded) cached=\(self.preload.cached) noLyrics=\(self.preload.noLyrics) failed=\(self.preload.failed) elapsed=\(Date().timeIntervalSince(startedAt))"
         )
     }
 
@@ -406,7 +405,7 @@ internal actor LyricsCoordinator: LyricsServing {
     private func removePreloadSubscription(_ id: UUID) {
         preloadContinuations.removeValue(forKey: id)
         Self.logger.debug(
-            "preload snapshot subscriber disconnected id=\(id.uuidString, privacy: .public) subscribers=\(self.preloadContinuations.count, privacy: .public)"
+            "preload snapshot subscriber disconnected id=\(id.uuidString) subscribers=\(self.preloadContinuations.count)"
         )
     }
 

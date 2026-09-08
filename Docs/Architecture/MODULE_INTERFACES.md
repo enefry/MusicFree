@@ -4,7 +4,7 @@
 > 适用版本：首版 iOS/iPadOS 26  
 > 文档范围：模块依赖、public API、并发、错误和持久化边界
 
-当前 live 基线：`Local Media vNext` 工作包 A 的本地模型和播放链路已实现；Core/Infrastructure/VLCKit/App 的 iOS 测试构建已通过，但本轮模拟器执行在测试 worker 安装/启动阶段阻塞，不能宣称模拟器回归完成。DS Audio、OAuth/DSM Session、远程 Catalog、下载缓存和网盘 Provider 仍未实现。真实设备媒体矩阵、后台/锁屏和发布验收不由模拟器测试替代。
+当前 live 基线：`Local Media vNext` 工作包 A 的本地模型和播放链路已实现；1.2 已加入在线源的协议边界和四 Tab 导航基础。Core/Infrastructure/VLCKit/App 的 iOS generic 构建以及 Core test bundle 构建已通过；本轮模拟器执行在 CoreSimulatorService/测试 worker 阶段阻塞，不能宣称模拟器回归完成。DS Audio、OAuth/DSM Session、远程 Catalog、下载缓存和网盘 Provider 仍未实现。真实设备媒体矩阵、后台/锁屏和发布验收不由模拟器测试替代。
 
 ## 1. 目的与阶段边界
 
@@ -59,7 +59,7 @@ Package 依赖固定为：
 | `LibraryAPI` | MusicDomain |
 | `PlaybackAPI` | MusicDomain、MediaSourceAPI |
 | `SystemIntegrationAPI` | MusicDomain、PlaybackAPI |
-| `SettingsAPI` | MusicDomain、PlaybackAPI |
+| `SettingsAPI` | MusicDomain、MediaSourceAPI、PlaybackAPI |
 | `AppServices` | MusicDomain、全部 API target |
 | `LocalMediaAdapter` | MusicDomain、MediaSourceAPI、LibraryAPI |
 | `LibraryPersistenceAdapter` | MusicDomain、LibraryAPI、PlaybackAPI、SwiftData |
@@ -144,6 +144,7 @@ Feature 可以读取 API 中的值类型和能力快照，但所有业务命令�
 | --- | --- |
 | `MediaSource.swift` | `MediaSource`、`MediaSourceChangesProviding`、`MediaSourceDescriptor`、`MediaSourceCapabilities`、`MediaSourceCursor`、`MediaSourceChange` |
 | `MediaSourceRegistry.swift` | `MediaSourceResolving`，按 `MediaSourceID` 查找来源 |
+| `OnlineSourceAPI.swift` | `OnlineSource`、`DownloadSource`、`SearchableDownloadSource`、`PlaybackSource`、来源配置、Catalog、下载回执和试听访问模型 |
 | `PlaybackResource.swift` | `PlaybackResource`、`RemotePlaybackRequest`；明确临时、不可持久化 |
 | `ArtworkResource.swift` | `ArtworkResource`，提供本地 URL 或短生命周期数据流描述 |
 | `MediaImporting.swift` | `MediaImporting`、request/event/result/error/cancellation 模型 |
@@ -199,6 +200,51 @@ public protocol MetadataReading: Sendable {
 ```
 
 `MediaRemovalTransaction` 只暴露 opaque ID 和待删除 item ID；隔离区路径属于 Adapter 私有信息。Adapter 必须保存 pending transaction，使 App 重启时可以根据资料库记录是否仍存在来选择 rollback 或继续 finalize。`RemotePlaybackRequest` 可包含 URL、请求 header 和过期时间，但必须标记为敏感、不可记录、不可持久化。
+
+### 5.3 在线源协议（1.2）
+
+`OnlineSourceAPI.swift` 是工作包 B 的协议基础。它只定义来源实例、远程 Catalog、下载和临时试听访问，不包含 URLSession、OAuth、DSM SDK、SwiftData、文件缓存或 VLCKit 实现。
+
+#### 来源实例与配置
+
+- `OnlineProviderKind` 只代表协议族；每一个账号、NAS 或网关配置都必须拥有独立的 `MediaSourceID`，同一种 Provider 可以同时存在多个不同配置。
+- `OnlineSourceConfiguration` 是可持久化的非敏感配置：来源 ID、Provider 类型、显示名、规范化 HTTP/HTTPS endpoint、可选根对象、`credentialRecordID` 和启用状态。
+- endpoint 不得包含 userinfo、query 或 fragment；访问令牌、Cookie、OAuth refresh token、完整远程路径和短期 URL 不进入配置、日志、错误或队列。
+- `SourceObjectID` 是来源内部对象 ID，不能与 `MediaItemID` 混用。`SourceCatalogItem` 是浏览快照，不是资料库记录；下载后必须交给 `MediaImporting`，由现有本地导入链路生成资料库数据。
+
+#### 下载源与播放源
+
+```swift
+public protocol DownloadSource: OnlineSource {
+  func browse(_ request: SourceBrowseRequest) async throws -> SourceCatalogPage
+  func download(_ itemID: SourceObjectID,
+                options: DownloadOptions) async throws -> DownloadReceipt
+}
+
+public protocol SearchableDownloadSource: DownloadSource {
+  func search(_ request: SourceSearchRequest) async throws -> SourceCatalogPage
+}
+
+public protocol PlaybackSource: DownloadSource {
+  func playbackAccess(for itemID: SourceObjectID,
+                      purpose: PlaybackPurpose) async throws -> PlaybackAccess
+}
+```
+
+- 下载源必须支持浏览和下载；搜索是可选能力，UI 只能依据 `OnlineSourceCapabilities.searching` 暴露搜索入口。
+- 播放源继承下载源，因此播放源理论上都具备下载能力。`playbackAccess` 可以返回 HTTP 试听请求、HTTP 转码请求描述，或明确要求先下载。
+- 1.2 的在线播放只支持 `PlaybackPurpose.audition`：不进入正式队列、不写播放历史、不承诺后台连续播放、锁屏控制或自动切歌。VLC 的 HTTP 播放由适配器负责，API 不直接暴露 VLC 类型。
+- `DownloadReceipt` 和 `PlaybackAccess` 都是短生命周期、不可 Codable 的值；文件 URL、HTTP header、授权信息和短期 URL 只能在一次下载/试听调用链中传递。
+
+#### 1.2 Provider 边界
+
+| Provider | 1.2 目标 | 协议形态 |
+| --- | --- | --- |
+| DS Audio | 浏览、可选搜索、下载、HTTP/转码 URL 试听 | `SearchableDownloadSource` + `PlaybackSource` |
+| Google Drive | OAuth、Catalog、下载，下载后复用本地导入和本地播放 | `DownloadSource` |
+| 百度网盘 | 只保留后续接入扩展点，不进入本版实现和验收 | `OnlineProviderKind.baiduPan` / Provider 工厂扩展 |
+
+Provider 的隐私同意和启用状态由上层来源管理服务统一裁决：应用在线源总开关关闭或应用隐私协议撤销时，所有在线源网络能力必须失效；单个来源实例仍需单独同意、单独撤销。已完成下载并导入的本地媒体不受在线协议撤销影响。
 
 ## 6. `LibraryAPI`
 
@@ -490,10 +536,10 @@ Adapter 仅向 Composition Root 暴露具体类型及 initializer，行为通过
 
 | Target | 唯一 public 入口 |
 | --- | --- |
-| `LibraryFeature` | `LibraryScene` 与依赖其 façade 的 initializer |
-| `PlayerFeature` | `MiniPlayerView`、`PlayerScene` |
-| `PlaylistFeature` | `PlaylistScene` |
-| `SettingsFeature` | `SettingsScene` |
+| `LibraryFeature` | `LibraryHomeViewController`、`LibraryCollectionsViewController`、`LibraryCollectionDetailViewController`、`LibraryTracksViewController` 及详情/编辑控制器 |
+| `PlayerFeature` | `PlayerMiniPlayerViewController`、`PlayerNowPlayingViewController`、`PlayerQueueViewController`、`PlayerLyricsViewController` |
+| `PlaylistFeature` | `PlaylistListViewController`、`PlaylistDetailViewController` |
+| `SettingsFeature` | `SettingsScene`（Settings SwiftUI 宿主）与 `OnlineSourcesViewController` |
 | `MusicFreeApp` | `MusicFreeApp`、`AppContainer`、路由和 scene composition |
 
 Feature 内部 ViewModel 默认 `@MainActor`，只把用户动作转换为 façade 命令。Feature 不公开自身状态作为其他 Feature 的数据源；跨 Feature 状态由 AppServices 提供，导航由 App target 负责。

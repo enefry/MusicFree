@@ -256,7 +256,8 @@ public struct MetadataEnrichmentQuery: Hashable, Sendable {
 
     private static func normalized(_ value: String?) -> String? {
         guard let value else { return nil }
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = MetadataTextRepair.repair(value)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
     }
 
@@ -345,7 +346,8 @@ public struct MetadataEnrichmentCandidate: Sendable, Equatable, Hashable {
         artworkData: Data? = nil
     ) {
         self.catalogID = catalogID.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.title = MetadataTextRepair.repair(title)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         self.artistName = Self.normalized(artistName)
         self.albumArtistName = Self.normalized(albumArtistName)
         self.albumName = Self.normalized(albumName)
@@ -359,7 +361,8 @@ public struct MetadataEnrichmentCandidate: Sendable, Equatable, Hashable {
 
     private static func normalized(_ value: String?) -> String? {
         guard let value else { return nil }
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = MetadataTextRepair.repair(value)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
     }
 }
@@ -601,6 +604,9 @@ public struct TrackMetadataSupplement: Sendable, Equatable {
     public let year: Int?
     public let lyrics: TrackLyrics?
     public let artworkData: Data?
+    /// When true, non-empty remote values replace existing local values.
+    /// Missing remote values still preserve the local value.
+    public let replaceExisting: Bool
 
     public init(
         itemID: MediaItemID,
@@ -613,7 +619,8 @@ public struct TrackMetadataSupplement: Sendable, Equatable {
         discNumber: Int? = nil,
         year: Int? = nil,
         lyrics: TrackLyrics? = nil,
-        artworkData: Data? = nil
+        artworkData: Data? = nil,
+        replaceExisting: Bool = false
     ) {
         self.itemID = itemID
         self.title = Self.normalized(title)
@@ -626,11 +633,13 @@ public struct TrackMetadataSupplement: Sendable, Equatable {
         self.year = year.flatMap { (1...9_999).contains($0) ? $0 : nil }
         self.lyrics = lyrics.flatMap { $0.isEmpty ? nil : $0 }
         self.artworkData = artworkData?.isEmpty == false ? artworkData : nil
+        self.replaceExisting = replaceExisting
     }
 
     private static func normalized(_ value: String?) -> String? {
         guard let value else { return nil }
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = MetadataTextRepair.repair(value)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
     }
 }
@@ -682,6 +691,63 @@ public struct MetadataEnrichmentScanSnapshot: Codable, Equatable, Sendable {
         self.failed = max(0, failed)
         self.currentTitle = currentTitle
         self.errorCode = errorCode
+    }
+}
+
+public struct MetadataEnrichmentRefreshResult: Equatable, Sendable {
+    public let total: Int
+    public let matched: Int
+    public let noMatch: Int
+    public let ambiguous: Int
+    public let failed: Int
+    public let skipped: Int
+
+    public init(
+        total: Int,
+        matched: Int = 0,
+        noMatch: Int = 0,
+        ambiguous: Int = 0,
+        failed: Int = 0,
+        skipped: Int = 0
+    ) {
+        self.total = max(0, total)
+        self.matched = max(0, matched)
+        self.noMatch = max(0, noMatch)
+        self.ambiguous = max(0, ambiguous)
+        self.failed = max(0, failed)
+        self.skipped = max(0, skipped)
+    }
+}
+
+/// Progress for an explicit album-level metadata refresh.
+public struct MetadataEnrichmentRefreshProgress: Equatable, Sendable {
+    public let total: Int
+    public let processed: Int
+    public let matched: Int
+    public let noMatch: Int
+    public let ambiguous: Int
+    public let failed: Int
+    public let skipped: Int
+    public let currentItemID: MediaItemID?
+
+    public init(
+        total: Int,
+        processed: Int = 0,
+        matched: Int = 0,
+        noMatch: Int = 0,
+        ambiguous: Int = 0,
+        failed: Int = 0,
+        skipped: Int = 0,
+        currentItemID: MediaItemID? = nil
+    ) {
+        self.total = max(0, total)
+        self.processed = min(max(0, processed), self.total)
+        self.matched = max(0, matched)
+        self.noMatch = max(0, noMatch)
+        self.ambiguous = max(0, ambiguous)
+        self.failed = max(0, failed)
+        self.skipped = max(0, skipped)
+        self.currentItemID = currentItemID
     }
 }
 

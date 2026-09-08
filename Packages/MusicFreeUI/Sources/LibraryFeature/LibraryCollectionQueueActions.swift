@@ -3,10 +3,11 @@ import DesignSystem
 import Foundation
 import LibraryAPI
 import MusicDomain
-import SwiftUI
 
 enum LibraryCollectionQueueTarget: Hashable, Sendable {
     case album(AlbumID)
+    case albums([AlbumID])
+    case noAlbum
     case artist(ArtistID)
     case genre(GenreID)
     case folder(String)
@@ -15,12 +16,12 @@ enum LibraryCollectionQueueTarget: Hashable, Sendable {
         switch self {
         case .album(let albumID):
             return TrackQuery(sourceID: .local, albumID: albumID)
+        case .albums, .noAlbum, .folder:
+            return TrackQuery(sourceID: .local)
         case .artist(let artistID):
             return TrackQuery(sourceID: .local, artistID: artistID)
         case .genre(let genreID):
             return TrackQuery(sourceID: .local, genreID: genreID)
-        case .folder:
-            return TrackQuery(sourceID: .local)
         }
     }
 
@@ -28,6 +29,10 @@ enum LibraryCollectionQueueTarget: Hashable, Sendable {
         switch self {
         case .folder(let path):
             return track.folderPath == path
+        case .noAlbum:
+            return track.albumID == nil
+        case .albums(let albumIDs):
+            return track.albumID.map(albumIDs.contains) == true
         case .album, .artist, .genre:
             return true
         }
@@ -35,9 +40,9 @@ enum LibraryCollectionQueueTarget: Hashable, Sendable {
 
     fileprivate func ordered(_ tracks: [Track]) -> [Track] {
         switch self {
-        case .album:
+        case .album, .albums:
             return LibraryAlbumTrackOrdering.ordered(tracks)
-        case .artist, .genre, .folder:
+        case .noAlbum, .artist, .genre, .folder:
             return tracks
         }
     }
@@ -45,6 +50,8 @@ enum LibraryCollectionQueueTarget: Hashable, Sendable {
     fileprivate var accessibilityValue: String {
         switch self {
         case .album(let albumID): return "album.\(albumID.rawValue)"
+        case .albums(let albumIDs): return "albums.\(albumIDs.map(\.rawValue).joined(separator: ","))"
+        case .noAlbum: return "noAlbum"
         case .artist(let artistID): return "artist.\(artistID.rawValue)"
         case .genre(let genreID): return "genre.\(genreID.rawValue)"
         case .folder(let path): return "folder.\(path)"
@@ -57,82 +64,52 @@ enum LibraryCollectionQueuePlacement: Equatable, Sendable {
     case end
 }
 
-struct LibraryCollectionQueueMenuActions: View {
-    let target: LibraryCollectionQueueTarget
-    let accessibilityPrefix: String
-    let enqueueNext: ((LibraryCollectionQueueTarget) -> Void)?
-    let enqueue: ((LibraryCollectionQueueTarget) -> Void)?
-    let addToPlaylist: ((LibraryCollectionQueueTarget) -> Void)?
-    let isPending: Bool
-
-    init(
-        target: LibraryCollectionQueueTarget,
-        accessibilityPrefix: String,
-        enqueueNext: ((LibraryCollectionQueueTarget) -> Void)?,
-        enqueue: ((LibraryCollectionQueueTarget) -> Void)?,
-        addToPlaylist: ((LibraryCollectionQueueTarget) -> Void)? = nil,
-        isPending: Bool
-    ) {
-        self.target = target
-        self.accessibilityPrefix = accessibilityPrefix
-        self.enqueueNext = enqueueNext
-        self.enqueue = enqueue
-        self.addToPlaylist = addToPlaylist
-        self.isPending = isPending
-    }
-
-    var body: some View {
-        Button {
-            enqueueNext?(target)
-        } label: {
-            Label(L("下一首播放"), systemImage: "text.line.first.and.arrowtriangle.forward")
-        }
-        .disabled(enqueueNext == nil || isPending)
-        .accessibilityIdentifier(
-            "\(accessibilityPrefix).playNext.\(target.accessibilityValue)"
-        )
-
-        Button {
-            enqueue?(target)
-        } label: {
-            Label(L("加入队列"), systemImage: "text.append")
-        }
-        .disabled(enqueue == nil || isPending)
-        .accessibilityIdentifier(
-            "\(accessibilityPrefix).enqueue.\(target.accessibilityValue)"
-        )
-
-        if let addToPlaylist {
-            Button {
-                addToPlaylist(target)
-            } label: {
-                Label(L("添加到播放列表"), systemImage: "text.badge.plus")
-            }
-            .disabled(isPending)
-            .accessibilityIdentifier(
-                "\(accessibilityPrefix).addToPlaylist.\(target.accessibilityValue)"
-            )
-        }
-    }
-}
-
 enum LibraryCollectionTrackLoader {
-    static func itemIDs(
+    static func tracks(
         for target: LibraryCollectionQueueTarget,
         from library: any LibraryServing
-    ) async throws -> [MediaItemID] {
+    ) async throws -> [Track] {
+        let tracks: [Track]
+        if case .noAlbum = target {
+            tracks = try await noAlbumContent(from: library).tracks
+        } else {
+            tracks = try await loadTracks(matching: target.query, from: library)
+                .filter(target.includes)
+        }
+
+        var seenIDs = Set<MediaItemID>()
+        return target.ordered(tracks).filter { track in
+            seenIDs.insert(track.id).inserted
+        }
+    }
+
+    static func noAlbumContent(
+        from library: any LibraryServing
+    ) async throws -> (tracks: [Track], knownAlbumIDs: Set<AlbumID>) {
+        async let allTracks = loadAllTracks(from: library)
+        async let allAlbums = loadAllAlbums(from: library)
+        let (tracks, albums) = try await (allTracks, allAlbums)
+        let knownAlbumIDs = Set(albums.map(\.id))
+        let noAlbumTracks = tracks.filter { track in
+            guard let albumID = track.albumID else { return true }
+            return !knownAlbumIDs.contains(albumID)
+        }
+        return (noAlbumTracks, knownAlbumIDs)
+    }
+
+    private static func loadTracks(
+        matching query: TrackQuery,
+        from library: any LibraryServing
+    ) async throws -> [Track] {
         var request = try LibraryPageRequest(limit: LibraryPageRequest.maximumLimit)
         var seenCursors = Set<LibraryCursor>()
         var tracks: [Track] = []
 
         while true {
             try Task.checkCancellation()
-            let page = try await library.browseTracks(
-                matching: target.query,
-                page: request
-            )
+            let page = try await library.browseTracks(matching: query, page: request)
             try Task.checkCancellation()
-            tracks.append(contentsOf: page.elements.filter(target.includes))
+            tracks.append(contentsOf: page.elements)
 
             guard let nextRequest = try page.nextPage(limit: request.limit) else {
                 break
@@ -144,11 +121,45 @@ enum LibraryCollectionTrackLoader {
             }
             request = nextRequest
         }
+        return tracks
+    }
 
-        var seenIDs = Set<MediaItemID>()
-        return target.ordered(tracks).compactMap { track in
-            seenIDs.insert(track.id).inserted ? track.id : nil
+    private static func loadAllTracks(from library: any LibraryServing) async throws -> [Track] {
+        try await loadTracks(matching: TrackQuery(sourceID: .local), from: library)
+    }
+
+    private static func loadAllAlbums(from library: any LibraryServing) async throws -> [Album] {
+        var request = try LibraryPageRequest(limit: LibraryPageRequest.maximumLimit)
+        var seenCursors = Set<LibraryCursor>()
+        var albums: [Album] = []
+
+        while true {
+            try Task.checkCancellation()
+            let page = try await library.browseAlbums(
+                matching: AlbumQuery(sourceID: .local),
+                page: request
+            )
+            try Task.checkCancellation()
+            albums.append(contentsOf: page.elements)
+
+            guard let nextRequest = try page.nextPage(limit: request.limit) else {
+                break
+            }
+            guard let cursor = nextRequest.cursor,
+                  seenCursors.insert(cursor).inserted
+            else {
+                throw LibraryCollectionQueueLoadError.repeatedCursor
+            }
+            request = nextRequest
         }
+        return albums
+    }
+
+    static func itemIDs(
+        for target: LibraryCollectionQueueTarget,
+        from library: any LibraryServing
+    ) async throws -> [MediaItemID] {
+        try await tracks(for: target, from: library).map(\.id)
     }
 
     static func itemIDs(

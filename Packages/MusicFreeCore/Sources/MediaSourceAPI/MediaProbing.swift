@@ -1,4 +1,5 @@
 import Foundation
+import MusicDomain
 
 /// One audio track reported by a probe. Unknown technical values remain nil.
 public struct ProbedAudioTrack: Codable, Equatable, Sendable {
@@ -29,17 +30,81 @@ public struct ProbedAudioTrack: Codable, Equatable, Sendable {
     isDecodable: Bool = true
   ) {
     self.index = index
-    self.stableID = stableID
-    self.codec = codec
+    self.stableID = Self.trimmed(stableID)
+    self.codec = Self.trimmed(codec)
     self.sampleRate = sampleRate
     self.channelCount = channelCount
     self.bitDepth = bitDepth
     self.bitRate = bitRate
-    self.language = language
-    self.title = title
+    self.language = Self.trimmed(language)
+    self.title = Self.repaired(title)
     self.isDefault = isDefault
     self.isDecodable = isDecodable
   }
+
+  private enum CodingKeys: String, CodingKey {
+    case index
+    case stableID
+    case codec
+    case sampleRate
+    case channelCount
+    case bitDepth
+    case bitRate
+    case language
+    case title
+    case isDefault
+    case isDecodable
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    let index = try container.decode(Int.self, forKey: .index)
+    let sampleRate = try container.decodeIfPresent(Double.self, forKey: .sampleRate)
+    let channelCount = try container.decodeIfPresent(Int.self, forKey: .channelCount)
+    let bitDepth = try container.decodeIfPresent(Int.self, forKey: .bitDepth)
+    let bitRate = try container.decodeIfPresent(Int.self, forKey: .bitRate)
+    guard index >= 0,
+          sampleRate == nil || (sampleRate!.isFinite && sampleRate! > 0),
+          channelCount == nil || channelCount! > 0,
+          bitDepth == nil || bitDepth! > 0,
+          bitRate == nil || bitRate! > 0
+    else {
+      throw musicSourceDecodingFailure(decoder, field: "ProbedAudioTrack")
+    }
+
+    self.init(
+      index: index,
+      stableID: try container.decodeIfPresent(String.self, forKey: .stableID),
+      codec: try container.decodeIfPresent(String.self, forKey: .codec),
+      sampleRate: sampleRate,
+      channelCount: channelCount,
+      bitDepth: bitDepth,
+      bitRate: bitRate,
+      language: try container.decodeIfPresent(String.self, forKey: .language),
+      title: try container.decodeIfPresent(String.self, forKey: .title),
+      isDefault: try container.decodeIfPresent(Bool.self, forKey: .isDefault) ?? false,
+      isDecodable: try container.decodeIfPresent(Bool.self, forKey: .isDecodable) ?? true
+    )
+  }
+
+  private static func trimmed(_ value: String?) -> String? {
+    guard let value else { return nil }
+    let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    return normalized.isEmpty ? nil : normalized
+  }
+
+  private static func repaired(_ value: String?) -> String? {
+    trimmed(MetadataTextRepair.repair(value ?? ""))
+  }
+}
+
+private func musicSourceDecodingFailure(_ decoder: Decoder, field: String) -> DecodingError {
+  DecodingError.dataCorrupted(
+    .init(
+      codingPath: decoder.codingPath,
+      debugDescription: "Invalid MediaSourceAPI value for \(field)"
+    )
+  )
 }
 
 /// Probe output before it is normalized into MusicDomain technical values.

@@ -1,9 +1,11 @@
 @testable import LibraryFeature
 import AppServices
+import DesignSystem
 import Foundation
 import LibraryAPI
 import MediaSourceAPI
 import MusicDomain
+import MusicTestSupport
 import Testing
 import UIKit
 
@@ -150,6 +152,66 @@ func libraryAlbumLookupFollowsPagination() async throws {
     #expect(album?.title == "Target")
     #expect(service.albumPageRequests.count == 2)
     #expect(service.albumPageRequests[1].cursor == LibraryCursor("albums-page-2"))
+}
+
+@MainActor
+@Test("Album name lookup follows every page and returns only requested albums")
+func libraryAlbumNameLookupFollowsPagination() async throws {
+    let firstID = AlbumID("first-requested-album")
+    let secondID = AlbumID("second-requested-album")
+    let service = FakeLibraryService()
+    service.albumResponses = [
+        .success(
+            LibraryPage(
+                elements: [
+                    Album(id: AlbumID("unrelated-album"), title: "Unrelated"),
+                    Album(id: firstID, title: "First Requested"),
+                ],
+                nextCursor: LibraryCursor("album-names-page-2")
+            )
+        ),
+        .success(
+            LibraryPage(elements: [Album(id: secondID, title: "Second Requested")])
+        ),
+    ]
+
+    let names = try await LibraryAlbumLoader.load(
+        albumIDs: [firstID, secondID],
+        sourceID: .local,
+        from: service
+    )
+
+    #expect(names == [
+        firstID: "First Requested",
+        secondID: "Second Requested",
+    ])
+    #expect(service.albumPageRequests.map(\.cursor) == [
+        nil,
+        LibraryCursor("album-names-page-2"),
+    ])
+}
+
+@Test("Albums present the no-album collection before regular albums")
+func libraryAlbumCollectionPresentsNoAlbumFirst() {
+    let firstAlbumID = AlbumID("first-album")
+    let secondAlbumID = AlbumID("second-album")
+
+    #expect(
+        LibraryAlbumCollectionDisplayItem.ordered(
+            albumIDs: [firstAlbumID, secondAlbumID],
+            includesNoAlbum: true
+        ) == [
+            .noAlbum,
+            .album(firstAlbumID),
+            .album(secondAlbumID),
+        ]
+    )
+    #expect(
+        LibraryAlbumCollectionDisplayItem.ordered(
+            albumIDs: [firstAlbumID],
+            includesNoAlbum: false
+        ) == [.album(firstAlbumID)]
+    )
 }
 
 @MainActor
@@ -331,6 +393,91 @@ func collectionBatchLoaderMergesTrackIDs() async throws {
 }
 
 @MainActor
+@Test("Merged artist album target loads tracks from every underlying album")
+func mergedAlbumTargetLoadsAllTracks() async throws {
+    let firstAlbumID = AlbumID("merged-first")
+    let secondAlbumID = AlbumID("merged-second")
+    let firstTrack = Track(
+        id: MediaItemID(sourceID: .local, externalID: "merged-first-track"),
+        title: "First track",
+        albumID: firstAlbumID
+    )
+    let secondTrack = Track(
+        id: MediaItemID(sourceID: .local, externalID: "merged-second-track"),
+        title: "Second track",
+        albumID: secondAlbumID
+    )
+    let unrelatedTrack = Track(
+        id: MediaItemID(sourceID: .local, externalID: "unrelated-track"),
+        title: "Unrelated track",
+        albumID: AlbumID("unrelated")
+    )
+    let service = FakeLibraryService()
+    service.trackResponsesByQuery[TrackQuery(sourceID: .local)] = [
+        .success(LibraryPage(elements: [firstTrack, secondTrack, unrelatedTrack]))
+    ]
+
+    let tracks = try await LibraryCollectionTrackLoader.tracks(
+        for: .albums([firstAlbumID, secondAlbumID]),
+        from: service
+    )
+
+    #expect(tracks.map(\.id) == [firstTrack.id, secondTrack.id])
+}
+
+@MainActor
+@Test("No-album collection keeps tracks with missing album records visible")
+func noAlbumCollectionIncludesUnassignedAndOrphanedTracks() async throws {
+    let knownAlbumID = AlbumID("known-album")
+    let orphanAlbumID = AlbumID("missing-album")
+    let allTracksQuery = TrackQuery(sourceID: .local)
+    let service = FakeLibraryService()
+        service.trackResponsesByQuery[allTracksQuery] = [
+            .success(
+                LibraryPage(
+                    elements: [
+                        Track(
+                            id: MediaItemID(sourceID: .local, externalID: "assigned"),
+                            title: "Assigned",
+                            albumID: knownAlbumID
+                        ),
+                        Track(
+                            id: MediaItemID(sourceID: .local, externalID: "unassigned"),
+                            title: "Unassigned"
+                        ),
+                    ],
+                    nextCursor: LibraryCursor("tracks-page-2")
+                )
+            ),
+            .success(
+                LibraryPage(elements: [
+                    Track(
+                        id: MediaItemID(sourceID: .local, externalID: "orphaned"),
+                        title: "Orphaned",
+                        albumID: orphanAlbumID
+                    )
+                ])
+            ),
+        ]
+        service.albumResponses = [
+            .success(
+                LibraryPage(
+                    elements: [Album(id: knownAlbumID, title: "Known")],
+                    nextCursor: LibraryCursor("albums-page-2")
+                )
+            ),
+            .success(LibraryPage(elements: [])),
+        ]
+
+        let content = try await LibraryCollectionTrackLoader.noAlbumContent(from: service)
+
+        #expect(content.tracks.map(\.title) == ["Unassigned", "Orphaned"])
+        #expect(content.knownAlbumIDs == [knownAlbumID])
+        #expect(service.trackPageRequests.count == 2)
+        #expect(service.albumPageRequests.count == 2)
+}
+
+@MainActor
 @Test("Library overview loads recently added albums in descending date order")
 func libraryOverviewLoadsRecentAlbums() async throws {
     let service = FakeLibraryService()
@@ -399,6 +546,41 @@ func userRefreshPreparesImportsBeforeReloading() async throws {
     #expect(await refreshRecorder.callCount == 1)
     #expect(service.trackRequests.count == 1)
     #expect(viewModel.tracks.map(\.title) == ["after refresh"])
+}
+
+@MainActor
+@Test("Initial load and user refresh use distinct import preparations")
+func initialLoadAndUserRefreshUseDistinctPreparations() async throws {
+    let service = FakeLibraryService()
+    service.trackResponses = [
+        .success(LibraryPage(elements: [makeTrack("initial")])),
+        .success(LibraryPage(elements: [makeTrack("refreshed")]))
+    ]
+    let initialRecorder = RefreshPreparationRecorder()
+    let refreshRecorder = RefreshPreparationRecorder()
+    let viewModel = LibraryViewModel(
+        library: service,
+        initialPreparation: {
+            await initialRecorder.record()
+        },
+        refreshPreparation: {
+            await refreshRecorder.record()
+        }
+    )
+
+    await viewModel.prepareForFirstLoad(of: .tracks)
+    await settle()
+
+    #expect(await initialRecorder.callCount == 1)
+    #expect(await refreshRecorder.callCount == 0)
+    #expect(viewModel.tracks.map(\.title) == ["initial"])
+
+    await viewModel.refreshCheckingForImports(section: .tracks)
+    await settle()
+
+    #expect(await initialRecorder.callCount == 1)
+    #expect(await refreshRecorder.callCount == 1)
+    #expect(viewModel.tracks.map(\.title) == ["refreshed"])
 }
 
 @MainActor
@@ -672,6 +854,105 @@ func collectionQueueLoadingUsesCompleteCollection() async throws {
     #expect(service.trackPageRequests.map(\.cursor) == [nil, LibraryCursor("folder-page-2")])
 }
 
+@Test("Media sharing resolves physical assets, preserves order, and removes duplicate files")
+func mediaSharingUsesPhysicalAssetsAndDeduplicatesFiles() async throws {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("MusicFree-Share-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let firstURL = root.appendingPathComponent("first.flac")
+    let secondURL = root.appendingPathComponent("second.flac")
+    try Data("first".utf8).write(to: firstURL)
+    try Data("second".utf8).write(to: secondURL)
+
+    let firstAssetID = MediaAssetID(sourceID: .local, externalID: "physical-first")
+    let secondAssetID = MediaAssetID(sourceID: .local, externalID: "physical-second")
+    let source = FakeMediaSource(
+        descriptor: MediaSourceDescriptor(
+            sourceID: .local,
+            kind: .local,
+            displayName: "Local"
+        ),
+        resolveResults: [
+            firstAssetID.mediaItemID: .resource(.localFile(firstURL)),
+            secondAssetID.mediaItemID: .resource(.localFile(secondURL)),
+        ]
+    )
+    let tracks = [
+        Track(
+            id: MediaItemID(sourceID: .local, externalID: "logical-cue-one"),
+            assetID: firstAssetID,
+            title: "First segment"
+        ),
+        Track(
+            id: MediaItemID(sourceID: .local, externalID: "logical-cue-two"),
+            assetID: firstAssetID,
+            title: "Second segment"
+        ),
+        Track(
+            id: MediaItemID(sourceID: .local, externalID: "logical-file-two"),
+            assetID: secondAssetID,
+            title: "Second file"
+        ),
+    ]
+
+    let urls = try await LibraryMediaShareResolver(sourceResolver: source).urls(for: tracks)
+
+    #expect(urls == [firstURL.standardizedFileURL, secondURL.standardizedFileURL])
+    #expect(source.sourceLookupCalls == [.local])
+    #expect(source.resolveCalls == [
+        firstAssetID.mediaItemID,
+        firstAssetID.mediaItemID,
+        secondAssetID.mediaItemID,
+    ])
+}
+
+@Test("Media sharing rejects remote, unavailable, and unreadable assets")
+func mediaSharingRejectsUnavailableFiles() async throws {
+    let missingURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent("MusicFree-Missing-\(UUID().uuidString).flac")
+    let remoteAssetID = MediaAssetID(sourceID: .local, externalID: "remote")
+    let unavailableAssetID = MediaAssetID(sourceID: .local, externalID: "unavailable")
+    let unreadableAssetID = MediaAssetID(sourceID: .local, externalID: "unreadable")
+    let source = FakeMediaSource(
+        descriptor: MediaSourceDescriptor(
+            sourceID: .local,
+            kind: .local,
+            displayName: "Local"
+        ),
+        resolveResults: [
+            remoteAssetID.mediaItemID: .resource(.remote(RemotePlaybackRequest(
+                url: URL(string: "https://example.invalid/song.flac")!
+            ))),
+            unavailableAssetID.mediaItemID: .failure(.sourceNotFound(.local)),
+            unreadableAssetID.mediaItemID: .resource(.localFile(missingURL)),
+        ]
+    )
+    let resolver = LibraryMediaShareResolver(sourceResolver: source)
+
+    await #expect(throws: LibraryMediaShareResolver.ShareError.nonLocalTrack("Remote")) {
+        _ = try await resolver.urls(for: [Track(
+            id: MediaItemID(sourceID: .local, externalID: "remote-track"),
+            assetID: remoteAssetID,
+            title: "Remote"
+        )])
+    }
+    await #expect(throws: LibraryMediaShareResolver.ShareError.unavailableTrack("Unavailable")) {
+        _ = try await resolver.urls(for: [Track(
+            id: MediaItemID(sourceID: .local, externalID: "unavailable-track"),
+            assetID: unavailableAssetID,
+            title: "Unavailable"
+        )])
+    }
+    await #expect(throws: LibraryMediaShareResolver.ShareError.unreadableTrack("Unreadable")) {
+        _ = try await resolver.urls(for: [Track(
+            id: MediaItemID(sourceID: .local, externalID: "unreadable-track"),
+            assetID: unreadableAssetID,
+            title: "Unreadable"
+        )])
+    }
+}
+
 @MainActor
 @Test("Committed library changes refresh content that was previously empty")
 func libraryChangesRefreshLoadedContent() async throws {
@@ -729,6 +1010,112 @@ func playbackHistoryPreservesRepeatedSessions() async throws {
     #expect(viewModel.recentTracks.map(\.id) == [track.id, track.id])
 }
 
+@Test("UIKit track row identities disambiguate repeated playback tracks")
+func libraryTrackRowIdentitiesDisambiguateRepeatedTracks() {
+    let track = makeTrack("repeated UIKit row")
+    let rows = LibraryTrackRowIdentity.rows(for: [track, track, track])
+
+    #expect(rows.map(\.id.itemID) == [track.id, track.id, track.id])
+    #expect(rows.map(\.id.occurrence) == [0, 1, 2])
+    #expect(Set(rows.map(\.id)).count == 3)
+}
+
+@Test("Artist detail keeps multi-artist albums and groups missing albums")
+func libraryArtistDetailContentKeepsRelationships() {
+    let artistID = ArtistID("artist-detail")
+    let secondaryArtistID = ArtistID("secondary-artist")
+    let albumFromTrack = Album(id: AlbumID("album-from-track"), title: "From Track")
+    let albumFromArtist = Album(
+        id: AlbumID("album-from-artist"),
+        title: "From Album Artist",
+        artistIDs: [artistID, secondaryArtistID]
+    )
+    let unrelatedAlbum = Album(
+        id: AlbumID("unrelated-album"),
+        title: "Unrelated",
+        artistIDs: [secondaryArtistID]
+    )
+    let tracks = [
+        Track(
+            id: MediaItemID(sourceID: .local, externalID: "direct-album-track"),
+            title: "Direct Album Track",
+            albumID: albumFromTrack.id,
+            artistIDs: [artistID, secondaryArtistID]
+        ),
+        Track(
+            id: MediaItemID(sourceID: .local, externalID: "album-artist-track"),
+            title: "Album Artist Track",
+            albumID: albumFromArtist.id,
+            artistIDs: [secondaryArtistID]
+        ),
+        Track(
+            id: MediaItemID(sourceID: .local, externalID: "no-album-track"),
+            title: "No Album Track",
+            artistIDs: [artistID]
+        ),
+        Track(
+            id: MediaItemID(sourceID: .local, externalID: "missing-album-track"),
+            title: "Missing Album Track",
+            albumID: AlbumID("missing-album"),
+            artistIDs: [artistID]
+        ),
+    ]
+
+    let artistTracks = LibraryArtistDetailContent.tracks(
+        for: artistID,
+        from: tracks,
+        albums: [albumFromTrack, albumFromArtist, unrelatedAlbum]
+    )
+    let artistAlbums = LibraryArtistDetailContent.albums(
+        for: artistID,
+        tracks: artistTracks,
+        from: [albumFromTrack, albumFromTrack, albumFromArtist, unrelatedAlbum]
+    )
+    let mergedAlbumOne = Album(
+        id: AlbumID("merged-album-1"),
+        title: "Shared Release",
+        artistIDs: [artistID],
+        releaseYear: 2024,
+        albumType: .album
+    )
+    let mergedAlbumTwo = Album(
+        id: AlbumID("merged-album-2"),
+        title: " shared release ",
+        artistIDs: [artistID, secondaryArtistID],
+        releaseYear: 2024,
+        albumType: .album
+    )
+    let mergedGroups = LibraryArtistDetailContent.albumGroups(
+        for: artistID,
+        tracks: [
+            Track(
+                id: MediaItemID(sourceID: .local, externalID: "merged-track-1"),
+                title: "Merged track 1",
+                albumID: mergedAlbumOne.id,
+                artistIDs: [artistID]
+            ),
+            Track(
+                id: MediaItemID(sourceID: .local, externalID: "merged-track-2"),
+                title: "Merged track 2",
+                albumID: mergedAlbumTwo.id,
+                artistIDs: [artistID]
+            ),
+        ],
+        from: [mergedAlbumOne, mergedAlbumTwo]
+    )
+    let noAlbumTracks = LibraryArtistDetailContent.noAlbumTracks(
+        from: artistTracks,
+        knownAlbums: artistAlbums
+    )
+
+    #expect(artistTracks.map(\.title) == tracks.map(\.title))
+    #expect(artistAlbums.map(\.id) == [albumFromTrack.id, albumFromArtist.id])
+    #expect(mergedGroups.count == 1)
+    #expect(mergedGroups[0].album.title == mergedAlbumOne.title)
+    #expect(mergedGroups[0].albumIDs == [mergedAlbumOne.id, mergedAlbumTwo.id])
+    #expect(noAlbumTracks.map(\.title) == ["No Album Track", "Missing Album Track"])
+}
+
 @MainActor
 @Test("Playback history clear retains rows on failure and empties them on retry")
 func playbackHistoryClearFailureAndRetry() async throws {
@@ -754,92 +1141,6 @@ func playbackHistoryClearFailureAndRetry() async throws {
     #expect(viewModel.playbackHistory.isEmpty)
     #expect(viewModel.state(for: .recent) == .empty)
     #expect(service.clearHistoryCallCount == 2)
-}
-
-@Test("Playback history groups today and yesterday with newest sessions first")
-func playbackHistoryPresentationGroupsDates() throws {
-    var calendar = Calendar(identifier: .gregorian)
-    calendar.timeZone = TimeZone(secondsFromGMT: 0)!
-    let now = Date(timeIntervalSince1970: 1_800_000_000)
-    let todayStart = calendar.startOfDay(for: now)
-    let yesterdayStart = try #require(calendar.date(byAdding: .day, value: -1, to: todayStart))
-    let track = makeTrack("dated")
-    let items = [
-        makeHistoryItem(sessionID: UUID(), track: track, date: todayStart.addingTimeInterval(10)),
-        makeHistoryItem(sessionID: UUID(), track: track, date: yesterdayStart.addingTimeInterval(20)),
-        makeHistoryItem(sessionID: UUID(), track: track, date: todayStart.addingTimeInterval(30)),
-    ]
-
-    let sections = PlaybackHistoryPresentation.sections(
-        from: items,
-        now: now,
-        calendar: calendar
-    )
-
-    #expect(sections.map(\.title) == ["Today", "Yesterday"])
-    #expect(sections[0].items.map(\.lastEventAt) == [
-        todayStart.addingTimeInterval(30),
-        todayStart.addingTimeInterval(10),
-    ])
-}
-
-@Test("Library home follows the Apple Music information hierarchy")
-func libraryHomeItemOrder() {
-    #expect(
-        LibraryHomeItem.allCases == [
-            .artists,
-            .albums,
-            .tracks,
-            .favorites,
-            .recent,
-            .genres,
-            .folders
-        ]
-    )
-}
-
-@MainActor
-@Test("A newer library artwork request wins over an older failure")
-func libraryArtworkLoaderIgnoresOlderFailure() async {
-    let service = LibraryArtworkRaceService()
-    let loader = ArtworkImageLoader()
-    let oldRequest = Task {
-        await loader.load(
-            artworkID: ArtworkID("old"),
-            sourceID: .local,
-            serving: service
-        )
-    }
-
-    await service.waitForOldRequest()
-    await loader.load(
-        artworkID: ArtworkID("new"),
-        sourceID: .local,
-        serving: service
-    )
-    await oldRequest.value
-
-    #expect(loader.image != nil)
-}
-
-@MainActor
-@Test("Cancelling a library artwork request reaches its service operation")
-func libraryArtworkLoaderPropagatesCancellation() async {
-    let service = LibraryArtworkCancellationService()
-    let loader = ArtworkImageLoader()
-    let request = Task {
-        await loader.load(
-            artworkID: ArtworkID("slow"),
-            sourceID: .local,
-            serving: service
-        )
-    }
-
-    await service.waitForRequest()
-    request.cancel()
-    await request.value
-
-    #expect(await service.wasCancelled)
 }
 
 @Test("Library artwork decoding rejects local files larger than 20 MiB")
@@ -870,30 +1171,6 @@ func libraryArtworkDecodingBoundsPixelDimensions() async throws {
 }
 
 @MainActor
-@Test("Cancelling after library artwork decode starts prevents publication")
-func libraryArtworkLoaderChecksCancellationAfterDecode() async throws {
-    let service = LibraryArtworkRaceService()
-    let decoder = LibraryControlledArtworkDecoder()
-    let loader = ArtworkImageLoader { resource in
-        await decoder.decode(resource)
-    }
-    let request = Task {
-        await loader.load(
-            artworkID: ArtworkID("new"),
-            sourceID: .local,
-            serving: service
-        )
-    }
-
-    await decoder.waitForDecode()
-    request.cancel()
-    await decoder.complete(with: UIImage(data: testArtworkData()))
-    await request.value
-
-    #expect(loader.image == nil)
-}
-
-@MainActor
 @Test("A newer search cancels the old query and wins the result race")
 func searchCancelsOlderQuery() async throws {
     let service = FakeLibraryService()
@@ -912,7 +1189,112 @@ func searchCancelsOlderQuery() async throws {
 
     #expect(service.cancelledQueries == ["old"])
     #expect(service.trackRequests.compactMap(\.searchText) == ["old", "new"])
-    #expect(viewModel.tracks.map(\.title) == ["new result"])
+    #expect(viewModel.searchTracks.map(\.title) == ["new result"])
+    #expect(viewModel.tracks.isEmpty)
+    #expect(service.searchRequests.map(\.searchText) == ["old", "new"])
+}
+
+@MainActor
+@Test("Library search loads albums and songs into one result state")
+func librarySearchLoadsAlbumsAndTracks() async {
+    let service = FakeLibraryService()
+    service.trackResponses = [
+        .success(LibraryPage(elements: [makeTrack("matching song")]))
+    ]
+    service.albumResponses = [
+        .success(LibraryPage(elements: [makeAlbum("matching album")]))
+    ]
+    let viewModel = LibraryViewModel(
+        library: service,
+        searchDebounceNanoseconds: 0
+    )
+
+    viewModel.updateSearchText("matching")
+    await settleUntil { viewModel.searchState != .loading }
+
+    #expect(viewModel.searchState == .loaded)
+    #expect(viewModel.searchTracks.map(\.title) == ["matching song"])
+    #expect(viewModel.searchAlbums.map(\.title) == ["matching album"])
+    #expect(service.trackRequests.first?.searchText == "matching")
+    #expect(service.trackRequests.first?.sourceID == .local)
+    #expect(service.albumRequests.first?.searchText == "matching")
+    #expect(service.albumRequests.first?.sourceID == .local)
+    #expect(service.searchRequests.count == 1)
+    #expect(service.searchRequests.first?.limit == 100)
+}
+
+@MainActor
+@Test("Library changes refresh active search without cancelling the current query")
+func libraryChangesCoalesceActiveSearchRefresh() async {
+    let service = FakeLibraryService()
+    service.trackResponses = [
+        .success(LibraryPage(elements: [makeTrack("initial song")])),
+        .success(LibraryPage(elements: [makeTrack("refreshed song")]))
+    ]
+    service.albumResponses = [
+        .success(LibraryPage(elements: [makeAlbum("initial album")])),
+        .success(LibraryPage(elements: [makeAlbum("refreshed album")]))
+    ]
+    let viewModel = LibraryViewModel(
+        library: service,
+        searchDebounceNanoseconds: 0
+    )
+
+    await viewModel.startObservingChanges()
+    await settle()
+    viewModel.updateSearchText("old")
+    await settle()
+
+    for revision in 1...3 {
+        service.publish(
+            LibraryChange(
+                revision: LibraryRevision(UInt64(revision)),
+                categories: [.tracks, .albums],
+                affectedIDs: LibraryAffectedIDs()
+            )
+        )
+    }
+
+    await settleUntil {
+        service.trackRequests.count == 2 && viewModel.searchState == .loaded
+    }
+
+    #expect(service.cancelledQueries.isEmpty)
+    #expect(service.trackRequests.count == 2)
+    #expect(service.albumRequests.count == 2)
+    #expect(viewModel.searchTracks.map(\.title) == ["refreshed song"])
+    #expect(viewModel.searchAlbums.map(\.title) == ["refreshed album"])
+}
+
+@MainActor
+@Test("Clearing library search restores idle state without changing song lists")
+func clearingLibrarySearchRestoresIdleState() async {
+    let libraryTrack = makeTrack("library song")
+    let service = FakeLibraryService()
+    service.trackResponses = [
+        .success(LibraryPage(elements: [libraryTrack])),
+        .success(LibraryPage(elements: [makeTrack("search result")]))
+    ]
+    service.albumResponses = [
+        .success(LibraryPage(elements: [makeAlbum("search album")]))
+    ]
+    let viewModel = LibraryViewModel(
+        library: service,
+        searchDebounceNanoseconds: 0
+    )
+
+    viewModel.load(section: .tracks, reset: true)
+    await settle()
+    viewModel.updateSearchText("search")
+    await settleUntil { viewModel.searchState != .loading }
+    #expect(viewModel.searchTracks.map(\.title) == ["search result"])
+    #expect(viewModel.searchAlbums.map(\.title) == ["search album"])
+    viewModel.updateSearchText("")
+
+    #expect(viewModel.searchState == .idle)
+    #expect(viewModel.searchTracks.isEmpty)
+    #expect(viewModel.searchAlbums.isEmpty)
+    #expect(viewModel.tracks.map(\.title) == ["library song"])
 }
 
 @Test("Import event mapping exposes progress and redacted failure summaries")
@@ -938,6 +1320,14 @@ func importEventMapping() {
     #expect(progress.failures.first?.itemName == "broken.wav")
     #expect(progress.failures.first?.code == "unsupported_format")
 
+    progress = ImportEventMapper.apply(
+        .confirmationRequired(importID: importID),
+        to: progress
+    )
+    #expect(progress.phase == nil)
+    #expect(LibraryImportState.awaitingConfirmation(progress).progress == progress)
+    #expect(LibraryImportState.awaitingConfirmation(progress).confirmationProgress == progress)
+
     let result = MediaImportResult(
         importID: importID,
         imported: 1,
@@ -954,6 +1344,247 @@ func importEventMapping() {
     #expect(progress.processedItems == 2)
 }
 
+@Test("Import status exposes an all-failed result and its file reason")
+func importStatusExposesTerminalFailureReason() throws {
+    let importID = UUID()
+    let result = MediaImportResult(
+        importID: importID,
+        imported: 0,
+        duplicate: 0,
+        skipped: 0,
+        failed: 1,
+        cancelled: 0
+    )
+    let failure = LibraryImportFailure(
+        itemName: "three-hour-sample.m4a",
+        code: "corrupted_media",
+        message: "The media appears to be damaged."
+    )
+
+    let presentation = try #require(LibraryImportStatusPresentation.make(
+        state: .completed(result),
+        failures: [failure]
+    ))
+
+    #expect(presentation.tone == .failure)
+    #expect(presentation.title == L("import.failed.title"))
+    #expect(presentation.primaryAction == .dismiss)
+    #expect(presentation.detail?.contains("three-hour-sample.m4a") == true)
+    #expect(presentation.detail?.contains("parser") != true)
+}
+
+@MainActor
+@Test("Library ViewModel continues a folder import after confirmation")
+func libraryViewModelContinuesImportAfterConfirmation() async {
+    let importer = ConfirmationImportService()
+    let viewModel = LibraryViewModel(
+        library: FakeLibraryService(),
+        importer: importer
+    )
+
+    await viewModel.startImport(urls: [URL(fileURLWithPath: "/fixture/folder")])
+    for _ in 0..<100 {
+        if case .awaitingConfirmation = viewModel.importState { break }
+        await Task.yield()
+    }
+
+    if case .awaitingConfirmation(let progress) = viewModel.importState {
+        #expect(progress.failures.map(\.itemName) == ["broken.wav"])
+    } else {
+        #expect(Bool(false), "the import did not pause for confirmation")
+        return
+    }
+
+    viewModel.continueImport()
+    for _ in 0..<100 {
+        if case .completed = viewModel.importState { break }
+        await Task.yield()
+    }
+
+    #expect(await importer.continueCallCount == 1)
+    if case .completed(let result) = viewModel.importState {
+        #expect(result.imported == 1)
+        #expect(result.failed == 1)
+        #expect(viewModel.importFailures.map(\.itemName) == ["broken.wav"])
+    } else {
+        #expect(Bool(false), "the import did not complete after confirmation")
+    }
+}
+
+@MainActor
+@Test("Library ViewModel cancellation closes a folder confirmation wait")
+func libraryViewModelCancelsImportConfirmation() async {
+    let importer = ConfirmationImportService()
+    let viewModel = LibraryViewModel(
+        library: FakeLibraryService(),
+        importer: importer
+    )
+
+    await viewModel.startImport(urls: [URL(fileURLWithPath: "/fixture/folder")])
+    for _ in 0..<100 {
+        if case .awaitingConfirmation = viewModel.importState { break }
+        await Task.yield()
+    }
+
+    viewModel.cancelImport()
+    for _ in 0..<100 {
+        if case .completed(let result) = viewModel.importState, result.isCancelled { break }
+        await Task.yield()
+    }
+
+    #expect(await importer.cancelCallCount == 1)
+    if case .completed(let result) = viewModel.importState {
+        #expect(result.isCancelled)
+    } else {
+        #expect(Bool(false), "the import did not finish after cancellation")
+    }
+}
+
+@MainActor
+@Test("A terminal import can be retried before its old stream finishes")
+func terminalImportCanBeRetriedBeforeOldStreamFinishes() async {
+    let importer = TerminalThenHangingImportService()
+    let viewModel = LibraryViewModel(
+        library: FakeLibraryService(),
+        importer: importer
+    )
+
+    await viewModel.startImport(urls: [URL(fileURLWithPath: "/fixture/first.mp3")])
+    await settle()
+    if case .completed = viewModel.importState {
+        // The service intentionally keeps the first stream open after its
+        // terminal event to reproduce the UI scheduling window.
+    } else {
+        #expect(Bool(false), "the first import did not reach a terminal state")
+    }
+
+    await viewModel.startImport(urls: [URL(fileURLWithPath: "/fixture/second.mp3")])
+    #expect(await importer.requestCount == 2)
+
+    await importer.finishAll()
+    await settle()
+
+    if case .completed(let result) = viewModel.importState {
+        #expect(result.imported == 1)
+        #expect(result.failed == 0)
+    } else {
+        #expect(Bool(false), "the retry did not complete")
+    }
+}
+
+private actor TerminalThenHangingImportService: ImportServing {
+    private(set) var requestCount = 0
+    private var continuations: [UUID: AsyncThrowingStream<MediaImportEvent, Error>.Continuation] = [:]
+
+    func start(
+        _ request: MediaImportRequest
+    ) async throws -> AsyncThrowingStream<MediaImportEvent, Error> {
+        requestCount += 1
+        let pair = AsyncThrowingStream<MediaImportEvent, Error>.makeStream()
+        continuations[request.importID] = pair.continuation
+        pair.continuation.yield(
+            .completed(
+                importID: request.importID,
+                result: MediaImportResult(
+                    importID: request.importID,
+                    imported: 1,
+                    duplicate: 0,
+                    skipped: 0,
+                    failed: 0,
+                    cancelled: 0
+                )
+            )
+        )
+        return pair.stream
+    }
+
+    func cancel(_ importID: UUID) async {}
+
+    func state(for importID: UUID) async -> ImportSessionSnapshot? {
+        nil
+    }
+
+    func makeStateStream() async -> AsyncStream<ImportSessionSnapshot> {
+        AsyncStream { continuation in continuation.finish() }
+    }
+
+    func finishAll() {
+        let pending = continuations.values
+        continuations.removeAll()
+        pending.forEach { $0.finish() }
+    }
+}
+
+private actor ConfirmationImportService: ImportServing {
+    private var continuations: [UUID: AsyncThrowingStream<MediaImportEvent, Error>.Continuation] = [:]
+    private(set) var continueCallCount = 0
+    private(set) var cancelCallCount = 0
+
+    func start(
+        _ request: MediaImportRequest
+    ) async throws -> AsyncThrowingStream<MediaImportEvent, Error> {
+        let pair = AsyncThrowingStream<MediaImportEvent, Error>.makeStream()
+        continuations[request.importID] = pair.continuation
+        let failedURL = URL(fileURLWithPath: "/fixture/broken.wav")
+        pair.continuation.yield(
+            .itemFailed(
+                importID: request.importID,
+                url: failedURL,
+                error: .unsupportedFormat
+            )
+        )
+        pair.continuation.yield(.confirmationRequired(importID: request.importID))
+        return pair.stream
+    }
+
+    func continueImport(_ importID: UUID) async {
+        continueCallCount += 1
+        guard let continuation = continuations.removeValue(forKey: importID) else { return }
+        continuation.yield(
+            .completed(
+                importID: importID,
+                result: MediaImportResult(
+                    importID: importID,
+                    imported: 1,
+                    duplicate: 0,
+                    skipped: 0,
+                    failed: 1,
+                    cancelled: 0
+                )
+            )
+        )
+        continuation.finish()
+    }
+
+    func cancel(_ importID: UUID) async {
+        cancelCallCount += 1
+        guard let continuation = continuations.removeValue(forKey: importID) else { return }
+        continuation.yield(
+            .cancelled(
+                importID: importID,
+                result: MediaImportResult(
+                    importID: importID,
+                    imported: 0,
+                    duplicate: 0,
+                    skipped: 0,
+                    failed: 1,
+                    cancelled: 1,
+                    status: .cancelled
+                )
+            )
+        )
+        continuation.finish()
+    }
+
+    func state(for importID: UUID) async -> ImportSessionSnapshot? {
+        nil
+    }
+
+    func makeStateStream() async -> AsyncStream<ImportSessionSnapshot> {
+        AsyncStream { continuation in continuation.finish() }
+    }
+}
+
 @MainActor
 private final class FakeLibraryService: LibraryServing {
     var trackResponses: [Result<LibraryPage<Track>, Error>] = []
@@ -963,6 +1594,7 @@ private final class FakeLibraryService: LibraryServing {
     var albumResponses: [Result<LibraryPage<Album>, Error>] = []
     var albumRequests: [AlbumQuery] = []
     var albumPageRequests: [LibraryPageRequest] = []
+    var searchRequests: [LibrarySearchRequest] = []
     var historyResponses: [Result<LibraryPage<PlaybackHistoryItem>, Error>] = []
     var clearHistoryError: Error?
     private(set) var clearHistoryCallCount = 0
@@ -1013,6 +1645,29 @@ private final class FakeLibraryService: LibraryServing {
         albumPageRequests.append(page)
         guard !albumResponses.isEmpty else { return LibraryPage(elements: []) }
         return try albumResponses.removeFirst().get()
+    }
+
+    func searchLibrary(
+        _ request: LibrarySearchRequest
+    ) async throws -> LibrarySearchResults {
+        searchRequests.append(request)
+        guard let searchText = request.searchText else {
+            return LibrarySearchResults()
+        }
+        let page = try LibraryPageRequest(limit: request.limit)
+        let tracks = try await browseTracks(
+            matching: TrackQuery(searchText: searchText, sourceID: request.sourceID),
+            page: page
+        )
+        try Task.checkCancellation()
+        let albums = try await browseAlbums(
+            matching: AlbumQuery(searchText: searchText, sourceID: request.sourceID),
+            page: page
+        )
+        return LibrarySearchResults(
+            tracks: tracks.elements,
+            albums: albums.elements
+        )
     }
 
     func browseArtists(
@@ -1109,95 +1764,6 @@ private enum LibraryTestError: Error, LocalizedError, Sendable {
 
     var errorDescription: String? {
         "The library is unavailable."
-    }
-}
-
-private enum ArtworkLoaderTestError: Error, Sendable {
-    case unavailable
-}
-
-private actor LibraryArtworkRaceService: ArtworkServing {
-    private var oldRequestStarted = false
-    private var oldRequestContinuation: CheckedContinuation<Void, Never>?
-
-    func artwork(
-        for artworkID: ArtworkID,
-        sourceID _: MediaSourceID
-    ) async throws -> ArtworkResource? {
-        if artworkID == ArtworkID("old") {
-            oldRequestStarted = true
-            oldRequestContinuation?.resume()
-            oldRequestContinuation = nil
-            try await Task.sleep(nanoseconds: 50_000_000)
-            throw ArtworkLoaderTestError.unavailable
-        }
-
-        return .inMemory(testArtworkData())
-    }
-
-    func waitForOldRequest() async {
-        guard !oldRequestStarted else { return }
-        await withCheckedContinuation { continuation in
-            oldRequestContinuation = continuation
-        }
-    }
-}
-
-private actor LibraryArtworkCancellationService: ArtworkServing {
-    private var requestStarted = false
-    private var requestContinuation: CheckedContinuation<Void, Never>?
-    private(set) var wasCancelled = false
-
-    func artwork(
-        for _: ArtworkID,
-        sourceID _: MediaSourceID
-    ) async throws -> ArtworkResource? {
-        requestStarted = true
-        requestContinuation?.resume()
-        requestContinuation = nil
-
-        do {
-            try await Task.sleep(nanoseconds: 1_000_000_000)
-            return .inMemory(testArtworkData())
-        } catch {
-            wasCancelled = true
-            throw error
-        }
-    }
-
-    func waitForRequest() async {
-        guard !requestStarted else { return }
-        await withCheckedContinuation { continuation in
-            requestContinuation = continuation
-        }
-    }
-}
-
-private actor LibraryControlledArtworkDecoder {
-    private var didStart = false
-    private var startContinuation: CheckedContinuation<Void, Never>?
-    private var resultContinuation: CheckedContinuation<UIImage?, Never>?
-
-    func decode(_ resource: ArtworkResource?) async -> UIImage? {
-        _ = resource
-        didStart = true
-        startContinuation?.resume()
-        startContinuation = nil
-        return await withCheckedContinuation { continuation in
-            resultContinuation = continuation
-        }
-    }
-
-    func waitForDecode() async {
-        guard !didStart else { return }
-        await withCheckedContinuation { continuation in
-            startContinuation = continuation
-        }
-    }
-
-    func complete(with image: UIImage?) {
-        resultContinuation?.resume(returning: image)
-        resultContinuation = nil
     }
 }
 
@@ -1304,4 +1870,16 @@ private func makeHistoryItem(
 private func settle(_ nanoseconds: UInt64 = 20_000_000) async {
     try? await Task.sleep(nanoseconds: nanoseconds)
     await Task.yield()
+}
+
+@MainActor
+private func settleUntil(
+    maximumAttempts: Int = 100,
+    condition: () -> Bool
+) async {
+    for _ in 0..<maximumAttempts {
+        if condition() { return }
+        try? await Task.sleep(nanoseconds: 10_000_000)
+        await Task.yield()
+    }
 }

@@ -107,8 +107,8 @@ Review 并统一 iOS 中所有歌曲行和歌曲集合列表的 context menu，�
 
 ## 实施边界
 
-- 优先复用 `NativeTrackCollectionView`、`NativeLibraryCollectionView` 和现有 `TrackContextMenuActions`/队列动作服务。
-- 播放历史和播放列表详情需要接入统一歌曲行菜单；如 SwiftUI `List` 无法提供一致的原生双指多选，则迁移其歌曲行区域到 UIKit collection view。
+- 复用 `LibraryTracksViewController`、`LibraryCollectionsViewController`、`LibraryCollectionDetailViewController` 和现有队列动作服务。
+- 播放历史和播放列表详情统一使用 UIKit 原生歌曲行容器，不再依赖已移除的 SwiftUI `List` 或页面桥接。
 - 只修改菜单、多选、列表行交互和所需的历史删除接口；保留现有未提交的其他功能修改。
 - 本计划只针对 iOS，不以 macOS Music 的菜单或布局为参考。
 

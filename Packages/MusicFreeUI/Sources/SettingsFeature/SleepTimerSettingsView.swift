@@ -10,6 +10,7 @@ struct SleepTimerSettingsView: View {
 
     @State private var oneTimeDurationMinutes = 20
     @State private var runtimeSnapshot = SleepTimerSnapshot.inactive
+    @State private var pendingDeletionID: UUID?
 
     var body: some View {
         Form {
@@ -19,6 +20,28 @@ struct SleepTimerSettingsView: View {
         .navigationTitle(L("Sleep timer"))
         .scrollContentBackground(.hidden)
         .background(MusicFreeColorTokens.backgroundGrouped)
+        .environment(\.defaultMinListRowHeight, MusicFreeLayoutMetrics.minimumHitTarget)
+        .confirmationDialog(
+            L("Delete schedule"),
+            isPresented: Binding(
+                get: { pendingDeletionID != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        pendingDeletionID = nil
+                    }
+                }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(L("Delete schedule"), role: .destructive) {
+                guard let pendingDeletionID else { return }
+                settingsViewModel.deleteSleepTimerSchedule(id: pendingDeletionID)
+                self.pendingDeletionID = nil
+            }
+            Button(L("Cancel"), role: .cancel) {
+                pendingDeletionID = nil
+            }
+        }
         .task {
             guard let serving else { return }
             runtimeSnapshot = serving.snapshot
@@ -31,15 +54,9 @@ struct SleepTimerSettingsView: View {
 
     private var oneTimeSection: some View {
         Section(L("One-time timer")) {
-            if runtimeSnapshot.isActive {
+            if case .oneTime = runtimeSnapshot.source {
                 activeTimerStatus
-
-                Button(role: .destructive) {
-                    serving?.cancel()
-                } label: {
-                    Label(L("Cancel timer"), systemImage: "xmark.circle")
-                }
-                .accessibilityIdentifier("settings.sleepTimer.cancel")
+                cancelTimerButton
             } else {
                 Stepper(
                     value: $oneTimeDurationMinutes,
@@ -86,6 +103,11 @@ struct SleepTimerSettingsView: View {
 
     private var automaticSchedulesSection: some View {
         Section {
+            if case .automatic = runtimeSnapshot.source {
+                activeTimerStatus
+                cancelTimerButton
+            }
+
             let schedules = settingsViewModel.settings.playbackPreferences.sleepTimer.schedules
             ForEach(Array(schedules.enumerated()), id: \.element.id) { index, schedule in
                 scheduleEditor(schedule, number: index + 1)
@@ -103,8 +125,17 @@ struct SleepTimerSettingsView: View {
         }
     }
 
+    private var cancelTimerButton: some View {
+        Button(role: .destructive) {
+            serving?.cancel()
+        } label: {
+            Label(L("Cancel timer"), systemImage: "xmark.circle")
+        }
+        .accessibilityIdentifier("settings.sleepTimer.cancel")
+    }
+
+    @ViewBuilder
     private func scheduleEditor(_ schedule: SleepTimerSchedule, number: Int) -> some View {
-        VStack(alignment: .leading, spacing: MusicFreeSpacingTokens.small) {
             Toggle(isOn: enabledBinding(for: schedule)) {
                 Text("\(L("Schedule")) \(number)")
             }
@@ -140,13 +171,11 @@ struct SleepTimerSettingsView: View {
             .disabled(!schedule.isEnabled || settingsViewModel.isSaving)
 
             Button(role: .destructive) {
-                settingsViewModel.deleteSleepTimerSchedule(id: schedule.id)
+                pendingDeletionID = schedule.id
             } label: {
                 Label(L("Delete schedule"), systemImage: "trash")
             }
             .disabled(settingsViewModel.isSaving)
-        }
-        .padding(.vertical, MusicFreeSpacingTokens.xSmall)
     }
 
     private func enabledBinding(for schedule: SleepTimerSchedule) -> Binding<Bool> {

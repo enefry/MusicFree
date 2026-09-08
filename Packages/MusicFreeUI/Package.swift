@@ -6,7 +6,7 @@ let package = Package(
     name: "MusicFreeUI",
     defaultLocalization: "en",
     platforms: [
-        .iOS(.v26)
+        .iOS(.v17)
     ],
     products: [
         .library(name: "DesignSystem", targets: ["DesignSystem"]),
@@ -16,7 +16,8 @@ let package = Package(
         .library(name: "SettingsFeature", targets: ["SettingsFeature"])
     ],
     dependencies: [
-        .package(path: "../MusicFreeCore")
+        .package(path: "../MusicFreeCore"),
+        .package(url: "https://github.com/onevcat/Kingfisher.git", exact: "8.12.0")
     ],
     targets: [
         .target(
@@ -28,6 +29,7 @@ let package = Package(
         .target(
             name: "LibraryFeature",
             dependencies: [
+                .product(name: "Kingfisher", package: "Kingfisher"),
                 "DesignSystem",
                 .product(name: "MusicDomain", package: "MusicFreeCore"),
                 .product(name: "LibraryAPI", package: "MusicFreeCore"),
@@ -38,6 +40,7 @@ let package = Package(
         .target(
             name: "PlayerFeature",
             dependencies: [
+                .product(name: "Kingfisher", package: "Kingfisher"),
                 "DesignSystem",
                 .product(name: "MusicDomain", package: "MusicFreeCore"),
                 .product(name: "LibraryAPI", package: "MusicFreeCore"),
@@ -49,6 +52,7 @@ let package = Package(
         .target(
             name: "PlaylistFeature",
             dependencies: [
+                .product(name: "Kingfisher", package: "Kingfisher"),
                 "DesignSystem",
                 .product(name: "MusicDomain", package: "MusicFreeCore"),
                 .product(name: "LibraryAPI", package: "MusicFreeCore"),
@@ -60,6 +64,7 @@ let package = Package(
             dependencies: [
                 "DesignSystem",
                 .product(name: "MusicDomain", package: "MusicFreeCore"),
+                .product(name: "MediaSourceAPI", package: "MusicFreeCore"),
                 .product(name: "SettingsAPI", package: "MusicFreeCore"),
                 .product(name: "PlaybackAPI", package: "MusicFreeCore"),
                 .product(name: "SystemIntegrationAPI", package: "MusicFreeCore"),
@@ -70,7 +75,7 @@ let package = Package(
             ]
         ),
         .testTarget(
-            name: "MusicFreeUITests",
+            name: "MusicFreeUIFeatureTests",
             dependencies: [
                 "DesignSystem",
                 "LibraryFeature",
@@ -80,11 +85,13 @@ let package = Package(
                 .product(name: "AppServices", package: "MusicFreeCore"),
                 .product(name: "LibraryAPI", package: "MusicFreeCore"),
                 .product(name: "MediaSourceAPI", package: "MusicFreeCore"),
+                .product(name: "MusicTestSupport", package: "MusicFreeCore"),
                 .product(name: "MusicDomain", package: "MusicFreeCore"),
                 .product(name: "PlaybackAPI", package: "MusicFreeCore"),
                 .product(name: "SettingsAPI", package: "MusicFreeCore"),
                 .product(name: "SystemIntegrationAPI", package: "MusicFreeCore")
-            ]
+            ],
+            path: "Tests/MusicFreeUITests"
         )
     ],
     swiftLanguageModes: [.v6]

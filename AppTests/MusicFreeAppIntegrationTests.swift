@@ -1,6 +1,7 @@
 import Foundation
 import AppServices
 import LibraryAPI
+import LocalMediaAdapter
 import MediaSourceAPI
 import MusicDomain
 import PlaybackAPI
@@ -8,6 +9,7 @@ import SettingsAPI
 import SystemIntegrationAPI
 import Testing
 import UIKit
+import VLCKitPlaybackAdapter
 
 @testable import MusicFree
 
@@ -18,6 +20,57 @@ private final class LifecycleEventRecorder {
 
 private enum CompositionFactoryTestError: Error, Sendable {
     case failed
+}
+
+struct MacLocalImportDiagnosticTests {
+    @Test(
+        "Mac Designed for iPad runs the real local importer on the Music folder",
+        .enabled(if: ProcessInfo.processInfo.environment["MUSICFREE_RUN_USER_MUSIC_DIAGNOSTICS"] == "1")
+    )
+    func importsMusicFolder() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        let sourcePath = try #require(environment["MUSICFREE_USER_MUSIC_PATH"])
+        let sourceURL = URL(fileURLWithPath: sourcePath, isDirectory: true)
+        try #require(FileManager.default.fileExists(atPath: sourceURL.path))
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MusicFree-MacImport-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let localConfiguration = try LocalMediaConfiguration(
+            managedRoot: root.appendingPathComponent("managed", isDirectory: true),
+            stagingRoot: root.appendingPathComponent("staging", isDirectory: true),
+            quarantineRoot: root.appendingPathComponent("quarantine", isDirectory: true)
+        )
+        let vlcConfiguration = try VLCKitAdapterConfiguration(
+            applicationIdentifier: "win.tools4me.music.mac-diagnostic",
+            applicationVersion: "1.0",
+            applicationName: "MusicFree Mac Diagnostic",
+            parserTimeout: .seconds(30)
+        )
+        let importer = try LocalMediaImporter(
+            configuration: localConfiguration,
+            probe: VLCMediaProbe(configuration: vlcConfiguration),
+            metadataReader: VLCMetadataReader(configuration: vlcConfiguration),
+            libraryRepository: EmptyLibraryRepository()
+        )
+
+        let request = MediaImportRequest(importID: UUID(), urls: [sourceURL])
+        var events: [MediaImportEvent] = []
+        for try await event in importer.importMedia(request) {
+            events.append(event)
+        }
+        let result = events.compactMap { event -> MediaImportResult? in
+            guard case .completed(_, let result) = event else { return nil }
+            return result
+        }.last
+        let failures = events.compactMap { event -> String? in
+            guard case .itemFailed(_, let url, let error) = event else { return nil }
+            return "\(url.path):\(error.diagnosticCode)"
+        }
+        print("MAC_REAL_IMPORT source=\(sourceURL.path) result=\(String(describing: result)) failures=\(failures)")
+        #expect((result?.imported ?? 0) > 0)
+        #expect(result?.failed == 0)
+    }
 }
 
 @MainActor
@@ -404,6 +457,7 @@ struct MusicFreeAppIntegrationSuite {
 func appRouterKeepsTypedState() {
     var router = AppRouter()
 
+    #expect(AppRouter.Route.allCases == [.library, .playlists, .onlineSources, .settings])
     #expect(router.selectedRoute == .library)
     #expect(router.presented == nil)
 
@@ -601,30 +655,31 @@ func appContainerPreservesCompositionDegradation() async throws {
 }
 
 @MainActor
-@Test("AppContainer remains loading until startup storage pruning finishes")
-func appContainerWaitsForStartupStoragePruning() async throws {
+@Test("AppContainer becomes ready before deferred storage pruning finishes")
+func appContainerDoesNotWaitForStartupStoragePruning() async throws {
     let maintenance = AppBlockingStorageMaintenance()
     let container = try await AppContainer.makeForTesting(
         startupState: .loading,
         storageMaintenance: maintenance
     )
     let services = try #require(container.serviceContainer)
-    let start = Task { @MainActor in
-        let report = try await services.start()
-        container.completeStartup(report)
-    }
+    let report = try await services.start()
+    container.completeStartup(report)
+
+    #expect(container.startupState == .ready)
     await maintenance.waitUntilPruningStarts()
 
-    #expect(container.startupState == .loading)
+    #expect(container.startupState == .ready)
 
     await maintenance.releasePruning()
-    try await start.value
+    let fallbacks = await services.waitForPostStartupMaintenance()
+    container.completePostStartupMaintenance(fallbacks, for: services)
     #expect(container.startupState == .ready)
 }
 
 @MainActor
-@Test("AppContainer degrades instead of requiring recovery when pruning fails")
-func appContainerMapsStoragePruningFailureToCacheDegradation() async throws {
+@Test("AppContainer applies deferred pruning failure after becoming usable")
+func appContainerAppliesDeferredStoragePruningFailure() async throws {
     let maintenance = AppBlockingStorageMaintenance(failsPruning: true)
     let container = try await AppContainer.makeForTesting(
         startupState: .loading,
@@ -635,7 +690,13 @@ func appContainerMapsStoragePruningFailureToCacheDegradation() async throws {
     let report = try await services.start()
     container.completeStartup(report)
 
-    #expect(report.fallbacks == [.storagePruningFailed])
+    #expect(report.fallbacks.isEmpty)
+    #expect(container.startupState == .ready)
+
+    let fallbacks = await services.waitForPostStartupMaintenance()
+    container.completePostStartupMaintenance(fallbacks, for: services)
+
+    #expect(fallbacks == [.storagePruningFailed])
     #expect(container.startupState == .degraded([.cacheUnavailable]))
 }
 
@@ -759,8 +820,8 @@ func cancellingServiceStartWaiterPreservesSharedGraph() async throws {
         startupState: .loading,
         serviceContainer: services
     )
-    let cancelledScene = RootScene(container: container)
-    let liveScene = RootScene(container: container)
+    let cancelledScene = RootViewController(container: container)
+    let liveScene = RootViewController(container: container)
 
     let cancelledWaiter = Task { @MainActor in
         await cancelledScene.startServices()
@@ -796,7 +857,7 @@ func corruptedSettingsStartDegradedWithoutImplicitReset() async throws {
         startupState: .loading,
         serviceContainer: services
     )
-    let scene = RootScene(container: container)
+    let scene = RootViewController(container: container)
 
     await scene.startServices()
 
@@ -825,7 +886,7 @@ func pruningFailureDoesNotDefeatCorruptedSettingsFallback() async throws {
         startupState: .loading,
         serviceContainer: services
     )
-    let scene = RootScene(container: container)
+    let scene = RootViewController(container: container)
 
     await scene.startServices()
 
@@ -853,7 +914,7 @@ func staleSettingsResetDoesNotMutateReplacementComposition() async throws {
             AppContainer.Composition(services: replacementServices)
         }
     )
-    let scene = RootScene(container: container)
+    let scene = RootViewController(container: container)
     await scene.startServices()
     #expect(container.startupState == .degraded([.settingsCorrupted]))
 
@@ -1184,6 +1245,23 @@ func documentsScannerIgnoresAutoImportPlaceholder() async throws {
     #expect(await importer.requestCount == 0)
 }
 
+@Test("Documents scanner records a directory containing only non-media sidecars")
+func documentsScannerRecordsNonMediaOnlyDirectory() async throws {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("MusicFreeScannerSidecarTests-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try Data("notes".utf8).write(to: root.appendingPathComponent("readme.txt"))
+    let importer = UnsupportedDirectoryImportService()
+    let scanner = AppDocumentsScanner(documentsURL: root, importer: importer)
+
+    #expect(try await scanner.scanIfNeeded() == nil)
+    #expect(await importer.requestCount == 1)
+    #expect(try await scanner.scanIfNeeded() == nil)
+    #expect(await importer.requestCount == 1)
+}
+
 @Test("Documents scanner retries a snapshot that had failed files")
 func documentsScannerRetriesFailedSnapshot() async throws {
     let root = FileManager.default.temporaryDirectory
@@ -1274,7 +1352,7 @@ func documentsScannerRestoresCompletedSnapshot() async throws {
     #expect(await relaunchedImporter.requestCount == 0)
 }
 
-@Test("Documents scanner invalidates pre-artwork snapshots after schema migration")
+@Test("Documents scanner invalidates v2 snapshots after album identity migration")
 func documentsScannerReimportsLegacySnapshotAfterSchemaMigration() async throws {
     struct LegacyEntry: Codable {
         let relativePath: String
@@ -1300,7 +1378,7 @@ func documentsScannerReimportsLegacySnapshotAfterSchemaMigration() async throws 
         forKeys: [.contentModificationDateKey]
     ).contentModificationDate
     let legacySnapshot = LegacySnapshot(
-        schemaVersion: 1,
+        schemaVersion: 2,
         entries: [
             LegacyEntry(
                 relativePath: mediaURL.lastPathComponent,
@@ -1363,6 +1441,48 @@ private actor RecordingImportService: ImportServing {
 
     func makeStateStream() async -> AsyncStream<ImportSessionSnapshot> {
         AsyncStream { continuation in continuation.finish() }
+    }
+}
+
+private actor UnsupportedDirectoryImportService: ImportServing {
+    private(set) var requestCount = 0
+
+    func start(
+        _ request: MediaImportRequest
+    ) async throws -> AsyncThrowingStream<MediaImportEvent, Error> {
+        requestCount += 1
+        let inputURL = try #require(request.urls.first)
+        return AsyncThrowingStream { continuation in
+            continuation.yield(.itemFailed(
+                importID: request.importID,
+                url: inputURL,
+                error: .unsupportedFormat
+            ))
+            continuation.yield(.completed(
+                importID: request.importID,
+                result: MediaImportResult(
+                    importID: request.importID,
+                    imported: 0,
+                    duplicate: 0,
+                    skipped: 0,
+                    failed: 1,
+                    cancelled: 0
+                )
+            ))
+            continuation.finish()
+        }
+    }
+
+    func cancel(_ importID: UUID) async {}
+
+    func state(for importID: UUID) async -> ImportSessionSnapshot? {
+        nil
+    }
+
+    func makeStateStream() async -> AsyncStream<ImportSessionSnapshot> {
+        AsyncStream { continuation in
+            continuation.finish()
+        }
     }
 }
 

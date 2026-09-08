@@ -1,7 +1,13 @@
 import Foundation
 import MediaSourceAPI
+import MusicDomain
 
 internal actor ImportCoordinator: ImportServing {
+    private static let logger = MusicLogger(
+        subsystem: "com.musicfree.app",
+        category: "import-coordinator"
+    )
+
     private let importer: (any MediaImporting)?
     private let metadataEnrichment: (any MetadataEnrichmentServing)?
     private var sessions: [UUID: ImportSessionSnapshot] = [:]
@@ -19,10 +25,15 @@ internal actor ImportCoordinator: ImportServing {
     func start(_ request: MediaImportRequest)
         async throws -> AsyncThrowingStream<MediaImportEvent, Error>
     {
+        Self.logger.info(
+            "coordinator start id=\(request.importID.uuidString) inputCount=\(request.urls.count)"
+        )
         guard !request.urls.isEmpty else {
+            Self.logger.error("coordinator rejected empty request")
             throw AppServiceError.invalidRequest(operation: "import")
         }
         guard let importer else {
+            Self.logger.error("coordinator rejected missing importer")
             throw AppServiceError.missingDependency("mediaImporter")
         }
 
@@ -41,6 +52,7 @@ internal actor ImportCoordinator: ImportServing {
         publish(sessions[request.importID]!)
 
         let upstream = importer.importMedia(request)
+        Self.logger.debug("coordinator connected upstream id=\(request.importID.uuidString)")
         return AsyncThrowingStream { [weak self] continuation in
             let task = Task { [weak self] in
                 await self?.consume(
@@ -65,6 +77,14 @@ internal actor ImportCoordinator: ImportServing {
     func cancel(_ importID: UUID) async {
         guard sessions[importID]?.isActive == true else { return }
         await importer?.cancelImport(importID)
+    }
+
+    func continueImport(_ importID: UUID) async {
+        guard sessions[importID]?.isActive == true else { return }
+        Self.logger.info(
+            "coordinator continuing import id=\(importID.uuidString)"
+        )
+        await importer?.continueImport(importID)
     }
 
     func state(for importID: UUID) async -> ImportSessionSnapshot? {
@@ -92,12 +112,23 @@ internal actor ImportCoordinator: ImportServing {
         do {
             for try await event in upstream {
                 guard isActive(importID: importID, sessionToken: sessionToken) else { break }
+                if case .confirmationRequired = event {
+                    Self.logger.info(
+                        "coordinator received confirmation event id=\(importID.uuidString)"
+                    )
+                }
                 update(with: event, sessionToken: sessionToken)
                 if case .persisting(_, let itemID) = event {
                     await metadataEnrichment?.enqueue(itemID: itemID)
                 }
-                continuation.yield(event)
+                let yieldResult = continuation.yield(event)
+                if case .confirmationRequired = event {
+                    Self.logger.info(
+                        "coordinator forwarded confirmation event id=\(importID.uuidString) result=\(String(describing: yieldResult))"
+                    )
+                }
                 if event.isTerminal {
+                    Self.logger.info("coordinator received terminal event id=\(importID.uuidString)")
                     continuation.finish()
                     return
                 }
@@ -113,6 +144,9 @@ internal actor ImportCoordinator: ImportServing {
             )
         } catch {
             if isActive(importID: importID, sessionToken: sessionToken) {
+                Self.logger.error(
+                    "coordinator stream failed id=\(importID.uuidString) error=\(String(describing: error))"
+                )
                 markInactive(importID: importID, sessionToken: sessionToken)
                 let mapped = AppServiceError.mapped(error, operation: "import")
                 continuation.finish(throwing: mapped)
@@ -139,7 +173,7 @@ internal actor ImportCoordinator: ImportServing {
         case .completed(_, let value), .cancelled(_, let value):
             result = value
             isActive = false
-        case .discovered, .hashing, .probing, .copying:
+        case .discovered, .hashing, .probing, .copying, .confirmationRequired:
             break
         }
 

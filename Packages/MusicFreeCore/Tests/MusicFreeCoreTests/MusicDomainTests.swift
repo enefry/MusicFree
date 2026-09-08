@@ -52,6 +52,82 @@ func idDescriptionsRedactPaths() {
     #expect(item.description.contains("MediaItemID"))
 }
 
+@Suite("MusicLoggerTests", .serialized)
+struct MusicLoggerTests {
+    @Test("File logging is redacted and disabled until explicitly enabled")
+    func fileLoggingRedactsSensitiveValues() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MusicFreeMusicLogger-\(UUID().uuidString)", isDirectory: true)
+        let fileURL = root.appendingPathComponent(MusicLogger.fileName, isDirectory: false)
+        defer {
+            MusicLogger.configureFileLogging(fileURL: fileURL, enabled: false)
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        MusicLogger.configureFileLogging(fileURL: fileURL, enabled: false)
+        let logger = MusicLogger(category: "logger-test")
+        logger.info("disabled authorization: hidden-value")
+        await MusicLogger.flushFileLog()
+        #expect(!FileManager.default.fileExists(atPath: fileURL.path))
+
+        MusicLogger.configureFileLogging(fileURL: fileURL, enabled: true)
+        logger.info(
+            "authorization: hidden-value token=token-value Bearer bearer-value "
+                + "https://example.com/path?query=private file:///private/secret/path"
+        )
+        await MusicLogger.flushFileLog()
+
+        let currentURL = try #require(MusicLogger.fileLogStatus().fileURL)
+        let content = try String(contentsOf: currentURL, encoding: .utf8)
+        #expect(content.contains("authorization=<redacted>"))
+        #expect(content.contains("token=<redacted>"))
+        #expect(content.contains("Bearer <redacted>"))
+        #expect(content.contains("https://example.com/path?<redacted>"))
+        #expect(content.contains("file://<redacted>"))
+        #expect(!content.contains("hidden-value"))
+        #expect(!content.contains("token-value"))
+        #expect(!content.contains("bearer-value"))
+        #expect(!content.contains("private"))
+        #expect(!content.contains("/private/secret/path"))
+    }
+
+    @Test("File logging keeps one bounded rolling file")
+    func fileLoggingRollsWithinConfiguredLimit() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MusicFreeMusicLogger-\(UUID().uuidString)", isDirectory: true)
+        let fileURL = root.appendingPathComponent(MusicLogger.fileName, isDirectory: false)
+        let maximumByteCount: Int64 = 256
+        defer {
+            MusicLogger.configureFileLogging(fileURL: fileURL, enabled: false)
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        MusicLogger.configureFileLogging(
+            fileURL: fileURL,
+            enabled: true,
+            maximumByteCount: maximumByteCount
+        )
+        let logger = MusicLogger(category: "rolling-test")
+        for index in 0..<10 {
+            logger.info("entry-\(index)-\(String(repeating: "x", count: 32))")
+        }
+        await MusicLogger.flushFileLog()
+
+        let status = MusicLogger.fileLogStatus()
+        let currentURL = try #require(status.fileURL)
+        let data = try Data(contentsOf: currentURL)
+        let content = String(decoding: data, as: UTF8.self)
+        let logFiles = try FileManager.default.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: nil
+        ).filter { $0.pathExtension == "log" }
+        #expect(status.byteCount <= maximumByteCount)
+        #expect(Int64(data.count) <= maximumByteCount)
+        #expect(logFiles.count <= 2)
+        #expect(content.contains("entry-9"))
+    }
+}
+
 @Test("Blank optional metadata becomes nil and relationships stay deterministic")
 func blankMetadataAndRelationships() {
     let track = Track(

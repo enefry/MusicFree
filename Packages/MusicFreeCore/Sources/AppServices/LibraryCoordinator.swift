@@ -2,7 +2,6 @@ import Foundation
 import LibraryAPI
 import MediaSourceAPI
 import MusicDomain
-import OSLog
 import PlaybackAPI
 
 private actor LibraryMutationGate {
@@ -63,7 +62,7 @@ internal actor LibraryCoordinator: LibraryServing {
     private var artworkPruneTask: Task<Void, Never>?
     private var artworkPruneNeedsRerun = false
 
-    private static let logger = Logger(
+    private static let logger = MusicLogger(
         subsystem: "com.musicfree.app",
         category: "artwork-maintenance"
     )
@@ -125,6 +124,22 @@ internal actor LibraryCoordinator: LibraryServing {
             return try await repository.albums(matching: query, page: page)
         } catch {
             throw AppServiceError.mapped(error, operation: "library.browseAlbums")
+        }
+    }
+
+    func searchLibrary(
+        _ request: LibrarySearchRequest
+    ) async throws -> LibrarySearchResults {
+        guard let repository else {
+            throw AppServiceError.missingDependency("libraryRepository")
+        }
+        do {
+            try Task.checkCancellation()
+            let results = try await repository.searchLibrary(request)
+            try Task.checkCancellation()
+            return results
+        } catch {
+            throw AppServiceError.mapped(error, operation: "library.search")
         }
     }
 
@@ -291,6 +306,23 @@ internal actor LibraryCoordinator: LibraryServing {
         }
     }
 
+    func repairMetadata() async throws -> LibraryMetadataRepairResult {
+        guard let repository else {
+            throw AppServiceError.missingDependency("libraryRepository")
+        }
+        let acquired = await libraryMutationGate.enter()
+        guard acquired else { throw CancellationError() }
+        do {
+            try Task.checkCancellation()
+            let result = try await repository.repairMetadata()
+            await libraryMutationGate.leave()
+            return result
+        } catch {
+            await libraryMutationGate.leave()
+            throw AppServiceError.mapped(error, operation: "library.metadataRepair")
+        }
+    }
+
     func updateMetadata(_ update: TrackMetadataUpdate) async throws -> Track {
         guard repository != nil else {
             throw AppServiceError.missingDependency("libraryRepository")
@@ -315,6 +347,10 @@ internal actor LibraryCoordinator: LibraryServing {
             throw AppServiceError.missingDependency("libraryRepository")
         }
         try Task.checkCancellation()
+        if case .replace = update.artwork {
+            await waitForArtworkPrune()
+            try Task.checkCancellation()
+        }
         guard !update.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw AppServiceError.invalidRequest(operation: "library.albumMetadata.title")
         }
@@ -325,17 +361,62 @@ internal actor LibraryCoordinator: LibraryServing {
         let acquired = await libraryMutationGate.enter()
         guard acquired else { throw CancellationError() }
 
+        var artworkWriteReceipt: ArtworkWriteReceipt?
         do {
             try Task.checkCancellation()
             guard let current = try await repository.album(id: update.albumID) else {
                 throw AppServiceError.library(.constraint(.danglingReference))
             }
 
+            let matchingAlbums = try await albumsMatchingEditedTitle(
+                update.title,
+                excluding: current.id,
+                repository: repository
+            )
+            let merge = matchingAlbums.isEmpty ? nil : LibraryAlbumMerge(
+                sourceAlbumIDs: Set(matchingAlbums.map(\.id)),
+                destinationAlbumID: current.id
+            )
+
             let artistNames = update.artistNames ?? []
-            let artistIDs = artistNames.map(Self.artistID)
+            let currentArtistNames = try await resolvedArtistNames(
+                for: current.artistIDs,
+                repository: repository
+            )
+            let artistIDs = currentArtistNames == artistNames
+                ? current.artistIDs
+                : artistNames.map(Self.artistID)
             var mutations: [LibraryMutation] = []
             for (artistID, artistName) in zip(artistIDs, artistNames) {
                 mutations.append(.upsert(.artist(Artist(id: artistID, name: artistName))))
+            }
+
+            var artwork = current.artwork
+            switch update.artwork {
+            case .keep:
+                artwork = artwork ?? matchingAlbums.compactMap(\.artwork).first
+            case .remove:
+                artwork = nil
+            case .replace(let data):
+                guard !data.isEmpty else {
+                    throw AppServiceError.invalidRequest(operation: "library.albumMetadata.artwork")
+                }
+                guard data.count <= ArtworkDataLimits.maximumByteCount else {
+                    throw AppServiceError.invalidRequest(operation: "library.albumMetadata.artworkSize")
+                }
+                guard let artworkWriter else {
+                    throw AppServiceError.missingDependency("artworkWriter")
+                }
+                let artworkID = ArtworkID(rawValue: "sha256-\(MusicContentIdentity.sha256Hex(data))")
+                artworkWriteReceipt = try await artworkWriter(data, artworkID)
+                try Task.checkCancellation()
+                let replacement = ArtworkReference(
+                    id: artworkID,
+                    variants: [.original],
+                    preferredVariant: .original
+                )
+                artwork = replacement
+                mutations.append(.upsert(.artwork(replacement)))
             }
 
             let updatedSortTitle: String?
@@ -352,28 +433,72 @@ internal actor LibraryCoordinator: LibraryServing {
                 title: update.title,
                 sortTitle: updatedSortTitle,
                 artistIDs: artistIDs,
-                artwork: current.artwork,
+                artwork: artwork,
                 releaseYear: update.releaseYear,
                 trackCount: current.trackCount,
                 albumType: current.albumType
             )
             mutations.append(.upsert(.album(updated)))
 
+            switch update.artwork {
+            case .keep:
+                break
+            case .remove, .replace:
+                mutations.append(.relation(.setAlbumTracksArtwork(
+                    albumID: updated.id,
+                    artworkID: updated.artworkID
+                )))
+            }
+
             let transaction = try LibraryTransaction(
                 idempotencyKey: Self.stableKey(
                     prefix: "album-metadata",
                     albumID: update.albumID
                 ) + "." + UUID().uuidString,
-                mutations: mutations
+                mutations: mutations,
+                albumMerge: merge
             )
             try Task.checkCancellation()
             try await repository.apply(transaction)
+            if let artworkWriteReceipt {
+                await artworkWriteReceipt.finish(committed: true)
+            }
+            scheduleArtworkPrune()
+            let savedAlbum = merge == nil ? updated : (try? await repository.album(id: updated.id)) ?? updated
             await libraryMutationGate.leave()
-            return updated
+            return savedAlbum
         } catch {
+            if let artworkWriteReceipt {
+                await artworkWriteReceipt.finish(committed: false)
+            }
             await libraryMutationGate.leave()
             throw AppServiceError.mapped(error, operation: "library.albumMetadata")
         }
+    }
+
+    private func albumsMatchingEditedTitle(
+        _ title: String,
+        excluding albumID: AlbumID,
+        repository: any LibraryRepository
+    ) async throws -> [Album] {
+        let normalizedTitle = LibraryAlbumMerge.normalizedTitle(title)
+        var request = try LibraryPageRequest(limit: LibraryPageRequest.maximumLimit)
+        var seenCursors = Set<LibraryCursor>()
+        var matches: [AlbumID: Album] = [:]
+        while true {
+            try Task.checkCancellation()
+            let page = try await repository.albums(matching: AlbumQuery(sourceID: .local), page: request)
+            for album in page.elements where album.id != albumID
+                && LibraryAlbumMerge.normalizedTitle(album.title) == normalizedTitle {
+                matches[album.id] = album
+            }
+            guard let next = try page.nextPage(limit: request.limit) else { break }
+            guard let cursor = next.cursor, seenCursors.insert(cursor).inserted else {
+                throw LibraryError.query(.invalidCursor)
+            }
+            request = next
+        }
+        return matches.values.sorted { $0.id < $1.id }
     }
 
     private func updateMetadataWhileHoldingGate(
@@ -398,7 +523,13 @@ internal actor LibraryCoordinator: LibraryServing {
             }
 
             let artistNames = update.artistNames ?? update.artistName.map { [$0] } ?? []
-            let artistIDs = artistNames.map(Self.artistID)
+            let currentArtistNames = try await resolvedArtistNames(
+                for: current.artistIDs,
+                repository: repository
+            )
+            let artistIDs = currentArtistNames == artistNames
+                ? current.artistIDs
+                : artistNames.map(Self.artistID)
             let explicitAlbumArtistNames: [String]?
             if let names = update.albumArtistNames {
                 explicitAlbumArtistNames = names
@@ -408,7 +539,13 @@ internal actor LibraryCoordinator: LibraryServing {
                 explicitAlbumArtistNames = nil
             }
             let genreNames = update.genreNames ?? update.genreName.map { [$0] } ?? []
-            let genreIDs = genreNames.map(Self.genreID)
+            let currentGenreNames = try await resolvedGenreNames(
+                for: current.genreIDs,
+                repository: repository
+            )
+            let genreIDs = currentGenreNames == genreNames
+                ? current.genreIDs
+                : genreNames.map(Self.genreID)
 
             let existingAlbum: Album?
             if update.albumName != nil, let currentAlbumID = current.albumID {
@@ -425,7 +562,13 @@ internal actor LibraryCoordinator: LibraryServing {
             let albumArtistIDs: [ArtistID]
             if let explicitAlbumArtistNames {
                 albumArtistNames = explicitAlbumArtistNames
-                albumArtistIDs = explicitAlbumArtistNames.map(Self.artistID)
+                let currentAlbumArtistNames = try await resolvedArtistNames(
+                    for: existingAlbum?.artistIDs ?? [],
+                    repository: repository
+                )
+                albumArtistIDs = currentAlbumArtistNames == explicitAlbumArtistNames
+                    ? existingAlbum?.artistIDs ?? []
+                    : explicitAlbumArtistNames.map(Self.artistID)
             } else if let existingAlbum {
                 albumArtistIDs = existingAlbum.artistIDs
                 albumArtistNames = try await resolvedArtistNames(
@@ -447,7 +590,7 @@ internal actor LibraryCoordinator: LibraryServing {
                 if let currentAlbumID = current.albumID,
                    let existingAlbum,
                    existingAlbum.title == albumName,
-                   existingAlbum.artistIDs == albumArtistIDs
+                   (existingAlbum.artistIDs == albumArtistIDs || existingAlbum.artistIDs.isEmpty)
                 {
                     albumID = currentAlbumID
                 } else {
@@ -636,22 +779,36 @@ internal actor LibraryCoordinator: LibraryServing {
             let update = TrackMetadataUpdate(
                 itemID: supplement.itemID,
                 title: supplement.title ?? current.title,
-                artistNames: currentArtistNames.isEmpty
-                    ? supplement.artistName.map { [$0] } ?? []
-                    : currentArtistNames,
-                albumArtistNames: currentAlbumArtistNames.isEmpty
-                    ? supplement.albumArtistName.map { [$0] }
-                    : currentAlbumArtistNames,
-                albumName: currentAlbum?.title ?? supplement.albumName,
-                genreNames: currentGenreNames.isEmpty
-                    ? supplement.genreName.map { [$0] } ?? []
-                    : currentGenreNames,
-                trackNumber: current.trackNumber ?? supplement.trackNumber,
-                discNumber: current.discNumber ?? supplement.discNumber,
-                year: current.year ?? supplement.year,
+                artistNames: supplement.replaceExisting
+                    ? supplement.artistName.map { [$0] } ?? currentArtistNames
+                    : currentArtistNames.isEmpty
+                        ? supplement.artistName.map { [$0] } ?? []
+                        : currentArtistNames,
+                albumArtistNames: supplement.replaceExisting
+                    ? supplement.albumArtistName.map { [$0] } ?? currentAlbumArtistNames
+                    : currentAlbumArtistNames.isEmpty
+                        ? supplement.albumArtistName.map { [$0] }
+                        : currentAlbumArtistNames,
+                albumName: supplement.replaceExisting
+                    ? supplement.albumName ?? currentAlbum?.title
+                    : currentAlbum?.title ?? supplement.albumName,
+                genreNames: supplement.replaceExisting
+                    ? supplement.genreName.map { [$0] } ?? currentGenreNames
+                    : currentGenreNames.isEmpty
+                        ? supplement.genreName.map { [$0] } ?? []
+                        : currentGenreNames,
+                trackNumber: supplement.replaceExisting
+                    ? supplement.trackNumber ?? current.trackNumber
+                    : current.trackNumber ?? supplement.trackNumber,
+                discNumber: supplement.replaceExisting
+                    ? supplement.discNumber ?? current.discNumber
+                    : current.discNumber ?? supplement.discNumber,
+                year: supplement.replaceExisting
+                    ? supplement.year ?? current.year
+                    : current.year ?? supplement.year,
                 comment: current.comment,
                 lyrics: supplement.lyrics ?? current.lyrics,
-                artwork: current.artwork == nil && supplement.artworkData != nil
+                artwork: (supplement.replaceExisting || current.artwork == nil) && supplement.artworkData != nil
                     ? .replace(supplement.artworkData!)
                     : .keep
             )

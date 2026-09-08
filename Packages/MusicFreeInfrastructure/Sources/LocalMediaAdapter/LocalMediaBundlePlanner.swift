@@ -18,6 +18,7 @@ struct PreparedLocalMediaAsset: Sendable {
 struct LocalMediaBundlePlan: Sendable {
   let normalizedTracks: [NormalizedMedia]
   let structuralMutations: [LibraryMutation]
+  let legacyAlbumIDsByItemID: [MediaItemID: Set<AlbumID>]
 
   var itemIDs: [MediaItemID] { normalizedTracks.map(\.itemID) }
   var variantsByItemID: [MediaItemID: TrackVariant] {
@@ -87,6 +88,69 @@ struct LocalMediaBundlePlan: Sendable {
       idempotencyKey: idempotencyKey,
       mutations: accumulator.mutations
     )
+  }
+}
+
+/// Normalizes release titles that encode a physical disc suffix in the album
+/// tag. Some rips use `CDA`/`CDB`/`CDC`, while others use `CD1`, `Disc 2`, or
+/// `Part 3`. The suffix identifies the disc, not a different album.
+enum LocalAlbumTitleNormalizer {
+  struct Result: Sendable {
+    let title: String
+    let discNumber: Int?
+  }
+
+  static func parse(_ value: String) -> Result {
+    let repaired = MetadataTextRepair.repair(value)
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !repaired.isEmpty else { return Result(title: repaired, discNumber: nil) }
+
+    if let captures = captures(
+      #"^(.+?)(?:\s*[-_\(\[]?\s*)(?:cd|disc|disk|dvd|part|volume|vol)\s*([0-9]+)\s*[\)\]]*$"#,
+      in: repaired
+    ),
+      let number = Int(captures[1]), number > 0
+    {
+      return Result(
+        title: captures[0].trimmingCharacters(in: .whitespacesAndNewlines),
+        discNumber: number
+      )
+    }
+
+    if let captures = captures(#"^(.+?)(?:\s*[-_\(\[]?\s*)cd\s*([a-z])\s*[\)\]]*$"#, in: repaired),
+      let scalar = captures[1].unicodeScalars.first
+    {
+      guard let base = "A".unicodeScalars.first else {
+        return Result(title: repaired, discNumber: nil)
+      }
+      let number = Int(scalar.value - base.value) + 1
+      guard number > 0, number <= 26 else {
+        return Result(title: repaired, discNumber: nil)
+      }
+      return Result(
+        title: captures[0].trimmingCharacters(in: .whitespacesAndNewlines),
+        discNumber: number
+      )
+    }
+
+    return Result(title: repaired, discNumber: nil)
+  }
+
+  private static func captures(_ pattern: String, in value: String) -> [String]? {
+    guard let expression = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+      return nil
+    }
+    let range = NSRange(value.startIndex..<value.endIndex, in: value)
+    guard let match = expression.firstMatch(in: value, range: range), match.numberOfRanges > 1 else {
+      return nil
+    }
+    return (1..<match.numberOfRanges).compactMap { index in
+      let captureRange = match.range(at: index)
+      guard captureRange.location != NSNotFound,
+            let swiftRange = Range(captureRange, in: value)
+      else { return nil }
+      return String(value[swiftRange])
+    }
   }
 }
 
@@ -255,6 +319,10 @@ struct LocalMediaBundlePlanner: Sendable {
 
     planned = applyCollectionManifest(planned, bundle: bundle)
     planned = enrichReleaseStructure(planned, bundle: bundle)
+    let legacyAlbumIDsByItemID = legacyAlbumIDs(
+      for: planned,
+      bundle: bundle
+    )
     let scopedAlbumIDs = releaseScopedAlbumIDs(for: planned)
     var normalized: [NormalizedMedia] = []
     var seenItemIDs = Set<MediaItemID>()
@@ -294,7 +362,8 @@ struct LocalMediaBundlePlanner: Sendable {
         for: normalized,
         planned: planned,
         bundle: bundle
-      )
+      ),
+      legacyAlbumIDsByItemID: legacyAlbumIDsByItemID
     )
   }
 
@@ -321,11 +390,14 @@ struct LocalMediaBundlePlanner: Sendable {
       let inferredAlbumTitle: String? = indices.count > 1
         ? releaseTitle(for: result[indices[0]].releaseFolder, bundle: bundle)
         : nil
-      for index in indices where result[index].metadata.album == nil {
+      for index in indices {
+        let metadata = result[index].metadata
+        let album = metadata.album.map { LocalAlbumTitleNormalizer.parse($0) }
         result[index].metadata = replacing(
-          result[index].metadata,
-          album: inferredAlbumTitle,
-          discNumber: result[index].metadata.discNumber
+          metadata,
+          album: album?.title ?? inferredAlbumTitle,
+          discNumber: metadata.discNumber
+            ?? album?.discNumber
             ?? inferredDiscNumber(from: result[index].asset.file.folderPath)
         )
       }
@@ -342,19 +414,15 @@ struct LocalMediaBundlePlanner: Sendable {
       let explicitAlbumArtists = Set(indices.compactMap {
         normalized(result[$0].metadata.albumArtist)
       })
-      let trackArtists = Set(indices.compactMap { normalized(result[$0].metadata.artist) })
       let commonAlbumArtist: String?
       let albumType: AlbumType?
       if explicitAlbumArtists.count == 1 {
         commonAlbumArtist = indices.compactMap { result[$0].metadata.albumArtist }.first
         albumType = commonAlbumArtist?.caseInsensitiveCompare("Various Artists") == .orderedSame
           ? .compilation : nil
-      } else if explicitAlbumArtists.isEmpty, trackArtists.count > 1 {
-        commonAlbumArtist = "Various Artists"
-        albumType = .compilation
       } else {
         commonAlbumArtist = nil
-        albumType = nil
+        albumType = explicitAlbumArtists.count > 1 ? .compilation : nil
       }
       let discNumbers = indices.compactMap { index in
         result[index].metadata.discNumber
@@ -399,21 +467,50 @@ struct LocalMediaBundlePlanner: Sendable {
     }, by: { $0.track.albumID! })
 
     for (albumID, tracks) in groupedByAlbum {
-      guard let baseAlbum = tracks.lazy.compactMap({ media in
+      let orderedTracks = tracks.sorted { lhs, rhs in
+        guard let left = plannedByID[lhs.itemID], let right = plannedByID[rhs.itemID] else {
+          return lhs.itemID < rhs.itemID
+        }
+        return plannedTrackOrder(left, right)
+      }
+      let sourceAlbums = orderedTracks.compactMap { media in
         media.transaction.mutations.compactMap { mutation -> Album? in
           guard case .upsert(.album(let value)) = mutation, value.id == albumID else { return nil }
           return value
         }.first
-      }).first else { continue }
-      let albumType = tracks.compactMap { plannedByID[$0.itemID]?.albumType }.first
+      }
+      guard let baseAlbum = sourceAlbums.first else { continue }
+      let albumType = orderedTracks.compactMap { plannedByID[$0.itemID]?.albumType }.first
+      let albumArtistIDs: [ArtistID]
+      if albumType == .compilation {
+        var seenArtistIDs = Set<ArtistID>()
+        albumArtistIDs = sourceAlbums.flatMap(\.artistIDs).filter {
+          seenArtistIDs.insert($0).inserted
+        }
+      } else if !baseAlbum.artistIDs.isEmpty {
+        albumArtistIDs = baseAlbum.artistIDs
+      } else {
+        var seenArtistIDs = Set<ArtistID>()
+        albumArtistIDs = orderedTracks.flatMap(\.track.artistIDs).filter {
+          seenArtistIDs.insert($0).inserted
+        }
+      }
+      let albumArtwork = AlbumArtworkSelector.select(from: orderedTracks.compactMap { media in
+        guard let artwork = media.track.artwork else { return nil }
+        return AlbumArtworkCandidate(
+          artwork: artwork,
+          origin: media.artworkOrigin,
+          stableKey: media.itemID.externalID
+        )
+      })
       let album = Album(
         id: baseAlbum.id,
         title: baseAlbum.title,
         sortTitle: baseAlbum.sortTitle,
-        artistIDs: baseAlbum.artistIDs,
-        artwork: tracks.compactMap(\.track.artwork).first ?? baseAlbum.artwork,
+        artistIDs: albumArtistIDs,
+        artwork: albumArtwork ?? baseAlbum.artwork,
         releaseYear: baseAlbum.releaseYear,
-        trackCount: tracks.count,
+        trackCount: orderedTracks.count,
         albumType: albumType ?? baseAlbum.albumType
       )
       mutations.append(.upsert(.album(album)))
@@ -464,7 +561,14 @@ struct LocalMediaBundlePlanner: Sendable {
       )
     }
     mutations.append(contentsOf: assetByID.values.map { .upsert(.mediaAsset($0)) })
-    mutations.append(contentsOf: discByID.values.map { .upsert(.disc($0)) })
+    mutations.append(contentsOf: discByID.values
+      .sorted { lhs, rhs in
+        if lhs.releaseID != rhs.releaseID {
+          return lhs.releaseID.rawValue < rhs.releaseID.rawValue
+        }
+        return lhs.number < rhs.number
+      }
+      .map { .upsert(.disc($0)) })
 
     if let manifest = bundle.collectionManifest {
       let releasesByFolder = Dictionary(grouping: normalized.compactMap { media -> (String, AlbumReleaseID)? in
@@ -497,10 +601,14 @@ struct LocalMediaBundlePlanner: Sendable {
       let collectionID = LibraryCollectionID(
         "local-box-set-\(MusicContentIdentity.compositeToken(collectionIdentity))"
       )
-      let collectionArtwork = normalized
-        .sorted { $0.itemID < $1.itemID }
-        .compactMap(\.track.artwork)
-        .first
+      let collectionArtwork = AlbumArtworkSelector.select(from: normalized.compactMap { media in
+        guard let artwork = media.track.artwork else { return nil }
+        return AlbumArtworkCandidate(
+          artwork: artwork,
+          origin: media.artworkOrigin,
+          stableKey: media.itemID.externalID
+        )
+      })
       mutations.append(.upsert(.collection(LibraryCollection(
         id: collectionID,
         kind: .boxSet,
@@ -747,7 +855,9 @@ struct LocalMediaBundlePlanner: Sendable {
     for file: ImportFile,
     bundle: FolderImportBundle
   ) -> (path: String, discTitle: String?) {
-    var components = file.folderPath?.split(separator: "/").map(String.init) ?? []
+    var components = file.folderPath
+      .map(MetadataTextRepair.repair)
+      .map { $0.split(separator: "/").map(String.init) } ?? []
     let discTitle = components.last.flatMap { inferredDiscNumber(from: $0) == nil ? nil : $0 }
     if discTitle != nil { components.removeLast() }
     let path = components.isEmpty ? "." : components.joined(separator: "/")
@@ -756,7 +866,8 @@ struct LocalMediaBundlePlanner: Sendable {
 
   private func releaseTitle(for path: String, bundle: FolderImportBundle) -> String? {
     let value = path == "." ? bundle.rootURL.lastPathComponent : URL(fileURLWithPath: path).lastPathComponent
-    let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    let normalized = MetadataTextRepair.repair(value)
+      .trimmingCharacters(in: .whitespacesAndNewlines)
     return normalized.isEmpty ? nil : normalized
   }
 
@@ -766,7 +877,8 @@ struct LocalMediaBundlePlanner: Sendable {
   /// silently merged by the legacy metadata-derived identity.
   private func releaseScopedAlbumIDs(for values: [PlannedTrack]) -> [String: AlbumID] {
     let contexts = Set(values.compactMap(releaseContextKey(for:)))
-    guard contexts.count > 1 else { return [:] }
+    let hasCompilation = values.contains { $0.albumType == .compilation }
+    guard contexts.count > 1 || hasCompilation else { return [:] }
     return Dictionary(uniqueKeysWithValues: contexts.map { context in
       let token = MusicContentIdentity.compositeToken([
         "local-release-album",
@@ -778,12 +890,60 @@ struct LocalMediaBundlePlanner: Sendable {
 
   private func releaseContextKey(for value: PlannedTrack) -> String? {
     guard let album = normalized(value.metadata.album) else { return nil }
+    var components = [
+      "folder", LocalMediaCollectionManifest.normalizedPath(value.releaseFolder).lowercased(),
+      "album", album
+    ]
+    if value.albumType != .compilation {
+      components.append(contentsOf: [
+        "album-artist", normalized(value.metadata.albumArtist) ?? ""
+      ])
+    }
+    return MusicContentIdentity.compositeToken(components)
+  }
+
+  private func legacyAlbumIDs(
+    for values: [PlannedTrack],
+    bundle: FolderImportBundle
+  ) -> [MediaItemID: Set<AlbumID>] {
+    let scopedAlbumIDs = legacyReleaseScopedAlbumIDs(for: values)
+    return values.reduce(into: [:]) { result, value in
+      guard bundle.collectionManifest?.albumID(for: value.releaseFolder) == nil,
+            let album = value.metadata.album
+      else { return }
+
+      let albumArtist = value.metadata.albumArtist ?? value.metadata.artist
+      var candidates: Set<AlbumID> = [MetadataNormalizer.legacyAlbumID(
+        for: album,
+        artistNames: albumArtist.map { [$0] } ?? []
+      )]
+      if let context = legacyReleaseContextKey(for: value),
+         let scopedAlbumID = scopedAlbumIDs[context]
+      {
+        candidates.insert(scopedAlbumID)
+      }
+      result[value.itemID] = candidates
+    }
+  }
+
+  private func legacyReleaseScopedAlbumIDs(for values: [PlannedTrack]) -> [String: AlbumID] {
+    let contexts = Set(values.compactMap(legacyReleaseContextKey(for:)))
+    guard contexts.count > 1 else { return [:] }
+    return Dictionary(uniqueKeysWithValues: contexts.map { context in
+      let token = MusicContentIdentity.compositeToken([
+        "local-release-album",
+        context
+      ])
+      return (context, AlbumID(rawValue: "local-release-album-\(token)"))
+    })
+  }
+
+  private func legacyReleaseContextKey(for value: PlannedTrack) -> String? {
+    guard let album = normalized(value.metadata.album) else { return nil }
     return MusicContentIdentity.compositeToken([
       "folder", LocalMediaCollectionManifest.normalizedPath(value.releaseFolder).lowercased(),
       "album", album,
-      "album-artist", normalized(value.metadata.albumArtist)
-        ?? normalized(value.metadata.artist)
-        ?? ""
+      "album-artist", normalized(value.metadata.albumArtist) ?? ""
     ])
   }
 
@@ -868,6 +1028,7 @@ private struct LocalMediaMutationAccumulator {
       case .setArtists(let trackID, _): return "relation:artists:\(trackID)"
       case .setGenres(let trackID, _): return "relation:genres:\(trackID)"
       case .setArtwork(let trackID, _): return "relation:artwork:\(trackID)"
+      case .setAlbumTracksArtwork(let albumID, _): return "relation:album-artwork:\(albumID)"
       }
     case .statistics(let value):
       switch value {

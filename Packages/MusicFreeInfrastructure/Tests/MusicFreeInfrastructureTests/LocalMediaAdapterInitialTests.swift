@@ -52,7 +52,7 @@ struct LocalMediaAdapterInitialTests {
     #expect(segments.map(\.end) == [.seconds(119), .seconds(300), .seconds(239)])
   }
 
-  @Test("CUE parser decodes legacy Chinese GB18030 text")
+  @Test("CUE parser decodes legacy Chinese GB18030 text and repairs mojibake")
   func cueParserDecodesGB18030() throws {
     let encoding = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(
       CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue)
@@ -69,6 +69,28 @@ struct LocalMediaAdapterInitialTests {
     #expect(sheet.title == "中文专辑")
     #expect(sheet.files.first?.path == "音乐.flac")
     #expect(sheet.tracks.first?.title == "第一轨")
+  }
+
+  @Test("CUE parser repairs mojibake in album and track fields")
+  func cueParserRepairsMojibakeFields() throws {
+    let sheet = try CUESheetParser().parse(text: """
+    TITLE "Àë²»¿ª-³Â°ÙÇ¿ ¼ÍÄî¸è¼¯ 80-93 D"
+    PERFORMER "³Â°ÙÇ¿"
+    REM GENRE ä¸­æ–‡
+    FILE "music.flac" WAVE
+      TRACK 01 AUDIO
+        TITLE "¼¸·ÖÖÓµÄÔ¼»á"
+        PERFORMER "³Â°ÙÇ¿"
+        SONGWRITER "ä¸­æ–‡"
+        INDEX 01 00:00:00
+    """)
+
+    #expect(sheet.title == "离不开-陈百强 纪念歌集 80-93 D")
+    #expect(sheet.performer == "陈百强")
+    #expect(sheet.remarks.first?.value == "中文")
+    #expect(sheet.tracks.first?.title == "几分钟的约会")
+    #expect(sheet.tracks.first?.performer == "陈百强")
+    #expect(sheet.tracks.first?.songwriter == "中文")
   }
 
   @Test("CUE parser decodes UTF-16 little and big endian BOM text")
@@ -196,6 +218,286 @@ struct LocalMediaAdapterInitialTests {
     #expect(artwork.pixelHeight > 0)
   }
 
+  @Test("Remote metadata hints fill missing tags and preserve the source filename")
+  func remoteMetadataHintsFillMissingTagsAndFileName() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let inputURL = fixture.inputRoot.appendingPathComponent(
+      "8b0f8ef9-Remote Song.mp3"
+    )
+    try Data("remote-transcoded-audio".utf8).write(to: inputURL)
+
+    let repository = InMemoryLibraryRepository()
+    let importer = try fixture.makeImporter(
+      repository: repository,
+      metadataReader: EmptyMetadataReader()
+    )
+    let events = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [inputURL],
+      duplicatePolicy: .report,
+      metadataHints: [
+        inputURL: MediaImportMetadataHint(
+          displayName: "Remote Song.mp3",
+          artist: "NAS Artist",
+          album: "NAS Album",
+          duration: .seconds(87)
+        )
+      ]
+    )))
+    let result = try completedResult(in: events)
+    let itemID = try #require(persistedItemID(in: events))
+    let track = try #require(try await repository.track(id: itemID))
+    let albumID = try #require(track.albumID)
+    let album = try #require(try await repository.album(id: albumID))
+
+    #expect(result.imported == 1)
+    #expect(result.duplicate == 0)
+    #expect(track.title == "Remote Song")
+    #expect(track.fileName == "Remote Song.mp3")
+    #expect(track.artistIDs.count == 1)
+    #expect(album.title == "NAS Album")
+    #expect(track.duration == .seconds(3))
+  }
+
+  @Test("Remote metadata hints replace parser titles derived from private staging names")
+  func remoteMetadataHintsReplacePrivateStagingFileNameTitle() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let inputURL = fixture.inputRoot.appendingPathComponent("Readable Source Name.mp3")
+    try Data("remote-transcoded-audio".utf8).write(to: inputURL)
+
+    let repository = InMemoryLibraryRepository()
+    let importer = try fixture.makeImporter(
+      repository: repository,
+      metadataReader: StagingFileNameMetadataReader()
+    )
+    let events = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [inputURL],
+      duplicatePolicy: .report,
+      metadataHints: [
+        inputURL: MediaImportMetadataHint(
+          displayName: "Readable Source Name.mp3",
+          artist: "NAS Artist",
+          album: "NAS Album"
+        )
+      ]
+    )))
+    let result = try completedResult(in: events)
+    let itemID = try #require(persistedItemID(in: events))
+    let track = try #require(try await repository.track(id: itemID))
+    let albumID = try #require(track.albumID)
+    let album = try #require(try await repository.album(id: albumID))
+
+    #expect(result.imported == 1)
+    #expect(track.title == "Readable Source Name")
+    #expect(track.fileName == "Readable Source Name.mp3")
+    #expect(track.artistIDs.count == 1)
+    #expect(album.title == "NAS Album")
+  }
+
+  @Test("Remote metadata hints repair legacy private staging metadata on reimport")
+  func remoteMetadataHintsRepairLegacyPrivateStagingMetadata() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let inputURL = fixture.inputRoot.appendingPathComponent("DSM Download.mp3")
+    try Data("legacy-remote-transcoded-audio".utf8).write(to: inputURL)
+
+    let repository = InMemoryLibraryRepository()
+    let importer = try fixture.makeImporter(
+      repository: repository,
+      metadataReader: StagingFileNameMetadataReader()
+    )
+    let firstEvents = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [inputURL]
+    )))
+    let itemID = try #require(persistedItemID(in: firstEvents))
+    let legacyTrack = try #require(try await repository.track(id: itemID))
+    let legacyTitleStem = URL(fileURLWithPath: legacyTrack.title)
+      .deletingPathExtension()
+      .lastPathComponent
+
+    #expect(UUID(uuidString: legacyTitleStem) != nil)
+    #expect(legacyTrack.artistIDs.isEmpty)
+    #expect(legacyTrack.albumID == nil)
+
+    let metadataHint = MediaImportMetadataHint(
+      displayName: "Readable DSM Song.mp3",
+      title: "Readable DSM Song",
+      artist: "DSM Artist",
+      album: "DSM Album"
+    )
+    let repairedEvents = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [inputURL],
+      metadataHints: [inputURL: metadataHint]
+    )))
+    let repairedResult = try completedResult(in: repairedEvents)
+    let repairedTrack = try #require(try await repository.track(id: itemID))
+    let repairedAlbumID = try #require(repairedTrack.albumID)
+    let repairedAlbum = try #require(try await repository.album(id: repairedAlbumID))
+    let tracks = try await repository.tracks(
+      matching: TrackQuery(sourceID: .local),
+      page: try LibraryPageRequest(limit: LibraryPageRequest.maximumLimit)
+    )
+
+    #expect(repairedResult.imported == 1)
+    #expect(repairedResult.duplicate == 0)
+    #expect(repairedResult.skipped == 0)
+    #expect(tracks.elements.count == 1)
+    #expect(repairedTrack.title == "Readable DSM Song")
+    #expect(repairedTrack.fileName == "Readable DSM Song.mp3")
+    #expect(repairedTrack.artistIDs.count == 1)
+    #expect(repairedAlbum.title == "DSM Album")
+
+    let idempotentEvents = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [inputURL],
+      metadataHints: [inputURL: metadataHint]
+    )))
+    let idempotentResult = try completedResult(in: idempotentEvents)
+    #expect(idempotentResult.imported == 0)
+    #expect(idempotentResult.skipped == 1)
+  }
+
+  @Test("Local metadata repair decodes GB18030 and UTF-8 mojibake")
+  func localMetadataRepairDecodesMojibake() throws {
+    #expect(MetadataTextRepair.repair("¼¸·ÖÖÓµÄÔ¼»á") == "几分钟的约会")
+    #expect(MetadataTextRepair.repair("Àë²»¿ª-³Â°ÙÇ¿ ¼ÍÄî¸è¼¯ 80-93 D") == "离不开-陈百强 纪念歌集 80-93 D")
+    #expect(MetadataTextRepair.repair("ä¸­æ–‡") == "中文")
+  }
+
+  @Test("Raw metadata repairs every textual field at the shared reader boundary")
+  func rawMetadataRepairsEveryTextualField() {
+    let metadata = RawMediaMetadata(
+      title: "¼¸·ÖÖÓµÄÔ¼»á",
+      artist: "³Â°ÙÇ¿",
+      album: "Àë²»¿ª-³Â°ÙÇ¿ ¼ÍÄî¸è¼¯ 80-93 D",
+      albumArtist: "³Â°ÙÇ¿",
+      composer: "ä¸­æ–‡",
+      genre: "ä¸­æ–‡",
+      comment: "ä¸­æ–‡",
+      lyrics: "ä¸­æ–‡\\nä¸­æ–‡"
+    )
+
+    #expect(metadata.title == "几分钟的约会")
+    #expect(metadata.artist == "陈百强")
+    #expect(metadata.album == "离不开-陈百强 纪念歌集 80-93 D")
+    #expect(metadata.albumArtist == "陈百强")
+    #expect(metadata.composer == "中文")
+    #expect(metadata.genre == "中文")
+    #expect(metadata.comment == "中文")
+    #expect(metadata.lyrics == "中文\\n中文")
+  }
+
+  @Test("Local metadata repair leaves normal text unchanged")
+  func localMetadataRepairLeavesNormalTextUnchanged() {
+    for value in ["中文", "日本語の曲名", "English Title", "Beyoncé", "éééé"] {
+      #expect(MetadataTextRepair.repair(value) == value)
+    }
+  }
+
+  @Test("Reimport skips a title normalized at the shared boundary and preserves user state")
+  func reimportKeepsNormalizedTitleIdempotent() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let inputURL = fixture.inputRoot.appendingPathComponent("mojibake-title.mp3")
+    try Data("mojibake-title-audio".utf8).write(to: inputURL)
+
+    let repository = InMemoryLibraryRepository()
+    let importer = try fixture.makeImporter(
+      repository: repository,
+      metadataReader: TitleMetadataReader(title: "几分钟的约会")
+    )
+    let firstEvents = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [inputURL]
+    )))
+    let itemID = try #require(persistedItemID(in: firstEvents))
+    let imported = try #require(await repository.track(id: itemID))
+    let preservedStatistics = PlaybackStatistics(
+      playCount: 3,
+      completionCount: 1,
+      lastCompletionReason: .ended,
+      totalListeningDuration: .seconds(19)
+    )
+    await repository.replaceTrack(trackReplacingUserState(
+      copyTrack(imported, title: "¼¸·ÖÖÓµÄÔ¼»á"),
+      isFavorite: true,
+      statistics: preservedStatistics
+    ))
+
+    let repairedEvents = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [inputURL]
+    )))
+    let result = try completedResult(in: repairedEvents)
+    let repaired = try #require(await repository.track(id: itemID))
+
+    #expect(result.imported == 0)
+    #expect(result.skipped == 1)
+    #expect(repaired.title == "几分钟的约会")
+    #expect(repaired.isFavorite)
+    #expect(repaired.statistics == preservedStatistics)
+  }
+
+  @Test("Reimport skips an album normalized at the shared boundary")
+  func reimportKeepsNormalizedAlbumIdempotent() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let inputURL = fixture.inputRoot.appendingPathComponent("mojibake-album.mp3")
+    try Data("mojibake-album-audio".utf8).write(to: inputURL)
+
+    let repository = InMemoryLibraryRepository()
+    let importer = try fixture.makeImporter(
+      repository: repository,
+      metadataReader: TitleMetadataReader(
+        title: "几分钟的约会",
+        album: "离不开-陈百强 纪念歌集 80-93 D"
+      )
+    )
+    let firstEvents = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [inputURL]
+    )))
+    let itemID = try #require(persistedItemID(in: firstEvents))
+    let imported = try #require(await repository.track(id: itemID))
+    let correctAlbumID = try #require(imported.albumID)
+    let correctAlbum = try #require(await repository.album(id: correctAlbumID))
+    let legacyAlbumID = AlbumID("legacy-mojibake-album")
+    let legacyAlbum = Album(
+      id: legacyAlbumID,
+      title: "Àë²»¿ª-³Â°ÙÇ¿ ¼ÍÄî¸è¼¯ 80-93 D",
+      artistIDs: correctAlbum.artistIDs,
+      artwork: correctAlbum.artwork,
+      releaseYear: correctAlbum.releaseYear,
+      trackCount: correctAlbum.trackCount,
+      albumType: correctAlbum.albumType
+    )
+    try await repository.apply(LibraryTransaction(
+      idempotencyKey: "install-legacy-mojibake-album",
+      mutations: [
+        .upsert(.album(legacyAlbum)),
+        .upsert(.track(copyTrack(imported, albumID: legacyAlbumID)))
+      ]
+    ))
+
+    let repairedEvents = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [inputURL]
+    )))
+    let repaired = try #require(await repository.track(id: itemID))
+    let repairedAlbumID = try #require(repaired.albumID)
+    let repairedAlbum = try #require(await repository.album(id: repairedAlbumID))
+
+    #expect(try completedResult(in: repairedEvents).skipped == 1)
+    #expect(repaired.id == itemID)
+    #expect(repairedAlbumID == legacyAlbumID)
+    #expect(repairedAlbum.title == "离不开-陈百强 纪念歌集 80-93 D")
+  }
+
   @Test("Directory imports ignore an undecodable unknown sidecar beside audio")
   func directoryImportIgnoresUndecodableUnknownSidecar() async throws {
     let fixture = try Fixture()
@@ -252,6 +554,58 @@ struct LocalMediaAdapterInitialTests {
       matching: TrackQuery(sourceID: .local),
       page: try LibraryPageRequest(limit: LibraryPageRequest.maximumLimit)
     ).elements.isEmpty)
+  }
+
+  @Test("Interactive folder imports pause on failures and continue with valid files")
+  func interactiveFolderImportContinuesAfterFailureConfirmation() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let albumRoot = fixture.inputRoot.appendingPathComponent("Partial Import", isDirectory: true)
+    try FileManager.default.createDirectory(at: albumRoot, withIntermediateDirectories: true)
+    let validURL = albumRoot.appendingPathComponent("01.flac")
+    let failedURL = albumRoot.appendingPathComponent("02.custom")
+    try Data("playable-audio".utf8).write(to: validURL)
+    try Data("possibly-audio".utf8).write(to: failedURL)
+
+    let repository = InMemoryLibraryRepository()
+    let importer = try fixture.makeImporter(
+      repository: repository,
+      probe: FailingCandidateProbe(pathExtension: "custom", error: .corruptedMedia)
+    )
+    let importID = UUID()
+    let stream = importer.importMedia(MediaImportRequest(
+      importID: importID,
+      urls: [albumRoot],
+      allowsFolderFailureConfirmation: true
+    ))
+    var events: [MediaImportEvent] = []
+    for try await event in stream {
+      events.append(event)
+      if case .confirmationRequired = event {
+        await importer.continueImport(importID)
+      }
+    }
+
+    let result = try completedResult(in: events)
+    #expect(result.imported == 1)
+    #expect(result.failed == 1)
+    #expect(events.contains { event in
+      if case .confirmationRequired(let eventImportID) = event {
+        return eventImportID == importID
+      }
+      return false
+    })
+    #expect(events.contains { event in
+      if case .itemFailed(_, let url, let error) = event {
+        return url == failedURL && error == .corruptedMedia
+      }
+      return false
+    })
+    let tracks = try await repository.tracks(
+      matching: TrackQuery(sourceID: .local),
+      page: try LibraryPageRequest(limit: LibraryPageRequest.maximumLimit)
+    )
+    #expect(tracks.elements.map(\.fileName) == [validURL.lastPathComponent])
   }
 
   @Test("Musepack probe failures are not treated as unknown sidecars")
@@ -359,6 +713,34 @@ struct LocalMediaAdapterInitialTests {
     #expect(members.map(\.position) == [0, 1])
     #expect(members.allSatisfy { $0.collectionID == collection.id })
     await repository.assertDistinctAlbumReleaseCount(expected: 2)
+  }
+
+  @Test("Collection manifests use the shared decoder for legacy text encodings")
+  func collectionManifestDecodesLegacyTextEncodings() throws {
+    let encoding = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(
+      CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue)
+    ))
+    let legacyJSON = """
+    {
+      "kind": "boxSet",
+      "title": "离不开-陈百强 纪念歌集 80-93 D",
+      "albums": [
+        { "path": "第一部", "title": "纪念歌集", "position": 0 }
+      ]
+    }
+    """
+
+    let gbData = try #require(legacyJSON.data(using: encoding))
+    let gbManifest = try LocalMediaCollectionManifest.parse(data: gbData)
+    #expect(gbManifest.title == "离不开-陈百强 纪念歌集 80-93 D")
+    #expect(gbManifest.albums.first?.folderPath == "第一部")
+    #expect(gbManifest.albums.first?.title == "纪念歌集")
+
+    let utf16Payload = try #require(legacyJSON.data(using: .utf16LittleEndian))
+    let utf16Data = Data([0xFF, 0xFE]) + utf16Payload
+    let utf16Manifest = try LocalMediaCollectionManifest.parse(data: utf16Data)
+    #expect(utf16Manifest.title == gbManifest.title)
+    #expect(utf16Manifest.albums.first?.folderPath == "第一部")
   }
 
   @Test("Folder artwork does not leak from a multi-album root")
@@ -494,6 +876,302 @@ struct LocalMediaAdapterInitialTests {
       return value
     }
     #expect(discs.map(\.id) == [try #require(first.track.discProjection?.id)])
+  }
+
+  @Test("Different explicit album artists form separate albums")
+  func differentExplicitAlbumArtistsFormSeparateAlbums() throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let root = fixture.inputRoot.appendingPathComponent("Compilation", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let firstFile = ImportFile(url: root.appendingPathComponent("01.flac"), folderPath: nil)
+    let secondFile = ImportFile(url: root.appendingPathComponent("02.flac"), folderPath: nil)
+    let bundle = FolderImportBundle(
+      rootURL: root,
+      resources: [firstFile, secondFile].map {
+        FolderImportResource(file: $0, kind: .mediaCandidate)
+      }
+    )
+    let assets = [
+      makePreparedAlbumAsset(
+        file: firstFile,
+        hashCharacter: "a",
+        title: "First",
+        artist: "Artist One",
+        album: "Shared Compilation",
+        albumArtist: "Artist One"
+      ),
+      makePreparedAlbumAsset(
+        file: secondFile,
+        hashCharacter: "b",
+        title: "Second",
+        artist: "Artist Two",
+        album: "Shared Compilation",
+        albumArtist: "Artist Two"
+      )
+    ]
+
+    let plan = try LocalMediaBundlePlanner().plan(
+      bundle: bundle,
+      assets: assets,
+      importID: UUID()
+    )
+    let albumIDs = Set(plan.normalizedTracks.compactMap(\.track.albumID))
+    #expect(albumIDs.count == 2)
+    let albums = plan.structuralMutations.compactMap { mutation -> Album? in
+      guard case .upsert(.album(let value)) = mutation else { return nil }
+      return value
+    }
+    #expect(albums.count == 2)
+    #expect(albums.allSatisfy { $0.albumType == nil && $0.trackCount == 1 })
+    #expect(Set(albums.flatMap(\.artistIDs)) == Set(plan.normalizedTracks.flatMap(\.track.artistIDs)))
+  }
+
+  @Test("Explicit same-directory files import as one compilation without unselected siblings")
+  func explicitSameDirectoryFilesFormOneCompilation() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let root = fixture.inputRoot.appendingPathComponent("Selected Compilation", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let firstURL = root.appendingPathComponent("01.flac")
+    let secondURL = root.appendingPathComponent("02.flac")
+    let unselectedURL = root.appendingPathComponent("03.flac")
+    try Data("selected-compilation-one".utf8).write(to: firstURL)
+    try Data("selected-compilation-two".utf8).write(to: secondURL)
+    let unselectedData = Data("unselected-compilation-three".utf8)
+    try unselectedData.write(to: unselectedURL)
+
+    let repository = InMemoryLibraryRepository()
+    let importer = try fixture.makeImporter(
+      repository: repository,
+      metadataReader: FileContentMetadataReader(metadataByContent: [
+        "selected-compilation-one": RawMediaMetadata(
+          title: "First",
+          artist: "Artist One",
+          album: "Shared Compilation",
+          albumArtist: "Artist One"
+        ),
+        "selected-compilation-two": RawMediaMetadata(
+          title: "Second",
+          artist: "Artist Two",
+          album: "Shared Compilation",
+          albumArtist: "Artist Two"
+        ),
+        "unselected-compilation-three": RawMediaMetadata(
+          title: "Unselected",
+          artist: "Artist Three",
+          album: "Shared Compilation",
+          albumArtist: "Artist Three"
+        ),
+      ])
+    )
+
+    let events = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [firstURL, secondURL]
+    )))
+    let tracks = try await repository.tracks(
+      matching: TrackQuery(sourceID: .local),
+      page: try LibraryPageRequest(limit: LibraryPageRequest.maximumLimit)
+    ).elements
+    let albumID = try #require(tracks.first?.albumID)
+    let album = try #require(try await repository.album(id: albumID))
+    let unselectedID = MediaItemID(
+      sourceID: .local,
+      externalID: "sha256-\(MusicContentIdentity.sha256Hex(unselectedData))"
+    )
+
+    #expect(try completedResult(in: events).imported == 2)
+    #expect(tracks.count == 2)
+    #expect(Set(tracks.compactMap(\.albumID)) == [albumID])
+    #expect(album.albumType == .compilation)
+    #expect(album.trackCount == 2)
+    #expect(album.artistIDs.count == 2)
+    #expect(try await repository.track(id: unselectedID) == nil)
+    #expect(events.allSatisfy { event in
+      guard case .discovered(_, let url) = event else { return true }
+      return url != unselectedURL
+    })
+  }
+
+  @Test("Compilation disc suffixes merge into one album with separate discs")
+  func compilationDiscSuffixesMergeIntoOneAlbumWithSeparateDiscs() throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let root = fixture.inputRoot.appendingPathComponent("Compilation Discs", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let files = (1...4).map {
+      ImportFile(url: root.appendingPathComponent("0\($0).flac"), folderPath: nil)
+    }
+    let bundle = FolderImportBundle(
+      rootURL: root,
+      resources: files.map { FolderImportResource(file: $0, kind: .mediaCandidate) }
+    )
+    let assets = [
+      makePreparedAlbumAsset(
+        file: files[0], hashCharacter: "a", title: "A1", artist: "Artist One",
+        album: "宝丽金辉煌60年·女人篇 CDA", albumArtist: "Artist One"
+      ),
+      makePreparedAlbumAsset(
+        file: files[1], hashCharacter: "b", title: "A2", artist: "Artist Two",
+        album: "宝丽金辉煌60年·女人篇 CDA", albumArtist: "Artist Two"
+      ),
+      makePreparedAlbumAsset(
+        file: files[2], hashCharacter: "c", title: "B1", artist: "Artist Three",
+        album: "宝丽金辉煌60年·女人篇 CDB", albumArtist: "Artist Three"
+      ),
+      makePreparedAlbumAsset(
+        file: files[3], hashCharacter: "d", title: "B2", artist: "Artist Four",
+        album: "宝丽金辉煌60年·女人篇 CDB", albumArtist: "Artist Four"
+      )
+    ]
+
+    let plan = try LocalMediaBundlePlanner().plan(
+      bundle: bundle,
+      assets: assets,
+      importID: UUID()
+    )
+    let albums = plan.structuralMutations.compactMap { mutation -> Album? in
+      guard case .upsert(.album(let value)) = mutation else { return nil }
+      return value
+    }
+    let album = try #require(albums.first)
+    let tracks = plan.normalizedTracks.map(\.track)
+    let discs = plan.structuralMutations.compactMap { mutation -> Disc? in
+      guard case .upsert(.disc(let value)) = mutation else { return nil }
+      return value
+    }
+
+    #expect(albums.count == 1)
+    #expect(album.title == "宝丽金辉煌60年·女人篇")
+    #expect(album.albumType == .compilation)
+    #expect(album.artistIDs.count == 4)
+    #expect(album.trackCount == 4)
+    #expect(Set(tracks.compactMap(\.albumID)) == [album.id])
+    #expect(tracks.map(\.discNumber) == [1, 1, 2, 2])
+    #expect(tracks.map(\.trackTotal) == [2, 2, 2, 2])
+    #expect(tracks.map(\.discTotal) == [2, 2, 2, 2])
+    #expect(discs.map(\.number) == [1, 2])
+    #expect(discs.map(\.trackCount) == [2, 2])
+  }
+
+  @Test("Reimport migrates legacy artist-scoped albums into one compilation")
+  func reimportMigratesLegacyArtistScopedAlbumsIntoOneCompilation() async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let root = fixture.inputRoot.appendingPathComponent("Legacy Compilation", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let firstURL = root.appendingPathComponent("01.flac")
+    let secondURL = root.appendingPathComponent("02.flac")
+    let firstData = Data("legacy-compilation-one".utf8)
+    let secondData = Data("legacy-compilation-two".utf8)
+    try firstData.write(to: firstURL)
+    try secondData.write(to: secondURL)
+    let metadataByContent = [
+      "legacy-compilation-one": RawMediaMetadata(
+        title: "First",
+        artist: "Artist One",
+        album: "Shared Compilation",
+        albumArtist: "Artist One"
+      ),
+      "legacy-compilation-two": RawMediaMetadata(
+        title: "Second",
+        artist: "Artist Two",
+        album: "Shared Compilation",
+        albumArtist: "Artist Two"
+      )
+    ]
+    let repository = InMemoryLibraryRepository()
+    let importer = try fixture.makeImporter(
+      repository: repository,
+      metadataReader: FileContentMetadataReader(metadataByContent: metadataByContent)
+    )
+
+    let firstEvents = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [root]
+    )))
+    #expect(try completedResult(in: firstEvents).imported == 2)
+    let importedTracks = try await repository.tracks(
+      matching: TrackQuery(sourceID: .local),
+      page: try LibraryPageRequest(limit: LibraryPageRequest.maximumLimit)
+    ).elements
+    let sourceAlbumID = try #require(importedTracks.first?.albumID)
+
+    let files = [
+      ImportFile(url: firstURL, folderPath: nil),
+      ImportFile(url: secondURL, folderPath: nil)
+    ]
+    let bundle = FolderImportBundle(
+      rootURL: root,
+      resources: files.map { FolderImportResource(file: $0, kind: .mediaCandidate) }
+    )
+    let assets = zip(files, [firstData, secondData]).map { pair in
+      let (file, data) = pair
+      let hash = MusicContentIdentity.sha256Hex(data)
+      return PreparedLocalMediaAsset(
+        file: file,
+        stagedURL: file.url,
+        contentHash: hash,
+        assetID: MediaAssetID(sourceID: .local, externalID: "sha256-\(hash)"),
+        probe: MediaProbeResult(
+          audioTracks: [ProbedAudioTrack(index: 0, codec: "flac")],
+          duration: .seconds(3)
+        ),
+        metadata: metadataByContent[String(decoding: data, as: UTF8.self)] ?? RawMediaMetadata(),
+        folderArtwork: nil
+      )
+    }
+    let plan = try LocalMediaBundlePlanner().plan(
+      bundle: bundle,
+      assets: assets,
+      importID: UUID()
+    )
+
+    var legacyMutations: [LibraryMutation] = []
+    var legacyAlbumIDs = Set<AlbumID>()
+    for (offset, track) in importedTracks.sorted(by: { $0.id < $1.id }).enumerated() {
+      let candidates = plan.legacyAlbumIDsByItemID[track.id] ?? []
+      let legacyAlbumID = try #require(candidates.first {
+        $0.rawValue.hasPrefix("local-release-album-")
+      })
+      legacyAlbumIDs.insert(legacyAlbumID)
+      legacyMutations.append(.upsert(.album(Album(
+        id: legacyAlbumID,
+        title: "Shared Compilation",
+        artistIDs: track.artistIDs,
+        artwork: track.artwork,
+        releaseYear: track.year,
+        trackCount: 1
+      ))))
+      legacyMutations.append(.upsert(.track(copyTrack(
+        track,
+        albumID: legacyAlbumID,
+        isFavorite: offset == 0
+      ))))
+    }
+    #expect(legacyAlbumIDs.count == 2)
+    try await repository.apply(LibraryTransaction(
+      idempotencyKey: "install-legacy-artist-scoped-compilation",
+      mutations: legacyMutations
+    ))
+
+    let refreshedEvents = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [firstURL, secondURL]
+    )))
+    let refreshedTracks = try await repository.tracks(
+      matching: TrackQuery(sourceID: .local),
+      page: try LibraryPageRequest(limit: LibraryPageRequest.maximumLimit)
+    ).elements
+    let refreshedAlbum = try #require(try await repository.album(id: sourceAlbumID))
+
+    #expect(try completedResult(in: refreshedEvents).imported == 2)
+    #expect(refreshedTracks.allSatisfy { $0.albumID == sourceAlbumID })
+    #expect(refreshedTracks.contains { $0.isFavorite })
+    #expect(refreshedAlbum.albumType == .compilation)
+    #expect(refreshedAlbum.trackCount == 2)
+    #expect(refreshedAlbum.artistIDs.count == 2)
   }
 
   @Test("CUE identity hints recover only an unambiguous object without file resource IDs")
@@ -1680,6 +2358,31 @@ struct LocalMediaAdapterInitialTests {
     #expect(normalized.track.technicalInfo?.duration == .seconds(222))
   }
 
+  @Test("Metadata normalization prefers folder artwork over embedded artwork")
+  func metadataNormalizationPrefersFolderArtwork() throws {
+    let embedded = Data("embedded-artwork".utf8)
+    let folder = Data("folder-artwork".utf8)
+    let normalized = try MetadataNormalizer().normalize(
+      fileURL: URL(fileURLWithPath: "/fixture/folder-cover.m4a"),
+      contentHash: String(repeating: "e", count: 64),
+      probe: MediaProbeResult(
+        audioTracks: [ProbedAudioTrack(index: 0, codec: "aac")],
+        duration: .seconds(10)
+      ),
+      metadata: RawMediaMetadata(
+        title: "Folder Cover",
+        artworks: [RawArtwork(data: embedded, mimeType: "image/jpeg")]
+      ),
+      fallbackArtwork: RawArtwork(data: folder, mimeType: "image/png")
+    )
+
+    #expect(normalized.artworkID == ArtworkID(
+      "sha256-\(MusicContentIdentity.sha256Hex(folder))"
+    ))
+    #expect(normalized.artworkData == folder)
+    #expect(normalized.artworkOrigin == .folderOrSidecar)
+  }
+
   @Test("Metadata normalization preserves positive track and disc numbers")
   func metadataNormalizationPreservesNumbering() throws {
     let normalizer = MetadataNormalizer()
@@ -2239,6 +2942,33 @@ struct LocalMediaAdapterInitialTests {
     #expect(
       try LocalLyricsReader.readSidecar(for: mediaURL) == "[00:01.00]Case fallback"
     )
+  }
+
+  @Test("Sidecar lyrics repair mojibake before import")
+  func sidecarLyricsRepairMojibake() throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let mediaURL = fixture.inputRoot.appendingPathComponent("mojibake-lyrics.mp3")
+    let sidecarURL = fixture.inputRoot.appendingPathComponent("mojibake-lyrics.lrc")
+    try Data("audio".utf8).write(to: mediaURL)
+    try "[00:01.00]ä¸­æ–‡".data(using: .utf8)!.write(to: sidecarURL)
+
+    #expect(try LocalLyricsReader.readSidecar(for: mediaURL) == "[00:01.00]中文")
+  }
+
+  @Test("Sidecar lyrics decode GB18030 bytes through the shared text boundary")
+  func sidecarLyricsDecodeGB18030() throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let mediaURL = fixture.inputRoot.appendingPathComponent("gb18030-lyrics.mp3")
+    let sidecarURL = fixture.inputRoot.appendingPathComponent("gb18030-lyrics.lrc")
+    let encoding = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(
+      CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue)
+    ))
+    try Data("audio".utf8).write(to: mediaURL)
+    try "[00:01.00]中文".data(using: encoding)!.write(to: sidecarURL)
+
+    #expect(try LocalLyricsReader.readSidecar(for: mediaURL) == "[00:01.00]中文")
   }
 
   @Test("Import ignores a sidecar lyrics symlink")
@@ -3810,12 +4540,13 @@ private struct Fixture {
   func makeImporter(
     repository: any LibraryRepository,
     probe: any MediaProbing = FixedProbe(),
+    metadataReader: any MetadataReading = FixedMetadataReader(),
     hasher: (any LocalMediaHashing)? = nil
   ) throws -> LocalMediaImporter {
     try LocalMediaImporter(
       configuration: configuration,
       probe: probe,
-      metadataReader: FixedMetadataReader(),
+      metadataReader: metadataReader,
       libraryRepository: repository,
       hasher: hasher
     )
@@ -3842,6 +4573,34 @@ private struct FixedProbe: MediaProbing {
       duration: .seconds(3)
     )
   }
+}
+
+private func makePreparedAlbumAsset(
+  file: ImportFile,
+  hashCharacter: String,
+  title: String,
+  artist: String,
+  album: String,
+  albumArtist: String
+) -> PreparedLocalMediaAsset {
+  let hash = String(repeating: hashCharacter, count: 64)
+  return PreparedLocalMediaAsset(
+    file: file,
+    stagedURL: file.url,
+    contentHash: hash,
+    assetID: MediaAssetID(sourceID: .local, externalID: "sha256-\(hash)"),
+    probe: MediaProbeResult(
+      audioTracks: [ProbedAudioTrack(index: 0, codec: "flac")],
+      duration: .seconds(180)
+    ),
+    metadata: RawMediaMetadata(
+      title: title,
+      artist: artist,
+      album: album,
+      albumArtist: albumArtist
+    ),
+    folderArtwork: nil
+  )
 }
 
 private struct MultipleAudioStreamProbe: MediaProbing {
@@ -3926,6 +4685,7 @@ private func copyTrack(
   logicalTrackID: LogicalTrackID? = nil,
   playbackSelection: PlaybackSelection? = nil,
   title: String? = nil,
+  albumID: AlbumID? = nil,
   artwork: ArtworkReference? = nil,
   isFavorite: Bool? = nil
 ) -> Track {
@@ -3936,7 +4696,7 @@ private func copyTrack(
     playbackSelection: playbackSelection ?? value.playbackSelection,
     title: title ?? value.title,
     sortTitle: title ?? value.sortTitle,
-    albumID: value.albumID,
+    albumID: albumID ?? value.albumID,
     artistIDs: value.artistIDs,
     genreIDs: value.genreIDs,
     trackNumber: value.trackNumber,
@@ -4031,6 +4791,47 @@ private struct FixedMetadataReader: MetadataReading {
       genre: "Fixture genre",
       artworks: [RawArtwork(data: Data("artwork".utf8), mimeType: "image/png")]
     )
+  }
+}
+
+private struct EmptyMetadataReader: MetadataReading {
+  func readMetadata(from resource: PlaybackResource) async throws -> RawMediaMetadata {
+    _ = resource
+    return RawMediaMetadata()
+  }
+}
+
+private struct StagingFileNameMetadataReader: MetadataReading {
+  func readMetadata(from resource: PlaybackResource) async throws -> RawMediaMetadata {
+    guard case .localFile(let url) = resource else {
+      return RawMediaMetadata()
+    }
+    return RawMediaMetadata(title: url.lastPathComponent)
+  }
+}
+
+private struct TitleMetadataReader: MetadataReading {
+  let title: String
+  let album: String?
+
+  init(title: String, album: String? = nil) {
+    self.title = title
+    self.album = album
+  }
+
+  func readMetadata(from resource: PlaybackResource) async throws -> RawMediaMetadata {
+    _ = resource
+    return RawMediaMetadata(title: title, album: album)
+  }
+}
+
+private struct FileContentMetadataReader: MetadataReading {
+  let metadataByContent: [String: RawMediaMetadata]
+
+  func readMetadata(from resource: PlaybackResource) async throws -> RawMediaMetadata {
+    guard case .localFile(let url) = resource else { return RawMediaMetadata() }
+    let content = String(decoding: try Data(contentsOf: url), as: UTF8.self)
+    return metadataByContent[content] ?? RawMediaMetadata()
   }
 }
 

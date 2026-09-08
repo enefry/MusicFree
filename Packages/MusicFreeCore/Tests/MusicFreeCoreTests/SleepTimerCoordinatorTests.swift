@@ -108,6 +108,231 @@ func oneTimeSleepTimerOverridesAutomaticTimer() async throws {
 }
 
 @MainActor
+@Test("An automatic timer is unchanged when its remaining time is too short")
+func automaticSleepTimerRemainsWhenRemainingTimeIsTooShort() async throws {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+    let startDate = calendar.date(from: DateComponents(
+        year: 2026,
+        month: 8,
+        day: 14,
+        hour: 23,
+        minute: 45
+    ))!
+    let clock = SleepTimerTestClock(startDate: startDate)
+    let playback = SleepTimerPlaybackSpy()
+    let preferences = try SleepTimerPreferences(schedules: [
+        SleepTimerSchedule(
+            startMinute: 23 * 60,
+            endMinute: 5 * 60,
+            durationMinutes: 20
+        ),
+    ])
+    let coordinator = SleepTimerCoordinator(
+        playback: playback,
+        clock: clock,
+        calendar: calendar
+    )
+
+    coordinator.start(preferences: preferences)
+    playback.publish(phase: .playing)
+    let didActivate = await waitForSleepTimerCondition {
+        let pendingSleepCount = await clock.pendingSleepCount()
+        return coordinator.snapshot.durationMinutes == 20
+            && pendingSleepCount == 1
+    }
+    #expect(didActivate)
+
+    await clock.advance(by: .seconds(10 * 60))
+    playback.publish(phase: .paused)
+    playback.publish(phase: .playing)
+
+    let didRemainUnchanged = await waitForSleepTimerCondition {
+        guard let deadline = coordinator.snapshot.deadline else { return false }
+        let now = await clock.now()
+        let pendingSleepCount = await clock.pendingSleepCount()
+        let remaining = deadline.timeIntervalSince(now)
+        return coordinator.snapshot.durationMinutes == 20
+            && remaining == TimeInterval(10 * 60)
+            && pendingSleepCount == 1
+    }
+    #expect(didRemainUnchanged)
+    coordinator.stop()
+}
+
+@MainActor
+@Test("An automatic timer shortens when its remaining time exceeds the active schedule")
+func automaticSleepTimerShortensWhenRemainingTimeIsTooLong() async throws {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+    let startDate = calendar.date(from: DateComponents(
+        year: 2026,
+        month: 8,
+        day: 14,
+        hour: 23,
+        minute: 45
+    ))!
+    let clock = SleepTimerTestClock(startDate: startDate)
+    let playback = SleepTimerPlaybackSpy()
+    let longPreferences = try SleepTimerPreferences(schedules: [
+        SleepTimerSchedule(
+            startMinute: 23 * 60,
+            endMinute: 5 * 60,
+            durationMinutes: 20
+        ),
+    ])
+    let shortPreferences = try SleepTimerPreferences(schedules: [
+        SleepTimerSchedule(
+            startMinute: 23 * 60,
+            endMinute: 5 * 60,
+            durationMinutes: 10
+        ),
+    ])
+    let coordinator = SleepTimerCoordinator(
+        playback: playback,
+        clock: clock,
+        calendar: calendar
+    )
+
+    coordinator.start(preferences: longPreferences)
+    playback.publish(phase: .playing)
+    let didActivate = await waitForSleepTimerCondition {
+        let pendingSleepCount = await clock.pendingSleepCount()
+        return coordinator.snapshot.durationMinutes == 20
+            && pendingSleepCount == 1
+    }
+    #expect(didActivate)
+
+    await coordinator.update(preferences: shortPreferences)
+
+    let didShorten = await waitForSleepTimerCondition {
+        guard let deadline = coordinator.snapshot.deadline else { return false }
+        let now = await clock.now()
+        let pendingSleepCount = await clock.pendingSleepCount()
+        let remaining = deadline.timeIntervalSince(now)
+        return coordinator.snapshot.durationMinutes == 10
+            && remaining == TimeInterval(10 * 60)
+            && pendingSleepCount == 1
+    }
+    #expect(didShorten)
+    coordinator.stop()
+}
+
+@MainActor
+@Test("A one-time timer is never created by playback entering the playing state")
+func oneTimeSleepTimerRequiresExplicitUserAction() async throws {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+    let startDate = calendar.date(from: DateComponents(
+        year: 2026,
+        month: 8,
+        day: 14,
+        hour: 12,
+        minute: 0
+    ))!
+    let clock = SleepTimerTestClock(startDate: startDate)
+    let playback = SleepTimerPlaybackSpy()
+    let coordinator = SleepTimerCoordinator(
+        playback: playback,
+        clock: clock,
+        calendar: calendar
+    )
+
+    coordinator.start(preferences: .defaults)
+    playback.publish(phase: .playing)
+
+    let didRemainInactive = await waitForSleepTimerCondition {
+        let pendingSleepCount = await clock.pendingSleepCount()
+        return coordinator.snapshot == .inactive
+            && pendingSleepCount == 0
+    }
+    #expect(didRemainInactive)
+    coordinator.stop()
+}
+
+@MainActor
+@Test("Cancelling a one-time timer invalidates a pending activation")
+func cancellingOneTimeSleepTimerPreventsLateActivation() async throws {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+    let startDate = calendar.date(from: DateComponents(
+        year: 2026,
+        month: 8,
+        day: 14,
+        hour: 12,
+        minute: 0
+    ))!
+    let clock = SleepTimerTestClock(startDate: startDate)
+    let playback = SleepTimerPlaybackSpy()
+    let coordinator = SleepTimerCoordinator(
+        playback: playback,
+        clock: clock,
+        calendar: calendar
+    )
+
+    coordinator.start(preferences: .defaults)
+    coordinator.startOneTime(durationMinutes: 20)
+    coordinator.cancel()
+    playback.publish(phase: .playing)
+
+    let didRemainCancelled = await waitForSleepTimerCondition {
+        let pendingSleepCount = await clock.pendingSleepCount()
+        return coordinator.snapshot == .inactive
+            && pendingSleepCount == 0
+    }
+    #expect(didRemainCancelled)
+    coordinator.stop()
+}
+
+@MainActor
+@Test("An automatic timer is cancelled on the next track after leaving its time window")
+func automaticSleepTimerDoesNotSurviveOutsideWindowOnNextTrack() async throws {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+    let startDate = calendar.date(from: DateComponents(
+        year: 2026,
+        month: 8,
+        day: 14,
+        hour: 0,
+        minute: 50
+    ))!
+    let clock = SleepTimerTestClock(startDate: startDate)
+    let playback = SleepTimerPlaybackSpy()
+    let preferences = try SleepTimerPreferences(schedules: [
+        SleepTimerSchedule(
+            startMinute: 23 * 60,
+            endMinute: 1 * 60,
+            durationMinutes: 20
+        ),
+    ])
+    let coordinator = SleepTimerCoordinator(
+        playback: playback,
+        clock: clock,
+        calendar: calendar
+    )
+
+    coordinator.start(preferences: preferences)
+    playback.publish(phase: .playing)
+    let didActivate = await waitForSleepTimerCondition {
+        let pendingSleepCount = await clock.pendingSleepCount()
+        return coordinator.snapshot.source != nil
+            && pendingSleepCount == 1
+    }
+    #expect(didActivate)
+
+    await clock.advance(by: .seconds(15 * 60))
+    playback.publish(phase: .playing)
+
+    let didCancelOutsideWindow = await waitForSleepTimerCondition {
+        let pendingSleepCount = await clock.pendingSleepCount()
+        return coordinator.snapshot == .inactive
+            && pendingSleepCount == 0
+    }
+    #expect(didCancelOutsideWindow)
+    coordinator.stop()
+}
+
+@MainActor
 private final class SleepTimerPlaybackSpy: PlaybackServing {
     private(set) var snapshot = PlaybackSessionSnapshot()
     private(set) var commands: [PlaybackSessionCommand] = []

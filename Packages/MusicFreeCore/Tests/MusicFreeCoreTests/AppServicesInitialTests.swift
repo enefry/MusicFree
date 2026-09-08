@@ -95,8 +95,8 @@ func failedAppServiceStartAllowsRetry() async throws {
 }
 
 @MainActor
-@Test("AppService startup enforces automatic storage pruning before playback starts")
-func appServiceStartupWaitsForAutomaticStoragePruning() async throws {
+@Test("AppService startup does not wait for automatic storage pruning")
+func appServiceStartupDefersAutomaticStoragePruning() async throws {
     let maintenance = ControlledStorageMaintenance()
     let engine = TestPlaybackEngine(capabilities: [])
     let container = try AppServiceContainer(
@@ -107,17 +107,19 @@ func appServiceStartupWaitsForAutomaticStoragePruning() async throws {
         )
     )
 
-    let start = Task { @MainActor in try await container.start() }
+    let report = try await container.start()
+    #expect(report.fallbacks.isEmpty)
+    #expect(engine.eventStreamCount == 1)
+
     await maintenance.waitUntilPruningStarts()
 
-    #expect(engine.eventStreamCount == 0)
     #expect(await maintenance.pruneCallCount == 1)
     #expect(await maintenance.lastLimit == .fiveGiB)
     #expect(await maintenance.lastRetention == .seconds(7 * 24 * 60 * 60))
 
     await maintenance.releasePruning()
-    _ = try await start.value
-    #expect(engine.eventStreamCount == 1)
+    let maintenanceFallbacks = await container.waitForPostStartupMaintenance()
+    #expect(maintenanceFallbacks.isEmpty)
     await container.stop()
 }
 
@@ -140,6 +142,8 @@ func appServiceStartupSkipsDisabledAutomaticStoragePruning() async throws {
     )
 
     _ = try await container.start()
+    let maintenanceFallbacks = await container.waitForPostStartupMaintenance()
+    #expect(maintenanceFallbacks.isEmpty)
 
     #expect(await maintenance.pruneCallCount == 0)
     #expect(await maintenance.orphanPruneCallCount == 1)
@@ -163,8 +167,10 @@ func appServiceStartupReportsAutomaticStoragePruningFailure() async throws {
     )
 
     let report = try await container.start()
+    let maintenanceFallbacks = await container.waitForPostStartupMaintenance()
 
-    #expect(report.fallbacks == [.storagePruningFailed])
+    #expect(report.fallbacks.isEmpty)
+    #expect(maintenanceFallbacks == [.storagePruningFailed])
     #expect(await maintenance.orphanPruneCallCount == 1)
     #expect(engine.eventStreamCount == 1)
     await container.stop()
@@ -676,6 +682,90 @@ func appServicesUpdateAlbumMetadata() async throws {
 }
 
 @MainActor
+@Test("Album metadata updates support replacing and removing album artwork")
+func appServicesUpdateAlbumArtwork() async throws {
+    let albumID = AlbumID("album-artwork-edit")
+    let repository = TestLibraryRepository(
+        tracks: [Track(
+            id: MediaItemID(sourceID: .local, externalID: "album-artwork-track"),
+            title: "Artwork Track",
+            albumID: albumID
+        )],
+        albums: [Album(id: albumID, title: "Artwork Album", trackCount: 1)]
+    )
+    let writerRecorder = ArtworkWriterCallRecorder()
+    let artworkData = Data([0x41, 0x42, 0x43])
+    let container = try AppServiceContainer(
+        dependencies: AppDependencies(
+            artworkWriter: { _, _ in
+                await writerRecorder.record()
+                return ArtworkWriteReceipt(wasCreated: true)
+            },
+            libraryRepository: repository
+        )
+    )
+
+    let replaced = try await container.library.updateAlbumMetadata(AlbumMetadataUpdate(
+        albumID: albumID,
+        title: "Artwork Album",
+        artwork: .replace(artworkData)
+    ))
+
+    #expect(replaced.artwork?.id == ArtworkID(
+        rawValue: "sha256-\(MusicContentIdentity.sha256Hex(artworkData))"
+    ))
+    #expect(await writerRecorder.count == 1)
+    #expect(try await repository.album(id: albumID) == replaced)
+
+    let removed = try await container.library.updateAlbumMetadata(AlbumMetadataUpdate(
+        albumID: albumID,
+        title: "Artwork Album",
+        artwork: .remove
+    ))
+
+    #expect(removed.artwork == nil)
+    #expect(await writerRecorder.count == 1)
+    #expect(try await repository.album(id: albumID) == removed)
+}
+
+@MainActor
+@Test("Album metadata updates preserve an unchanged artist ID and support clearing it")
+func appServicesUpdateAlbumArtistRelationship() async throws {
+    let albumID = AlbumID("album-artist-relationship-edit")
+    let artistID = ArtistID("legacy-album-artist-id")
+    let repository = TestLibraryRepository(
+        tracks: [],
+        albums: [Album(
+            id: albumID,
+            title: "Album",
+            artistIDs: [artistID]
+        )],
+        artists: [Artist(id: artistID, name: "Existing Artist")]
+    )
+    let container = try AppServiceContainer(
+        dependencies: AppDependencies(libraryRepository: repository)
+    )
+
+    let unchanged = try await container.library.updateAlbumMetadata(AlbumMetadataUpdate(
+        albumID: albumID,
+        title: "Album",
+        artistNames: ["Existing Artist"]
+    ))
+
+    #expect(unchanged.artistIDs == [artistID])
+    #expect(try await repository.album(id: albumID)?.artistIDs == [artistID])
+
+    let cleared = try await container.library.updateAlbumMetadata(AlbumMetadataUpdate(
+        albumID: albumID,
+        title: "Album",
+        artistNames: []
+    ))
+
+    #expect(cleared.artistIDs.isEmpty)
+    #expect(try await repository.album(id: albumID)?.artistIDs.isEmpty == true)
+}
+
+@MainActor
 @Test("Renaming one track album does not mutate a shared album")
 func appServicesMetadataRenameSplitsSharedAlbum() async throws {
     let firstID = MediaItemID(sourceID: .local, externalID: "shared-album-first")
@@ -777,6 +867,36 @@ func appServicesPreserveAlbumArtworkDuringTrackUpdate() async throws {
 
     #expect(updated.albumID == albumID)
     #expect(try await repository.album(id: albumID)?.artwork == albumArtwork)
+}
+
+@MainActor
+@Test("Metadata enrichment keeps an artistless local album identity")
+func appServicesMetadataEnrichmentKeepsArtistlessAlbumIdentity() async throws {
+    let itemID = MediaItemID(sourceID: .local, externalID: "artistless-album-track")
+    let albumID = AlbumID("local-album-artistless-album")
+    let albumArtistID = ArtistID("artistless-album-artist")
+    let repository = TestLibraryRepository(
+        tracks: [Track(id: itemID, title: "Track", albumID: albumID)],
+        albums: [Album(id: albumID, title: "Album")]
+    )
+    let container = try AppServiceContainer(
+        dependencies: AppDependencies(libraryRepository: repository)
+    )
+
+    let updated = try await container.library.updateMetadata(TrackMetadataUpdate(
+        itemID: itemID,
+        title: "Track",
+        albumArtistName: "Album Artist",
+        albumName: "Album"
+    ))
+
+    let expectedCandidateID = AlbumID(
+        "local-album-\(MusicContentIdentity.token("Album|Album Artist"))"
+    )
+    #expect(expectedCandidateID != albumID)
+    #expect(updated.albumID == albumID)
+    #expect(try await repository.album(id: expectedCandidateID) == nil)
+    #expect(try await repository.album(id: albumID)?.artistIDs == [albumArtistID])
 }
 
 @MainActor
@@ -1441,6 +1561,45 @@ func appServicesNaturalCompletionStartsNextTrackFromTheBeginning() async throws 
 }
 
 @MainActor
+@Test("Transient engine phases without an item do not clear the current playback session")
+func appServicesIgnoreTransientPhaseWithoutItemID() async throws {
+    let itemID = MediaItemID(sourceID: .local, externalID: "transient-phase-item")
+    let entry = PlaybackQueueEntry(
+        id: UUID(uuidString: "00000000-0000-0000-0000-000000000490")!,
+        itemID: itemID
+    )
+    let engine = FakePlaybackEngine(capabilities: [.seeking])
+    let container = try AppServiceContainer(
+        dependencies: AppDependencies(
+            mediaSources: [TestSource()],
+            libraryRepository: TestLibraryRepository(tracks: [
+                Track(id: itemID, title: "Transient Phase", duration: .seconds(20))
+            ]),
+            playbackQueueRepository: TestQueueRepository(
+                value: PlaybackQueueSnapshot(entries: [entry], currentEntryID: entry.id)
+            ),
+            playbackEngine: engine
+        )
+    )
+    _ = try await container.start()
+    try await container.playback.execute(.resume)
+
+    #expect(container.playback.snapshot.currentItemID == itemID)
+    #expect(container.playback.snapshot.phase == .playing)
+
+    engine.emit(.phaseChanged(
+        generation: engine.state.generation,
+        itemID: nil,
+        phase: .buffering
+    ))
+    await settleAppServiceEvents()
+
+    #expect(container.playback.snapshot.currentItemID == itemID)
+    #expect(container.playback.snapshot.currentItem?.title == "Transient Phase")
+    #expect(container.playback.snapshot.phase == .playing)
+}
+
+@MainActor
 @Test("Playback completion skips queue entries without an available variant")
 func appServicesCompletionSkipsUnavailableQueueEntries() async throws {
     let firstID = MediaItemID(sourceID: .local, externalID: "skip-first")
@@ -1715,6 +1874,225 @@ func playbackQueueRestoresAfterServiceRecreation() async throws {
     #expect(restored.position == .zero)
     #expect(restoredEngine.preparedItems.isEmpty)
     await restoredContainer.stop()
+}
+
+@MainActor
+@Test("Playback startup clamps a stale persisted resume position to track duration")
+func playbackStartupClampsStaleResumePosition() async throws {
+    let itemID = MediaItemID(sourceID: .local, externalID: "stale-resume-position")
+    let entryID = UUID(uuidString: "00000000-0000-0000-0000-000000000604")!
+    let queue = TestQueueRepository(value: PlaybackQueueSnapshot(
+        entries: [PlaybackQueueEntry(id: entryID, itemID: itemID)],
+        currentEntryID: entryID,
+        resumePosition: .seconds(45)
+    ))
+    let nowPlaying = FakeNowPlayingPublisher()
+    let container = try AppServiceContainer(
+        dependencies: AppDependencies(
+            mediaSources: [TestSource()],
+            libraryRepository: TestLibraryRepository(tracks: [
+                Track(id: itemID, title: "Stale Resume", duration: .seconds(30)),
+            ]),
+            playbackQueueRepository: queue,
+            playbackEngine: FakePlaybackEngine(capabilities: [.seeking]),
+            nowPlaying: nowPlaying,
+            systemCapabilities: SystemIntegrationCapabilitySnapshot(
+                platform: .iOS,
+                capabilities: [.nowPlaying]
+            )
+        )
+    )
+
+    _ = try await container.start()
+
+    #expect(container.playback.snapshot.position == .seconds(30))
+    #expect(try await queue.load().resumePosition == .seconds(30))
+    #expect(nowPlaying.currentSnapshot?.elapsed == .seconds(30))
+
+    await container.stop()
+}
+
+@MainActor
+@Test("Playback position events clamp engine values before persistence and Now Playing")
+func playbackPositionEventsClampOversizedValues() async throws {
+    let itemID = MediaItemID(sourceID: .local, externalID: "oversized-position-event")
+    let entryID = UUID(uuidString: "00000000-0000-0000-0000-000000000605")!
+    let queue = TestQueueRepository(value: PlaybackQueueSnapshot(
+        entries: [PlaybackQueueEntry(id: entryID, itemID: itemID)],
+        currentEntryID: entryID
+    ))
+    let engine = FakePlaybackEngine(capabilities: [.seeking])
+    let nowPlaying = FakeNowPlayingPublisher()
+    let container = try AppServiceContainer(
+        dependencies: AppDependencies(
+            mediaSources: [TestSource()],
+            libraryRepository: TestLibraryRepository(tracks: [
+                Track(id: itemID, title: "Oversized Position", duration: .seconds(30)),
+            ]),
+            playbackQueueRepository: queue,
+            playbackEngine: engine,
+            nowPlaying: nowPlaying,
+            systemCapabilities: SystemIntegrationCapabilitySnapshot(
+                platform: .iOS,
+                capabilities: [.nowPlaying]
+            )
+        )
+    )
+
+    _ = try await container.start()
+    engine.emit(.positionChanged(
+        generation: container.playback.snapshot.generation,
+        itemID: itemID,
+        position: .seconds(45),
+        duration: .seconds(30)
+    ))
+    await settleAppServiceEvents()
+
+    #expect(container.playback.snapshot.position == .seconds(30))
+    #expect(try await queue.load().resumePosition == .seconds(30))
+    #expect(nowPlaying.currentSnapshot?.elapsed == .seconds(30))
+
+    await container.stop()
+}
+
+@MainActor
+@Test("Playback seeks clamp to duration before persisting the resume position")
+func playbackSeekClampsToTrackDuration() async throws {
+    let itemID = MediaItemID(sourceID: .local, externalID: "clamped-seek")
+    let entryID = UUID(uuidString: "00000000-0000-0000-0000-000000000606")!
+    let queue = TestQueueRepository(value: PlaybackQueueSnapshot(
+        entries: [PlaybackQueueEntry(id: entryID, itemID: itemID)],
+        currentEntryID: entryID
+    ))
+    let engine = FakePlaybackEngine(capabilities: [.seeking])
+    let container = try AppServiceContainer(
+        dependencies: AppDependencies(
+            mediaSources: [TestSource()],
+            libraryRepository: TestLibraryRepository(tracks: [
+                Track(id: itemID, title: "Clamped Seek", duration: .seconds(30))
+            ]),
+            playbackQueueRepository: queue,
+            playbackEngine: engine
+        )
+    )
+
+    _ = try await container.start()
+    try await container.playback.execute(.resume)
+    try await container.playback.execute(.seek(to: .seconds(45)))
+
+    #expect(engine.seekCalls == [.seconds(30)])
+    #expect(container.playback.snapshot.position == .seconds(30))
+    #expect(container.playback.snapshot.queue.resumePosition == .seconds(30))
+    #expect(try await queue.load().resumePosition == .seconds(30))
+
+    await container.stop()
+}
+
+@MainActor
+@Test("A seek superseded by stop cannot persist or publish its stale position")
+func playbackSeekDropsSupersededStopResult() async throws {
+    let itemID = MediaItemID(sourceID: .local, externalID: "superseded-seek")
+    let entryID = UUID(uuidString: "00000000-0000-0000-0000-000000000607")!
+    let queue = TestQueueRepository(value: PlaybackQueueSnapshot(
+        entries: [PlaybackQueueEntry(id: entryID, itemID: itemID)],
+        currentEntryID: entryID
+    ))
+    let engine = FakePlaybackEngine(capabilities: [.seeking])
+    let container = try AppServiceContainer(
+        dependencies: AppDependencies(
+            mediaSources: [TestSource()],
+            libraryRepository: TestLibraryRepository(tracks: [
+                Track(id: itemID, title: "Superseded Seek", duration: .seconds(30))
+            ]),
+            playbackQueueRepository: queue,
+            playbackEngine: engine
+        )
+    )
+
+    _ = try await container.start()
+    try await container.playback.execute(.resume)
+    engine.script.delay = .milliseconds(100)
+
+    let seekTask = Task { @MainActor in
+        try? await container.playback.execute(.seek(to: .seconds(20)))
+    }
+    for _ in 0..<2_000 where engine.seekCalls.isEmpty {
+        await Task.yield()
+    }
+    #expect(engine.seekCalls == [.seconds(20)])
+
+    let stopTask = Task { @MainActor in
+        try? await container.playback.execute(.stop)
+    }
+    await stopTask.value
+    await seekTask.value
+
+    #expect(container.playback.snapshot.phase == .stopped)
+    #expect(container.playback.snapshot.position == .zero)
+    #expect(container.playback.snapshot.queue.resumePosition == .zero)
+    #expect(try await queue.load().resumePosition == .zero)
+
+    await container.stop()
+}
+
+@MainActor
+@Test("A seek superseded by next cannot overwrite the next item's state")
+func playbackSeekDropsSupersededNextResult() async throws {
+    let firstID = MediaItemID(sourceID: .local, externalID: "superseded-next-first")
+    let secondID = MediaItemID(sourceID: .local, externalID: "superseded-next-second")
+    let entries = [firstID, secondID].enumerated().map { index, itemID in
+        PlaybackQueueEntry(
+            id: UUID(uuidString: String(
+                format: "00000000-0000-0000-0000-%012d",
+                608 + index
+            ))!,
+            itemID: itemID
+        )
+    }
+    let queue = TestQueueRepository(value: PlaybackQueueSnapshot(
+        entries: entries,
+        currentEntryID: entries[0].id
+    ))
+    let engine = FakePlaybackEngine(capabilities: [.seeking])
+    let container = try AppServiceContainer(
+        dependencies: AppDependencies(
+            mediaSources: [TestSource()],
+            libraryRepository: TestLibraryRepository(tracks: [
+                Track(id: firstID, title: "Superseded Next First", duration: .seconds(30)),
+                Track(id: secondID, title: "Superseded Next Second", duration: .seconds(45))
+            ]),
+            playbackQueueRepository: queue,
+            playbackEngine: engine
+        )
+    )
+
+    _ = try await container.start()
+    try await container.playback.execute(.resume)
+    engine.script.delay = .milliseconds(100)
+
+    let seekTask = Task { @MainActor in
+        try? await container.playback.execute(.seek(to: .seconds(20)))
+    }
+    for _ in 0..<2_000 where engine.seekCalls.isEmpty {
+        await Task.yield()
+    }
+    #expect(engine.seekCalls == [.seconds(20)])
+
+    let nextTask = Task { @MainActor in
+        try? await container.playback.execute(.next)
+    }
+    await nextTask.value
+    await seekTask.value
+
+    #expect(container.playback.snapshot.currentItemID == secondID)
+    #expect(container.playback.snapshot.phase == .playing)
+    #expect(container.playback.snapshot.position == .zero)
+    #expect(container.playback.snapshot.queue.currentItemID == secondID)
+    #expect(container.playback.snapshot.queue.resumePosition == nil)
+    #expect(try await queue.load().currentItemID == secondID)
+    #expect(try await queue.load().resumePosition == nil)
+
+    await container.stop()
 }
 
 @MainActor

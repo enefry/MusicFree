@@ -18,6 +18,7 @@ private func acceptedPrivacy(
 private actor TestMetadataProvider: MetadataEnrichmentProviding {
     let provider: MetadataEnrichmentProvider
     private(set) var searchCount = 0
+    private(set) var queries: [MetadataEnrichmentQuery] = []
     var authorization: MetadataEnrichmentAuthorizationStatus = .authorized
     private var searchResults: [[MetadataEnrichmentCandidate]]
 
@@ -50,8 +51,9 @@ private actor TestMetadataProvider: MetadataEnrichmentProviding {
     }
 
     func search(
-        _: MetadataEnrichmentQuery
+        _ query: MetadataEnrichmentQuery
     ) async throws -> [MetadataEnrichmentCandidate] {
+        queries.append(query)
         let index = min(searchCount, max(0, searchResults.count - 1))
         searchCount += 1
         return searchResults.isEmpty ? [] : searchResults[index]
@@ -118,6 +120,23 @@ private actor TestArtworkWriter {
 
     func write(_ data: Data) {
         values.append(data)
+    }
+}
+
+private final class MetadataRefreshProgressRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [MetadataEnrichmentRefreshProgress] = []
+
+    func append(_ value: MetadataEnrichmentRefreshProgress) {
+        lock.lock()
+        values.append(value)
+        lock.unlock()
+    }
+
+    func snapshot() -> [MetadataEnrichmentRefreshProgress] {
+        lock.lock()
+        defer { lock.unlock() }
+        return values
     }
 }
 
@@ -390,6 +409,156 @@ func metadataEnrichmentPersistsArtwork() async throws {
     #expect(completedRecord.candidateCount == 1)
     #expect(completedRecord.updatedFields.contains(.artwork))
     #expect(completedRecord.lastErrorCode == nil)
+}
+
+@MainActor
+@Test("Manual metadata refresh replaces remote fields and preserves missing local fields")
+func metadataEnrichmentManualRefreshMergesRemoteFields() async throws {
+    let itemID = MediaItemID(sourceID: .local, externalID: "manual-refresh-track")
+    let artistID = ArtistID("manual-refresh-local-artist")
+    let albumID = AlbumID("manual-refresh-album")
+    let genreID = GenreID("manual-refresh-local-genre")
+    let localArtwork = ArtworkReference(
+        id: ArtworkID("manual-refresh-local-artwork"),
+        variants: [.original],
+        preferredVariant: .original
+    )
+    let manualAlbumArtwork = ArtworkReference(
+        id: ArtworkID("manual-refresh-manual-album-artwork"),
+        variants: [.original],
+        preferredVariant: .original
+    )
+    let remoteArtworkData = Data([0x31, 0x32, 0x33])
+    let track = Track(
+        id: itemID,
+        title: "Refresh Song",
+        albumID: albumID,
+        artistIDs: [artistID],
+        genreIDs: [genreID],
+        trackNumber: 1,
+        discNumber: 1,
+        duration: .seconds(180),
+        year: 2001,
+        artwork: localArtwork
+    )
+    let repository = InMemoryLibraryRepository(
+        tracks: [track],
+        albums: [Album(
+            id: albumID,
+            title: "Local Album",
+            artistIDs: [artistID],
+            artwork: manualAlbumArtwork,
+            trackCount: 1
+        )],
+        artists: [Artist(id: artistID, name: "Local Artist")],
+        genres: [Genre(id: genreID, name: "Local Genre")]
+    )
+    let provider = TestMetadataProvider(candidate: MetadataEnrichmentCandidate(
+        catalogID: "manual-refresh-catalog",
+        title: "Refresh Song (Remastered)",
+        albumName: "Remote Album",
+        trackNumber: 7,
+        year: 2024,
+        durationSeconds: 180,
+        artworkData: remoteArtworkData
+    ))
+    let records = TestMetadataRecordRepository()
+    let artworkWriter = TestArtworkWriter()
+    let container = try AppServiceContainer(dependencies: AppDependencies(
+        artworkWriter: { data, _ in
+            await artworkWriter.write(data)
+            return ArtworkWriteReceipt(wasCreated: true)
+        },
+        libraryRepository: repository,
+        metadataEnrichmentProvider: provider,
+        metadataEnrichmentRecordRepository: records
+    ))
+
+    await container.metadataEnrichmentServing.setPrivacyPreferences(
+        acceptedPrivacy(for: [.musicKit])
+    )
+    await container.metadataEnrichmentServing.setProviderPreferences([
+        MetadataProviderPreference(provider: .musicKit, isEnabled: true)
+    ])
+    await container.metadataEnrichmentServing.setEnabled(true)
+
+    let result = try await container.metadataEnrichmentServing.refresh(itemIDs: [itemID])
+
+    #expect(result == MetadataEnrichmentRefreshResult(
+        total: 1,
+        matched: 1
+    ))
+    #expect(await provider.searchCount == 1)
+
+    let refreshedTrack = try #require(try await repository.track(id: itemID))
+    #expect(refreshedTrack.title == "Refresh Song (Remastered)")
+    #expect(refreshedTrack.albumID != albumID)
+    #expect(refreshedTrack.artistIDs == [artistID])
+    #expect(refreshedTrack.genreIDs == [genreID])
+    #expect(refreshedTrack.trackNumber == 7)
+    #expect(refreshedTrack.discNumber == 1)
+    #expect(refreshedTrack.year == 2024)
+    #expect(refreshedTrack.artwork?.id == ArtworkID(
+        rawValue: "sha256-\(MusicContentIdentity.sha256Hex(remoteArtworkData))"
+    ))
+    #expect(await artworkWriter.values == [remoteArtworkData])
+
+    let refreshedAlbum = try #require(try await repository.album(id: albumID))
+    #expect(refreshedAlbum.artwork == manualAlbumArtwork)
+    #expect(try await repository.album(id: refreshedTrack.albumID!)?.title == "Remote Album")
+}
+
+@MainActor
+@Test("Album metadata refresh uses the edited album name and reports progress")
+func metadataEnrichmentAlbumRefreshUsesEditedNameAndReportsProgress() async throws {
+    let itemID = MediaItemID(sourceID: .local, externalID: "album-refresh-progress-track")
+    let albumID = AlbumID("album-refresh-progress-album")
+    let track = Track(
+        id: itemID,
+        title: "Album Refresh Song",
+        albumID: albumID,
+        duration: .seconds(180)
+    )
+    let repository = InMemoryLibraryRepository(
+        tracks: [track],
+        albums: [Album(id: albumID, title: "Old Album", trackCount: 1)]
+    )
+    let provider = TestMetadataProvider(candidate: MetadataEnrichmentCandidate(
+        catalogID: "album-refresh-progress-catalog",
+        title: "Album Refresh Song",
+        albumName: "Remote Album"
+    ))
+    let records = TestMetadataRecordRepository()
+    let container = try AppServiceContainer(dependencies: AppDependencies(
+        libraryRepository: repository,
+        metadataEnrichmentProvider: provider,
+        metadataEnrichmentRecordRepository: records
+    ))
+
+    await container.metadataEnrichmentServing.setPrivacyPreferences(
+        acceptedPrivacy(for: [.musicKit])
+    )
+    await container.metadataEnrichmentServing.setProviderPreferences([
+        MetadataProviderPreference(provider: .musicKit, isEnabled: true)
+    ])
+    await container.metadataEnrichmentServing.setEnabled(true)
+
+    let progress = MetadataRefreshProgressRecorder()
+    let result = try await container.metadataEnrichmentServing.refresh(
+        itemIDs: [itemID],
+        albumName: "Edited Album",
+        progress: { value in progress.append(value) }
+    )
+
+    #expect(result == MetadataEnrichmentRefreshResult(total: 1, matched: 1))
+    #expect(await provider.searchCount == 1)
+    #expect(await provider.queries.first?.albumName == "Edited Album")
+
+    let values = progress.snapshot()
+    #expect(values.count == 2)
+    #expect(values.first?.processed == 0)
+    #expect(values.last?.processed == 1)
+    #expect(values.last?.currentItemID == itemID)
 }
 
 @MainActor

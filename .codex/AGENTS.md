@@ -14,3 +14,8 @@ xcodebuild -workspace YourApp.xcworkspace -scheme YourScheme -derivedDataPath ./
 ## 3. 自动化清理机制
 - 在长时间高 I/O 构建或任务结束时，自动清理中间产物。
 
+## 4. UI 风格
+
+- 采用iOS原生，所有功能如果原生有支持，都是用原生样式，除了设置节目都采用UIKit完成
+- 优先采用系统 CollectionView, ContextMenu, UIMenu, UIBarButtonItem 等
+

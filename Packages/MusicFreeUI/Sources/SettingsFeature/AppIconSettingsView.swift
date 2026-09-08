@@ -197,7 +197,7 @@ struct AppIconSettingsView: View {
         } else if viewModel.isSelected(option) {
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 24, weight: .semibold))
-                .foregroundStyle(.white, MusicFreeColorTokens.accent)
+                .foregroundStyle(MusicFreeColorTokens.onAccent, MusicFreeColorTokens.accent)
                 .background(Circle().fill(MusicFreeColorTokens.backgroundPrimary))
         }
     }

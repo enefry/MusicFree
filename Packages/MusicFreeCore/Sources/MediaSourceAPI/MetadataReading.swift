@@ -1,4 +1,5 @@
 import Foundation
+import MusicDomain
 
 /// Embedded artwork returned by a raw metadata reader.
 public struct RawArtwork: Codable, Equatable, Sendable {
@@ -70,6 +71,25 @@ public struct RawMediaMetadata: Codable, Equatable, Sendable {
     self.artworks = artworks
   }
 
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    self.init(
+      title: try container.decodeIfPresent(String.self, forKey: .title),
+      artist: try container.decodeIfPresent(String.self, forKey: .artist),
+      album: try container.decodeIfPresent(String.self, forKey: .album),
+      albumArtist: try container.decodeIfPresent(String.self, forKey: .albumArtist),
+      composer: try container.decodeIfPresent(String.self, forKey: .composer),
+      genre: try container.decodeIfPresent(String.self, forKey: .genre),
+      comment: try container.decodeIfPresent(String.self, forKey: .comment),
+      lyrics: try container.decodeIfPresent(String.self, forKey: .lyrics),
+      trackNumber: try container.decodeIfPresent(Int.self, forKey: .trackNumber),
+      discNumber: try container.decodeIfPresent(Int.self, forKey: .discNumber),
+      year: try container.decodeIfPresent(Int.self, forKey: .year),
+      duration: try container.decodeIfPresent(Duration.self, forKey: .duration),
+      artworks: try container.decodeIfPresent([RawArtwork].self, forKey: .artworks) ?? []
+    )
+  }
+
   public var firstArtwork: RawArtwork? {
     artworks.first
   }
@@ -96,8 +116,25 @@ public struct RawMediaMetadata: Codable, Equatable, Sendable {
     guard let value else {
       return nil
     }
-    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    let trimmed = MetadataTextRepair.repair(value)
+      .trimmingCharacters(in: .whitespacesAndNewlines)
     return trimmed.isEmpty ? nil : trimmed
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case title
+    case artist
+    case album
+    case albumArtist
+    case composer
+    case genre
+    case comment
+    case lyrics
+    case trackNumber
+    case discNumber
+    case year
+    case duration
+    case artworks
   }
 }
 

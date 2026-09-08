@@ -21,6 +21,11 @@ public protocol LibraryRepository: Sendable {
     /// after a failed migration or a custom repository may retain unreferenced
     /// metadata while the managed file is eligible for cleanup.
     func isArtworkReferenced(_ artworkID: ArtworkID) async throws -> Bool
+    /// Resolves candidate artwork identifiers in one repository pass. Storage
+    /// cleanup uses this to avoid loading the full library once per file.
+    func referencedArtworkIDs(
+        in candidates: Set<ArtworkID>
+    ) async throws -> Set<ArtworkID>
     /// Returns whether a media asset is still referenced by a variant outside
     /// the item IDs being removed.
     func isMediaAssetReferenced(
@@ -37,6 +42,10 @@ public protocol LibraryRepository: Sendable {
         matching query: AlbumQuery,
         page: LibraryPageRequest
     ) async throws -> LibraryPage<Album>
+
+    func searchLibrary(
+        _ request: LibrarySearchRequest
+    ) async throws -> LibrarySearchResults
 
     func artists(
         matching query: ArtistQuery,
@@ -55,6 +64,10 @@ public protocol LibraryRepository: Sendable {
     /// The transaction must commit all mutations or make no visible change.
     func apply(_ transaction: LibraryTransaction) async throws
 
+    /// Scans persisted metadata, repairs supported mojibake, and writes all
+    /// repaired records in one atomic store transaction.
+    func repairMetadata() async throws -> LibraryMetadataRepairResult
+
     /// Removes tracks and prunes their relationships, playlist entries, and statistics atomically.
     func remove(_ itemIDs: Set<MediaItemID>) async throws
 
@@ -63,6 +76,47 @@ public protocol LibraryRepository: Sendable {
 }
 
 public extension LibraryRepository {
+    func repairMetadata() async throws -> LibraryMetadataRepairResult {
+        LibraryMetadataRepairResult()
+    }
+
+    func searchLibrary(
+        _ request: LibrarySearchRequest
+    ) async throws -> LibrarySearchResults {
+        guard let searchText = request.searchText else {
+            return LibrarySearchResults()
+        }
+        let page = try LibraryPageRequest(limit: request.limit)
+        let tracks = try await tracks(
+            matching: TrackQuery(searchText: searchText, sourceID: request.sourceID),
+            page: page
+        )
+        try Task.checkCancellation()
+        let albums = try await albums(
+            matching: AlbumQuery(searchText: searchText, sourceID: request.sourceID),
+            page: page
+        )
+        try Task.checkCancellation()
+
+        let artistIDs = Set(
+            tracks.elements.flatMap(\.artistIDs)
+                + albums.elements.flatMap(\.artistIDs)
+        )
+        var artists: [Artist] = []
+        artists.reserveCapacity(artistIDs.count)
+        for artistID in artistIDs.sorted() {
+            try Task.checkCancellation()
+            if let artist = try await artist(id: artistID) {
+                artists.append(artist)
+            }
+        }
+        return LibrarySearchResults(
+            tracks: tracks.elements,
+            albums: albums.elements,
+            artists: artists
+        )
+    }
+
     func logicalTrack(id: LogicalTrackID) async throws -> LogicalTrack? {
         var request = try LibraryPageRequest(limit: LibraryPageRequest.maximumLimit)
         while true {
@@ -143,6 +197,19 @@ public extension LibraryRepository {
 
     func isArtworkReferenced(_ artworkID: ArtworkID) async throws -> Bool {
         try await artwork(id: artworkID) != nil
+    }
+
+    func referencedArtworkIDs(
+        in candidates: Set<ArtworkID>
+    ) async throws -> Set<ArtworkID> {
+        var referenced = Set<ArtworkID>()
+        for artworkID in candidates {
+            try Task.checkCancellation()
+            if try await isArtworkReferenced(artworkID) {
+                referenced.insert(artworkID)
+            }
+        }
+        return referenced
     }
 
     func isMediaAssetReferenced(

@@ -91,6 +91,35 @@ final class PlaylistTrackCandidateLoader {
         }
     }
 
+    /// Refreshes only candidates whose underlying library tracks changed.
+    /// This is intentionally separate from `load()`: metadata scans should
+    /// not force every playlist detail row to be rebuilt.
+    @discardableResult
+    func refresh(trackIDs: Set<MediaItemID>) async -> Set<MediaItemID> {
+        guard let library, !trackIDs.isEmpty else { return [] }
+
+        var nextCandidates = candidates
+        var changedIDs = Set<MediaItemID>()
+        for trackID in trackIDs {
+            guard !Task.isCancelled,
+                  let track = try? await library.track(id: trackID)
+            else { continue }
+            let artistNames = (try? await PlaylistArtistNameLoader.load(
+                for: [track],
+                from: library
+            )) ?? [:]
+            let next = Self.candidate(for: track, artistNames: artistNames)
+            if let index = nextCandidates.firstIndex(where: { $0.id == trackID }) {
+                guard nextCandidates[index] != next else { continue }
+                nextCandidates[index] = next
+                changedIDs.insert(trackID)
+            }
+        }
+        guard !changedIDs.isEmpty else { return [] }
+        candidates = nextCandidates
+        return changedIDs
+    }
+
     private static func candidate(
         for track: Track,
         artistNames: [ArtistID: String]

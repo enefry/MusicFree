@@ -30,6 +30,14 @@
 	<true/>
 	<key>NSAppleMusicUsageDescription</key>
 	<string>用于补充本地音频的歌曲元数据和封面。</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>用于连接你配置的 NAS、DS Audio 和其他局域网在线媒体源。</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<!-- DSM deployments commonly expose Audio Station over HTTP on the LAN. -->
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 	<key>MetadataServerBaseURL</key>
 	<string>$(METADATA_SERVER_BASE_URL)</string>
 	<key>MetadataServerRequestTimeout</key>
@@ -54,12 +62,48 @@
 	<string>$(DISCOGS_API_REQUEST_TIMEOUT)</string>
 	<key>DiscogsAPIMinimumRequestInterval</key>
 	<string>$(DISCOGS_API_MINIMUM_REQUEST_INTERVAL)</string>
+	<key>GoogleDriveOAuthClientID</key>
+	<string>$(GOOGLE_DRIVE_OAUTH_CLIENT_ID)</string>
+	<key>GoogleDriveOAuthReversedClientID</key>
+	<string>$(GOOGLE_DRIVE_OAUTH_REVERSED_CLIENT_ID)</string>
+	<key>GoogleDriveOAuthEnabled</key>
+	<string>$(GOOGLE_DRIVE_OAUTH_ENABLED)</string>
+	<key>GoogleDriveOAuthRedirectURL</key>
+	<string>$(GOOGLE_DRIVE_OAUTH_REDIRECT_URL)</string>
 	<key>LRCLIBAPIBaseURL</key>
 	<string>$(LRCLIB_API_BASE_URL)</string>
 	<key>LRCLIBAPIRequestTimeout</key>
 	<string>$(LRCLIB_API_REQUEST_TIMEOUT)</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+		<key>UISceneConfigurations</key>
+		<dict>
+			<key>UIWindowSceneSessionRoleApplication</key>
+			<array>
+				<dict>
+					<key>UISceneConfigurationName</key>
+					<string>Default Configuration</string>
+					<key>UISceneDelegateClassName</key>
+					<string>$(PRODUCT_MODULE_NAME).MusicFreeSceneDelegate</string>
+				</dict>
+			</array>
+		</dict>
+	</dict>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>$(GOOGLE_DRIVE_OAUTH_URL_SCHEME)</string>
+			</array>
+		</dict>
+	</array>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

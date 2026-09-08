@@ -69,12 +69,14 @@ public final class VLCPlaybackEngine: PlaybackEngine, PlaybackAudioControlling {
     private let bufferingDebouncer: VLCPlaybackDebouncer
 
     #if canImport(VLCKit)
-        private let library: VLCLibrary
         private var player: VLCMediaPlayer?
         private var delegateBridge: VLCPlaybackDelegateBridge?
     #endif
 
-    public init(configuration: VLCKitAdapterConfiguration) throws {
+    public init(
+        configuration: VLCKitAdapterConfiguration,
+        loadsEqualizerDescriptor: Bool = true
+    ) throws {
         self.configuration = configuration
         bufferingDebouncer = VLCPlaybackDebouncer()
         state = .idle
@@ -83,11 +85,17 @@ public final class VLCPlaybackEngine: PlaybackEngine, PlaybackAudioControlling {
         equalizerDescriptor = nil
 
         #if canImport(VLCKit)
-            let library = try VLCLibraryFactory.shared(configuration: configuration)
-            self.library = library
-
-            let equalizer = VLCAudioEqualizer()
-            let descriptor = VLCAudioEffectsMapper.descriptor(from: equalizer)
+            // Online audition never exposes audio effects. Avoid constructing
+            // VLCAudioEqualizer (and enumerating every preset) for that second
+            // engine during app composition; the main playback engine keeps
+            // the complete descriptor used by Settings.
+            let descriptor: EqualizerDescriptor?
+            if loadsEqualizerDescriptor {
+                let equalizer = VLCAudioEqualizer()
+                descriptor = VLCAudioEffectsMapper.descriptor(from: equalizer)
+            } else {
+                descriptor = nil
+            }
             equalizerDescriptor = descriptor
             capabilities = VLCCapabilityResolver.resolve(
                 policy: configuration.capabilityPolicy,
@@ -148,6 +156,7 @@ public final class VLCPlaybackEngine: PlaybackEngine, PlaybackAudioControlling {
 
         #if canImport(VLCKit)
             do {
+                let library = try VLCLibraryFactory.shared(configuration: configuration)
                 let media = try VLCMediaFactory.makeMedia(
                     for: item.resource,
                     configuration: configuration,
@@ -191,6 +200,11 @@ public final class VLCPlaybackEngine: PlaybackEngine, PlaybackAudioControlling {
             guard let player else {
                 throw PlaybackError.noCurrentItem
             }
+            // `play()` already publishes the optimistic playing phase below.
+            // Keep the internal lifecycle flag in sync with that contract so
+            // a missing libVLC state callback cannot leave a later buffering
+            // callback stuck in the loading phase while time keeps advancing.
+            playbackStarted = true
             player.play()
             try applyPendingStartIfPossible()
             if let itemID = currentItem?.itemID {
@@ -422,6 +436,17 @@ public final class VLCPlaybackEngine: PlaybackEngine, PlaybackAudioControlling {
         ) = event,
             let range = currentItem?.selection.range,
             let absolutePosition = VLCPlaybackEventMapper.durationFromMilliseconds(positionMilliseconds) {
+            if let recoveryPhase = VLCPlaybackEventMapper.recoveryPhase(
+                currentPhase: state.phase,
+                playbackStarted: playbackStarted,
+                position: absolutePosition
+            ) {
+                apply(.phaseChanged(
+                    generation: generation,
+                    itemID: itemID,
+                    phase: recoveryPhase
+                ))
+            }
             if absolutePosition >= range.end {
                 completeSelectedRange(generation: generation, itemID: itemID, range: range)
             } else {
@@ -433,6 +458,20 @@ public final class VLCPlaybackEngine: PlaybackEngine, PlaybackAudioControlling {
                 ))
             }
             return
+        }
+
+        if case let .time(generation, itemID, positionMilliseconds, _) = event,
+           let position = VLCPlaybackEventMapper.durationFromMilliseconds(positionMilliseconds),
+           let recoveryPhase = VLCPlaybackEventMapper.recoveryPhase(
+               currentPhase: state.phase,
+               playbackStarted: playbackStarted,
+               position: position
+           ) {
+            apply(.phaseChanged(
+                generation: generation,
+                itemID: itemID,
+                phase: recoveryPhase
+            ))
         }
 
         if case .time(_, _, nil, let durationMilliseconds) = event {

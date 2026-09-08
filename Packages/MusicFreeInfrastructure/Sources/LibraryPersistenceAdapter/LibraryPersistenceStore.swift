@@ -32,6 +32,13 @@ private struct LibrarySnapshot {
     var artwork: [ArtworkID: ArtworkReference]
 }
 
+private struct LibrarySearchSnapshot {
+    var tracks: [MediaItemID: StoredTrack]
+    var albums: [AlbumID: StoredAlbum]
+    var artists: [ArtistID: StoredArtist]
+    var genres: [GenreID: StoredGenre]
+}
+
 private struct LocalMediaGraphSnapshot {
     var logicalTracks: [LogicalTrackID: LogicalTrack]
     var variants: [MediaItemID: TrackVariant]
@@ -66,6 +73,17 @@ private struct MetadataPruneResult {
         artistIDs.formUnion(other.artistIDs)
         genreIDs.formUnion(other.genreIDs)
         artworkIDs.formUnion(other.artworkIDs)
+    }
+}
+
+private struct DuplicateAlbumRepairResult {
+    var repairedRecordCount = 0
+    var trackIDs: Set<MediaItemID> = []
+    var albumIDs: Set<AlbumID> = []
+    var artworkIDs: Set<ArtworkID> = []
+
+    var isEmpty: Bool {
+        repairedRecordCount == 0
     }
 }
 
@@ -150,6 +168,8 @@ private final class LibraryChangeHub: @unchecked Sendable {
 /// The shared serialized SwiftData lifecycle for all library repositories.
 public actor LibraryPersistenceStore {
     public static let currentSchemaVersion = 2
+    private static let localMediaGraphBackfillMarker =
+        "__musicfree_internal_migration_local_media_graph_v2__"
 
     public let configuration: LibraryPersistenceConfiguration
     public let schemaVersion: Int
@@ -162,6 +182,7 @@ public actor LibraryPersistenceStore {
     private var closed = false
     private var didBackfillLocalMediaGraph = false
     private var browseRecordFetchCount: Int?
+    private var librarySearchSnapshotBuildCount = 0
     private nonisolated let changeHub = LibraryChangeHub()
 
     public init(
@@ -206,10 +227,14 @@ public actor LibraryPersistenceStore {
                 }
                 self.metadata = existingMetadata
             } else {
+                // A newly-created v2 store has no legacy rows to backfill.
+                // Persist the marker immediately so its first read does not
+                // enter the legacy migration path.
+                let initialKeys: Set<String> = [Self.localMediaGraphBackfillMarker]
                 let newMetadata = StoreMetadataRecord(
                     storageKey: "state",
                     revision: 0,
-                    appliedTransactionKeys: try PersistenceCodec.encode(Set<String>())
+                    appliedTransactionKeys: try PersistenceCodec.encode(initialKeys)
                 )
                 context.insert(newMetadata)
                 try context.save()
@@ -218,6 +243,9 @@ public actor LibraryPersistenceStore {
             self.appliedTransactionKeys = try PersistenceCodec.decode(
                 Set<String>.self,
                 from: self.metadata.appliedTransactionKeys
+            )
+            self.didBackfillLocalMediaGraph = self.appliedTransactionKeys.contains(
+                Self.localMediaGraphBackfillMarker
             )
             let queueRecords = try context.fetch(FetchDescriptor<PlaybackQueueRecord>())
             self.queueVersion = queueRecords.first?.version ?? 0
@@ -253,6 +281,10 @@ public actor LibraryPersistenceStore {
 
     internal func lastBrowseRecordFetchCount() -> Int? {
         browseRecordFetchCount
+    }
+
+    internal func searchSnapshotBuildCount() -> Int {
+        librarySearchSnapshotBuildCount
     }
 
     internal func track(id: MediaItemID) throws -> Track? {
@@ -390,21 +422,27 @@ public actor LibraryPersistenceStore {
     }
 
     internal func isArtworkReferenced(_ artworkID: ArtworkID) throws -> Bool {
+        try referencedArtworkIDs(in: [artworkID]).contains(artworkID)
+    }
+
+    internal func referencedArtworkIDs(
+        in candidates: Set<ArtworkID>
+    ) throws -> Set<ArtworkID> {
         try ensureOpen()
-        let snapshot = try loadLibrarySnapshot()
-        if snapshot.tracks.values.contains(where: { $0.value.artworkID == artworkID }) {
-            return true
-        }
-        if snapshot.albums.values.contains(where: { $0.value.artworkID == artworkID }) {
-            return true
-        }
-        if snapshot.artists.values.contains(where: { $0.value.artworkID == artworkID }) {
-            return true
-        }
-        if try playlistArtworkIDs().contains(artworkID) {
-            return true
-        }
-        return try graphArtworkIDs().contains(artworkID)
+        guard !candidates.isEmpty else { return [] }
+
+        var referenced = Set(try fetch(TrackRecord.self).compactMap { record in
+            record.artworkID.map(ArtworkID.init(rawValue:))
+        })
+        referenced.formUnion(try fetch(AlbumRecord.self).compactMap { record in
+            record.artworkID.map(ArtworkID.init(rawValue:))
+        })
+        referenced.formUnion(try fetch(ArtistRecord.self).compactMap { record in
+            record.artworkID.map(ArtworkID.init(rawValue:))
+        })
+        referenced.formUnion(try playlistArtworkIDs())
+        referenced.formUnion(try graphArtworkIDs())
+        return referenced.intersection(candidates)
     }
 
     internal func isMediaAssetReferenced(
@@ -419,6 +457,91 @@ public actor LibraryPersistenceStore {
         }
     }
 
+    internal func searchLibrary(
+        _ request: LibrarySearchRequest
+    ) throws -> LibrarySearchResults {
+        try ensureOpen()
+        guard let searchText = request.searchText else {
+            return LibrarySearchResults()
+        }
+
+        let normalizedText = normalizedSearch(searchText)
+        let snapshot = try loadLibrarySearchSnapshot()
+        let sourceIDsByAlbum = sourceIDsByAlbum(snapshot.tracks.values)
+
+        var matchingTracks: [StoredTrack] = []
+        matchingTracks.reserveCapacity(min(request.limit, snapshot.tracks.count))
+        for (index, stored) in snapshot.tracks.values.enumerated() {
+            if index.isMultiple(of: 64) { try Task.checkCancellation() }
+            let track = stored.value
+            guard request.sourceID == nil || track.id.sourceID == request.sourceID else {
+                continue
+            }
+            let albumText = track.albumID.flatMap { snapshot.albums[$0]?.value.title } ?? ""
+            let artistText = track.artistIDs.compactMap {
+                snapshot.artists[$0]?.value.name
+            }.joined(separator: " ")
+            let genreText = track.genreIDs.compactMap {
+                snapshot.genres[$0]?.value.name
+            }.joined(separator: " ")
+            let candidate = [track.title, albumText, artistText, genreText]
+                .joined(separator: " ")
+            if normalizedSearch(candidate).contains(normalizedText) {
+                matchingTracks.append(stored)
+            }
+        }
+        try Task.checkCancellation()
+        matchingTracks.sort { lhs, rhs in
+            let result = compare(
+                normalizedSort(lhs.value.sortTitle ?? lhs.value.title),
+                normalizedSort(rhs.value.sortTitle ?? rhs.value.title)
+            )
+            return result == 0 ? lhs.value.id < rhs.value.id : result < 0
+        }
+        let tracks = matchingTracks.prefix(request.limit).map(\.value)
+
+        var matchingAlbums: [StoredAlbum] = []
+        matchingAlbums.reserveCapacity(min(request.limit, snapshot.albums.count))
+        for (index, stored) in snapshot.albums.values.enumerated() {
+            if index.isMultiple(of: 64) { try Task.checkCancellation() }
+            let album = stored.value
+            if let sourceID = request.sourceID,
+               sourceIDsByAlbum[album.id]?.contains(sourceID) != true {
+                continue
+            }
+            let artistText = album.artistIDs.compactMap {
+                snapshot.artists[$0]?.value.name
+            }.joined(separator: " ")
+            let candidate = [album.title, artistText].joined(separator: " ")
+            if normalizedSearch(candidate).contains(normalizedText) {
+                matchingAlbums.append(stored)
+            }
+        }
+        try Task.checkCancellation()
+        matchingAlbums.sort { lhs, rhs in
+            let result = compare(
+                normalizedSort(lhs.value.sortTitle ?? lhs.value.title),
+                normalizedSort(rhs.value.sortTitle ?? rhs.value.title)
+            )
+            return result == 0 ? lhs.value.id < rhs.value.id : result < 0
+        }
+        let albums = matchingAlbums.prefix(request.limit).map(\.value)
+
+        let visibleArtistIDs = Set(
+            tracks.flatMap(\.artistIDs) + albums.flatMap(\.artistIDs)
+        )
+        let artists = visibleArtistIDs.compactMap { snapshot.artists[$0]?.value }
+            .sorted { lhs, rhs in
+                let result = compare(
+                    normalizedSort(lhs.sortName ?? lhs.name),
+                    normalizedSort(rhs.sortName ?? rhs.name)
+                )
+                return result == 0 ? lhs.id < rhs.id : result < 0
+            }
+        try Task.checkCancellation()
+        return LibrarySearchResults(tracks: tracks, albums: albums, artists: artists)
+    }
+
     internal func tracks(
         matching query: TrackQuery,
         page: LibraryPageRequest
@@ -426,17 +549,33 @@ public actor LibraryPersistenceStore {
         try ensureOpen()
         browseRecordFetchCount = nil
         if query.searchText == nil,
-           query.sourceID == nil,
+           (query.sourceID == nil || query.sourceID == .local),
            query.albumID == nil,
            query.artistID == nil,
-           query.genreID == nil,
-           query.favorite == .any
+           query.genreID == nil
         {
+            let predicate = trackPredicate(for: query)
             let sortOrder = sortOrder(for: query.sort.direction)
             switch query.sort.key {
+            case .title:
+                guard query.sourceID == .local else { break }
+                return try boundedPage(
+                    model: TrackRecord.self,
+                    predicate: predicate,
+                    sortBy: [
+                        SortDescriptor(\TrackRecord.sortTitle, order: sortOrder),
+                        SortDescriptor(\TrackRecord.title, order: sortOrder),
+                        SortDescriptor(\TrackRecord.externalID, order: .forward),
+                    ],
+                    page: page,
+                    kind: .tracks,
+                    fingerprint: try fingerprint(query),
+                    map: { try LibraryRecordMapper.track(from: $0) }
+                )
             case .dateAdded:
                 return try boundedPage(
                     model: TrackRecord.self,
+                    predicate: predicate,
                     sortBy: [
                         SortDescriptor(\TrackRecord.dateAddedAt, order: sortOrder),
                         SortDescriptor(\TrackRecord.sourceID, order: .forward),
@@ -450,6 +589,7 @@ public actor LibraryPersistenceStore {
             case .lastPlayed:
                 return try boundedPage(
                     model: TrackRecord.self,
+                    predicate: predicate,
                     sortBy: [
                         SortDescriptor(\TrackRecord.lastPlayedAt, order: sortOrder),
                         SortDescriptor(\TrackRecord.sourceID, order: .forward),
@@ -463,6 +603,7 @@ public actor LibraryPersistenceStore {
             case .playCount:
                 return try boundedPage(
                     model: TrackRecord.self,
+                    predicate: predicate,
                     sortBy: [
                         SortDescriptor(\TrackRecord.playCount, order: sortOrder),
                         SortDescriptor(\TrackRecord.sourceID, order: .forward),
@@ -473,7 +614,7 @@ public actor LibraryPersistenceStore {
                     fingerprint: try fingerprint(query),
                     map: { try LibraryRecordMapper.track(from: $0) }
                 )
-            case .title, .albumTitle, .artistName, .duration:
+            case .albumTitle, .artistName, .duration:
                 break
             }
         }
@@ -560,6 +701,34 @@ public actor LibraryPersistenceStore {
             kind: .tracks,
             fingerprint: try fingerprint(query)
         )
+    }
+
+    private func trackPredicate(for query: TrackQuery) -> Predicate<TrackRecord>? {
+        let sourceID = query.sourceID?.rawValue
+        switch (sourceID, query.favorite) {
+        case (nil, .any):
+            return nil
+        case (let sourceID?, .any):
+            return #Predicate<TrackRecord> { record in
+                record.sourceID == sourceID
+            }
+        case (nil, .favorite):
+            return #Predicate<TrackRecord> { record in
+                record.isFavorite
+            }
+        case (nil, .notFavorite):
+            return #Predicate<TrackRecord> { record in
+                !record.isFavorite
+            }
+        case (let sourceID?, .favorite):
+            return #Predicate<TrackRecord> { record in
+                record.sourceID == sourceID && record.isFavorite
+            }
+        case (let sourceID?, .notFavorite):
+            return #Predicate<TrackRecord> { record in
+                record.sourceID == sourceID && !record.isFavorite
+            }
+        }
     }
 
     internal func albums(
@@ -881,6 +1050,622 @@ public actor LibraryPersistenceStore {
         return try PlaybackRecordMapper.queue(from: record)
     }
 
+    /// Repairs all persisted metadata-bearing records in one SwiftData
+    /// transaction. Domain decoding is the single normalization boundary, so
+    /// nested source snapshots, lyrics, filenames, and technical metadata use
+    /// the same repair policy as newly imported media.
+    internal func repairMetadata() throws -> LibraryMetadataRepairResult {
+        try ensureOpen()
+
+        let oldRevision = metadata.revision
+        let oldAppliedData = metadata.appliedTransactionKeys
+        let oldAppliedKeys = appliedTransactionKeys
+        var scannedRecordCount = 0
+        var repairedRecordCount = 0
+        var categories = Set<LibraryChangeCategory>()
+        var trackIDs = Set<MediaItemID>()
+        var albumIDs = Set<AlbumID>()
+        var artistIDs = Set<ArtistID>()
+        var genreIDs = Set<GenreID>()
+        var playlistIDs = Set<PlaylistID>()
+        var albumRecordsByID: [AlbumID: (record: AlbumRecord, value: Album, dateAddedAt: Date)] = [:]
+
+        do {
+            for (index, record) in try fetch(TrackRecord.self).enumerated() {
+                if index.isMultiple(of: 64) { try Task.checkCancellation() }
+                scannedRecordCount += 1
+                let value = try LibraryRecordMapper.track(from: record)
+                let payload = try PersistenceCodec.encode(value)
+                let artistIDs = try PersistenceCodec.encode(value.artistIDs)
+                let genreIDs = try PersistenceCodec.encode(value.genreIDs)
+                let needsUpdate = record.sourceID != value.id.sourceID.rawValue
+                    || record.externalID != value.id.externalID
+                    || record.title != value.title
+                    || record.sortTitle != value.sortTitle
+                    || record.albumID != value.albumID?.rawValue
+                    || record.artistIDs != artistIDs
+                    || record.genreIDs != genreIDs
+                    || record.trackNumber != value.trackNumber
+                    || record.discNumber != value.discNumber
+                    || record.artworkID != value.artworkID?.rawValue
+                    || record.isFavorite != value.isFavorite
+                    || record.playCount != value.statistics.playCount
+                    || record.lastPlayedAt != value.statistics.lastPlayedAt
+                    || record.payload != payload
+                guard needsUpdate else { continue }
+                try LibraryRecordMapper.update(record, from: value)
+                repairedRecordCount += 1
+                categories.insert(.tracks)
+                trackIDs.insert(value.id)
+            }
+
+            for (index, record) in try fetch(AlbumRecord.self).enumerated() {
+                if index.isMultiple(of: 64) { try Task.checkCancellation() }
+                scannedRecordCount += 1
+                let value = try LibraryRecordMapper.album(from: record)
+                albumRecordsByID[value.id] = (
+                    record: record,
+                    value: value,
+                    dateAddedAt: record.dateAddedAt
+                )
+                let payload = try PersistenceCodec.encode(value)
+                let artistIDs = try PersistenceCodec.encode(value.artistIDs)
+                let needsUpdate = record.rawID != value.id.rawValue
+                    || record.title != value.title
+                    || record.sortTitle != value.sortTitle
+                    || record.artistIDs != artistIDs
+                    || record.artworkID != value.artworkID?.rawValue
+                    || record.releaseYear != value.releaseYear
+                    || record.trackCount != value.trackCount
+                    || record.albumType != value.albumType?.code
+                    || record.payload != payload
+                guard needsUpdate else { continue }
+                try LibraryRecordMapper.update(record, from: value)
+                repairedRecordCount += 1
+                categories.insert(.albums)
+                albumIDs.insert(value.id)
+            }
+
+            let duplicateAlbumRepair = try repairDuplicateAlbums(in: albumRecordsByID)
+            repairedRecordCount += duplicateAlbumRepair.repairedRecordCount
+            trackIDs.formUnion(duplicateAlbumRepair.trackIDs)
+            albumIDs.formUnion(duplicateAlbumRepair.albumIDs)
+            if !duplicateAlbumRepair.artworkIDs.isEmpty {
+                categories.insert(.artwork)
+                categories.insert(.deletions)
+            }
+            if !duplicateAlbumRepair.isEmpty {
+                categories.insert(.albums)
+                categories.insert(.tracks)
+                categories.insert(.deletions)
+            }
+
+            for (index, record) in try fetch(ArtistRecord.self).enumerated() {
+                if index.isMultiple(of: 64) { try Task.checkCancellation() }
+                scannedRecordCount += 1
+                let value = try LibraryRecordMapper.artist(from: record)
+                let payload = try PersistenceCodec.encode(value)
+                let needsUpdate = record.rawID != value.id.rawValue
+                    || record.name != value.name
+                    || record.sortName != value.sortName
+                    || record.artworkID != value.artworkID?.rawValue
+                    || record.payload != payload
+                guard needsUpdate else { continue }
+                try LibraryRecordMapper.update(record, from: value)
+                repairedRecordCount += 1
+                categories.insert(.artists)
+                artistIDs.insert(value.id)
+            }
+
+            for (index, record) in try fetch(GenreRecord.self).enumerated() {
+                if index.isMultiple(of: 64) { try Task.checkCancellation() }
+                scannedRecordCount += 1
+                let value = try LibraryRecordMapper.genre(from: record)
+                let payload = try PersistenceCodec.encode(value)
+                let needsUpdate = record.rawID != value.id.rawValue
+                    || record.name != value.name
+                    || record.sortName != value.sortName
+                    || record.payload != payload
+                guard needsUpdate else { continue }
+                try LibraryRecordMapper.update(record, from: value)
+                repairedRecordCount += 1
+                categories.insert(.genres)
+                genreIDs.insert(value.id)
+            }
+
+            for (index, record) in try fetch(PlaylistRecord.self).enumerated() {
+                if index.isMultiple(of: 64) { try Task.checkCancellation() }
+                scannedRecordCount += 1
+                let value = try LibraryRecordMapper.playlist(from: record)
+                let payload = try PersistenceCodec.encode(value)
+                let needsUpdate = record.rawID != value.id.rawValue
+                    || record.name != value.name
+                    || record.sortName != value.sortName
+                    || record.artworkID != value.artworkID?.rawValue
+                    || record.createdAt != value.createdAt
+                    || record.updatedAt != value.updatedAt
+                    || record.payload != payload
+                guard needsUpdate else { continue }
+                try LibraryRecordMapper.update(record, from: value)
+                repairedRecordCount += 1
+                categories.insert(.playlists)
+                playlistIDs.insert(value.id)
+            }
+
+            for (index, record) in try fetch(LogicalTrackRecord.self).enumerated() {
+                if index.isMultiple(of: 64) { try Task.checkCancellation() }
+                scannedRecordCount += 1
+                let value = try LocalMediaGraphRecordMapper.logicalTrack(from: record)
+                let payload = try PersistenceCodec.encode(value)
+                guard record.releaseID != value.releaseID?.rawValue
+                    || record.discID != value.discID?.rawValue
+                    || record.payload != payload
+                else { continue }
+                try LocalMediaGraphRecordMapper.update(record, from: value)
+                repairedRecordCount += 1
+                categories.insert(.tracks)
+            }
+
+            for (index, record) in try fetch(MediaAssetRecord.self).enumerated() {
+                if index.isMultiple(of: 64) { try Task.checkCancellation() }
+                scannedRecordCount += 1
+                let value = try LocalMediaGraphRecordMapper.asset(from: record)
+                let payload = try PersistenceCodec.encode(value)
+                guard record.sourceID != value.id.sourceID.rawValue
+                    || record.externalID != value.id.externalID
+                    || record.payload != payload
+                else { continue }
+                try LocalMediaGraphRecordMapper.update(record, from: value)
+                repairedRecordCount += 1
+                categories.insert(.tracks)
+            }
+
+            for (index, record) in try fetch(TrackVariantRecord.self).enumerated() {
+                if index.isMultiple(of: 64) { try Task.checkCancellation() }
+                scannedRecordCount += 1
+                let value = try LocalMediaGraphRecordMapper.variant(from: record)
+                let payload = try PersistenceCodec.encode(value)
+                guard record.sourceID != value.id.sourceID.rawValue
+                    || record.externalID != value.id.externalID
+                    || record.logicalTrackID != value.logicalTrackID.rawValue
+                    || record.assetStorageKey != PersistenceKey.asset(value.assetID)
+                    || record.payload != payload
+                else { continue }
+                try LocalMediaGraphRecordMapper.update(record, from: value)
+                repairedRecordCount += 1
+                categories.insert(.tracks)
+                trackIDs.insert(value.id)
+            }
+
+            for (index, record) in try fetch(AlbumGroupRecord.self).enumerated() {
+                if index.isMultiple(of: 64) { try Task.checkCancellation() }
+                scannedRecordCount += 1
+                let value = try LocalMediaGraphRecordMapper.albumGroup(from: record)
+                let payload = try PersistenceCodec.encode(value)
+                guard record.payload != payload else { continue }
+                try LocalMediaGraphRecordMapper.update(record, from: value)
+                repairedRecordCount += 1
+                categories.insert(.albums)
+            }
+
+            for (index, record) in try fetch(AlbumReleaseRecord.self).enumerated() {
+                if index.isMultiple(of: 64) { try Task.checkCancellation() }
+                scannedRecordCount += 1
+                let value = try LocalMediaGraphRecordMapper.release(from: record)
+                let payload = try PersistenceCodec.encode(value)
+                guard record.legacyAlbumID != value.legacyAlbumID?.rawValue
+                    || record.groupID != value.groupID?.rawValue
+                    || record.payload != payload
+                else { continue }
+                try LocalMediaGraphRecordMapper.update(record, from: value)
+                repairedRecordCount += 1
+                categories.insert(.albums)
+                if let legacyAlbumID = value.legacyAlbumID {
+                    albumIDs.insert(legacyAlbumID)
+                }
+            }
+
+            for (index, record) in try fetch(DiscRecord.self).enumerated() {
+                if index.isMultiple(of: 64) { try Task.checkCancellation() }
+                scannedRecordCount += 1
+                let value = try LocalMediaGraphRecordMapper.disc(from: record)
+                let payload = try PersistenceCodec.encode(value)
+                guard record.releaseID != value.releaseID.rawValue
+                    || record.number != value.number
+                    || record.payload != payload
+                else { continue }
+                try LocalMediaGraphRecordMapper.update(record, from: value)
+                repairedRecordCount += 1
+                categories.insert(.albums)
+            }
+
+            for (index, record) in try fetch(LibraryCollectionRecord.self).enumerated() {
+                if index.isMultiple(of: 64) { try Task.checkCancellation() }
+                scannedRecordCount += 1
+                let value = try LocalMediaGraphRecordMapper.collection(from: record)
+                let payload = try PersistenceCodec.encode(value)
+                guard record.kind != value.kind.rawValue || record.payload != payload else {
+                    continue
+                }
+                try LocalMediaGraphRecordMapper.update(record, from: value)
+                repairedRecordCount += 1
+                categories.insert(.albums)
+            }
+
+            try Task.checkCancellation()
+            let currentRevision = try revisionValue()
+            guard repairedRecordCount > 0 else {
+                return LibraryMetadataRepairResult(
+                    scannedRecordCount: scannedRecordCount,
+                    revision: currentRevision
+                )
+            }
+
+            let revision = try advanceRevision()
+            try saveContext()
+            publish(LibraryChange(
+                revision: revision,
+                categories: categories,
+                affectedIDs: LibraryAffectedIDs(
+                    trackIDs: trackIDs,
+                    albumIDs: albumIDs,
+                    artistIDs: artistIDs,
+                    genreIDs: genreIDs,
+                    playlistIDs: playlistIDs
+                )
+            ))
+            return LibraryMetadataRepairResult(
+                scannedRecordCount: scannedRecordCount,
+                repairedRecordCount: repairedRecordCount,
+                revision: revision
+            )
+        } catch {
+            context.rollback()
+            metadata.revision = oldRevision
+            metadata.appliedTransactionKeys = oldAppliedData
+            appliedTransactionKeys = oldAppliedKeys
+            throw error
+        }
+    }
+
+    private func repairDuplicateAlbums(
+        in albums: [AlbumID: (record: AlbumRecord, value: Album, dateAddedAt: Date)]
+    ) throws -> DuplicateAlbumRepairResult {
+        let localAlbums = albums.values.filter {
+            $0.value.id.rawValue.hasPrefix("local-album-")
+                || $0.value.id.rawValue.hasPrefix("local-release-album-")
+        }
+        let groups = Dictionary(grouping: localAlbums) {
+            normalizedDuplicateAlbumTitle($0.value.title)
+                .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        }
+        let duplicateGroups = groups.values.compactMap {
+            group -> [(record: AlbumRecord, value: Album, dateAddedAt: Date)]? in
+            let ordered = group.sorted {
+                if $0.dateAddedAt != $1.dateAddedAt {
+                    return $0.dateAddedAt < $1.dateAddedAt
+                }
+                return $0.value.id.rawValue < $1.value.id.rawValue
+            }
+            return ordered.count > 1 ? ordered : nil
+        }
+        guard !duplicateGroups.isEmpty else { return DuplicateAlbumRepairResult() }
+
+        let trackRecords = try fetch(TrackRecord.self)
+        let trackValues = try trackRecords.map { record in
+            (record: record, value: try LibraryRecordMapper.track(from: record))
+        }
+        let trackCountsByAlbum = trackValues.reduce(into: [AlbumID: Int]()) { counts, entry in
+            if let albumID = entry.value.albumID {
+                counts[albumID, default: 0] += 1
+            }
+        }
+
+        var result = DuplicateAlbumRepairResult()
+        var albumIDMap: [AlbumID: AlbumID] = [:]
+        var sourceAlbumDiscNumbers: [AlbumID: Int] = [:]
+        var sourceAlbumDiscTotals: [AlbumID: Int] = [:]
+        var sourceAlbumTrackTotals: [AlbumID: Int] = [:]
+        var mergedAlbums: [AlbumID: Album] = [:]
+        var artworkCandidates = Set<ArtworkID>()
+        var releaseIDMap: [AlbumReleaseID: AlbumReleaseID] = [:]
+        var sourceAlbumByReleaseID: [AlbumReleaseID: AlbumID] = [:]
+
+        let releaseRecords = try fetch(AlbumReleaseRecord.self)
+        let releasesByID = Dictionary(uniqueKeysWithValues: try releaseRecords.map {
+            let value = try LocalMediaGraphRecordMapper.release(from: $0)
+            return (value.id, (record: $0, value: value))
+        })
+
+        for group in duplicateGroups {
+            guard let canonical = group.first else { continue }
+            let canonicalAlbum = canonical.value
+            let canonicalReleaseID = AlbumReleaseID(legacyAlbumID: canonicalAlbum.id)
+            let title = normalizedDuplicateAlbumTitle(canonicalAlbum.title)
+
+            var artistIDs: [ArtistID] = []
+            var seenArtistIDs = Set<ArtistID>()
+            for (index, source) in group.enumerated() {
+                for artistID in source.value.artistIDs where seenArtistIDs.insert(artistID).inserted {
+                    artistIDs.append(artistID)
+                }
+                result.albumIDs.insert(source.value.id)
+                albumIDMap[source.value.id] = canonicalAlbum.id
+                sourceAlbumDiscNumbers[source.value.id] = index + 1
+                sourceAlbumDiscTotals[source.value.id] = group.count
+                sourceAlbumTrackTotals[source.value.id] = trackCountsByAlbum[source.value.id] ?? 0
+                artworkCandidates.formUnion([
+                    source.value.artwork?.id,
+                    releasesByID[AlbumReleaseID(legacyAlbumID: source.value.id)]?.value.artwork?.id
+                ].compactMap { $0 })
+                let sourceReleaseID = AlbumReleaseID(legacyAlbumID: source.value.id)
+                releaseIDMap[sourceReleaseID] = canonicalReleaseID
+                sourceAlbumByReleaseID[sourceReleaseID] = source.value.id
+            }
+
+            let mergedTrackCount = group.reduce(0) {
+                $0 + (trackCountsByAlbum[$1.value.id] ?? 0)
+            }
+            let mergedArtwork = AlbumArtworkSelector.select(from: group.flatMap { source in
+                var candidates: [AlbumArtworkCandidate] = []
+                if let artwork = source.value.artwork
+                    ?? releasesByID[AlbumReleaseID(legacyAlbumID: source.value.id)]?.value.artwork {
+                    candidates.append(AlbumArtworkCandidate(
+                        artwork: artwork,
+                        origin: .folderOrSidecar,
+                        stableKey: "album:\(source.value.id.rawValue)"
+                    ))
+                }
+                for entry in trackValues where entry.value.albumID == source.value.id {
+                    guard let artwork = entry.value.artwork else { continue }
+                    candidates.append(AlbumArtworkCandidate(
+                        artwork: artwork,
+                        origin: .embedded,
+                        stableKey: "track:\(entry.value.id.externalID)"
+                    ))
+                }
+                return candidates
+            })
+            let mergedAlbum = Album(
+                id: canonicalAlbum.id,
+                title: title,
+                sortTitle: canonicalAlbum.sortTitle,
+                artistIDs: artistIDs,
+                artwork: mergedArtwork,
+                releaseYear: canonicalAlbum.releaseYear
+                    ?? group.dropFirst().compactMap { $0.value.releaseYear }.first,
+                trackCount: mergedTrackCount,
+                albumType: .compilation
+            )
+            mergedAlbums[canonicalAlbum.id] = mergedAlbum
+
+            let sourceReleases = group.compactMap {
+                releasesByID[AlbumReleaseID(legacyAlbumID: $0.value.id)]?.value
+            }
+            for release in sourceReleases {
+                artworkCandidates.formUnion([release.artwork?.id].compactMap { $0 })
+            }
+            let canonicalRelease = releasesByID[canonicalReleaseID]?.value
+            let mergedRelease = AlbumRelease(
+                id: canonicalReleaseID,
+                legacyAlbumID: canonicalAlbum.id,
+                groupID: canonicalRelease?.groupID
+                    ?? sourceReleases.compactMap(\.groupID).first,
+                title: normalizedDuplicateAlbumTitle(
+                    canonicalRelease?.title ?? title
+                ),
+                artistIDs: artistIDs,
+                releaseYear: canonicalRelease?.releaseYear
+                    ?? mergedAlbum.releaseYear,
+                editionTitle: canonicalRelease?.editionTitle
+                    ?? sourceReleases.dropFirst().compactMap(\.editionTitle).first,
+                albumType: .compilation,
+                artwork: mergedArtwork
+            )
+            if let record = releasesByID[canonicalReleaseID]?.record {
+                try LocalMediaGraphRecordMapper.update(record, from: mergedRelease)
+            } else {
+                context.insert(try LocalMediaGraphRecordMapper.makeRelease(mergedRelease))
+            }
+            result.repairedRecordCount += 1
+        }
+
+        let discRecords = try fetch(DiscRecord.self)
+        let discsByID = Dictionary(uniqueKeysWithValues: try discRecords.map {
+            let value = try LocalMediaGraphRecordMapper.disc(from: $0)
+            return (value.id, (record: $0, value: value))
+        })
+        for group in duplicateGroups {
+            guard let canonical = group.first else { continue }
+            let canonicalReleaseID = AlbumReleaseID(legacyAlbumID: canonical.value.id)
+            for (index, source) in group.enumerated() {
+                let targetDiscID = DiscID(
+                    releaseID: canonicalReleaseID,
+                    number: index + 1
+                )
+                let sourceDiscs = discsByID.values.filter {
+                    $0.value.releaseID == AlbumReleaseID(legacyAlbumID: source.value.id)
+                }
+                let preferredDisc = sourceDiscs.first(where: { $0.value.id == targetDiscID })
+                    ?? sourceDiscs.sorted { $0.value.id.rawValue < $1.value.id.rawValue }.first
+                let targetDisc = Disc(
+                    id: targetDiscID,
+                    releaseID: canonicalReleaseID,
+                    number: index + 1,
+                    title: preferredDisc?.value.title,
+                    trackCount: sourceAlbumTrackTotals[source.value.id]
+                        ?? preferredDisc?.value.trackCount
+                )
+                if let record = discsByID[targetDiscID]?.record {
+                    try LocalMediaGraphRecordMapper.update(record, from: targetDisc)
+                } else {
+                    context.insert(try LocalMediaGraphRecordMapper.makeDisc(targetDisc))
+                }
+                result.repairedRecordCount += 1
+
+                for sourceDisc in sourceDiscs {
+                    if sourceDisc.value.id != targetDiscID {
+                        context.delete(sourceDisc.record)
+                        result.repairedRecordCount += 1
+                    }
+                }
+            }
+        }
+
+        for entry in trackValues {
+            guard let sourceAlbumID = entry.value.albumID,
+                  let canonicalAlbumID = albumIDMap[sourceAlbumID],
+                  let discNumber = sourceAlbumDiscNumbers[sourceAlbumID],
+                  let discTotal = sourceAlbumDiscTotals[sourceAlbumID]
+            else { continue }
+            let updated = replacing(
+                entry.value,
+                albumID: canonicalAlbumID,
+                trackTotal: sourceAlbumTrackTotals[sourceAlbumID],
+                discNumber: discNumber,
+                discTotal: discTotal
+            )
+            guard updated != entry.value else { continue }
+            try LibraryRecordMapper.update(entry.record, from: updated)
+            result.trackIDs.insert(entry.value.id)
+            result.repairedRecordCount += 1
+        }
+
+        var sourceAlbumByLogicalTrackID: [LogicalTrackID: AlbumID] = [:]
+        for entry in trackValues {
+            guard let albumID = entry.value.albumID,
+                  sourceAlbumDiscNumbers[albumID] != nil,
+                  sourceAlbumByLogicalTrackID[entry.value.logicalTrackID] == nil
+            else { continue }
+            sourceAlbumByLogicalTrackID[entry.value.logicalTrackID] = albumID
+        }
+        for record in try fetch(LogicalTrackRecord.self) {
+            let value = try LocalMediaGraphRecordMapper.logicalTrack(from: record)
+            let sourceAlbumID = value.releaseID.flatMap { sourceAlbumByReleaseID[$0] }
+                ?? sourceAlbumByLogicalTrackID[value.id]
+            guard let sourceAlbumID,
+                  let canonicalAlbumID = albumIDMap[sourceAlbumID],
+                  let discNumber = sourceAlbumDiscNumbers[sourceAlbumID],
+                  let discTotal = sourceAlbumDiscTotals[sourceAlbumID]
+            else { continue }
+            let targetReleaseID = AlbumReleaseID(legacyAlbumID: canonicalAlbumID)
+            let targetDiscID = DiscID(releaseID: targetReleaseID, number: discNumber)
+            let updated = LogicalTrack(
+                id: value.id,
+                releaseID: targetReleaseID,
+                discID: targetDiscID,
+                title: value.title,
+                artistIDs: value.artistIDs,
+                genreIDs: value.genreIDs,
+                trackNumber: value.trackNumber,
+                trackTotal: sourceAlbumTrackTotals[sourceAlbumID] ?? value.trackTotal,
+                discNumber: discNumber,
+                discTotal: discTotal,
+                duration: value.duration,
+                artwork: value.artwork,
+                isFavorite: value.isFavorite,
+                statistics: value.statistics
+            )
+            guard updated != value else { continue }
+            try LocalMediaGraphRecordMapper.update(record, from: updated)
+            result.repairedRecordCount += 1
+        }
+
+        var membersByKey: [String: [
+            (record: LibraryCollectionMemberRecord,
+             value: LibraryCollectionMember,
+             target: LibraryCollectionMember)
+        ]] = [:]
+        for record in try fetch(LibraryCollectionMemberRecord.self) {
+            let value = try LocalMediaGraphRecordMapper.member(from: record)
+            guard let canonicalReleaseID = releaseIDMap[value.releaseID],
+                  sourceAlbumByReleaseID[value.releaseID] != nil
+            else { continue }
+            let target = LibraryCollectionMember(
+                collectionID: value.collectionID,
+                releaseID: canonicalReleaseID,
+                position: value.position
+            )
+            let key = PersistenceKey.collectionMember(target)
+            membersByKey[key, default: []].append((record, value, target))
+        }
+        for (key, entries) in membersByKey {
+            guard let first = entries.first else { continue }
+            let targetReleaseID = first.target.releaseID
+            let targetPosition = entries.map { $0.target.position }.min() ?? first.target.position
+            let target = LibraryCollectionMember(
+                collectionID: first.target.collectionID,
+                releaseID: targetReleaseID,
+                position: targetPosition
+            )
+            let winner = entries.first(where: { $0.record.storageKey == key })
+                ?? entries.sorted {
+                    if $0.target.position != $1.target.position {
+                        return $0.target.position < $1.target.position
+                    }
+                    return $0.value.releaseID.rawValue < $1.value.releaseID.rawValue
+                }.first!
+            if entries.count == 1,
+               winner.value == target,
+               winner.record.storageKey == key
+            {
+                continue
+            }
+            for entry in entries where entry.record !== winner.record {
+                context.delete(entry.record)
+                result.repairedRecordCount += 1
+            }
+            winner.record.storageKey = key
+            try LocalMediaGraphRecordMapper.update(winner.record, from: target)
+            result.repairedRecordCount += 1
+        }
+
+        for (albumID, value) in mergedAlbums {
+            guard let record = albums[albumID]?.record else { continue }
+            try LibraryRecordMapper.update(record, from: value)
+            result.repairedRecordCount += 1
+        }
+
+        for group in duplicateGroups {
+            for duplicate in group.dropFirst() {
+                let duplicateReleaseID = AlbumReleaseID(legacyAlbumID: duplicate.value.id)
+                if let record = releasesByID[duplicateReleaseID]?.record {
+                    context.delete(record)
+                    result.repairedRecordCount += 1
+                }
+                context.delete(duplicate.record)
+                result.repairedRecordCount += 1
+            }
+        }
+
+        result.artworkIDs = artworkCandidates
+        let referencedArtwork = try referencedArtworkIDs(in: artworkCandidates)
+        let orphanArtwork = artworkCandidates.subtracting(referencedArtwork)
+        for record in try fetch(ArtworkRecord.self)
+        where orphanArtwork.contains(ArtworkID(rawValue: record.rawID)) {
+            context.delete(record)
+            result.repairedRecordCount += 1
+        }
+        return result
+    }
+
+    private func normalizedDuplicateAlbumTitle(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let expression = try? NSRegularExpression(
+                pattern: #"\s*[-_(\[]?\s*(?:cd|disc|disk|dvd|part|volume|vol)\s*(?:[0-9]+|[a-z])\s*[)\]]*$"#,
+                options: [.caseInsensitive]
+              )
+        else { return trimmed }
+        let range = NSRange(trimmed.startIndex..<trimmed.endIndex, in: trimmed)
+        let normalized = expression.stringByReplacingMatches(
+            in: trimmed,
+            range: range,
+            withTemplate: ""
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalized.isEmpty ? trimmed : normalized
+    }
+
     internal func apply(_ transaction: LibraryTransaction) throws {
         try ensureOpen()
         if appliedTransactionKeys.contains(transaction.idempotencyKey) {
@@ -1080,6 +1865,8 @@ public actor LibraryPersistenceStore {
                     trackIDs.insert(trackID)
                     artworkIDs.formUnion([artworkID].compactMap { $0 })
                     categories.insert(.tracks)
+                case .setAlbumTracksArtwork:
+                    continue
                 }
             case .statistics(let statistics):
                 let trackID: MediaItemID
@@ -1116,6 +1903,87 @@ public actor LibraryPersistenceStore {
         var staleReleaseIDs = Set<AlbumReleaseID>()
         var staleDiscIDs = Set<DiscID>()
         var staleGroupIDs = Set<AlbumGroupID>()
+
+        var mergedMemberReleaseIDs = Set<AlbumReleaseID>()
+        var mergeOnlyTrackIDs = Set<MediaItemID>()
+        if let merge = transaction.albumMerge {
+            let plan = try LibraryAlbumMergePlan(
+                merge: merge,
+                albums: after.albums.mapValues(\.value),
+                tracks: after.tracks.values.map(\.value),
+                logicalTracks: existingGraph.logicalTracks.merging(logicalTrackUpserts) { _, new in new },
+                variants: Array(existingGraph.variants.merging(variantUpserts) { _, new in new }.values),
+                releases: existingGraph.releases.merging(releaseUpserts) { _, new in new },
+                discs: existingGraph.discs.merging(discUpserts) { _, new in new },
+                members: try fetch(LibraryCollectionMemberRecord.self).map(LocalMediaGraphRecordMapper.member(from:))
+            )
+            after.albums[plan.album.id]?.value = plan.album
+            for itemID in plan.movedTrackIDs {
+                guard let track = after.tracks[itemID] else { continue }
+                after.tracks[itemID]?.value = replacing(track.value, albumID: plan.album.id)
+            }
+            for logical in plan.logicalTracks { logicalTrackUpserts[logical.id] = logical }
+            releaseUpserts[plan.release.id] = plan.release
+            for disc in plan.discs { discUpserts[disc.id] = disc }
+            for member in plan.members {
+                collectionMemberUpserts[PersistenceKey.collectionMember(member)] = member
+            }
+            mergedMemberReleaseIDs = plan.removedReleaseIDs
+            staleReleaseIDs.formUnion(plan.removedReleaseIDs)
+            staleDiscIDs.formUnion(plan.removedDiscIDs)
+            let retainedGroupIDs = Set(existingGraph.releases.values.filter {
+                !plan.removedReleaseIDs.contains($0.id)
+            }.compactMap(\.groupID)).union(releaseUpserts.values.compactMap(\.groupID))
+            staleGroupIDs.formUnion(existingGraph.releases.values.filter {
+                plan.removedReleaseIDs.contains($0.id)
+            }.compactMap(\.groupID).filter { !retainedGroupIDs.contains($0) })
+            mergeOnlyTrackIDs = plan.movedTrackIDs.subtracting(trackIDs)
+            trackIDs.formUnion(plan.movedTrackIDs)
+            albumIDs.formUnion(merge.sourceAlbumIDs.union([plan.album.id]))
+            categories.formUnion([.tracks, .albums, .deletions])
+        }
+
+        var artworkOnlyTrackIDs = Set<MediaItemID>()
+        for mutation in transaction.mutations {
+            guard case let .relation(.setAlbumTracksArtwork(albumID, artworkID)) = mutation else { continue }
+            guard relationKeys.insert("album-artwork:\(albumID.rawValue)").inserted else {
+                throw LibraryError.constraint(.duplicateMutation)
+            }
+            guard after.albums[albumID] != nil,
+                  artworkID == nil || after.artwork[artworkID!] != nil
+            else { throw LibraryError.constraint(.danglingReference) }
+
+            let artwork = artworkID.flatMap { after.artwork[$0] }
+            var affectedTrackIDs = Set<MediaItemID>()
+            var affectedLogicalIDs = Set<LogicalTrackID>()
+            for (itemID, stored) in after.tracks where stored.value.albumID == albumID {
+                after.tracks[itemID]?.value = replacing(stored.value, artwork: artwork)
+                affectedTrackIDs.insert(itemID)
+                affectedLogicalIDs.insert(stored.value.logicalTrackID)
+            }
+            let releaseIDs = Set(existingGraph.releases.merging(releaseUpserts) { _, new in new }
+                .values.filter { $0.legacyAlbumID == albumID }.map(\.id))
+                .union([AlbumReleaseID(legacyAlbumID: albumID)])
+            var logicalValues = existingGraph.logicalTracks.merging(logicalTrackUpserts) { _, new in new }
+            for itemID in affectedTrackIDs {
+                guard let track = after.tracks[itemID]?.value, logicalValues[track.logicalTrackID] == nil else { continue }
+                logicalValues[track.logicalTrackID] = track.logicalTrackProjection
+            }
+            for logical in logicalValues.values
+            where affectedLogicalIDs.contains(logical.id) || logical.releaseID.map(releaseIDs.contains) == true {
+                logicalTrackUpserts[logical.id] = logical.replacingArtwork(artwork)
+                affectedLogicalIDs.insert(logical.id)
+            }
+            for variant in existingGraph.variants.merging(variantUpserts, uniquingKeysWith: { _, new in new }).values
+            where affectedLogicalIDs.contains(variant.logicalTrackID) {
+                affectedTrackIDs.insert(variant.id)
+            }
+            artworkOnlyTrackIDs.formUnion(affectedTrackIDs.subtracting(trackIDs))
+            trackIDs.formUnion(affectedTrackIDs)
+            albumIDs.insert(albumID)
+            artworkIDs.formUnion([artworkID].compactMap { $0 })
+            categories.formUnion([.tracks, .artwork])
+        }
 
         for (itemID, value) in variantUpserts {
             guard let previous = existingGraph.variants[itemID] else { continue }
@@ -1166,6 +2034,8 @@ public actor LibraryPersistenceStore {
             staleGroupIDs.formUnion([previous.groupID].compactMap { $0 })
         }
 
+        // Graph-only variants below participate in pruning, not legacy-row writes.
+        let legacyTrackIDs = Set(after.tracks.keys)
         try addRetainedLocalGraphMetadata(
             to: &after,
             removing: [],
@@ -1225,17 +2095,27 @@ public actor LibraryPersistenceStore {
             removingAssetIDs: staleAssetIDs,
             removingReleaseIDs: staleReleaseIDs,
             removingDiscIDs: staleDiscIDs,
-            removingGroupIDs: staleGroupIDs
+            removingGroupIDs: staleGroupIDs,
+            removingMemberReleaseIDs: mergedMemberReleaseIDs
         )
 
         let oldRevision = metadata.revision
         let oldAppliedData = metadata.appliedTransactionKeys
         let oldAppliedKeys = appliedTransactionKeys
         do {
-            for trackID in trackIDs {
+            // Remove the consumed memberships before inserting their replacements.
+            if !mergedMemberReleaseIDs.isEmpty {
+                for record in try fetch(LibraryCollectionMemberRecord.self)
+                where mergedMemberReleaseIDs.contains(AlbumReleaseID(record.releaseID)) {
+                    context.delete(record)
+                }
+            }
+            for trackID in trackIDs where legacyTrackIDs.contains(trackID) {
                 guard let value = after.tracks[trackID] else { continue }
                 try persistTrack(value, existing: before.tracks[trackID])
-                try persistLocalMediaGraph(for: value.value)
+                if !mergeOnlyTrackIDs.contains(trackID), !artworkOnlyTrackIDs.contains(trackID) {
+                    try persistLocalMediaGraph(for: value.value)
+                }
             }
             for albumID in albumIDs {
                 guard let value = after.albums[albumID] else { continue }
@@ -1815,11 +2695,15 @@ public actor LibraryPersistenceStore {
     private func ensureOpen() throws {
         guard !closed else { throw LibraryPersistenceError.closed }
         if !didBackfillLocalMediaGraph {
+            let oldAppliedData = metadata.appliedTransactionKeys
+            let oldAppliedKeys = appliedTransactionKeys
             do {
                 try backfillLocalMediaGraph()
                 didBackfillLocalMediaGraph = true
             } catch {
                 context.rollback()
+                metadata.appliedTransactionKeys = oldAppliedData
+                appliedTransactionKeys = oldAppliedKeys
                 throw error
             }
         }
@@ -1852,6 +2736,7 @@ public actor LibraryPersistenceStore {
 
     private func boundedPage<Model: PersistentModel, Element: Sendable>(
         model _: Model.Type,
+        predicate: Predicate<Model>? = nil,
         sortBy: [SortDescriptor<Model>],
         page: LibraryPageRequest,
         kind: PageKind,
@@ -1860,7 +2745,9 @@ public actor LibraryPersistenceStore {
     ) throws -> LibraryPage<Element> {
         let totalCount: Int
         do {
-            totalCount = try context.fetchCount(FetchDescriptor<Model>())
+            totalCount = try context.fetchCount(
+                FetchDescriptor<Model>(predicate: predicate)
+            )
         } catch {
             throw LibraryPersistenceError.corruptedStore
         }
@@ -1872,7 +2759,7 @@ public actor LibraryPersistenceStore {
             revision: revision,
             totalCount: totalCount
         )
-        var descriptor = FetchDescriptor<Model>(sortBy: sortBy)
+        var descriptor = FetchDescriptor<Model>(predicate: predicate, sortBy: sortBy)
         descriptor.fetchOffset = offset
         descriptor.fetchLimit = page.limit + 1
 
@@ -1924,6 +2811,66 @@ public actor LibraryPersistenceStore {
             guard snapshot.artwork[value.id] == nil else { throw LibraryPersistenceError.corruptedStore }
             snapshot.artwork[value.id] = value
         }
+        return snapshot
+    }
+
+    private func loadLibrarySearchSnapshot() throws -> LibrarySearchSnapshot {
+        librarySearchSnapshotBuildCount += 1
+        var snapshot = LibrarySearchSnapshot(
+            tracks: [:],
+            albums: [:],
+            artists: [:],
+            genres: [:]
+        )
+
+        for (index, record) in try fetch(TrackRecord.self).enumerated() {
+            if index.isMultiple(of: 64) { try Task.checkCancellation() }
+            let value = try LibraryRecordMapper.track(from: record)
+            guard snapshot.tracks[value.id] == nil else {
+                throw LibraryPersistenceError.corruptedStore
+            }
+            snapshot.tracks[value.id] = StoredTrack(
+                value: value,
+                dateAddedAt: record.dateAddedAt
+            )
+        }
+        try Task.checkCancellation()
+        for (index, record) in try fetch(AlbumRecord.self).enumerated() {
+            if index.isMultiple(of: 64) { try Task.checkCancellation() }
+            let value = try LibraryRecordMapper.album(from: record)
+            guard snapshot.albums[value.id] == nil else {
+                throw LibraryPersistenceError.corruptedStore
+            }
+            snapshot.albums[value.id] = StoredAlbum(
+                value: value,
+                dateAddedAt: record.dateAddedAt
+            )
+        }
+        try Task.checkCancellation()
+        for (index, record) in try fetch(ArtistRecord.self).enumerated() {
+            if index.isMultiple(of: 64) { try Task.checkCancellation() }
+            let value = try LibraryRecordMapper.artist(from: record)
+            guard snapshot.artists[value.id] == nil else {
+                throw LibraryPersistenceError.corruptedStore
+            }
+            snapshot.artists[value.id] = StoredArtist(
+                value: value,
+                dateAddedAt: record.dateAddedAt
+            )
+        }
+        try Task.checkCancellation()
+        for (index, record) in try fetch(GenreRecord.self).enumerated() {
+            if index.isMultiple(of: 64) { try Task.checkCancellation() }
+            let value = try LibraryRecordMapper.genre(from: record)
+            guard snapshot.genres[value.id] == nil else {
+                throw LibraryPersistenceError.corruptedStore
+            }
+            snapshot.genres[value.id] = StoredGenre(
+                value: value,
+                dateAddedAt: record.dateAddedAt
+            )
+        }
+        try Task.checkCancellation()
         return snapshot
     }
 
@@ -2412,7 +3359,13 @@ public actor LibraryPersistenceStore {
         }
     }
 
-    private func replacing(_ value: Track, albumID: AlbumID?) -> Track {
+    private func replacing(
+        _ value: Track,
+        albumID: AlbumID? = nil,
+        trackTotal: Int? = nil,
+        discNumber: Int? = nil,
+        discTotal: Int? = nil
+    ) -> Track {
         Track(
             id: value.id,
             logicalTrackID: value.logicalTrackID,
@@ -2424,9 +3377,9 @@ public actor LibraryPersistenceStore {
             artistIDs: value.artistIDs,
             genreIDs: value.genreIDs,
             trackNumber: value.trackNumber,
-            trackTotal: value.trackTotal,
-            discNumber: value.discNumber,
-            discTotal: value.discTotal,
+            trackTotal: trackTotal ?? value.trackTotal,
+            discNumber: discNumber ?? value.discNumber,
+            discTotal: discTotal ?? value.discTotal,
             fileName: value.fileName,
             folderPath: value.folderPath,
             duration: value.duration,
@@ -2674,7 +3627,8 @@ public actor LibraryPersistenceStore {
         removingAssetIDs: Set<MediaAssetID> = [],
         removingReleaseIDs: Set<AlbumReleaseID> = [],
         removingDiscIDs: Set<DiscID> = [],
-        removingGroupIDs: Set<AlbumGroupID> = []
+        removingGroupIDs: Set<AlbumGroupID> = [],
+        removingMemberReleaseIDs: Set<AlbumReleaseID> = []
     ) throws {
         let logicalTrackRecords = try fetch(LogicalTrackRecord.self).filter {
             !removingLogicalTrackIDs.contains(LogicalTrackID($0.storageKey))
@@ -2733,6 +3687,16 @@ public actor LibraryPersistenceStore {
             }
         )
         releaseValues.merge(releases) { _, new in new }
+        // A legacy album mutation is also the source of truth for its
+        // compatibility release projection. Refresh that projection before
+        // validating references so removed album artists are not retained
+        // from the stale persisted release record. An explicit release
+        // mutation remains authoritative when both are present.
+        for album in legacyAlbums {
+            let projection = album.releaseProjection
+            guard releases[projection.id] == nil else { continue }
+            releaseValues[projection.id] = projection
+        }
         let releaseIDs = Set(releaseValues.keys)
             .union(releases.keys)
             .union(legacyAlbums.map { AlbumReleaseID(legacyAlbumID: $0.id) })
@@ -2784,7 +3748,10 @@ public actor LibraryPersistenceStore {
         let replacedMembers = Set(members.values.map(LibraryCollectionMemberIdentity.init))
         let existingMembers = try fetch(LibraryCollectionMemberRecord.self)
             .map(LocalMediaGraphRecordMapper.member(from:))
-            .filter { !replacedMembers.contains(LibraryCollectionMemberIdentity($0)) }
+            .filter {
+                !removingMemberReleaseIDs.contains($0.releaseID)
+                    && !replacedMembers.contains(LibraryCollectionMemberIdentity($0))
+            }
         for member in existingMembers + Array(members.values) {
             guard positionsByCollection[member.collectionID, default: []]
                 .insert(member.position).inserted
@@ -2869,12 +3836,52 @@ public actor LibraryPersistenceStore {
     }
 
     private func backfillLocalMediaGraph() throws {
+        // A store without the completion marker can be either a v1 store just
+        // upgraded to the v2 schema or an older v2 store created before the
+        // marker was introduced. The legacy rows are therefore only a source
+        // for missing graph rows; existing graph rows are authoritative and
+        // must never be rewritten from the legacy projection.
+        var releaseKeys = Set(try fetch(AlbumReleaseRecord.self).map(\.storageKey))
+        var logicalTrackKeys = Set(try fetch(LogicalTrackRecord.self).map(\.storageKey))
+        var assetKeys = Set(try fetch(MediaAssetRecord.self).map(\.storageKey))
+        var variantKeys = Set(try fetch(TrackVariantRecord.self).map(\.storageKey))
+        var discKeys = Set(try fetch(DiscRecord.self).map(\.storageKey))
+
         for record in try context.fetch(FetchDescriptor<AlbumRecord>()) {
-            try persistRelease(LibraryRecordMapper.album(from: record).releaseProjection)
+            let release = try LibraryRecordMapper.album(from: record).releaseProjection
+            guard releaseKeys.insert(release.id.rawValue).inserted else { continue }
+            context.insert(try LocalMediaGraphRecordMapper.makeRelease(release))
         }
         for record in try context.fetch(FetchDescriptor<TrackRecord>()) {
-            try persistLocalMediaGraph(for: LibraryRecordMapper.track(from: record))
+            let track = try LibraryRecordMapper.track(from: record)
+
+            // A present variant is the graph's ownership signal. In
+            // particular, do not recreate a legacy logical track when a v2
+            // user has intentionally moved this variant to another logical
+            // track.
+            let variantKey = PersistenceKey.item(track.id)
+            guard variantKeys.insert(variantKey).inserted else { continue }
+
+            let logical = track.logicalTrackProjection
+            if logicalTrackKeys.insert(logical.id.rawValue).inserted {
+                context.insert(try LocalMediaGraphRecordMapper.makeLogicalTrack(logical))
+            }
+
+            let asset = track.mediaAssetProjection
+            let assetKey = PersistenceKey.asset(asset.id)
+            if assetKeys.insert(assetKey).inserted {
+                context.insert(try LocalMediaGraphRecordMapper.makeAsset(asset))
+            }
+
+            context.insert(try LocalMediaGraphRecordMapper.makeVariant(track.trackVariantProjection))
+
+            if let disc = track.discProjection,
+               discKeys.insert(disc.id.rawValue).inserted {
+                context.insert(try LocalMediaGraphRecordMapper.makeDisc(disc))
+            }
         }
+        appliedTransactionKeys.insert(Self.localMediaGraphBackfillMarker)
+        metadata.appliedTransactionKeys = try PersistenceCodec.encode(appliedTransactionKeys)
         if context.hasChanges {
             try context.save()
         }

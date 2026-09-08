@@ -52,6 +52,7 @@ final class SleepTimerCoordinator: SleepTimerServing {
     private var timerID: UUID?
     private var timerTask: Task<Void, Never>?
     private var playbackTask: Task<Void, Never>?
+    private var activationVersion: UInt64 = 0
     private var continuations: [UUID: AsyncStream<SleepTimerSnapshot>.Continuation] = [:]
 
     init(playback: any PlaybackServing, clock: any AppClock, calendar: Calendar) {
@@ -100,7 +101,9 @@ final class SleepTimerCoordinator: SleepTimerServing {
         case .oneTime:
             return
         case .automatic, nil:
+            let activationVersion = self.activationVersion
             let now = await clock.now()
+            guard self.activationVersion == activationVersion else { return }
             activateAutomaticTimerIfNeeded(at: now)
         }
     }
@@ -110,12 +113,18 @@ final class SleepTimerCoordinator: SleepTimerServing {
             .contains(durationMinutes)
         else { return }
 
+        activationVersion &+= 1
+        let activationVersion = self.activationVersion
         Task { @MainActor [weak self] in
             guard let self else { return }
+            let now = await clock.now()
+            guard self.activationVersion == activationVersion,
+                  !Task.isCancelled
+            else { return }
             activate(
                 durationMinutes: durationMinutes,
                 source: .oneTime,
-                startedAt: await clock.now()
+                startedAt: now
             )
         }
     }
@@ -137,12 +146,28 @@ final class SleepTimerCoordinator: SleepTimerServing {
     private func handlePlaybackSnapshot(_ snapshot: PlaybackSessionSnapshot) async {
         let enteredPlaying = snapshot.phase == .playing && playbackPhase != .playing
         playbackPhase = snapshot.phase
-        guard enteredPlaying, !snapshotValue.isActive else { return }
+        let hasAutomaticTimer: Bool
+        if case .automatic = snapshotValue.source {
+            hasAutomaticTimer = true
+        } else {
+            hasAutomaticTimer = false
+        }
+        guard enteredPlaying || (snapshot.phase == .playing && hasAutomaticTimer) else {
+            return
+        }
+        let activationVersion = self.activationVersion
         let now = await clock.now()
+        guard self.activationVersion == activationVersion else { return }
         activateAutomaticTimerIfNeeded(at: now)
     }
 
     private func activateAutomaticTimerIfNeeded(at date: Date) {
+        if case .oneTime = snapshotValue.source {
+            // A one-time timer is an explicit user action. Playback events
+            // must never recreate or replace it.
+            return
+        }
+
         let activeSchedules = preferences.activeSchedules(at: date, calendar: calendar)
         guard let durationMinutes = activeSchedules.map(\.durationMinutes).min() else {
             if case .automatic = snapshotValue.source {
@@ -154,6 +179,13 @@ final class SleepTimerCoordinator: SleepTimerServing {
             .filter { $0.durationMinutes == durationMinutes }
             .map(\.id)
             .sorted { $0.uuidString < $1.uuidString }
+
+        if case .automatic = snapshotValue.source,
+           let deadline = snapshotValue.deadline,
+           deadline.timeIntervalSince(date) <= TimeInterval(durationMinutes * 60) {
+            return
+        }
+
         activate(
             durationMinutes: durationMinutes,
             source: .automatic(scheduleIDs: selectedIDs),
@@ -205,6 +237,7 @@ final class SleepTimerCoordinator: SleepTimerServing {
     }
 
     private func cancelTimer(publish: Bool) {
+        activationVersion &+= 1
         timerID = nil
         timerTask?.cancel()
         timerTask = nil

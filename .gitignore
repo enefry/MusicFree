@@ -3,3 +3,10 @@ Design/screenshot
 dist
 thirdpart/参考UI
 archive_and_push.sh
+.noindex
+*.xcodeproj
+
+# Developer-local Google Drive OAuth configuration.
+/App/apps.googleusercontent.com.plist
+/apps.googleusercontent.com.plist
+/GoogleDriveOAuth.local.xcconfig

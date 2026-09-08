@@ -66,6 +66,57 @@ fileprivate actor ImportSessionRegistry {
   }
 }
 
+fileprivate actor ImportConfirmationRegistry {
+  enum Decision: Sendable {
+    case continueImport
+    case cancelled
+  }
+
+  private var waiters: [UUID: CheckedContinuation<Decision, Never>] = [:]
+  private var decisions: [UUID: Decision] = [:]
+
+  func wait(for importID: UUID) async -> Decision {
+    if let decision = decisions.removeValue(forKey: importID) {
+      return decision
+    }
+
+    return await withTaskCancellationHandler {
+      await withCheckedContinuation { continuation in
+        if Task.isCancelled {
+          continuation.resume(returning: .cancelled)
+        } else if let decision = decisions.removeValue(forKey: importID) {
+          continuation.resume(returning: decision)
+        } else {
+          waiters[importID] = continuation
+        }
+      }
+    } onCancel: {
+      Task { await self.cancel(importID) }
+    }
+  }
+
+  func continueImport(_ importID: UUID) {
+    resolve(importID, decision: .continueImport)
+  }
+
+  func cancel(_ importID: UUID) {
+    resolve(importID, decision: .cancelled)
+  }
+
+  func remove(_ importID: UUID) {
+    waiters.removeValue(forKey: importID)
+    decisions.removeValue(forKey: importID)
+  }
+
+  private func resolve(_ importID: UUID, decision: Decision) {
+    if let continuation = waiters.removeValue(forKey: importID) {
+      continuation.resume(returning: decision)
+    } else {
+      decisions[importID] = decision
+    }
+  }
+}
+
 /// Allows imports to remain concurrent while giving staging maintenance an
 /// exclusive window. Waiting maintenance has priority so new imports cannot
 /// indefinitely postpone startup pruning.
@@ -187,6 +238,7 @@ struct ImportCoordinatorKey: Hashable {
 final class ImportCoordinator: @unchecked Sendable {
   let store: ManagedMediaStore
   fileprivate let sessions = ImportSessionRegistry()
+  fileprivate let confirmationRegistry = ImportConfirmationRegistry()
   fileprivate let contentGate = ImportContentGate()
   let maintenanceGate = ImportMaintenanceGate()
 
@@ -323,6 +375,10 @@ private final class SecurityScopedURLAccess: @unchecked Sendable {
   private let url: URL
   private var didStartAccess = false
 
+  var didStart: Bool {
+    didStartAccess
+  }
+
   init(url: URL) {
     self.url = url
 #if os(iOS) || os(macOS)
@@ -346,6 +402,11 @@ private final class SecurityScopedURLAccess: @unchecked Sendable {
 /// Imports user-selected local files into managed storage.
 @available(macOS 13.0, iOS 16.0, *)
 public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
+  private static let logger = MusicLogger(
+    subsystem: "com.musicfree.app",
+    category: "local-media-import"
+  )
+
   private enum ItemOutcome: Sendable {
     case imported
     case duplicate
@@ -356,6 +417,73 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
     let imported: Int
     let duplicate: Int
     let skipped: Int
+    let failed: Int
+    let cancelled: Int
+
+    init(
+      imported: Int,
+      duplicate: Int,
+      skipped: Int,
+      failed: Int = 0,
+      cancelled: Int = 0
+    ) {
+      self.imported = imported
+      self.duplicate = duplicate
+      self.skipped = skipped
+      self.failed = failed
+      self.cancelled = cancelled
+    }
+  }
+
+  /// One picked input, kept in both of the forms the pipeline needs.
+  ///
+  /// A security-scoped URL carries its sandbox extension inside the URL object
+  /// itself, so any derived copy — including `standardizedFileURL` — loses the
+  /// authorization. Path logic therefore uses `standardizedURL` while
+  /// `startAccessingSecurityScopedResource()` must always be sent to
+  /// `providedURL`, exactly as the document picker handed it over.
+  private struct ImportInput: Sendable {
+    let providedURL: URL
+    let standardizedURL: URL
+
+    init(providedURL: URL) {
+      self.providedURL = providedURL
+      standardizedURL = providedURL.standardizedFileURL
+    }
+  }
+
+  private enum ImportWorkItem: Sendable {
+    case standalone(ImportInput)
+    case selectedFiles(rootURL: URL, inputs: [ImportInput])
+
+    var inputURL: URL {
+      switch self {
+      case .standalone(let input):
+        return input.standardizedURL
+      case .selectedFiles(_, let inputs):
+        return inputs[0].standardizedURL
+      }
+    }
+
+    var accessURLs: [URL] {
+      switch self {
+      case .standalone(let input):
+        let isSelectedCUE = input.standardizedURL.pathExtension
+          .caseInsensitiveCompare("cue") == .orderedSame
+        // A selected CUE is authorized as a file; its sibling FILE entries need
+        // the enclosing directory, so claim both and let the caller work with
+        // whichever scope the system actually grants.
+        return isSelectedCUE
+          ? [input.providedURL, input.providedURL.deletingLastPathComponent()]
+          : [input.providedURL]
+      case .selectedFiles(_, let inputs):
+        return inputs.map(\.providedURL)
+      }
+    }
+  }
+
+  private struct FolderImportCancelled: Error, Sendable {
+    let failedCount: Int
   }
 
   private struct UserPlaybackState: Sendable {
@@ -369,6 +497,7 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
     let albumFallbackCounts: [AlbumID: Int]
     let discFallbackCounts: [DiscID: Int]
     let existingDiscs: [DiscID: Disc]
+    let existingAlbums: [AlbumID: Album]
   }
 
   private struct SourceAwareImport: Sendable {
@@ -381,6 +510,78 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
     let variants: [MediaItemID: TrackVariant]
   }
 
+  private static func importWorkItems(
+    for urls: [URL],
+    maximumGroupSize: Int
+  ) -> [ImportWorkItem] {
+    enum WorkKey: Hashable {
+      case standalone(Int)
+      case directory(String)
+    }
+
+    var orderedKeys: [WorkKey] = []
+    var groupedInputs: [WorkKey: [ImportInput]] = [:]
+
+    for (index, inputURL) in urls.enumerated() {
+      let input = ImportInput(providedURL: inputURL)
+      let standardizedURL = input.standardizedURL
+      let isSelectedCUE = standardizedURL.pathExtension.caseInsensitiveCompare("cue")
+        == .orderedSame
+      let values: URLResourceValues?
+      if isSelectedCUE {
+        values = nil
+      } else {
+        let access = SecurityScopedURLAccess(url: input.providedURL)
+        values = try? standardizedURL.resourceValues(forKeys: [
+          .isDirectoryKey,
+          .isRegularFileKey,
+          .isSymbolicLinkKey,
+          .isPackageKey,
+          .isHiddenKey,
+        ])
+        access.stop()
+      }
+      let isGroupableFile = !isSelectedCUE
+        && values?.isDirectory != true
+        && values?.isRegularFile == true
+        && values?.isSymbolicLink != true
+        && values?.isPackage != true
+        && values?.isHidden != true
+        && !standardizedURL.lastPathComponent.hasPrefix(".")
+
+      let key: WorkKey
+      if isGroupableFile {
+        let parentURL = standardizedURL.deletingLastPathComponent()
+          .resolvingSymlinksInPath()
+          .standardizedFileURL
+        key = .directory(parentURL.path)
+      } else {
+        key = .standalone(index)
+      }
+
+      if groupedInputs[key] == nil {
+        orderedKeys.append(key)
+      }
+      groupedInputs[key, default: []].append(input)
+    }
+
+    return orderedKeys.flatMap { key -> [ImportWorkItem] in
+      guard let grouped = groupedInputs[key] else { return [] }
+      switch key {
+      case .standalone:
+        return grouped.map(ImportWorkItem.standalone)
+      case .directory:
+        guard grouped.count > 1, grouped.count <= maximumGroupSize else {
+          return grouped.map(ImportWorkItem.standalone)
+        }
+        let rootURL = grouped[0].standardizedURL.deletingLastPathComponent()
+          .resolvingSymlinksInPath()
+          .standardizedFileURL
+        return [.selectedFiles(rootURL: rootURL, inputs: grouped)]
+      }
+    }
+  }
+
   private let configuration: LocalMediaConfiguration
   private let coordinator: ImportCoordinator
   private let store: ManagedMediaStore
@@ -390,6 +591,7 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
   private let libraryRepository: any LibraryRepository
   private let hasher: any LocalMediaHashing
   private let sessions: ImportSessionRegistry
+  private let confirmationRegistry: ImportConfirmationRegistry
   private let contentGate: ImportContentGate
 
   public init(
@@ -409,6 +611,7 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
     self.libraryRepository = libraryRepository
     self.hasher = hasher ?? ContentHasher()
     self.sessions = coordinator.sessions
+    self.confirmationRegistry = coordinator.confirmationRegistry
     self.contentGate = coordinator.contentGate
   }
 
@@ -496,6 +699,10 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
     await sessions.cancel(importID)
   }
 
+  public func continueImport(_ importID: UUID) async {
+    await confirmationRegistry.continueImport(importID)
+  }
+
   private func run(
     request: MediaImportRequest,
     continuation: AsyncThrowingStream<MediaImportEvent, Error>.Continuation,
@@ -508,31 +715,64 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
     var cancelled = 0
 
     guard !request.urls.isEmpty else {
+      Self.logger.error("import rejected empty request id=\(request.importID.uuidString)")
       await finishSession(request.importID, handle: handle)
       continuation.finish(throwing: MediaSourceError.importFailed(.invalidRequest))
       return
     }
 
     do {
-      for inputURL in request.urls {
+      Self.logger.info(
+        "import execution started id=\(request.importID.uuidString) inputCount=\(request.urls.count)"
+      )
+      let workItems = Self.importWorkItems(
+        for: request.urls,
+        maximumGroupSize: configuration.maximumFileCount
+      )
+      for workItem in workItems {
         try Task.checkCancellation()
+        let inputURL = workItem.inputURL
         let isSelectedCUE = inputURL.pathExtension.caseInsensitiveCompare("cue") == .orderedSame
-        let enumerationURL = isSelectedCUE ? inputURL.deletingLastPathComponent() : inputURL
+        let isSelectedFileGroup: Bool
+        let enumerationURL: URL
+        switch workItem {
+        case .standalone:
+          isSelectedFileGroup = false
+          enumerationURL = isSelectedCUE ? inputURL.deletingLastPathComponent() : inputURL
+        case .selectedFiles(let rootURL, _):
+          isSelectedFileGroup = true
+          enumerationURL = rootURL
+        }
 
         // A selected CUE needs directory authorization because its FILE entries
-        // are sibling resources. Scope each request independently so a large
-        // multi-selection does not retain every security scope until completion.
-        let access = SecurityScopedURLAccess(url: enumerationURL)
-        defer { access.stop() }
+        // are sibling resources. A grouped explicit selection retains each file's
+        // authorization only while that group is being prepared and persisted.
+        let accesses = workItem.accessURLs.map { SecurityScopedURLAccess(url: $0) }
+        defer { accesses.forEach { $0.stop() } }
+        let grantedScopeCount = accesses.filter(\.didStart).count
 
-        let isDirectory = (try? inputURL.resourceValues(forKeys: [.isDirectoryKey]))?
-          .isDirectory == true
+        let isDirectory = !isSelectedFileGroup
+          && (try? inputURL.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+        Self.logger.debug(
+          "input opened id=\(request.importID.uuidString) name=\(inputURL.lastPathComponent) kind=\(isDirectory ? "directory" : (isSelectedFileGroup ? "file-group" : "file")) extension=\(inputURL.pathExtension) scopeCount=\(accesses.count) grantedScopeCount=\(grantedScopeCount)"
+        )
         let files: [ImportFile]
         do {
-          files = try ImportFileEnumerator(configuration: configuration).enumerate(enumerationURL)
+          switch workItem {
+          case .standalone:
+            files = try ImportFileEnumerator(configuration: configuration).enumerate(enumerationURL)
+          case .selectedFiles(_, let inputs):
+            files = inputs.map { ImportFile(url: $0.standardizedURL, folderPath: nil) }
+          }
+          Self.logger.info(
+            "input enumerated id=\(request.importID.uuidString) fileCount=\(files.count)"
+          )
         } catch is CancellationError {
           throw CancellationError()
         } catch let error as LocalMediaError {
+          Self.logger.error(
+            "input enumeration failed id=\(request.importID.uuidString) code=\(error.diagnosticCode)"
+          )
           failed += 1
           continuation.yield(
             .itemFailed(
@@ -543,6 +783,9 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
           )
           continue
         } catch {
+          Self.logger.error(
+            "input enumeration failed id=\(request.importID.uuidString) code=inaccessible_input"
+          )
           failed += 1
           continuation.yield(
             .itemFailed(
@@ -556,14 +799,17 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
 
         let bundle: FolderImportBundle
         do {
-          let analyzed = try FolderImportBundleAnalyzer().analyze(
-            inputURL: enumerationURL,
-            files: files
-          )
+          let analyzer = FolderImportBundleAnalyzer()
+          let analyzed = isSelectedFileGroup
+            ? try analyzer.analyze(rootURL: enumerationURL, files: files)
+            : try analyzer.analyze(inputURL: enumerationURL, files: files)
           bundle = isSelectedCUE
             ? try Self.bundle(forSelectedCUE: inputURL, from: analyzed)
             : analyzed
         } catch {
+          Self.logger.error(
+            "bundle analysis failed id=\(request.importID.uuidString) code=enumeration_failed"
+          )
           failed += 1
           continuation.yield(
             MediaImportEvent.itemFailed(
@@ -575,8 +821,11 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
           continue
         }
         let allowRootArtwork = Self.likelySingleRelease(bundle)
+        Self.logger.info(
+          "bundle analyzed id=\(request.importID.uuidString) mediaCandidates=\(bundle.mediaCandidates.count) cueFiles=\(bundle.cueFiles.count)"
+        )
 
-        if isDirectory || isSelectedCUE || !bundle.cueFiles.isEmpty {
+        if isDirectory || isSelectedCUE || isSelectedFileGroup || !bundle.cueFiles.isEmpty {
           for file in bundle.mediaCandidates {
             continuation.yield(.discovered(importID: request.importID, url: file.url))
           }
@@ -585,11 +834,17 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
               bundle,
               allowRootArtwork: allowRootArtwork,
               request: request,
+              allowsFailureConfirmation: request.allowsFolderFailureConfirmation
+                && isDirectory
+                && bundle.cueFiles.isEmpty
+                && bundle.collectionManifest == nil,
               continuation: continuation
             )
             imported += outcome.imported
             duplicate += outcome.duplicate
             skipped += outcome.skipped
+            failed += outcome.failed
+            cancelled += outcome.cancelled
           } catch is CancellationError {
             cancelled += 1
             throw CancellationError()
@@ -598,6 +853,9 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
             throw CancellationError()
           } catch let error as LocalMediaError where error == .duplicate {
             duplicate += 1
+            Self.logger.warning(
+              "bundle skipped duplicate id=\(request.importID.uuidString)"
+            )
             continuation.yield(.itemFailed(
               importID: request.importID,
               url: inputURL,
@@ -605,6 +863,9 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
             ))
           } catch {
             failed += 1
+            Self.logger.error(
+              "bundle processing failed id=\(request.importID.uuidString) file=\(inputURL.lastPathComponent) code=\(Self.mapImportError(error).diagnosticCode)"
+            )
             continuation.yield(.itemFailed(
               importID: request.importID,
               url: inputURL,
@@ -643,6 +904,9 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
             throw CancellationError()
           } catch let error as LocalMediaError where error == .duplicate {
             duplicate += 1
+            Self.logger.warning(
+              "item skipped duplicate id=\(request.importID.uuidString) file=\(fileURL.lastPathComponent)"
+            )
             continuation.yield(
               .itemFailed(
                 importID: request.importID,
@@ -652,6 +916,9 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
             )
           } catch let error as LocalMediaError {
             failed += 1
+            Self.logger.error(
+              "item processing failed id=\(request.importID.uuidString) file=\(fileURL.lastPathComponent) code=\(error.diagnosticCode)"
+            )
             continuation.yield(
               .itemFailed(
                 importID: request.importID,
@@ -661,11 +928,17 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
             )
           } catch let error as MediaImportError {
             failed += 1
+            Self.logger.error(
+              "item processing failed id=\(request.importID.uuidString) file=\(fileURL.lastPathComponent) code=\(error.diagnosticCode)"
+            )
             continuation.yield(
               .itemFailed(importID: request.importID, url: fileURL, error: error)
             )
           } catch {
             failed += 1
+            Self.logger.error(
+              "item processing failed id=\(request.importID.uuidString) file=\(fileURL.lastPathComponent) code=\(Self.mapImportError(error).diagnosticCode)"
+            )
             continuation.yield(
               .itemFailed(
                 importID: request.importID,
@@ -686,10 +959,32 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
         cancelled: cancelled,
         status: .completed
       )
+      Self.logger.info(
+        "import execution completed id=\(request.importID.uuidString) imported=\(imported) duplicate=\(duplicate) skipped=\(skipped) failed=\(failed)"
+      )
       await finishSession(request.importID, handle: handle)
       continuation.yield(.completed(importID: request.importID, result: result))
       continuation.finish()
+    } catch let error as FolderImportCancelled {
+      Self.logger.warning(
+        "folder import cancelled after confirmation id=\(request.importID.uuidString) failed=\(error.failedCount)"
+      )
+      failed += error.failedCount
+      cancelled = max(cancelled, 1)
+      let result = MediaImportResult(
+        importID: request.importID,
+        imported: imported,
+        duplicate: duplicate,
+        skipped: skipped,
+        failed: failed,
+        cancelled: cancelled,
+        status: .cancelled
+      )
+      await finishSession(request.importID, handle: handle)
+      continuation.yield(.cancelled(importID: request.importID, result: result))
+      continuation.finish()
     } catch is CancellationError {
+      Self.logger.warning("import execution cancelled id=\(request.importID.uuidString)")
       cancelled = max(cancelled, 1)
       let result = MediaImportResult(
         importID: request.importID,
@@ -704,6 +999,9 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
       continuation.yield(.cancelled(importID: request.importID, result: result))
       continuation.finish()
     } catch {
+      Self.logger.error(
+        "import execution terminated id=\(request.importID.uuidString) error=\(String(describing: error))"
+      )
       await finishSession(request.importID, handle: handle)
       continuation.finish(throwing: Self.mapStreamError(error))
     }
@@ -711,6 +1009,7 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
 
   private func finishSession(_ importID: UUID, handle: ImportOperationHandle) async {
     await staging.removeBatch(for: importID)
+    await confirmationRegistry.remove(importID)
     await sessions.remove(importID, handle: handle)
   }
 
@@ -718,6 +1017,7 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
     _ bundle: FolderImportBundle,
     allowRootArtwork: Bool,
     request: MediaImportRequest,
+    allowsFailureConfirmation: Bool,
     continuation: AsyncThrowingStream<MediaImportEvent, Error>.Continuation
   ) async throws -> BundleOutcome {
     guard !bundle.mediaCandidates.isEmpty else {
@@ -727,6 +1027,7 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
     var stagedURLs: [URL] = []
     do {
       var assets: [PreparedLocalMediaAsset] = []
+      var preparationFailures: [(url: URL, error: MediaImportError)] = []
       for file in bundle.mediaCandidates {
         var stagedForFile: URL?
         do {
@@ -764,9 +1065,14 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
           do {
             let embeddedMetadata = try await metadataReader.readMetadata(from: resource)
             let sidecarLyrics = try? LocalLyricsReader.readSidecar(for: file.url)
-            rawMetadata = embeddedMetadata.lyrics == nil
+            let metadataWithLyrics = embeddedMetadata.lyrics == nil
               ? embeddedMetadata.replacingLyrics(sidecarLyrics ?? nil)
               : embeddedMetadata
+            rawMetadata = Self.applyingMetadataHint(
+              request.metadataHint(for: file.url),
+              to: metadataWithLyrics,
+              parsedFileURL: staged
+            )
           } catch is CancellationError {
             throw CancellationError()
           } catch {
@@ -798,11 +1104,98 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
             await staging.remove(stagedForFile)
           }
           continue
+        } catch let error as LocalMediaError {
+          Self.logger.error(
+            "bundle file failed id=\(request.importID.uuidString) file=\(file.url.lastPathComponent) extension=\(file.url.pathExtension) code=\(error.diagnosticCode)"
+          )
+          if let stagedForFile {
+            await staging.remove(stagedForFile)
+          }
+          guard allowsFailureConfirmation else { throw error }
+          preparationFailures.append((file.url, error.importError))
+        } catch {
+          Self.logger.error(
+            "bundle file failed id=\(request.importID.uuidString) file=\(file.url.lastPathComponent) extension=\(file.url.pathExtension) code=\(Self.mapImportError(error).diagnosticCode)"
+          )
+          if let stagedForFile {
+            await staging.remove(stagedForFile)
+          }
+          guard allowsFailureConfirmation else { throw error }
+          preparationFailures.append((file.url, Self.mapImportError(error)))
         }
       }
 
       guard !assets.isEmpty else {
+        if !preparationFailures.isEmpty {
+          for failure in preparationFailures {
+            continuation.yield(
+              .itemFailed(
+                importID: request.importID,
+                url: failure.url,
+                error: failure.error
+              )
+            )
+          }
+          if allowsFailureConfirmation {
+            Self.logger.info(
+              "confirmation event yielding id=\(request.importID.uuidString) failureCount=\(preparationFailures.count) validCount=0"
+            )
+            let yieldResult = continuation.yield(
+              .confirmationRequired(importID: request.importID)
+            )
+            Self.logger.info(
+              "confirmation event yielded id=\(request.importID.uuidString) result=\(String(describing: yieldResult))"
+            )
+            Self.logger.info(
+              "confirmation decision waiting id=\(request.importID.uuidString)"
+            )
+            let decision = await confirmationRegistry.wait(for: request.importID)
+            Self.logger.info(
+              "confirmation decision received id=\(request.importID.uuidString) decision=\(String(describing: decision))"
+            )
+            guard decision == .continueImport, !Task.isCancelled else {
+              throw FolderImportCancelled(failedCount: preparationFailures.count)
+            }
+          }
+          return BundleOutcome(
+            imported: 0,
+            duplicate: 0,
+            skipped: 0,
+            failed: preparationFailures.count
+          )
+        }
         throw LocalMediaError.unsupportedInput
+      }
+
+      for failure in preparationFailures {
+        continuation.yield(
+          .itemFailed(
+            importID: request.importID,
+            url: failure.url,
+            error: failure.error
+          )
+        )
+      }
+      if allowsFailureConfirmation, !preparationFailures.isEmpty {
+        Self.logger.info(
+          "confirmation event yielding id=\(request.importID.uuidString) failureCount=\(preparationFailures.count) validCount=\(assets.count)"
+        )
+        let yieldResult = continuation.yield(
+          .confirmationRequired(importID: request.importID)
+        )
+        Self.logger.info(
+          "confirmation event yielded id=\(request.importID.uuidString) result=\(String(describing: yieldResult))"
+        )
+        Self.logger.info(
+          "confirmation decision waiting id=\(request.importID.uuidString)"
+        )
+        let decision = await confirmationRegistry.wait(for: request.importID)
+        Self.logger.info(
+          "confirmation decision received id=\(request.importID.uuidString) decision=\(String(describing: decision))"
+        )
+        guard decision == .continueImport, !Task.isCancelled else {
+          throw FolderImportCancelled(failedCount: preparationFailures.count)
+        }
       }
 
       let existingCUEState = try await existingCUEState(
@@ -828,7 +1221,12 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
       for staged in stagedURLs {
         await staging.remove(staged)
       }
-      return outcome
+      return BundleOutcome(
+        imported: outcome.imported,
+        duplicate: outcome.duplicate,
+        skipped: outcome.skipped,
+        failed: preparationFailures.count
+      )
     } catch {
       for staged in stagedURLs {
         await staging.remove(staged)
@@ -929,10 +1327,41 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
       else { return nil }
       return media.itemID
     })
+    let sourceMetadataRepairItemIDs = Set(plan.normalizedTracks.compactMap {
+      media -> MediaItemID? in
+      guard Self.needsSourceMetadataRepair(
+        existingTrack: existingTracksByItemID[media.itemID],
+        sourceTrack: media.track,
+        existingAlbum: existingTracksByItemID[media.itemID]?.albumID.flatMap {
+          existingAlbumsByID[$0]
+        },
+        sourceAlbum: Self.sourceAlbum(
+          for: media.track.albumID,
+          in: media.transaction
+        )
+      ) else { return nil }
+      return media.itemID
+    })
+    let albumIdentityRepairItemIDs = Set(plan.normalizedTracks.compactMap {
+      media -> MediaItemID? in
+      guard Self.shouldRepairAlbumIdentity(
+        existingTrack: existingTracksByItemID[media.itemID],
+        existingAlbum: existingTracksByItemID[media.itemID]?.albumID.flatMap {
+          existingAlbumsByID[$0]
+        },
+        previousSource: existingVariantsByItemID[media.itemID]?.sourceMetadata,
+        sourceTrack: media.track,
+        sourceAlbum: Self.sourceAlbum(for: media.track.albumID, in: media.transaction),
+        legacyAlbumIDs: plan.legacyAlbumIDsByItemID[media.itemID] ?? []
+      ) else { return nil }
+      return media.itemID
+    })
     let repairOrRefreshItemIDs = repairItemIDs
       .union(artworkRepairItemIDs)
       .union(sourceRefreshItemIDs)
       .union(audioSelectionRepairItemIDs)
+      .union(sourceMetadataRepairItemIDs)
+      .union(albumIdentityRepairItemIDs)
     if request.duplicatePolicy == .report,
        !existingItemIDs.subtracting(repairOrRefreshItemIDs).isEmpty
     {
@@ -978,7 +1407,9 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
         existingVariants: existingVariantsByItemID,
         existingAlbums: existingAlbumsByID,
         artworkRepairItemIDs: artworkRepairItemIDs,
-        audioSelectionRepairItemIDs: audioSelectionRepairItemIDs
+        audioSelectionRepairItemIDs: audioSelectionRepairItemIDs,
+        sourceMetadataRepairItemIDs: sourceMetadataRepairItemIDs,
+        albumIdentityRepairItemIDs: albumIdentityRepairItemIDs
       )
 
       let artworkIDsToPersist = Set(sourceAwareImport.transaction.mutations.compactMap {
@@ -1136,6 +1567,14 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
         throw LocalMediaError.persistenceFailed
       }
       let alreadyImported = existingAssetID != nil
+      let shouldAttemptSourceMetadataRepair = Self.shouldAttemptSourceMetadataRepair(
+        existingTrack: existingTrack,
+        existingAlbum: existingAlbum,
+        hint: request.metadataHint(for: fileURL)
+      )
+      Self.logger.debug(
+        "content state id=\(request.importID.uuidString) managed=\(existingManagedURL != nil) track=\(existingTrack != nil) variant=\(existingVariant != nil) asset=\(existingAssetID != nil) policy=\(request.duplicatePolicy.rawValue)"
+      )
       if let existingManagedURL {
         // The external ID identifies the source bytes, so an existing managed
         // path is reusable only when its contents still match that identity.
@@ -1146,13 +1585,22 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
           throw LocalMediaError.destinationConflict
         }
 
-        if alreadyImported, !Self.needsAudioSelectionRepair(existingTrack) {
+        if alreadyImported,
+           !Self.needsAudioSelectionRepair(existingTrack),
+           !shouldAttemptSourceMetadataRepair
+        {
           switch request.duplicatePolicy {
           case .skip:
+            Self.logger.info(
+              "content decision id=\(request.importID.uuidString) result=skipped reason=content_hash_match"
+            )
             await staging.remove(staged)
             stagedURL = nil
             return .skipped
           case .report:
+            Self.logger.info(
+              "content decision id=\(request.importID.uuidString) result=duplicate reason=content_hash_match"
+            )
             throw LocalMediaError.duplicate
           }
         }
@@ -1177,9 +1625,14 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
       do {
         let embeddedMetadata = try await metadataReader.readMetadata(from: resource)
         let sidecarLyrics = try? LocalLyricsReader.readSidecar(for: fileURL)
-        rawMetadata = embeddedMetadata.lyrics == nil
+        let metadataWithLyrics = embeddedMetadata.lyrics == nil
           ? embeddedMetadata.replacingLyrics(sidecarLyrics ?? nil)
           : embeddedMetadata
+        rawMetadata = Self.applyingMetadataHint(
+          request.metadataHint(for: fileURL),
+          to: metadataWithLyrics,
+          parsedFileURL: staged
+        )
       } catch is CancellationError {
         throw CancellationError()
       } catch {
@@ -1189,6 +1642,7 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
       let normalized = try MetadataNormalizer().normalize(
         fileURL: fileURL,
         stagedFileURL: staged,
+        preferredFileName: request.metadataHint(for: fileURL)?.displayName,
         folderPath: folderPath,
         contentHash: contentHash,
         probe: probeResult,
@@ -1214,6 +1668,15 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
         else { return [] }
         return [itemID]
       }()
+      let sourceMetadataRepairItemIDs: Set<MediaItemID> = Self.needsSourceMetadataRepair(
+        existingTrack: existingTrack,
+        sourceTrack: normalized.track,
+        existingAlbum: existingAlbum,
+        sourceAlbum: Self.sourceAlbum(
+          for: normalized.track.albumID,
+          in: normalized.transaction
+        )
+      ) ? [itemID] : []
       let sourceAwareImport = try Self.applyingSourceMetadataPolicy(
         to: normalized.transaction,
         plannedTracks: [normalized.track],
@@ -1222,7 +1685,9 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
         existingAlbums: existingAlbum.map { [$0.id: $0] } ?? [:],
         artworkRepairItemIDs: artworkRepairItemIDs,
         audioSelectionRepairItemIDs: Self.needsAudioSelectionRepair(existingTrack)
-          ? [itemID] : []
+          ? [itemID] : [],
+        sourceMetadataRepairItemIDs: sourceMetadataRepairItemIDs,
+        albumIdentityRepairItemIDs: []
       )
       let transaction = try preservingUserPlaybackState(
         in: sourceAwareImport.transaction,
@@ -1236,6 +1701,9 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
       )
 
       if existingManagedURL == nil {
+        Self.logger.info(
+          "content decision id=\(request.importID.uuidString) result=imported managedFile=new repair=\(alreadyImported)"
+        )
         managedLocation = try await store.moveToManaged(
           stagedURL: staged,
           externalID: normalized.itemID.externalID
@@ -1364,7 +1832,10 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
           id: value.id,
           title: value.title,
           sortTitle: value.sortTitle,
-          artistIDs: value.artistIDs,
+          artistIDs: Self.mergedArtistIDs(
+            existing: counts.existingAlbums[value.id]?.artistIDs ?? [],
+            incoming: value.artistIDs
+          ),
           artwork: value.artwork,
           releaseYear: value.releaseYear,
           trackCount: count,
@@ -1433,10 +1904,14 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
       var albumFallbackCounts: [AlbumID: Int] = [:]
       var discFallbackCounts: [DiscID: Int] = [:]
       var existingDiscs: [DiscID: Disc] = [:]
+      var existingAlbums: [AlbumID: Album] = [:]
 
       for albumID in albumIDs.sorted() {
-        if let count = try await libraryRepository.album(id: albumID)?.trackCount {
-          albumFallbackCounts[albumID] = count
+        if let album = try await libraryRepository.album(id: albumID) {
+          existingAlbums[albumID] = album
+          if let count = album.trackCount {
+            albumFallbackCounts[albumID] = count
+          }
         }
         let releaseID = AlbumReleaseID(legacyAlbumID: albumID)
         for disc in try await libraryRepository.discs(for: releaseID) {
@@ -1470,7 +1945,8 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
         discTrackIDs: discTrackIDs,
         albumFallbackCounts: albumFallbackCounts,
         discFallbackCounts: discFallbackCounts,
-        existingDiscs: existingDiscs
+        existingDiscs: existingDiscs,
+        existingAlbums: existingAlbums
       )
     } catch is CancellationError {
       throw CancellationError()
@@ -1497,6 +1973,14 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
     let knownIncomingCount = incomingIDs.intersection(knownExistingItemIDs).count
     let newIncomingCount = incomingIDs.subtracting(knownExistingItemIDs).count
     return max(fallback, knownIncomingCount) + newIncomingCount
+  }
+
+  private static func mergedArtistIDs(
+    existing: [ArtistID],
+    incoming: [ArtistID]
+  ) -> [ArtistID] {
+    var seen = Set<ArtistID>()
+    return (existing + incoming).filter { seen.insert($0).inserted }
   }
 
   private func preservingUserPlaybackState(
@@ -1607,6 +2091,119 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
     return !streams.contains(where: \.isDefault)
   }
 
+  private static func shouldAttemptSourceMetadataRepair(
+    existingTrack: Track?,
+    existingAlbum: Album?,
+    hint: MediaImportMetadataHint?
+  ) -> Bool {
+    guard let existingTrack else { return false }
+    if isLikelyMojibake(existingTrack.title)
+      || isLikelyMojibake(existingTrack.comment)
+      || isLikelyMojibake(existingTrack.lyrics?.rawText)
+      || isLikelyMojibake(existingAlbum?.title)
+    {
+      return true
+    }
+    guard isPrivateStagingTitle(existingTrack.title),
+          let hint,
+          let hintedTitle = hint.title ?? hint.displayName.map({
+            URL(fileURLWithPath: $0).deletingPathExtension().lastPathComponent
+          }),
+          !isPrivateStagingTitle(hintedTitle),
+          hintedTitle.caseInsensitiveCompare(existingTrack.title) != .orderedSame
+    else { return false }
+    return true
+  }
+
+  private static func needsSourceMetadataRepair(
+    existingTrack: Track?,
+    sourceTrack: Track,
+    existingAlbum: Album?,
+    sourceAlbum: Album?
+  ) -> Bool {
+    guard let existingTrack else { return false }
+    return (isPrivateStagingTitle(existingTrack.title)
+      && !isPrivateStagingTitle(sourceTrack.title))
+      || isMojibakeTransition(
+        existing: existingTrack.title,
+        source: sourceTrack.title
+      )
+      || isMojibakeTransition(
+        existing: existingAlbum?.title,
+        source: sourceAlbum?.title
+      )
+      || isMojibakeTransition(
+        existing: existingTrack.comment,
+        source: sourceTrack.comment
+      )
+      || isMojibakeTransition(
+        existing: existingTrack.lyrics?.rawText,
+        source: sourceTrack.lyrics?.rawText
+      )
+  }
+
+  private static func isLikelyMojibake(_ value: String?) -> Bool {
+    guard let value else { return false }
+    return MetadataTextRepair.isLikelyMojibake(value)
+  }
+
+  private static func isMojibakeTransition(
+    existing: String?,
+    source: String?
+  ) -> Bool {
+    guard let existing,
+          let source,
+          existing.caseInsensitiveCompare(source) != .orderedSame
+    else { return false }
+    return isLikelyMojibake(existing) && !isLikelyMojibake(source)
+  }
+
+  private static func repairsLegacyAlbum(
+    existingTrack: Track,
+    sourceTrack: Track,
+    existingAlbum: Album?,
+    sourceAlbum: Album?
+  ) -> Bool {
+    if existingTrack.albumID == nil {
+      return sourceTrack.albumID != nil
+    }
+    return isMojibakeTransition(
+      existing: existingAlbum?.title,
+      source: sourceAlbum?.title
+    )
+  }
+
+  private static func shouldRepairAlbumIdentity(
+    existingTrack: Track?,
+    existingAlbum: Album?,
+    previousSource: TrackSourceMetadataSnapshot?,
+    sourceTrack: Track,
+    sourceAlbum: Album?,
+    legacyAlbumIDs: Set<AlbumID>
+  ) -> Bool {
+    guard let existingTrack,
+          let existingAlbum,
+          let existingAlbumID = existingTrack.albumID,
+          let sourceAlbumID = sourceTrack.albumID,
+          existingAlbumID != sourceAlbumID,
+          legacyAlbumIDs.contains(existingAlbumID),
+          existingAlbum.title.caseInsensitiveCompare(sourceAlbum?.title ?? "") == .orderedSame
+    else { return false }
+
+    if let previousSource, previousSource.albumID != existingAlbumID {
+      return false
+    }
+    return true
+  }
+
+  private static func isPrivateStagingTitle(_ value: String) -> Bool {
+    let lastPathComponent = URL(fileURLWithPath: value).lastPathComponent
+    let stem = URL(fileURLWithPath: lastPathComponent)
+      .deletingPathExtension()
+      .lastPathComponent
+    return UUID(uuidString: stem) != nil
+  }
+
   private static func applyingSourceMetadataPolicy(
     to transaction: LibraryTransaction,
     plannedTracks: [Track],
@@ -1614,25 +2211,46 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
     existingVariants: [MediaItemID: TrackVariant],
     existingAlbums: [AlbumID: Album],
     artworkRepairItemIDs: Set<MediaItemID>,
-    audioSelectionRepairItemIDs: Set<MediaItemID>
+    audioSelectionRepairItemIDs: Set<MediaItemID>,
+    sourceMetadataRepairItemIDs: Set<MediaItemID>,
+    albumIdentityRepairItemIDs: Set<MediaItemID>
   ) throws -> SourceAwareImport {
     var tracksByItemID: [MediaItemID: Track] = [:]
     var protectedAlbumIDs = Set<AlbumID>()
     var protectedArtistIDs = Set<ArtistID>()
     var protectedGenreIDs = Set<GenreID>()
+    let sourceAlbumsByID = transaction.mutations.reduce(into: [AlbumID: Album]()) {
+      result, mutation in
+      guard case .upsert(.album(let album)) = mutation else { return }
+      result[album.id] = album
+    }
 
     for sourceTrack in plannedTracks {
       guard let existingTrack = existingTracks[sourceTrack.id] else {
         tracksByItemID[sourceTrack.id] = sourceTrack
         continue
       }
+      let sourceAlbum = Self.sourceAlbum(
+        for: sourceTrack.albumID,
+        in: sourceAlbumsByID
+      )
+      let repairsLegacyAlbum = albumIdentityRepairItemIDs.contains(sourceTrack.id)
+        || (sourceMetadataRepairItemIDs.contains(sourceTrack.id) && Self.repairsLegacyAlbum(
+          existingTrack: existingTrack,
+          sourceTrack: sourceTrack,
+          existingAlbum: existingTrack.albumID.flatMap { existingAlbums[$0] },
+          sourceAlbum: sourceAlbum
+        ))
       let merged = mergingSourceMetadata(
         sourceTrack: sourceTrack,
         existingTrack: existingTrack,
         previousSource: existingVariants[sourceTrack.id]?.sourceMetadata,
         existingAlbum: existingTrack.albumID.flatMap { existingAlbums[$0] },
+        sourceAlbum: sourceAlbum,
         forceSourceArtwork: artworkRepairItemIDs.contains(sourceTrack.id),
-        forceSourceAudioSelection: audioSelectionRepairItemIDs.contains(sourceTrack.id)
+        forceSourceAudioSelection: audioSelectionRepairItemIDs.contains(sourceTrack.id),
+        repairLegacyMetadata: sourceMetadataRepairItemIDs.contains(sourceTrack.id),
+        repairAlbumIdentity: albumIdentityRepairItemIDs.contains(sourceTrack.id)
       )
       tracksByItemID[sourceTrack.id] = merged
       let previousSource = existingVariants[sourceTrack.id]?.sourceMetadata
@@ -1640,7 +2258,7 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
         previousSource == nil
           || existingTrack.albumID.flatMap { existingAlbums[$0] }
             .map(AlbumSourceMetadataSnapshot.init(album:)) != previousSource?.album
-      )
+      ) && !repairsLegacyAlbum
       if protectsAlbumEntity,
          merged.albumID == existingTrack.albumID,
          let albumID = merged.albumID
@@ -1769,14 +2387,61 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
     )
   }
 
+  private static func sourceAlbum(
+    for albumID: AlbumID?,
+    in transaction: LibraryTransaction
+  ) -> Album? {
+    guard let albumID else { return nil }
+    return sourceAlbum(for: albumID, in: transaction.mutations)
+  }
+
+  private static func sourceAlbum(
+    for albumID: AlbumID?,
+    in albums: [AlbumID: Album]
+  ) -> Album? {
+    guard let albumID else { return nil }
+    return albums[albumID]
+  }
+
+  private static func sourceAlbum(
+    for albumID: AlbumID,
+    in mutations: [LibraryMutation]
+  ) -> Album? {
+    mutations.compactMap { mutation -> Album? in
+      guard case .upsert(.album(let album)) = mutation,
+            album.id == albumID
+      else { return nil }
+      return album
+    }.first
+  }
+
   private static func mergingSourceMetadata(
     sourceTrack: Track,
     existingTrack: Track,
     previousSource: TrackSourceMetadataSnapshot?,
     existingAlbum: Album?,
+    sourceAlbum: Album?,
     forceSourceArtwork: Bool,
-    forceSourceAudioSelection: Bool
+    forceSourceAudioSelection: Bool,
+    repairLegacyMetadata: Bool,
+    repairAlbumIdentity: Bool
   ) -> Track {
+    let repairsLegacyTitle = repairLegacyMetadata && (
+      (isPrivateStagingTitle(existingTrack.title)
+        && !isPrivateStagingTitle(sourceTrack.title))
+      || (MetadataTextRepair.isLikelyMojibake(existingTrack.title)
+        && !MetadataTextRepair.isLikelyMojibake(sourceTrack.title))
+    )
+    let repairsLegacyAlbum = repairAlbumIdentity || (repairLegacyMetadata
+      && Self.repairsLegacyAlbum(
+        existingTrack: existingTrack,
+        sourceTrack: sourceTrack,
+        existingAlbum: existingAlbum,
+        sourceAlbum: sourceAlbum
+      ))
+    let repairsLegacyArtists = repairsLegacyTitle
+      && existingTrack.artistIDs.isEmpty
+      && !sourceTrack.artistIDs.isEmpty
     let preserveExistingAlbum: Bool
     if let previousSource {
       preserveExistingAlbum = existingAlbum.map(AlbumSourceMetadataSnapshot.init(album:))
@@ -1806,10 +2471,10 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
         logicalTrackID: sourceTrack.logicalTrackID,
         assetID: sourceTrack.assetID,
         playbackSelection: playbackSelection,
-        title: existingTrack.title,
-        sortTitle: existingTrack.sortTitle,
-        albumID: existingTrack.albumID,
-        artistIDs: existingTrack.artistIDs,
+        title: repairsLegacyTitle ? sourceTrack.title : existingTrack.title,
+        sortTitle: repairsLegacyTitle ? sourceTrack.sortTitle : existingTrack.sortTitle,
+        albumID: repairsLegacyAlbum ? sourceTrack.albumID : existingTrack.albumID,
+        artistIDs: repairsLegacyArtists ? sourceTrack.artistIDs : existingTrack.artistIDs,
         genreIDs: existingTrack.genreIDs,
         trackNumber: existingTrack.trackNumber,
         trackTotal: existingTrack.trackTotal,
@@ -1833,13 +2498,27 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
       logicalTrackID: sourceTrack.logicalTrackID,
       assetID: sourceTrack.assetID,
       playbackSelection: playbackSelection,
-      title: existingTrack.title == previousSource.title ? sourceTrack.title : existingTrack.title,
-      sortTitle: existingTrack.sortTitle == previousSource.sortTitle
-        ? sourceTrack.sortTitle : existingTrack.sortTitle,
-      albumID: !preserveExistingAlbum && existingTrack.albumID == previousSource.albumID
-        ? sourceTrack.albumID : existingTrack.albumID,
-      artistIDs: existingTrack.artistIDs == previousSource.artistIDs
-        ? sourceTrack.artistIDs : existingTrack.artistIDs,
+      title: repairsLegacyTitle
+        ? sourceTrack.title
+        : (existingTrack.title == previousSource.title ? sourceTrack.title : existingTrack.title),
+      sortTitle: repairsLegacyTitle
+        ? sourceTrack.sortTitle
+        : (
+          existingTrack.sortTitle == previousSource.sortTitle
+            ? sourceTrack.sortTitle : existingTrack.sortTitle
+        ),
+      albumID: repairsLegacyAlbum
+        ? sourceTrack.albumID
+        : (
+          !preserveExistingAlbum && existingTrack.albumID == previousSource.albumID
+            ? sourceTrack.albumID : existingTrack.albumID
+        ),
+      artistIDs: repairsLegacyArtists
+        ? sourceTrack.artistIDs
+        : (
+          existingTrack.artistIDs == previousSource.artistIDs
+            ? sourceTrack.artistIDs : existingTrack.artistIDs
+        ),
       genreIDs: existingTrack.genreIDs == previousSource.genreIDs
         ? sourceTrack.genreIDs : existingTrack.genreIDs,
       trackNumber: existingTrack.trackNumber == previousSource.trackNumber
@@ -1881,6 +2560,44 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
     default:
       return .probeFailed
     }
+  }
+
+  private static func applyingMetadataHint(
+    _ hint: MediaImportMetadataHint?,
+    to embedded: RawMediaMetadata,
+    parsedFileURL: URL
+  ) -> RawMediaMetadata {
+    guard let hint else { return embedded }
+    let parsedFileNames = [
+      parsedFileURL.lastPathComponent,
+      parsedFileURL.deletingPathExtension().lastPathComponent,
+    ]
+    let embeddedTitleIsParserFileName = embedded.title.map { title in
+      parsedFileNames.contains {
+        $0.caseInsensitiveCompare(title) == .orderedSame
+      }
+    } ?? false
+    let hintedDisplayTitle = hint.displayName.map {
+      URL(fileURLWithPath: $0).deletingPathExtension().lastPathComponent
+    }
+    let resolvedTitle = embeddedTitleIsParserFileName
+      ? (hint.title ?? hintedDisplayTitle ?? embedded.title)
+      : (embedded.title ?? hint.title ?? hintedDisplayTitle)
+    return RawMediaMetadata(
+      title: resolvedTitle,
+      artist: embedded.artist ?? hint.artist,
+      album: embedded.album ?? hint.album,
+      albumArtist: embedded.albumArtist,
+      composer: embedded.composer,
+      genre: embedded.genre,
+      comment: embedded.comment,
+      lyrics: embedded.lyrics,
+      trackNumber: embedded.trackNumber,
+      discNumber: embedded.discNumber,
+      year: embedded.year,
+      duration: embedded.duration ?? hint.duration,
+      artworks: embedded.artworks
+    )
   }
 
   private static func bundle(

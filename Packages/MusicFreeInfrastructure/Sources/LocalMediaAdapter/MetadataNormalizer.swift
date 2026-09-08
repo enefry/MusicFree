@@ -10,6 +10,7 @@ struct NormalizedMedia: Sendable {
   let transaction: LibraryTransaction
   let artworkID: ArtworkID?
   let artworkData: Data?
+  let artworkOrigin: AlbumArtworkOrigin
 }
 
 @available(macOS 13.0, iOS 16.0, *)
@@ -17,6 +18,7 @@ struct MetadataNormalizer: Sendable {
   func normalize(
     fileURL: URL,
     stagedFileURL: URL? = nil,
+    preferredFileName: String? = nil,
     folderPath: String? = nil,
     contentHash: String,
     probe: MediaProbeResult,
@@ -43,12 +45,23 @@ struct MetadataNormalizer: Sendable {
     guard itemID.sourceID == .local, assetID.sourceID == .local else {
       throw LocalMediaError.invalidItemID
     }
+    let displayFileName = Self.fileName(
+      preferredFileName,
+      fallback: fileURL.lastPathComponent
+    )
     let title = Self.clean(metadata.title)
-      ?? Self.clean(fileURL.deletingPathExtension().lastPathComponent)
+      ?? Self.clean(
+        URL(fileURLWithPath: displayFileName)
+          .deletingPathExtension()
+          .lastPathComponent
+      )
       ?? "Untitled"
 
     let artistName = Self.clean(metadata.artist)
-    let albumArtistName = Self.clean(metadata.albumArtist) ?? artistName
+    // A track artist is not an album artist. In particular, a compilation
+    // or an album with featured artists must keep one album identity unless
+    // the file explicitly provides a different album artist.
+    let albumArtistName = Self.clean(metadata.albumArtist)
     let albumArtistNames = albumArtistName.map { [$0] } ?? []
     let albumTitle = Self.clean(metadata.album)
     let genreName = Self.clean(metadata.genre)
@@ -57,11 +70,22 @@ struct MetadataNormalizer: Sendable {
     let albumArtistIDs = albumArtistNames.map(Self.artistID)
     let genreID = genreName.map { Self.genreID(for: $0) }
     let albumID = explicitAlbumID ?? albumTitle.map {
-      Self.albumID(for: $0, artistNames: albumArtistNames)
+      Self.albumID(for: $0, artistNames: albumArtistNames, albumType: albumType)
     }
 
     let artworkID: ArtworkID?
-    let selectedArtwork = metadata.firstArtwork ?? fallbackArtwork
+    let selectedArtwork: RawArtwork?
+    let artworkOrigin: AlbumArtworkOrigin
+    if let fallbackArtwork, !fallbackArtwork.data.isEmpty {
+      selectedArtwork = fallbackArtwork
+      artworkOrigin = .folderOrSidecar
+    } else if let embeddedArtwork = metadata.firstArtwork, !embeddedArtwork.data.isEmpty {
+      selectedArtwork = embeddedArtwork
+      artworkOrigin = .embedded
+    } else {
+      selectedArtwork = nil
+      artworkOrigin = .embedded
+    }
     if let artwork = selectedArtwork, !artwork.data.isEmpty {
       artworkID = ArtworkID(rawValue: "sha256-\(MusicContentIdentity.sha256Hex(artwork.data))")
     } else {
@@ -114,13 +138,13 @@ struct MetadataNormalizer: Sendable {
       trackTotal: Self.positive(trackTotal),
       discNumber: Self.positive(metadata.discNumber),
       discTotal: Self.positive(discTotal),
-      fileName: fileURL.lastPathComponent,
+      fileName: displayFileName,
       folderPath: folderPath,
       duration: duration,
       technicalInfo: technicalInfo,
       year: Self.validYear(metadata.year),
-      comment: metadata.comment,
-      lyrics: metadata.lyrics.map(TrackLyrics.init(rawText:)),
+      comment: Self.clean(metadata.comment),
+      lyrics: Self.clean(metadata.lyrics).map(TrackLyrics.init(rawText:)),
       artwork: artworkReference
     )
 
@@ -176,14 +200,25 @@ struct MetadataNormalizer: Sendable {
       track: track,
       transaction: transaction,
       artworkID: artworkID,
-      artworkData: selectedArtwork?.data
+      artworkData: selectedArtwork?.data,
+      artworkOrigin: artworkOrigin
     )
   }
 
   private static func clean(_ value: String?) -> String? {
     guard let value else { return nil }
-    let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    let normalized = MetadataTextRepair.repair(value)
+      .trimmingCharacters(in: .whitespacesAndNewlines)
     return normalized.isEmpty ? nil : normalized
+  }
+
+  private static func fileName(_ value: String?, fallback: String) -> String {
+    guard let value = clean(value) else { return fallback }
+    let pathNormalized = value.replacingOccurrences(of: "\\", with: "/")
+    let leaf = URL(fileURLWithPath: pathNormalized).lastPathComponent
+    let invalid = CharacterSet(charactersIn: "/\\:\0")
+    let sanitized = leaf.components(separatedBy: invalid).joined(separator: "_")
+    return clean(sanitized) ?? fallback
   }
 
   private static func nonNegative(_ duration: Duration?) -> Duration? {
@@ -264,7 +299,25 @@ struct MetadataNormalizer: Sendable {
     ArtistID(rawValue: "local-artist-\(stableToken(name))")
   }
 
-  private static func albumID(for title: String, artistNames: [String]) -> AlbumID {
+  private static func albumID(
+    for title: String,
+    artistNames: [String],
+    albumType: AlbumType?
+  ) -> AlbumID {
+    if albumType == .compilation {
+      let token = MusicContentIdentity.compositeToken([
+        "local-compilation-album",
+        title
+      ])
+      return AlbumID(rawValue: "local-album-\(token)")
+    }
+    guard let artistName = artistNames.first else {
+      return AlbumID(rawValue: "local-album-\(stableToken(title))")
+    }
+    return legacyAlbumID(for: title, artistNames: [artistName])
+  }
+
+  static func legacyAlbumID(for title: String, artistNames: [String]) -> AlbumID {
     let token: String
     if artistNames.count <= 1 {
       // Preserve the pre-multi-artist ID format for existing libraries.

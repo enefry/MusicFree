@@ -1,10 +1,21 @@
 // MusicFree shared application metadata.
 
-BUILD_VERSION = 2026082301
-APP_VERSION = 1.1.100
+BUILD_VERSION = 2026082501
+APP_VERSION = 1.2.0
 
 APP_CATEGORY = public.app-category.music
 APP_DISPLAY_NAME = MyMusic
+
+// Google Drive OAuth uses public client identifiers. Keep the feature disabled
+// in the committed baseline and enable/configure it in a local xcconfig or CI.
+GOOGLE_DRIVE_OAUTH_ENABLED = NO
+GOOGLE_DRIVE_OAUTH_CLIENT_ID =
+GOOGLE_DRIVE_OAUTH_REVERSED_CLIENT_ID =
+GOOGLE_DRIVE_OAUTH_REDIRECT_URL = win.tools4me.music:/oauth2redirect/google
+GOOGLE_DRIVE_OAUTH_URL_SCHEME = win.tools4me.music
+
+// Production project generation keeps optional diagnostics out of every target.
+MUSICFREE_DEBUG_SUPPORT_ENABLED = NO
 
 MARKETING_VERSION = $(APP_VERSION)
 CURRENT_PROJECT_VERSION = $(BUILD_VERSION)
@@ -39,3 +50,6 @@ DISCOGS_API_MINIMUM_REQUEST_INTERVAL =
 
 LRCLIB_API_BASE_URL = $(HTTPS_PREFIX)lrclib.net
 LRCLIB_API_REQUEST_TIMEOUT = 20
+
+// Optional developer/CI overrides. The real file is ignored by Git.
+#include? "GoogleDriveOAuth.local.xcconfig"

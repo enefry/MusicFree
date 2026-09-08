@@ -6,6 +6,9 @@ enum PersistenceCodec {
 
     static func encode<Value: Encodable>(_ value: Value) throws -> Data {
         let encoder = JSONEncoder()
+        // Payload bytes are compared during metadata repair, so their key
+        // order must remain stable across process launches.
+        encoder.outputFormatting = [.sortedKeys]
         let preciseDatePrefix = Self.preciseDatePrefix
         encoder.dateEncodingStrategy = .custom { date, encoder in
             var container = encoder.singleValueContainer()

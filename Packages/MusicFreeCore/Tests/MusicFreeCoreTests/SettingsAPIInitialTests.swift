@@ -33,6 +33,17 @@ func settingsDefaultsAreSafe() {
     #expect(settings.storagePreferences.cacheLimit == .fiveGiB)
     #expect(settings.storagePreferences.automaticallyPruneCache)
     #expect(settings.storagePreferences.stagingRetention == .seconds(7 * 24 * 60 * 60))
+    #expect(!settings.loggingPreferences.isFileLoggingEnabled)
+}
+
+@Test("Legacy settings decode with file logging disabled")
+func legacySettingsDecodeFileLoggingDefaultsToDisabled() throws {
+    let payload = #"{"schemaVersion":1,"importPreferences":{},"playbackPreferences":{},"storagePreferences":{}}"#
+        .data(using: .utf8)!
+
+    let decoded = try JSONDecoder().decode(AppSettings.self, from: payload)
+
+    #expect(decoded.loggingPreferences == .defaults)
 }
 
 @Test("Import preferences migrate the legacy MusicKit flag and preserve provider order")

@@ -8,7 +8,7 @@ public struct ChannelLayout: Codable, Equatable, Hashable, Sendable {
     /// Creates a layout. The name is descriptive metadata, not a decoder hint.
     public init(channelCount: Int, name: String? = nil) {
         self.channelCount = musicDomainPositive(channelCount, field: "channelCount")
-        self.name = musicDomainOptionalText(name)
+        self.name = musicDomainOptionalTechnicalText(name)
     }
 
     public static let mono = Self(channelCount: 1, name: "mono")
@@ -88,10 +88,10 @@ public struct AudioStreamInfo: Codable, Equatable, Hashable, Sendable {
 
         self.streamID = streamID
         self.indexHint = indexHint
-        self.language = musicDomainOptionalText(language)
-        self.title = musicDomainOptionalText(title)
+        self.language = musicDomainOptionalTechnicalText(language)
+        self.title = musicDomainOptionalMetadataText(title)
         self.isDefault = isDefault
-        self.codec = musicDomainOptionalText(codec)
+        self.codec = musicDomainOptionalTechnicalText(codec)
         self.sampleRate = sampleRate
         self.bitDepth = bitDepth
         self.channels = channels
@@ -195,8 +195,8 @@ public struct MediaTechnicalInfo: Codable, Equatable, Hashable, Sendable {
             precondition(fileSizeBytes >= 0, "MusicDomain fileSizeBytes cannot be negative")
         }
 
-        self.container = musicDomainOptionalText(container)
-        self.codec = musicDomainOptionalText(codec)
+        self.container = musicDomainOptionalTechnicalText(container)
+        self.codec = musicDomainOptionalTechnicalText(codec)
         self.duration = duration
         self.audioStreams = audioStreams
         self.bitRate = bitRate

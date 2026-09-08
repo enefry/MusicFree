@@ -2,9 +2,9 @@ import AppServices
 import DesignSystem
 import Foundation
 import LibraryAPI
+import MediaSourceAPI
 import MusicDomain
 import Observation
-import OSLog
 import PlaybackAPI
 import SettingsAPI
 import SystemIntegrationAPI
@@ -63,7 +63,7 @@ final class SettingsViewModel {
     private var metadataRuntimeGeneration: UInt64 = 0
     private var lyricsPreloadIntentGeneration: UInt64 = 0
 
-    private static let metadataLogger = Logger(
+    private static let metadataLogger = MusicLogger(
         subsystem: "com.musicfree.app",
         category: "metadata-enrichment-ui"
     )
@@ -118,6 +118,14 @@ final class SettingsViewModel {
         settings.importPreferences.privacyPreferences.isPrivacyPolicyAccepted
     }
 
+    var isOnlineSourcesEnabled: Bool {
+        settings.importPreferences.onlineSourcePreferences.isEnabled
+    }
+
+    var onlineSourceConfigurations: [OnlineSourceConfiguration] {
+        settings.importPreferences.onlineSourcePreferences.sources
+    }
+
     var canEditPlayback: Bool {
         loadState == .loaded && !isLoading
     }
@@ -165,6 +173,10 @@ final class SettingsViewModel {
 
     var displayedCacheLimitBytes: Int64 {
         cacheLimitDraftBytes ?? settings.storagePreferences.cacheLimit.bytes
+    }
+
+    var isFileLoggingEnabled: Bool {
+        settings.loggingPreferences.isFileLoggingEnabled
     }
 
     var maximumCacheLimitBytes: Int64? {
@@ -473,6 +485,14 @@ final class SettingsViewModel {
                     sleepTimer: current.playbackPreferences.sleepTimer
                 ),
                 storagePreferences: current.storagePreferences
+            )
+        }
+    }
+
+    func setFileLoggingEnabled(_ isEnabled: Bool) {
+        applyEdit(preservingLoggingPreferences: false) { current in
+            current.settingLoggingPreferences(
+                LoggingPreferences(isFileLoggingEnabled: isEnabled)
             )
         }
     }
@@ -849,7 +869,8 @@ final class SettingsViewModel {
                     duplicatePolicy: policy,
                     metadataProviders: current.importPreferences.metadataProviders,
                     lyricsProviders: current.importPreferences.lyricsProviders,
-                    privacyPreferences: current.importPreferences.privacyPreferences
+                    privacyPreferences: current.importPreferences.privacyPreferences,
+                    onlineSourcePreferences: current.importPreferences.onlineSourcePreferences
                 ),
                 playbackPreferences: current.playbackPreferences,
                 storagePreferences: current.storagePreferences
@@ -914,6 +935,92 @@ final class SettingsViewModel {
         }
     }
 
+    func setOnlineSourcesEnabled(_ isEnabled: Bool) {
+        guard canEditPlayback else { return }
+        guard !isEnabled || isPrivacyPolicyAccepted else { return }
+        applyEdit { current in
+            AppSettings(
+                importPreferences: current.importPreferences
+                    .settingOnlineSourcePreferences(
+                        current.importPreferences.onlineSourcePreferences
+                            .settingEnabled(isEnabled)
+                    ),
+                playbackPreferences: current.playbackPreferences,
+                storagePreferences: current.storagePreferences
+            )
+        }
+    }
+
+    func setOnlineSourceEnabled(
+        _ sourceID: MediaSourceID,
+        _ isEnabled: Bool
+    ) {
+        guard canEditPlayback else { return }
+        guard !isEnabled || (
+            isPrivacyPolicyAccepted
+                && onlineSourceConfigurations.first(where: { $0.sourceID == sourceID })
+                    .map {
+                        $0.privacyPolicyVersion == $0.providerKind.defaultPrivacyPolicyVersion
+                    }
+                    == true
+        ) else {
+            return
+        }
+        do {
+            let preferences = try settings.importPreferences.onlineSourcePreferences
+                .settingSourceEnabled(sourceID, enabled: isEnabled)
+            applyEdit { current in
+                AppSettings(
+                    importPreferences: current.importPreferences
+                        .settingOnlineSourcePreferences(preferences),
+                    playbackPreferences: current.playbackPreferences,
+                    storagePreferences: current.storagePreferences
+                )
+            }
+        } catch {
+            recordValidationFailure(error)
+        }
+    }
+
+    func acceptOnlineSourcePrivacy(
+        _ sourceID: MediaSourceID,
+        policyVersion: String
+    ) {
+        guard canEditPlayback else { return }
+        do {
+            let preferences = try settings.importPreferences.onlineSourcePreferences
+                .acceptingSourcePrivacy(sourceID, policyVersion: policyVersion)
+            applyEdit { current in
+                AppSettings(
+                    importPreferences: current.importPreferences
+                        .settingOnlineSourcePreferences(preferences),
+                    playbackPreferences: current.playbackPreferences,
+                    storagePreferences: current.storagePreferences
+                )
+            }
+        } catch {
+            recordValidationFailure(error)
+        }
+    }
+
+    func revokeOnlineSourcePrivacy(_ sourceID: MediaSourceID) {
+        guard canEditPlayback else { return }
+        do {
+            let preferences = try settings.importPreferences.onlineSourcePreferences
+                .revokingSourcePrivacy(sourceID)
+            applyEdit { current in
+                AppSettings(
+                    importPreferences: current.importPreferences
+                        .settingOnlineSourcePreferences(preferences),
+                    playbackPreferences: current.playbackPreferences,
+                    storagePreferences: current.storagePreferences
+                )
+            }
+        } catch {
+            recordValidationFailure(error)
+        }
+    }
+
     func revokeOnlinePrivacy() {
         applyEdit { current in
             let importPreferences = current.importPreferences
@@ -927,6 +1034,9 @@ final class SettingsViewModel {
                     current.importPreferences.lyricsProviders.map {
                         $0.settingEnabled(false)
                     }
+                )
+                .settingOnlineSourcePreferences(
+                    current.importPreferences.onlineSourcePreferences.revokingAllPrivacy()
                 )
             return AppSettings(
                 importPreferences: importPreferences,
@@ -1164,7 +1274,7 @@ final class SettingsViewModel {
               metadataEnrichmentSnapshot.scan.status != .scanning
         else {
             Self.metadataLogger.debug(
-                "scan button ignored enabled=\(self.metadataEnrichmentSnapshot.isEnabled, privacy: .public) authorization=\(self.metadataEnrichmentSnapshot.authorization.rawValue, privacy: .public) status=\(self.metadataEnrichmentSnapshot.scan.status.rawValue, privacy: .public)"
+                "scan button ignored enabled=\(self.metadataEnrichmentSnapshot.isEnabled) authorization=\(self.metadataEnrichmentSnapshot.authorization.rawValue) status=\(self.metadataEnrichmentSnapshot.scan.status.rawValue)"
             )
             return
         }
@@ -1180,7 +1290,7 @@ final class SettingsViewModel {
             return
         }
         Self.metadataLogger.info(
-            "scan button tapped action=\(actionID, privacy: .public)"
+            "scan button tapped action=\(actionID)"
         )
 
         // Reflect the user action immediately. The service remains the source
@@ -1200,14 +1310,14 @@ final class SettingsViewModel {
                   self.metadataScanIntentGeneration == generation
             else {
                 Self.metadataLogger.debug(
-                    "scan action superseded action=\(actionID, privacy: .public)"
+                    "scan action superseded action=\(actionID)"
                 )
                 return
             }
             let snapshot = await metadataEnrichment.snapshot()
             self.metadataEnrichmentSnapshot = snapshot
             Self.metadataLogger.info(
-                "scan action accepted action=\(actionID, privacy: .public) status=\(snapshot.scan.status.rawValue, privacy: .public)"
+                "scan action accepted action=\(actionID) status=\(snapshot.scan.status.rawValue)"
             )
         }
     }
@@ -1224,7 +1334,7 @@ final class SettingsViewModel {
             return
         }
         Self.metadataLogger.info(
-            "cancel button tapped action=\(actionID, privacy: .public)"
+            "cancel button tapped action=\(actionID)"
         )
 
         let currentScan = metadataEnrichmentSnapshot.scan
@@ -1253,14 +1363,14 @@ final class SettingsViewModel {
                   self.metadataScanIntentGeneration == generation
             else {
                 Self.metadataLogger.debug(
-                    "cancel action superseded action=\(actionID, privacy: .public)"
+                    "cancel action superseded action=\(actionID)"
                 )
                 return
             }
             let snapshot = await metadataEnrichment.snapshot()
             self.metadataEnrichmentSnapshot = snapshot
             Self.metadataLogger.info(
-                "cancel action completed action=\(actionID, privacy: .public) status=\(snapshot.scan.status.rawValue, privacy: .public) processed=\(snapshot.scan.processed, privacy: .public)"
+                "cancel action completed action=\(actionID) status=\(snapshot.scan.status.rawValue) processed=\(snapshot.scan.processed)"
             )
         }
     }
@@ -1279,7 +1389,7 @@ final class SettingsViewModel {
               lyricsPreloadSnapshot.status != .downloading
         else {
             Self.metadataLogger.debug(
-                "lyrics preload button ignored status=\(self.lyricsPreloadSnapshot.status.rawValue, privacy: .public)"
+                "lyrics preload button ignored status=\(self.lyricsPreloadSnapshot.status.rawValue)"
             )
             return
         }
@@ -1289,7 +1399,7 @@ final class SettingsViewModel {
         lyricsPreloadActionTask?.cancel()
         let actionID = String(generation)
         Self.metadataLogger.info(
-            "lyrics preload button tapped action=\(actionID, privacy: .public)"
+            "lyrics preload button tapped action=\(actionID)"
         )
 
         lyricsPreloadSnapshot = LyricsPreloadSnapshot(status: .downloading)
@@ -1300,14 +1410,14 @@ final class SettingsViewModel {
                   self.lyricsPreloadIntentGeneration == generation
             else {
                 Self.metadataLogger.debug(
-                    "lyrics preload action superseded action=\(actionID, privacy: .public)"
+                    "lyrics preload action superseded action=\(actionID)"
                 )
                 return
             }
             let snapshot = await lyricsServing.preloadSnapshot()
             self.lyricsPreloadSnapshot = snapshot
             Self.metadataLogger.info(
-                "lyrics preload action accepted action=\(actionID, privacy: .public) status=\(snapshot.status.rawValue, privacy: .public)"
+                "lyrics preload action accepted action=\(actionID) status=\(snapshot.status.rawValue)"
             )
         }
     }
@@ -1324,7 +1434,7 @@ final class SettingsViewModel {
             return
         }
         Self.metadataLogger.info(
-            "lyrics preload cancel tapped action=\(actionID, privacy: .public)"
+            "lyrics preload cancel tapped action=\(actionID)"
         )
 
         let current = lyricsPreloadSnapshot
@@ -1347,14 +1457,14 @@ final class SettingsViewModel {
                   self.lyricsPreloadIntentGeneration == generation
             else {
                 Self.metadataLogger.debug(
-                    "lyrics preload cancel superseded action=\(actionID, privacy: .public)"
+                    "lyrics preload cancel superseded action=\(actionID)"
                 )
                 return
             }
             let snapshot = await lyricsServing.preloadSnapshot()
             self.lyricsPreloadSnapshot = snapshot
             Self.metadataLogger.info(
-                "lyrics preload cancel completed action=\(actionID, privacy: .public) status=\(snapshot.status.rawValue, privacy: .public) processed=\(snapshot.processed, privacy: .public)"
+                "lyrics preload cancel completed action=\(actionID) status=\(snapshot.status.rawValue) processed=\(snapshot.processed)"
             )
         }
     }
@@ -1457,7 +1567,7 @@ final class SettingsViewModel {
                 guard let self else { return }
                 self.metadataEnrichmentSnapshot = value
                 Self.metadataLogger.debug(
-                    "metadata snapshot received status=\(value.scan.status.rawValue, privacy: .public) processed=\(value.scan.processed, privacy: .public)/\(value.scan.total, privacy: .public) current=\(value.scan.currentTitle ?? "-", privacy: .public)"
+                    "metadata snapshot received status=\(value.scan.status.rawValue) processed=\(value.scan.processed)/\(value.scan.total) current=\(value.scan.currentTitle ?? "-")"
                 )
             }
             Self.metadataLogger.debug("metadata snapshot stream ended")
@@ -1477,7 +1587,7 @@ final class SettingsViewModel {
                 guard let self else { return }
                 self.lyricsPreloadSnapshot = value
                 Self.metadataLogger.debug(
-                    "lyrics preload snapshot received status=\(value.status.rawValue, privacy: .public) processed=\(value.processed, privacy: .public)/\(value.total, privacy: .public) current=\(value.currentTitle ?? "-", privacy: .public)"
+                    "lyrics preload snapshot received status=\(value.status.rawValue) processed=\(value.processed)/\(value.total) current=\(value.currentTitle ?? "-")"
                 )
             }
             Self.metadataLogger.debug("lyrics preload snapshot stream ended")
@@ -1600,11 +1710,18 @@ final class SettingsViewModel {
         enqueue(.reset(id: nextOperationID()))
     }
 
-    private func applyEdit(_ edit: (AppSettings) throws -> AppSettings) {
+    private func applyEdit(
+        preservingLoggingPreferences: Bool = true,
+        _ edit: (AppSettings) throws -> AppSettings
+    ) {
         guard canEditPlayback else { return }
 
         do {
-            let next = try edit(settings).validated()
+            var edited = try edit(settings)
+            if preservingLoggingPreferences {
+                edited = edited.settingLoggingPreferences(settings.loggingPreferences)
+            }
+            let next = try edited.validated()
             guard next != settings else { return }
             failedSaveSettings = nil
             settings = next

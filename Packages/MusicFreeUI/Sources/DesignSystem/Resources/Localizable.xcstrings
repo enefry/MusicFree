@@ -1,6 +1,39 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "跳转到专辑" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Go to Album" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "跳转到专辑" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Accéder à l’album" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Zum Album" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Ir al álbum" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "アルバムを表示" } }
+      }
+    },
+    "跳转到艺人" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Go to Artist" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "跳转到艺人" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Accéder à l’artiste" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Zum Künstler" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Ir al artista" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "アーティストを表示" } }
+      }
+    },
+    "已导入" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Imported" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已导入" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Importé" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Importiert" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Importado" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "インポート済み" } }
+      }
+    },
     "%lld min" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -904,6 +937,83 @@
         }
       }
     },
+    "library.search.albumKind" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Album" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "专辑" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Album" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Album" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Álbum" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "アルバム" } }
+      }
+    },
+    "library.search.albums" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Albums" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "专辑" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Albums" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Alben" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Álbumes" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "アルバム" } }
+      }
+    },
+    "library.search.placeholder" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Search albums and songs" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "搜索专辑和歌曲" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Rechercher des albums et des morceaux" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Alben und Titel durchsuchen" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Buscar álbumes y canciones" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "アルバムと曲を検索" } }
+      }
+    },
+    "library.search.songKind" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Song" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "歌曲" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Morceau" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Titel" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Canción" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "曲" } }
+      }
+    },
+    "library.search.songs" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Songs" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "歌曲" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Morceaux" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Titel" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Canciones" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "曲" } }
+      }
+    },
+    "library.search.tabTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Search" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "搜索" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Rechercher" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Suchen" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Buscar" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "検索" } }
+      }
+    },
+    "library.search.topResults" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Top Results" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "最佳结果" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Meilleurs résultats" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Top-Ergebnisse" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Mejores resultados" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "トップ結果" } }
+      }
+    },
     "library.title" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -984,6 +1094,116 @@
             "value" : "プレイリスト"
           }
         }
+      }
+    },
+    "onlineSources.detailDescription" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Source configuration and catalog content will appear here." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "来源配置与目录内容会显示在这里。" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "La configuration de la source et le contenu du catalogue s’afficheront ici." } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Quellkonfiguration und Kataloginhalte werden hier angezeigt." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "La configuración de la fuente y el contenido del catálogo aparecerán aquí." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ソース設定とカタログの内容がここに表示されます。" } }
+      }
+    },
+    "onlineSources.placeholderDescription" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Online sources will be connected in a later 1.2.0 requirement." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "在线源将在后续 1.2.0 需求中接入。" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Les sources en ligne seront intégrées dans une exigence ultérieure de la version 1.2.0." } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Online-Quellen werden in einer späteren Anforderung für Version 1.2.0 angebunden." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Las fuentes en línea se conectarán en un requisito posterior de la versión 1.2.0." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "オンラインソースは、今後の 1.2.0 要件で接続されます。" } }
+      }
+    },
+    "onlineSources.selectPrompt" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Select an Online Source" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "选择一个在线源" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Sélectionner une source en ligne" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Online-Quelle auswählen" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Seleccionar una fuente en línea" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "オンラインソースを選択" } }
+      }
+    },
+    "onlineSources.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Online Sources" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "在线源" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Sources en ligne" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Online-Quellen" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Fuentes en línea" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "オンラインソース" } }
+      }
+    },
+    "settings.category.about" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "About" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "关于" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "À propos" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Über" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Acerca de" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "情報" } }
+      }
+    },
+    "settings.category.general" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "General" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "通用" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Général" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Allgemein" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "General" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "一般" } }
+      }
+    },
+    "settings.category.importing" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Import and Metadata" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "导入与元数据" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Importation et métadonnées" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Import und Metadaten" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Importación y metadatos" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "読み込みとメタデータ" } }
+      }
+    },
+    "settings.category.playback" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Playback" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "播放" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Lecture" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Wiedergabe" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Reproducción" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "再生" } }
+      }
+    },
+    "settings.category.storage" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Storage" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "存储" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Stockage" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Speicher" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Almacenamiento" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ストレージ" } }
+      }
+    },
+    "settings.category.privacy" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Privacy and Online Services" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "隐私与联网服务" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Confidentialité et services en ligne" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Datenschutz und Onlinedienste" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Privacidad y servicios en línea" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "プライバシーとオンラインサービス" } }
       }
     },
     "settings.title" : {
@@ -15252,7 +15472,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Edit albums"
+            "value" : "Edit Album"
           }
         },
         "zh-Hans" : {
@@ -15264,19 +15484,19 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Modifier les albums"
+            "value" : "Modifier l’album"
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Alben bearbeiten"
+            "value" : "Album bearbeiten"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Editar álbumes"
+            "value" : "Editar álbum"
           }
         },
         "ja" : {
@@ -17624,6 +17844,47 @@
         }
       }
     },
+    "选择" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Select"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sélectionner"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auswählen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Seleccionar"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "選択"
+          }
+        }
+      }
+    },
     "选择专辑" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -17753,7 +18014,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Select song"
+            "value" : "Select Songs"
           }
         },
         "zh-Hans" : {
@@ -17765,7 +18026,7 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Sélectionner un morceau"
+            "value" : "Sélectionner des morceaux"
           }
         },
         "de" : {
@@ -17777,7 +18038,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Seleccionar canción"
+            "value" : "Seleccionar canciones"
           }
         },
         "ja" : {
@@ -17948,6 +18209,47 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "配色"
+          }
+        }
+      }
+    },
+    "强调色" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Accent color"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "强调色"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couleur d’accent"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Akzentfarbe"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Color de acento"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アクセントカラー"
           }
         }
       }
@@ -19317,6 +19619,17 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "ファイルの場所" } }
       }
     },
+    "文件日志" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "File logging" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "文件日志" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Journalisation dans un fichier" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Dateiprotokollierung" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Registro en archivo" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ファイルログ" } }
+      }
+    },
     "文件大小" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -19326,6 +19639,94 @@
         "de" : { "stringUnit" : { "state" : "translated", "value" : "Dateigröße" } },
         "es" : { "stringUnit" : { "state" : "translated", "value" : "Tamaño del archivo" } },
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "ファイルサイズ" } }
+      }
+    },
+    "启用文件日志" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Enable file logging" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "启用文件日志" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Activer la journalisation dans un fichier" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Dateiprotokollierung aktivieren" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Activar el registro en archivo" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ファイルログを有効にする" } }
+      }
+    },
+    "滚动上限" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Rolling limit" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "滚动上限" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Limite de rotation" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Rotationslimit" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Límite de rotación" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ローテーション上限" } }
+      }
+    },
+    "正在准备日志文件" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Preparing log file" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在准备日志文件" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Préparation du fichier journal" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Protokolldatei wird vorbereitet" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Preparando el archivo de registro" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ログファイルを準備中" } }
+      }
+    },
+    "分享日志文件" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Share log file" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "分享日志文件" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Partager le fichier journal" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Protokolldatei teilen" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Compartir archivo de registro" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ログファイルを共有" } }
+      }
+    },
+    "无法分享日志文件" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Unable to share log file" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法分享日志文件" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Impossible de partager le fichier journal" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Protokolldatei kann nicht geteilt werden" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "No se puede compartir el archivo de registro" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ログファイルを共有できません" } }
+      }
+    },
+    "暂无可分享的日志文件" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "No log file is available to share" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "暂无可分享的日志文件" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Aucun fichier journal à partager" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Keine Protokolldatei zum Teilen verfügbar" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "No hay ningún archivo de registro para compartir" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "共有できるログファイルがありません" } }
+      }
+    },
+    "单文件滚动保存，超过 %@ 后覆盖旧内容。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "The log uses one rolling file and overwrites older content after %@." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "单文件滚动保存，超过 %@ 后覆盖旧内容。" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Le journal utilise un seul fichier tournant et remplace l’ancien contenu après %@." } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Das Protokoll verwendet eine rollierende Datei und überschreibt ältere Inhalte nach %@." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "El registro usa un único archivo rotativo y sobrescribe el contenido antiguo después de %@." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ログは1つのローテーションファイルに保存され、%@を超えると古い内容を上書きします。" } }
+      }
+    },
+    "按大小滚动，最多保留当前文件和 1 个归档文件。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Logs roll by size, keeping the active file and one archived file." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "按大小滚动，最多保留当前文件和 1 个归档文件。" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Les journaux sont renouvelés selon leur taille, avec le fichier actif et un seul fichier archivé conservés." } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Protokolle werden nach Größe rotiert; die aktive Datei und eine archivierte Datei bleiben erhalten." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Los registros rotan por tamaño y conservan el archivo activo y un archivo archivado." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ログはサイズでローテーションされ、アクティブファイルとアーカイブファイル1つが保持されます。" } }
       }
     },
     "在线获取" : {
@@ -19348,6 +19749,28 @@
         "de" : { "stringUnit" : { "state" : "translated", "value" : "Kein Liedtext" } },
         "es" : { "stringUnit" : { "state" : "translated", "value" : "Sin letra" } },
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "歌詞なし" } }
+      }
+    },
+    "无专辑" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "No Album" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无专辑" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Sans album" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Kein Album" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Sin álbum" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "アルバムなし" } }
+      }
+    },
+    "无专辑封面" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "No album artwork" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无专辑封面" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Aucune pochette d’album" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Kein Albumcover" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Sin portada de álbum" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "アルバムアートワークなし" } }
       }
     },
     "无法保存歌曲" : {
@@ -20363,15 +20786,15 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "アプリのプライバシーポリシー" } }
       }
     },
-    "应用隐私政策 v1.1.0" : {
+    "应用隐私政策 v1.2.0" : {
       "extractionState" : "manual",
       "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "App privacy policy v1.1.0" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "应用隐私政策 v1.1.0" } },
-        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Politique de confidentialité de l’app v1.1.0" } },
-        "de" : { "stringUnit" : { "state" : "translated", "value" : "Datenschutzrichtlinie der App v1.1.0" } },
-        "es" : { "stringUnit" : { "state" : "translated", "value" : "Política de privacidad de la app v1.1.0" } },
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "アプリのプライバシーポリシー v1.1.0" } }
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "App privacy policy v1.2.0" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "应用隐私政策 v1.2.0" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Politique de confidentialité de l’app v1.2.0" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Datenschutzrichtlinie der App v1.2.0" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Política de privacidad de la app v1.2.0" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "アプリのプライバシーポリシー v1.2.0" } }
       }
     },
     "应用隐私政策已同意" : {
@@ -20506,15 +20929,15 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "未確認" } }
       }
     },
-    "本地播放器的基本播放功能不需要联网。元数据和歌词服务属于可选的第三方服务，所有 Provider 默认关闭。" : {
+    "本地播放器的基本播放功能不需要联网。DS Audio、Google Drive、元数据和歌词都属于可选的第三方服务，所有 Provider 默认关闭。" : {
       "extractionState" : "manual",
       "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Basic local playback does not require a network connection. Metadata and lyrics are optional third-party services, and every Provider is disabled by default." } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "本地播放器的基本播放功能不需要联网。元数据和歌词服务属于可选的第三方服务，所有 Provider 默认关闭。" } },
-        "fr" : { "stringUnit" : { "state" : "translated", "value" : "La lecture locale de base ne nécessite pas de connexion réseau. Les services de métadonnées et de paroles sont des services tiers facultatifs, et tous les Providers sont désactivés par défaut." } },
-        "de" : { "stringUnit" : { "state" : "translated", "value" : "Die grundlegende lokale Wiedergabe benötigt keine Netzwerkverbindung. Metadaten- und Liedtextdienste sind optionale Dienste von Drittanbietern, und alle Provider sind standardmäßig deaktiviert." } },
-        "es" : { "stringUnit" : { "state" : "translated", "value" : "La reproducción local básica no requiere conexión de red. Los servicios de metadatos y letras son servicios de terceros opcionales y todos los Providers están desactivados de forma predeterminada." } },
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "基本的なローカル再生にネットワーク接続は必要ありません。メタデータと歌詞のサービスは任意の第三者サービスで、すべてのProviderはデフォルトで無効です。" } }
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Basic local playback does not require a network connection. DS Audio, Google Drive, metadata, and lyrics are optional third-party services, and every Provider is disabled by default." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "本地播放器的基本播放功能不需要联网。DS Audio、Google Drive、元数据和歌词都属于可选的第三方服务，所有 Provider 默认关闭。" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "La lecture locale de base ne nécessite pas de connexion réseau. DS Audio, Google Drive, les métadonnées et les paroles sont des services tiers facultatifs, et tous les Providers sont désactivés par défaut." } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Die grundlegende lokale Wiedergabe benötigt keine Netzwerkverbindung. DS Audio, Google Drive, Metadaten und Liedtexte sind optionale Dienste von Drittanbietern, und alle Provider sind standardmäßig deaktiviert." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "La reproducción local básica no requiere conexión de red. DS Audio, Google Drive, los metadatos y las letras son servicios de terceros opcionales y todos los Providers están desactivados de forma predeterminada." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "基本的なローカル再生にネットワーク接続は必要ありません。DS Audio、Google Drive、メタデータ、歌詞は任意の第三者サービスで、すべてのProviderはデフォルトで無効です。" } }
       }
     },
     "权限已拒绝" : {
@@ -20801,6 +21224,541 @@
         "de" : { "stringUnit" : { "state" : "translated", "value" : "Datenschutz und Onlinedienste" } },
         "es" : { "stringUnit" : { "state" : "translated", "value" : "Privacidad y servicios en línea" } },
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "プライバシーとオンラインサービス" } }
+        }
+    },
+    "以下文件无法导入。确认后将继续导入其他文件。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "The following files could not be imported. Confirm to continue with the remaining files." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "以下文件无法导入。确认后将继续导入其他文件。" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Les fichiers suivants n’ont pas pu être importés. Confirmez pour continuer avec les autres fichiers." } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Die folgenden Dateien konnten nicht importiert werden. Bestätigen Sie, um mit den übrigen Dateien fortzufahren." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "No se pudieron importar los siguientes archivos. Confirma para continuar con los demás archivos." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "次のファイルを読み込めませんでした。確認すると残りのファイルの読み込みを続行します。" } }
+      }
+    },
+    "部分文件导入失败" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Some files failed to import" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "部分文件导入失败" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Échec de l’importation de certains fichiers" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Einige Dateien konnten nicht importiert werden" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "No se pudieron importar algunos archivos" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "一部のファイルを読み込めませんでした" } }
+      }
+    },
+    "媒体解析失败或超时，请重试。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Media parsing failed or timed out. Try again." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "媒体解析失败或超时，请重试。" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "L’analyse du média a échoué ou a expiré. Réessayez." } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Die Medienanalyse ist fehlgeschlagen oder hat das Zeitlimit überschritten. Versuchen Sie es erneut." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "El análisis del archivo multimedia falló o agotó el tiempo de espera. Inténtalo de nuevo." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "メディアの解析に失敗したか、タイムアウトしました。もう一度お試しください。" } }
+      }
+    },
+    "已复制" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Copied" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已复制" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Copié" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Kopiert" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Copiado" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "コピーしました" } }
+      }
+    },
+    "复制失败列表" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Copy failure list" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "复制失败列表" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Copier la liste des échecs" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Fehlerliste kopieren" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Copiar lista de errores" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "失敗リストをコピー" } }
+      }
+    },
+    "继续导入其他文件" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Continue with other files" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "继续导入其他文件" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Continuer avec les autres fichiers" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Mit den übrigen Dateien fortfahren" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Continuar con los demás archivos" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "他のファイルの読み込みを続ける" } }
+      }
+    },
+    "%@ · 协议 %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ · Policy %@" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "%@ · 协议 %@" } }
+      }
+    },
+    "%d 项" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "%d items" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "%d 项" } }
+      }
+    },
+    "上一级" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Up one level" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "上一级" } }
+      }
+    },
+    "允许浏览、试听和下载" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Allow browsing, audition, and downloads" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "允许浏览、试听和下载" } }
+      }
+    },
+    "协议 %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Policy %@" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "协议 %@" } }
+      }
+    },
+    "浏览、试听和下载" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Browse, audition, and download" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "浏览、试听和下载" } }
+      }
+    },
+    "浏览此来源的文件夹和音频" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Browse folders and audio from this source" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "浏览此来源的文件夹和音频" } }
+      }
+    },
+    "浏览当前目录中的音频和文件夹" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Browse audio and folders in this directory" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "浏览当前目录中的音频和文件夹" } }
+      }
+    },
+    "点击文件夹进入下一级" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Open a folder to browse deeper" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "点击文件夹进入下一级" } }
+      }
+    },
+    "查看此来源隐私协议" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "View this source's privacy policy" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "查看此来源隐私协议" } }
+      }
+    },
+    "当前无法导入媒体库" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "The media library is currently unavailable for import." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "当前无法导入媒体库" } }
+      }
+    },
+    "当前目录" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Current directory" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "当前目录" } }
+      }
+    },
+    "点击文件夹进入下一级；导入当前文件夹会递归处理其中的音频。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Open a folder to browse deeper. Importing the current folder includes its audio files recursively." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "点击文件夹进入下一级；导入当前文件夹会递归处理其中的音频。" } }
+      }
+    },
+    "导入当前目录" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Import current directory" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "导入当前目录" } }
+      }
+    },
+    "包含子文件夹中的音频" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Includes audio in subfolders" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "包含子文件夹中的音频" } }
+      }
+    },
+    "导入全部" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Import all" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "导入全部" } }
+      }
+    },
+    "根目录" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Root directory" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "根目录" } }
+      }
+    },
+    "目录加载失败" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not load directory" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "目录加载失败" } }
+      }
+    },
+    "目录为空" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Directory is empty" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "目录为空" } }
+      }
+    },
+    "目录与试听" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Browse and audition" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "目录与试听" } }
+      }
+    },
+    "目录与下载" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Browse and download" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "目录与下载" } }
+      }
+    },
+    "撤销同意" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Revoke consent" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "撤销同意" } }
+      }
+    },
+    "撤销并停用" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Revoke and disable" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "撤销并停用" } }
+      }
+    },
+    "撤销此来源隐私协议？" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Revoke this source's privacy consent?" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "撤销此来源隐私协议？" } }
+      }
+    },
+    "搜索当前目录" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Search this directory" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "搜索当前目录" } }
+      }
+    },
+    "启用此来源" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Enable this source" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "启用此来源" } }
+      }
+    },
+    "请先同意来源协议并启用来源。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Accept the source policy and enable the source first." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "请先同意来源协议并启用来源。" } }
+      }
+    },
+    "同意来源隐私协议" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Accept source privacy policy" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "同意来源隐私协议" } }
+      }
+    },
+    "同意后才能浏览、试听或下载" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Accept it before browsing, audition, or downloading" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "同意后才能浏览、试听或下载" } }
+      }
+    },
+    "隐私协议" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Privacy policy" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "隐私协议" } }
+      }
+    },
+    "重新授权" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Reauthorize" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "重新授权" } }
+      }
+    },
+    "返回根目录" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Back to root directory" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "返回根目录" } }
+      }
+    },
+    "返回上一级" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Back up one level" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "返回上一级" } }
+      }
+    },
+    "%@选项" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ Options" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "%@选项" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Options de %@" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "%@-Optionen" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Opciones de %@" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%@のオプション" } }
+      }
+    },
+    "网格" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Grid" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "网格" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Grille" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Raster" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Cuadrícula" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "グリッド" } }
+      }
+    },
+    "列表" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "List" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "列表" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Liste" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Liste" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Lista" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "リスト" } }
+      }
+    },
+    "排序方式" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Sort By" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "排序方式" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Trier par" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Sortieren nach" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Ordenar por" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "並べ替え" } }
+      }
+    },
+    "显示与排序" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Display and Sort" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "显示与排序" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Affichage et tri" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Anzeige und Sortierung" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Visualización y orden" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "表示と並べ替え" } }
+      }
+    },
+    "添加日期" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Date Added" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "添加日期" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Date d’ajout" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Hinzugefügt" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Fecha de adición" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "追加日" } }
+      }
+    },
+    "连接 Google Drive" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Connect Google Drive" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "连接 Google Drive" } }
+      }
+    },
+    "所有音乐" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "All Music" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "所有音乐" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Toute la musique" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Alle Musik" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Toda la música" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "すべての音楽" } }
+      }
+    },
+    "按文件夹浏览" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Browse by Folder" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "按文件夹浏览" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Parcourir par dossier" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Nach Ordnern durchsuchen" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Explorar por carpeta" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "フォルダ別に閲覧" } }
+      }
+    },
+    "按专辑浏览" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Browse by Album" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "按专辑浏览" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Parcourir par album" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Nach Alben durchsuchen" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Explorar por álbum" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "アルバム別に閲覧" } }
+      }
+    },
+    "按艺人浏览" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Browse by Artist" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "按艺人浏览" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Parcourir par artiste" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Nach Künstlern durchsuchen" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Explorar por artista" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "アーティスト別に閲覧" } }
+      }
+    },
+    "浏览全部音乐" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Browse All Music" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "浏览全部音乐" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Parcourir toute la musique" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Alle Musik durchsuchen" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Explorar toda la música" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "すべての音楽を閲覧" } }
+      }
+    },
+    "加载更多" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Load More" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "加载更多" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Charger davantage" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Mehr laden" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Cargar más" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "さらに読み込む" } }
+      }
+    },
+    "加载更多失败" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Failed to Load More" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "加载更多失败" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Échec du chargement supplémentaire" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Mehr laden fehlgeschlagen" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Error al cargar más" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "追加読み込みに失敗" } }
+      }
+    },
+    "正在加载更多" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Loading More" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在加载更多" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Chargement supplémentaire" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Mehr wird geladen" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Cargando más" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "さらに読み込み中" } }
+      }
+    },
+    "升序" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Ascending" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "升序" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Croissant" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Aufsteigend" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Ascendente" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "昇順" } }
+      }
+    },
+    "降序" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Descending" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "降序" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Décroissant" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Absteigend" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Descendente" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "降順" } }
+      }
+    },
+    "名称 %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Name %@" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "名称 %@" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Nom %@" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Name %@" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Nombre %@" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "名前 %@" } }
+      }
+    },
+    "艺人 %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Artist %@" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "艺人 %@" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Artiste %@" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Künstler %@" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Artista %@" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "アーティスト %@" } }
+      }
+    },
+    "专辑 %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Album %@" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "专辑 %@" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Album %@" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Album %@" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Álbum %@" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "アルバム %@" } }
+      }
+    },
+    "年份 %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Year %@" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "年份 %@" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Année %@" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Jahr %@" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Año %@" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "年 %@" } }
+      }
+    },
+    "重试加载更多" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Retry Loading More" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "重试加载更多" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Réessayer le chargement" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Mehr laden erneut versuchen" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Reintentar cargar más" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "追加読み込みを再試行" } }
       }
     }
   },

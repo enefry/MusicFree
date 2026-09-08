@@ -1,4 +1,6 @@
 import Foundation
+import MediaSourceAPI
+import MusicDomain
 
 /// Reads a same-name sidecar without retaining the source URL in the library.
 /// The caller is responsible for holding any security-scoped access required
@@ -53,9 +55,7 @@ enum LocalLyricsReader {
     guard let data = try readData(at: sidecar, maximumByteCount: maximumByteCount) else {
       return nil
     }
-    return String(data: data, encoding: .utf8)
-      ?? String(data: data, encoding: .utf16)
-      ?? String(data: data, encoding: .isoLatin1)
+    return MetadataTextRepair.decode(data)
   }
 
   private static func readData(at url: URL, maximumByteCount: Int) throws -> Data? {

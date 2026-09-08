@@ -19,7 +19,8 @@ public struct PlaybackDisplaySnapshot: Codable, Equatable, Hashable, Sendable {
     artworkID: ArtworkID? = nil,
     duration: Duration? = nil
   ) {
-    let normalizedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+    let normalizedTitle = MetadataTextRepair.repair(title)
+      .trimmingCharacters(in: .whitespacesAndNewlines)
     precondition(!normalizedTitle.isEmpty, "PlaybackDisplaySnapshot.title cannot be empty")
     if let duration {
       precondition(duration >= .zero, "PlaybackDisplaySnapshot.duration cannot be negative")
@@ -36,7 +37,8 @@ public struct PlaybackDisplaySnapshot: Codable, Equatable, Hashable, Sendable {
     guard let value else {
       return nil
     }
-    let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    let normalized = MetadataTextRepair.repair(value)
+      .trimmingCharacters(in: .whitespacesAndNewlines)
     return normalized.isEmpty ? nil : normalized
   }
 }

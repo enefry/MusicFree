@@ -75,12 +75,6 @@ public enum MusicFreeLocalization {
 
 }
 
-/// Returns a String Catalog-backed resource for SwiftUI APIs that accept
-/// `LocalizedStringResource`.
-public func LR(_ key: String) -> LocalizedStringResource {
-    MusicFreeLocalization.resource(key)
-}
-
 /// Returns the selected-language string for model, error, and persistence
 /// boundaries that require an eagerly resolved `String`.
 public func L(_ key: String) -> String {
@@ -89,11 +83,4 @@ public func L(_ key: String) -> String {
 
 public func L(_ key: String, _ arguments: CVarArg...) -> String {
     MusicFreeLocalization.localized(key, arguments: arguments)
-}
-
-public extension View {
-    /// Keeps SwiftUI's LocalizedStringKey lookup aligned with the app language.
-    func musicFreeLanguageEnvironment() -> some View {
-        environment(\.locale, MusicFreeLocalization.locale)
-    }
 }

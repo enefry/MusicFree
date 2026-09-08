@@ -4,6 +4,7 @@ struct AppRouter: Equatable, Sendable {
     enum Route: String, CaseIterable, Hashable, Identifiable, Sendable {
         case library
         case playlists
+        case onlineSources
         case settings
 
         var id: Self { self }
@@ -14,6 +15,8 @@ struct AppRouter: Equatable, Sendable {
                 L("library.title")
             case .playlists:
                 L("playlists.title")
+            case .onlineSources:
+                L("onlineSources.title")
             case .settings:
                 L("settings.title")
             }
@@ -25,6 +28,8 @@ struct AppRouter: Equatable, Sendable {
                 "music.note.list"
             case .playlists:
                 "list.bullet.rectangle"
+            case .onlineSources:
+                "externaldrive.connected.to.line.below"
             case .settings:
                 "gearshape"
             }

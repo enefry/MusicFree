@@ -64,11 +64,37 @@ public struct AudioStreamSignature: Codable, Equatable, Hashable, Sendable {
     ) {
         if let channelCount { precondition(channelCount > 0) }
         if let indexHint { precondition(indexHint >= 0) }
-        self.language = musicDomainOptionalText(language)
-        self.title = musicDomainOptionalText(title)
-        self.codec = musicDomainOptionalText(codec)
+        self.language = musicDomainOptionalTechnicalText(language)
+        self.title = musicDomainOptionalMetadataText(title)
+        self.codec = musicDomainOptionalTechnicalText(codec)
         self.channelCount = channelCount
         self.indexHint = indexHint
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case language
+        case title
+        case codec
+        case channelCount
+        case indexHint
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let channelCount = try container.decodeIfPresent(Int.self, forKey: .channelCount)
+        let indexHint = try container.decodeIfPresent(Int.self, forKey: .indexHint)
+        guard channelCount == nil || channelCount! > 0,
+              indexHint == nil || indexHint! >= 0
+        else {
+            throw musicDomainDecodingFailure(decoder, field: "AudioStreamSignature")
+        }
+        self.init(
+            language: try container.decodeIfPresent(String.self, forKey: .language),
+            title: try container.decodeIfPresent(String.self, forKey: .title),
+            codec: try container.decodeIfPresent(String.self, forKey: .codec),
+            channelCount: channelCount,
+            indexHint: indexHint
+        )
     }
 }
 
@@ -154,10 +180,35 @@ public struct MediaAsset: Codable, Equatable, Hashable, Identifiable, Sendable {
         if let byteCount { precondition(byteCount >= 0, "MediaAsset.byteCount cannot be negative") }
         self.id = id
         self.contentRevision = musicDomainOptionalText(contentRevision)
-        self.fileName = musicDomainOptionalText(fileName)
-        self.folderPath = musicDomainOptionalText(folderPath)
+        self.fileName = musicDomainOptionalMetadataText(fileName)
+        self.folderPath = musicDomainOptionalMetadataText(folderPath)
         self.byteCount = byteCount
         self.technicalInfo = technicalInfo
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case contentRevision
+        case fileName
+        case folderPath
+        case byteCount
+        case technicalInfo
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let byteCount = try container.decodeIfPresent(Int64.self, forKey: .byteCount)
+        guard byteCount == nil || byteCount! >= 0 else {
+            throw musicDomainDecodingFailure(decoder, field: "MediaAsset.byteCount")
+        }
+        self.init(
+            id: try container.decode(MediaAssetID.self, forKey: .id),
+            contentRevision: try container.decodeIfPresent(String.self, forKey: .contentRevision),
+            fileName: try container.decodeIfPresent(String.self, forKey: .fileName),
+            folderPath: try container.decodeIfPresent(String.self, forKey: .folderPath),
+            byteCount: byteCount,
+            technicalInfo: try container.decodeIfPresent(MediaTechnicalInfo.self, forKey: .technicalInfo)
+        )
     }
 }
 
@@ -190,6 +241,51 @@ public struct AlbumSourceMetadataSnapshot: Codable, Equatable, Hashable, Sendabl
         artwork = album.artwork
         releaseYear = album.releaseYear
         albumType = album.albumType
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case sortTitle
+        case artistIDs
+        case artwork
+        case releaseYear
+        case albumType
+    }
+
+    private init(
+        id: AlbumID,
+        title: String,
+        sortTitle: String?,
+        artistIDs: [ArtistID],
+        artwork: ArtworkReference?,
+        releaseYear: Int?,
+        albumType: AlbumType?
+    ) {
+        self.id = id
+        self.title = musicDomainRequiredMetadataText(title, field: "AlbumSourceMetadataSnapshot.title")
+        self.sortTitle = musicDomainOptionalMetadataText(sortTitle)
+        self.artistIDs = musicDomainUnique(artistIDs)
+        self.artwork = artwork
+        self.releaseYear = releaseYear
+        self.albumType = albumType
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let releaseYear = try container.decodeIfPresent(Int.self, forKey: .releaseYear)
+        guard releaseYear == nil || (1...9_999).contains(releaseYear!) else {
+            throw musicDomainDecodingFailure(decoder, field: "AlbumSourceMetadataSnapshot")
+        }
+        self.init(
+            id: try container.decode(AlbumID.self, forKey: .id),
+            title: try container.decode(String.self, forKey: .title),
+            sortTitle: try container.decodeIfPresent(String.self, forKey: .sortTitle),
+            artistIDs: try container.decodeIfPresent([ArtistID].self, forKey: .artistIDs) ?? [],
+            artwork: try container.decodeIfPresent(ArtworkReference.self, forKey: .artwork),
+            releaseYear: releaseYear,
+            albumType: try container.decodeIfPresent(AlbumType.self, forKey: .albumType)
+        )
     }
 }
 
@@ -228,6 +324,92 @@ public struct TrackSourceMetadataSnapshot: Codable, Equatable, Hashable, Sendabl
         artwork = track.artwork
         self.album = album.map(AlbumSourceMetadataSnapshot.init(album:))
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case playbackSelection
+        case title
+        case sortTitle
+        case albumID
+        case artistIDs
+        case genreIDs
+        case trackNumber
+        case trackTotal
+        case discNumber
+        case discTotal
+        case year
+        case comment
+        case lyrics
+        case artwork
+        case album
+    }
+
+    private init(
+        playbackSelection: PlaybackSelection,
+        title: String,
+        sortTitle: String?,
+        albumID: AlbumID?,
+        artistIDs: [ArtistID],
+        genreIDs: [GenreID],
+        trackNumber: Int?,
+        trackTotal: Int?,
+        discNumber: Int?,
+        discTotal: Int?,
+        year: Int?,
+        comment: String?,
+        lyrics: TrackLyrics?,
+        artwork: ArtworkReference?,
+        album: AlbumSourceMetadataSnapshot?
+    ) {
+        self.playbackSelection = playbackSelection
+        self.title = musicDomainRequiredMetadataText(title, field: "TrackSourceMetadataSnapshot.title")
+        self.sortTitle = musicDomainOptionalMetadataText(sortTitle)
+        self.albumID = albumID
+        self.artistIDs = musicDomainUnique(artistIDs)
+        self.genreIDs = musicDomainUnique(genreIDs)
+        self.trackNumber = trackNumber
+        self.trackTotal = trackTotal
+        self.discNumber = discNumber
+        self.discTotal = discTotal
+        self.year = year
+        self.comment = musicDomainOptionalMetadataText(comment)
+        self.lyrics = lyrics
+        self.artwork = artwork
+        self.album = album
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let trackNumber = try container.decodeIfPresent(Int.self, forKey: .trackNumber)
+        let trackTotal = try container.decodeIfPresent(Int.self, forKey: .trackTotal)
+        let discNumber = try container.decodeIfPresent(Int.self, forKey: .discNumber)
+        let discTotal = try container.decodeIfPresent(Int.self, forKey: .discTotal)
+        let year = try container.decodeIfPresent(Int.self, forKey: .year)
+        guard trackNumber == nil || trackNumber! > 0,
+              trackTotal == nil || trackTotal! > 0,
+              discNumber == nil || discNumber! > 0,
+              discTotal == nil || discTotal! > 0,
+              year == nil || (1...9_999).contains(year!)
+        else {
+            throw musicDomainDecodingFailure(decoder, field: "TrackSourceMetadataSnapshot")
+        }
+        self.init(
+            playbackSelection: try container.decodeIfPresent(PlaybackSelection.self, forKey: .playbackSelection) ?? .wholeFile,
+            title: try container.decode(String.self, forKey: .title),
+            sortTitle: try container.decodeIfPresent(String.self, forKey: .sortTitle),
+            albumID: try container.decodeIfPresent(AlbumID.self, forKey: .albumID),
+            artistIDs: try container.decodeIfPresent([ArtistID].self, forKey: .artistIDs) ?? [],
+            genreIDs: try container.decodeIfPresent([GenreID].self, forKey: .genreIDs) ?? [],
+            trackNumber: trackNumber,
+            trackTotal: trackTotal,
+            discNumber: discNumber,
+            discTotal: discTotal,
+            year: year,
+            comment: try container.decodeIfPresent(String.self, forKey: .comment),
+            lyrics: try container.decodeIfPresent(TrackLyrics.self, forKey: .lyrics),
+            artwork: try container.decodeIfPresent(ArtworkReference.self, forKey: .artwork),
+            album: try container.decodeIfPresent(AlbumSourceMetadataSnapshot.self, forKey: .album)
+        )
+    }
 }
 
 @available(macOS 13.0, iOS 16.0, *)
@@ -259,9 +441,34 @@ public struct TrackVariant: Codable, Equatable, Hashable, Identifiable, Sendable
         self.assetID = assetID
         self.selection = selection
         self.availability = availability
-        self.sourceIdentityHint = musicDomainOptionalText(sourceIdentityHint)
-        self.sourceMetadataRevision = musicDomainOptionalText(sourceMetadataRevision)
+        self.sourceIdentityHint = musicDomainOptionalTechnicalText(sourceIdentityHint)
+        self.sourceMetadataRevision = musicDomainOptionalTechnicalText(sourceMetadataRevision)
         self.sourceMetadata = sourceMetadata
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case logicalTrackID
+        case assetID
+        case selection
+        case availability
+        case sourceIdentityHint
+        case sourceMetadataRevision
+        case sourceMetadata
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id: try container.decode(MediaItemID.self, forKey: .id),
+            logicalTrackID: try container.decode(LogicalTrackID.self, forKey: .logicalTrackID),
+            assetID: try container.decode(MediaAssetID.self, forKey: .assetID),
+            selection: try container.decodeIfPresent(PlaybackSelection.self, forKey: .selection) ?? .wholeFile,
+            availability: try container.decodeIfPresent(TrackVariantAvailability.self, forKey: .availability) ?? .available,
+            sourceIdentityHint: try container.decodeIfPresent(String.self, forKey: .sourceIdentityHint),
+            sourceMetadataRevision: try container.decodeIfPresent(String.self, forKey: .sourceMetadataRevision),
+            sourceMetadata: try container.decodeIfPresent(TrackSourceMetadataSnapshot.self, forKey: .sourceMetadata)
+        )
     }
 }
 
@@ -305,7 +512,7 @@ public struct LogicalTrack: Codable, Equatable, Hashable, Identifiable, Sendable
         self.id = id
         self.releaseID = releaseID
         self.discID = discID
-        self.title = musicDomainRequiredText(title, field: "LogicalTrack.title")
+        self.title = musicDomainRequiredMetadataText(title, field: "LogicalTrack.title")
         self.artistIDs = musicDomainUnique(artistIDs)
         self.genreIDs = musicDomainUnique(genreIDs)
         self.trackNumber = trackNumber
@@ -317,6 +524,75 @@ public struct LogicalTrack: Codable, Equatable, Hashable, Identifiable, Sendable
         self.isFavorite = isFavorite
         self.statistics = statistics
     }
+
+    public func replacingArtwork(_ artwork: ArtworkReference?) -> LogicalTrack {
+        LogicalTrack(
+            id: id,
+            releaseID: releaseID,
+            discID: discID,
+            title: title,
+            artistIDs: artistIDs,
+            genreIDs: genreIDs,
+            trackNumber: trackNumber,
+            trackTotal: trackTotal,
+            discNumber: discNumber,
+            discTotal: discTotal,
+            duration: duration,
+            artwork: artwork,
+            isFavorite: isFavorite,
+            statistics: statistics
+        )
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case releaseID
+        case discID
+        case title
+        case artistIDs
+        case genreIDs
+        case trackNumber
+        case trackTotal
+        case discNumber
+        case discTotal
+        case duration
+        case artwork
+        case isFavorite
+        case statistics
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let trackNumber = try container.decodeIfPresent(Int.self, forKey: .trackNumber)
+        let trackTotal = try container.decodeIfPresent(Int.self, forKey: .trackTotal)
+        let discNumber = try container.decodeIfPresent(Int.self, forKey: .discNumber)
+        let discTotal = try container.decodeIfPresent(Int.self, forKey: .discTotal)
+        let duration = try container.decodeIfPresent(Duration.self, forKey: .duration)
+        guard trackNumber == nil || trackNumber! > 0,
+              trackTotal == nil || trackTotal! > 0,
+              discNumber == nil || discNumber! > 0,
+              discTotal == nil || discTotal! > 0,
+              duration == nil || duration! >= .zero
+        else {
+            throw musicDomainDecodingFailure(decoder, field: "LogicalTrack")
+        }
+        self.init(
+            id: try container.decode(LogicalTrackID.self, forKey: .id),
+            releaseID: try container.decodeIfPresent(AlbumReleaseID.self, forKey: .releaseID),
+            discID: try container.decodeIfPresent(DiscID.self, forKey: .discID),
+            title: try container.decode(String.self, forKey: .title),
+            artistIDs: try container.decodeIfPresent([ArtistID].self, forKey: .artistIDs) ?? [],
+            genreIDs: try container.decodeIfPresent([GenreID].self, forKey: .genreIDs) ?? [],
+            trackNumber: trackNumber,
+            trackTotal: trackTotal,
+            discNumber: discNumber,
+            discTotal: discTotal,
+            duration: duration,
+            artwork: try container.decodeIfPresent(ArtworkReference.self, forKey: .artwork),
+            isFavorite: try container.decodeIfPresent(Bool.self, forKey: .isFavorite) ?? false,
+            statistics: try container.decodeIfPresent(PlaybackStatistics.self, forKey: .statistics) ?? .empty
+        )
+    }
 }
 
 public struct AlbumGroup: Codable, Equatable, Hashable, Identifiable, Sendable {
@@ -326,8 +602,23 @@ public struct AlbumGroup: Codable, Equatable, Hashable, Identifiable, Sendable {
 
     public init(id: AlbumGroupID, title: String, artistIDs: [ArtistID] = []) {
         self.id = id
-        self.title = musicDomainRequiredText(title, field: "AlbumGroup.title")
+        self.title = musicDomainRequiredMetadataText(title, field: "AlbumGroup.title")
         self.artistIDs = musicDomainUnique(artistIDs)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case artistIDs
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id: try container.decode(AlbumGroupID.self, forKey: .id),
+            title: try container.decode(String.self, forKey: .title),
+            artistIDs: try container.decodeIfPresent([ArtistID].self, forKey: .artistIDs) ?? []
+        )
     }
 }
 
@@ -357,12 +648,43 @@ public struct AlbumRelease: Codable, Equatable, Hashable, Identifiable, Sendable
         self.id = id
         self.legacyAlbumID = legacyAlbumID
         self.groupID = groupID
-        self.title = musicDomainRequiredText(title, field: "AlbumRelease.title")
+        self.title = musicDomainRequiredMetadataText(title, field: "AlbumRelease.title")
         self.artistIDs = musicDomainUnique(artistIDs)
         self.releaseYear = releaseYear
-        self.editionTitle = musicDomainOptionalText(editionTitle)
+        self.editionTitle = musicDomainOptionalMetadataText(editionTitle)
         self.albumType = albumType
         self.artwork = artwork
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case legacyAlbumID
+        case groupID
+        case title
+        case artistIDs
+        case releaseYear
+        case editionTitle
+        case albumType
+        case artwork
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let releaseYear = try container.decodeIfPresent(Int.self, forKey: .releaseYear)
+        guard releaseYear == nil || (1...9_999).contains(releaseYear!) else {
+            throw musicDomainDecodingFailure(decoder, field: "AlbumRelease.releaseYear")
+        }
+        self.init(
+            id: try container.decode(AlbumReleaseID.self, forKey: .id),
+            legacyAlbumID: try container.decodeIfPresent(AlbumID.self, forKey: .legacyAlbumID),
+            groupID: try container.decodeIfPresent(AlbumGroupID.self, forKey: .groupID),
+            title: try container.decode(String.self, forKey: .title),
+            artistIDs: try container.decodeIfPresent([ArtistID].self, forKey: .artistIDs) ?? [],
+            releaseYear: releaseYear,
+            editionTitle: try container.decodeIfPresent(String.self, forKey: .editionTitle),
+            albumType: try container.decodeIfPresent(AlbumType.self, forKey: .albumType),
+            artwork: try container.decodeIfPresent(ArtworkReference.self, forKey: .artwork)
+        )
     }
 }
 
@@ -379,8 +701,32 @@ public struct Disc: Codable, Equatable, Hashable, Identifiable, Sendable {
         self.id = id
         self.releaseID = releaseID
         self.number = number
-        self.title = musicDomainOptionalText(title)
+        self.title = musicDomainOptionalMetadataText(title)
         self.trackCount = trackCount
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case releaseID
+        case number
+        case title
+        case trackCount
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let number = try container.decode(Int.self, forKey: .number)
+        let trackCount = try container.decodeIfPresent(Int.self, forKey: .trackCount)
+        guard number > 0, trackCount == nil || trackCount! >= 0 else {
+            throw musicDomainDecodingFailure(decoder, field: "Disc")
+        }
+        self.init(
+            id: try container.decode(DiscID.self, forKey: .id),
+            releaseID: try container.decode(AlbumReleaseID.self, forKey: .releaseID),
+            number: number,
+            title: try container.decodeIfPresent(String.self, forKey: .title),
+            trackCount: trackCount
+        )
     }
 }
 
@@ -399,8 +745,25 @@ public struct LibraryCollection: Codable, Equatable, Hashable, Identifiable, Sen
     public init(id: LibraryCollectionID, kind: LibraryCollectionKind, title: String, artwork: ArtworkReference? = nil) {
         self.id = id
         self.kind = kind
-        self.title = musicDomainRequiredText(title, field: "LibraryCollection.title")
+        self.title = musicDomainRequiredMetadataText(title, field: "LibraryCollection.title")
         self.artwork = artwork
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case kind
+        case title
+        case artwork
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id: try container.decode(LibraryCollectionID.self, forKey: .id),
+            kind: try container.decode(LibraryCollectionKind.self, forKey: .kind),
+            title: try container.decode(String.self, forKey: .title),
+            artwork: try container.decodeIfPresent(ArtworkReference.self, forKey: .artwork)
+        )
     }
 }
 
@@ -414,6 +777,25 @@ public struct LibraryCollectionMember: Codable, Equatable, Hashable, Sendable {
         self.collectionID = collectionID
         self.releaseID = releaseID
         self.position = position
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case collectionID
+        case releaseID
+        case position
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let position = try container.decode(Int.self, forKey: .position)
+        guard position >= 0 else {
+            throw musicDomainDecodingFailure(decoder, field: "LibraryCollectionMember.position")
+        }
+        self.init(
+            collectionID: try container.decode(LibraryCollectionID.self, forKey: .collectionID),
+            releaseID: try container.decode(AlbumReleaseID.self, forKey: .releaseID),
+            position: position
+        )
     }
 }
 

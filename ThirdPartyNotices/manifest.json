@@ -2,6 +2,28 @@
   "schemaVersion": 1,
   "dependencies": [
     {
+      "id": "kingfisher",
+      "name": "Kingfisher",
+      "version": "8.12.0",
+      "license": "MIT",
+      "kind": "source",
+      "sourceURL": "https://github.com/onevcat/Kingfisher",
+      "licenseURL": "https://github.com/onevcat/Kingfisher/blob/8.12.0/LICENSE",
+      "licenseFile": "Kingfisher-MIT.txt",
+      "revision": "be0d257b9bd47a4e6e1265fc8c237411825f107a"
+    },
+    {
+      "id": "cocoalumberjack",
+      "name": "CocoaLumberjack",
+      "version": "3.9.1",
+      "license": "BSD-3-Clause",
+      "kind": "source",
+      "sourceURL": "https://github.com/CocoaLumberjack/CocoaLumberjack",
+      "licenseURL": "https://spdx.org/licenses/BSD-3-Clause.html",
+      "licenseFile": "CocoaLumberjack-BSD-3-Clause.txt",
+      "revision": "c5f2ed4d219866117e135cf648180dc7b66739d3"
+    },
+    {
       "id": "musicfreevlckit",
       "name": "MusicFreeVLCKit VLCKit wrapper",
       "version": "4.0.0-audio.20260814.3",

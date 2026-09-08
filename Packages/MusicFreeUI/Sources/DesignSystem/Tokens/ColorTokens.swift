@@ -45,9 +45,9 @@ public enum MusicFreeColorTokens {
     public static let foregroundTertiary = Color(.tertiaryLabel)
     public static let separator = Color(.separator)
 
-    public static let accent = Color(.systemPink)
-    public static let accentSoft = Color(.systemPink).opacity(0.14)
-    public static let onAccent = Color.white
+    public static var accent: Color { MusicFreeAccentColorStore.color }
+    public static var accentSoft: Color { MusicFreeAccentColorStore.color.opacity(0.14) }
+    public static var onAccent: Color { MusicFreeAccentColorStore.onAccentColor(forHex: MusicFreeAccentColorStore.hexValue) }
     public static let positive = Color(.systemGreen)
     public static let warning = Color(.systemOrange)
     public static let destructive = Color(.systemRed)

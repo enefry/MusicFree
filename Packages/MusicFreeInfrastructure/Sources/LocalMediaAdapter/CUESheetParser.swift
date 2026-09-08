@@ -1,5 +1,5 @@
-import CoreFoundation
 import Foundation
+import MusicDomain
 
 struct CUETime: Equatable, Comparable, Sendable {
   static let framesPerSecond = 75
@@ -317,32 +317,8 @@ struct CUESheetParser: Sendable {
   }
 
   private static func decode(_ data: Data) -> String? {
-    if data.starts(with: [0xFF, 0xFE]) {
-      return String(data: data.dropFirst(2), encoding: .utf16LittleEndian)
-    }
-    if data.starts(with: [0xFE, 0xFF]) {
-      return String(data: data.dropFirst(2), encoding: .utf16BigEndian)
-    }
-    let bytes = data.starts(with: [0xEF, 0xBB, 0xBF]) ? data.dropFirst(3) : data[...]
-    let normalized = Data(bytes)
-    if let utf8 = String(data: normalized, encoding: .utf8) { return utf8 }
-    for encoding in [gb18030Encoding, big5Encoding, .shiftJIS] {
-      if let decoded = String(data: normalized, encoding: encoding) { return decoded }
-    }
-    return nil
+    return MetadataTextRepair.decode(data)
   }
-
-  private static let gb18030Encoding = String.Encoding(
-    rawValue: CFStringConvertEncodingToNSStringEncoding(
-      CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue)
-    )
-  )
-
-  private static let big5Encoding = String.Encoding(
-    rawValue: CFStringConvertEncodingToNSStringEncoding(
-      CFStringEncoding(CFStringEncodings.big5.rawValue)
-    )
-  )
 
   private static func commandAndRest(_ line: String) -> (command: String, rest: String) {
     guard let separator = line.firstIndex(where: \Character.isWhitespace) else {
@@ -390,12 +366,14 @@ struct CUESheetParser: Sendable {
     }
     return CUERemark(
       key: first.uppercased(),
-      value: parsed.dropFirst().joined(separator: " ")
+      value: MetadataTextRepair.repair(parsed.dropFirst().joined(separator: " "))
+        .trimmingCharacters(in: .whitespacesAndNewlines)
     )
   }
 
   private static func normalizedReference(_ value: String, line: Int) throws -> String {
-    let normalized = value.replacingOccurrences(of: "\\", with: "/")
+    let normalized = MetadataTextRepair.repair(value)
+      .replacingOccurrences(of: "\\", with: "/")
       .trimmingCharacters(in: .whitespacesAndNewlines)
     let components = normalized.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
     guard !normalized.isEmpty,
@@ -408,7 +386,8 @@ struct CUESheetParser: Sendable {
 
   private static func clean(_ value: String?) -> String? {
     guard let value else { return nil }
-    let result = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    let result = MetadataTextRepair.repair(value)
+      .trimmingCharacters(in: .whitespacesAndNewlines)
     return result.isEmpty ? nil : result
   }
 }

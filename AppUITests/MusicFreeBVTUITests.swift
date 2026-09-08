@@ -6,13 +6,20 @@ final class MusicFreeBVTUITests: XCTestCase {
 
     override func setUpWithError() throws {
         continueAfterFailure = false
+        // Xcode's default per-test timeout is shorter than the end-to-end BVT
+        // flows. Keep timeout protection while allowing the longest fixture
+        // scenario to finish instead of force-quitting the runner at 40s.
+        executionTimeAllowance = 900
     }
 
     @MainActor
     func testAgentBVTCompletesCoreIPhoneFlowAndPersistsState() {
         let app = XCUIApplication()
         defer { app.terminate() }
-        app.launchArguments = ["--bvt-seed-audio"]
+        app.launchArguments = [
+            "--bvt-seed-audio",
+            "--bvt-reset-user-interface-preferences",
+        ]
         app.launch()
 
         assertMainTabs(in: app)
@@ -32,13 +39,520 @@ final class MusicFreeBVTUITests: XCTestCase {
     }
 
     @MainActor
+    func testUIKitShellLibrarySongsSlicePlaysSeededTrack() {
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        app.launchArguments = [
+            "--uikit-shell",
+            "--bvt-seed-audio",
+            "--bvt-seed-uikit-songs",
+            "--bvt-reset-user-interface-preferences",
+        ]
+        app.launch()
+
+        assertMainTabs(in: app)
+        XCTAssertTrue(
+            app.descendants(matching: .any)["app.root"].firstMatch
+                .waitForExistence(timeout: 15),
+            "The UIKit root must expose a stable root identifier."
+        )
+
+        let songsSection = app.descendants(matching: .any)[
+            "library.home.section.tracks"
+        ].firstMatch
+        XCTAssertTrue(
+            songsSection.waitForExistence(timeout: 20),
+            "The UIKit Library home must expose the Songs section."
+        )
+        songsSection.tap()
+
+        XCTAssertTrue(
+            app.navigationBars["Songs"].waitForExistence(timeout: 10),
+            "Selecting Songs must push a native UIKit navigation surface."
+        )
+        XCTAssertTrue(
+            app.collectionViews["library.tracks.collection"].waitForExistence(timeout: 10),
+            "The Songs surface must be backed by the UIKit collection view."
+        )
+        let seededTrack = app.collectionViews["library.tracks.collection"].cells
+            .matching(NSPredicate(format: "label == %@", trackTitle))
+            .firstMatch
+        XCTAssertTrue(
+            seededTrack.waitForExistence(timeout: 30),
+            "The seeded audio track must render in the UIKit list."
+        )
+        XCTAssertTrue(
+            app.staticTexts[trackTitle].firstMatch.waitForExistence(timeout: 10),
+            "The seeded track title must remain visible in the UIKit list."
+        )
+        XCTAssertTrue(
+            app.staticTexts["BVT Artist"].firstMatch.waitForExistence(timeout: 15),
+            "The UIKit list must render the asynchronously loaded artist subtitle."
+        )
+        for title in ["BVT DS Audio Tone", "BVT Extremely Long Track Title That Must Stay Inside The Player Width", "BVT Google Drive Tone"] {
+            XCTAssertTrue(
+                app.staticTexts[title].firstMatch.waitForExistence(timeout: 15),
+                "The UIKit visual fixture must render (title)."
+            )
+        }
+        attachScreenshot(named: "uikit-songs")
+        XCTAssertTrue(seededTrack.isHittable)
+        seededTrack.tap()
+
+        let miniPlayer = app.descendants(matching: .any)["player.mini"].firstMatch
+        XCTAssertTrue(
+            miniPlayer.waitForExistence(timeout: 20),
+            "Selecting a UIKit track must feed the shared playback service and show Mini Player."
+        )
+        let miniTitle = app.staticTexts.matching(
+            NSPredicate(
+                format: "identifier == %@ AND label == %@",
+                "player.mini.title",
+                trackTitle
+            )
+        ).firstMatch
+        XCTAssertTrue(
+            miniTitle.waitForExistence(timeout: 10),
+            "Compact Mini Player must refresh its title after selecting a UIKit track."
+        )
+        attachScreenshot(named: "uikit-songs-mini-player")
+    }
+
+    @MainActor
+    func testUIKitShellNowPlayingSliceRendersNativePlayerControls() {
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        app.launchArguments = [
+            "--uikit-shell",
+            "--bvt-seed-audio",
+            "--bvt-seed-uikit-songs",
+            "--bvt-reset-user-interface-preferences",
+        ]
+        app.launch()
+
+        assertMainTabs(in: app)
+        let songsSection = app.descendants(matching: .any)[
+            "library.home.section.tracks"
+        ].firstMatch
+        XCTAssertTrue(songsSection.waitForExistence(timeout: 20))
+        songsSection.tap()
+
+        XCTAssertTrue(
+            app.navigationBars["Songs"].waitForExistence(timeout: 10)
+        )
+        let seededTrack = app.collectionViews["library.tracks.collection"].cells
+            .matching(NSPredicate(format: "label == %@", trackTitle))
+            .firstMatch
+        XCTAssertTrue(seededTrack.waitForExistence(timeout: 30))
+        seededTrack.tap()
+
+        let miniPlayerOpen = app.buttons["player.mini"].firstMatch
+        XCTAssertTrue(
+            miniPlayerOpen.waitForExistence(timeout: 20),
+            "The UIKit Mini Player must expose a concrete presentation target."
+        )
+        miniPlayerOpen.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.30, dy: 0.50)
+        ).tap()
+        attachScreenshot(named: "uikit-now-playing-debug")
+
+        let nowPlaying = app.descendants(matching: .any)[
+            "player.nowPlaying"
+        ].firstMatch
+        XCTAssertTrue(
+            nowPlaying.waitForExistence(timeout: 15),
+            "The UIKit Player Sheet must expose the native Now Playing surface."
+        )
+        XCTAssertTrue(
+            app.staticTexts[trackTitle].firstMatch.waitForExistence(timeout: 10),
+            "The native Now Playing surface must render the current title."
+        )
+        XCTAssertTrue(
+            app.descendants(matching: .any)["player.nowPlaying.artwork"]
+                .firstMatch.waitForExistence(timeout: 10)
+        )
+        XCTAssertTrue(
+            app.sliders["Playback progress"].firstMatch.exists
+                || app.sliders["播放进度"].firstMatch.exists,
+            "The native Now Playing surface must expose playback progress."
+        )
+        XCTAssertTrue(
+            app.buttons["Pause"].firstMatch.exists
+                || app.buttons["暂停"].firstMatch.exists
+                || app.buttons["Play"].firstMatch.exists
+                || app.buttons["播放"].firstMatch.exists,
+            "The native Now Playing surface must expose transport control."
+        )
+        XCTAssertTrue(
+            app.buttons["AirPlay"].firstMatch.exists
+                || app.buttons["播放队列"].firstMatch.exists
+                || app.buttons["Play queue"].firstMatch.exists,
+            "The native Now Playing footer must expose system/player actions."
+        )
+
+        let more = app.buttons["player.nowPlaying.more"].firstMatch
+        XCTAssertTrue(more.waitForExistence(timeout: 5))
+        more.tap()
+        for labels in [
+            ["Share", "分享"],
+            ["Play next", "下一首播放"],
+            ["Add to queue", "加入队列"],
+            ["Add to playlist", "添加到播放列表"],
+            ["View song details", "查看歌曲详情"],
+            ["Go to Album", "跳转到专辑"],
+            ["Go to Artist", "跳转到艺人"],
+            ["Delete", "删除"],
+        ] {
+            let predicate = NSPredicate(
+                format: "label == %@ OR label == %@",
+                labels[0],
+                labels[1]
+            )
+            XCTAssertTrue(
+                app.buttons.matching(predicate).firstMatch.waitForExistence(timeout: 5),
+                "Now Playing must expose the Apple Music-style action: \(labels[0])."
+            )
+        }
+        for labels in [
+            ["Download", "下载"],
+            ["Add to Library", "收藏到资料库"],
+            ["Create Station", "创建电台"],
+            ["Share Lyrics", "分享歌词"],
+        ] {
+            let predicate = NSPredicate(
+                format: "label == %@ OR label == %@",
+                labels[0],
+                labels[1]
+            )
+            XCTAssertFalse(
+                app.buttons.matching(predicate).firstMatch.exists,
+                "Now Playing must not expose the unavailable action: \(labels[0])."
+            )
+        }
+        attachScreenshot(named: "uikit-now-playing-native")
+    }
+
+    @MainActor
+    func testUIKitShellLibraryBrowseCollectionsRenderSeededData() {
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        app.launchArguments = [
+            "--uikit-shell",
+            "--bvt-seed-audio",
+            "--bvt-seed-layout-library",
+            "--bvt-reset-user-interface-preferences",
+        ]
+        app.launch()
+
+        assertMainTabs(in: app)
+        let pages: [(title: String, rawValue: String, itemPrefix: String)] = [
+            ("Albums", "albums", "library.album.open."),
+            ("Artists", "artists", "library.artist.open."),
+            ("Genres", "genres", "library.genre.open."),
+            ("Folders", "folders", "library.folder.open."),
+        ]
+
+        for page in pages {
+            let section = app.descendants(matching: .any)[
+                "library.home.section.\(page.rawValue)"
+            ].firstMatch
+            XCTAssertTrue(
+                section.waitForExistence(timeout: 20),
+                "The UIKit Library home must expose the \(page.title) section."
+            )
+            section.tap()
+
+            XCTAssertTrue(
+                app.navigationBars[page.title].waitForExistence(timeout: 10),
+                "Selecting \(page.title) must push the native browse controller."
+            )
+            XCTAssertTrue(
+                app.collectionViews["library.\(page.rawValue).collection"]
+                    .waitForExistence(timeout: 15),
+                "\(page.title) must be backed by the UIKit collection view."
+            )
+
+            let seededItem = app.descendants(matching: .any).matching(
+                NSPredicate(format: "identifier BEGINSWITH %@", page.itemPrefix)
+            ).firstMatch
+            XCTAssertTrue(
+                seededItem.waitForExistence(timeout: 30),
+                "The seeded \(page.title) item must render in the UIKit surface."
+            )
+            XCTAssertTrue(seededItem.isHittable)
+            seededItem.tap()
+
+            let detailIdentifier = page.rawValue == "artists"
+                ? "library.artistDetail"
+                : "library.collectionDetail"
+            let detail = app.descendants(matching: .any)[detailIdentifier].firstMatch
+            XCTAssertTrue(
+                detail.waitForExistence(timeout: 15),
+                "Selecting a \(page.title) item must push the native detail surface."
+            )
+
+            if page.rawValue == "artists" {
+                XCTAssertTrue(
+                    app.collectionViews["library.artist.albums"]
+                        .waitForExistence(timeout: 15),
+                    "Artists must use the native UIKit album grid."
+                )
+                XCTAssertTrue(
+                    detail.descendants(matching: .any)["library.artist.header.title"]
+                        .waitForExistence(timeout: 15),
+                    "Artist details must render the artist header."
+                )
+            } else {
+                XCTAssertTrue(
+                    app.collectionViews["library.collectionDetail.collection"]
+                        .waitForExistence(timeout: 15),
+                    "The \(page.title) detail must use the native UIKit collection view."
+                )
+                let detailTrack = app.descendants(matching: .any).matching(
+                    NSPredicate(format: "identifier BEGINSWITH %@", "library.collection.track.play.")
+                ).firstMatch
+                XCTAssertTrue(
+                    detailTrack.waitForExistence(timeout: 30),
+                    "The \(page.title) detail must render at least one filtered track."
+                )
+            }
+
+            app.navigationBars.buttons.firstMatch.tap()
+            XCTAssertTrue(
+                app.collectionViews["library.\(page.rawValue).collection"]
+                    .waitForExistence(timeout: 10),
+                "Back navigation from the \(page.title) detail must return to its collection."
+            )
+            app.navigationBars[page.title].buttons.firstMatch.tap()
+            XCTAssertTrue(
+                app.descendants(matching: .any)["library.home"].firstMatch
+                    .waitForExistence(timeout: 10),
+                "Back navigation from \(page.title) must return to the UIKit Library home."
+            )
+        }
+    }
+
+    @MainActor
+    func testUIKitShellLibraryCollectionDetailExposesNativeActions() {
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        app.launchArguments = [
+            "--uikit-shell",
+            "--bvt-seed-audio",
+            "--bvt-seed-layout-library",
+            "--bvt-reset-user-interface-preferences",
+        ]
+        app.launch()
+
+        assertMainTabs(in: app)
+        let albumsSection = app.descendants(matching: .any)[
+            "library.home.section.albums"
+        ].firstMatch
+        XCTAssertTrue(albumsSection.waitForExistence(timeout: 20))
+        albumsSection.tap()
+
+        let seededAlbum = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "library.album.open.")
+        ).firstMatch
+        XCTAssertTrue(seededAlbum.waitForExistence(timeout: 30))
+        seededAlbum.tap()
+
+        XCTAssertTrue(
+            app.descendants(matching: .any)["library.collectionDetail"].firstMatch
+                .waitForExistence(timeout: 15)
+        )
+        attachScreenshot(named: "uikit-collection-detail")
+        let collectionMenu = app.buttons["library.collection.menu"].firstMatch
+        XCTAssertTrue(collectionMenu.waitForExistence(timeout: 10))
+        collectionMenu.tap()
+
+        XCTAssertTrue(app.buttons["Play next"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Add to queue"].exists)
+        XCTAssertTrue(app.buttons["Add to playlist"].exists)
+
+        app.buttons["Play next"].tap()
+
+        XCTAssertTrue(collectionMenu.waitForExistence(timeout: 5))
+        collectionMenu.tap()
+        let selectButton = app.buttons.matching(
+            NSPredicate(format: "label == %@ OR label == %@", "选择歌曲", "Select Songs")
+        ).firstMatch
+        XCTAssertTrue(selectButton.waitForExistence(timeout: 5))
+        selectButton.tap()
+        XCTAssertTrue(
+            app.buttons["library.collection.finishSelection"].waitForExistence(timeout: 5)
+        )
+        let detailTrack = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "library.collection.track.play.")
+        ).firstMatch
+        XCTAssertTrue(detailTrack.waitForExistence(timeout: 10))
+        // In selection mode, a normal tap selects the row and updates the
+        // batch deletion action. The context menu is intentionally not used
+        // for this selection-state assertion.
+        detailTrack.tap()
+        XCTAssertTrue(app.buttons["library.collection.deleteSelected"].isEnabled)
+        attachScreenshot(named: "uikit-collection-detail-selection")
+        app.buttons["library.collection.finishSelection"].tap()
+    }
+
+    @MainActor
+    func testUIKitShellLibraryAlbumEditorRendersMetadataForm() {
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        app.launchArguments = [
+            "--uikit-shell",
+            "--bvt-seed-audio",
+            "--bvt-seed-layout-library",
+            "--bvt-reset-user-interface-preferences",
+        ]
+        app.launch()
+
+        assertMainTabs(in: app)
+        let albumsSection = app.descendants(matching: .any)[
+            "library.home.section.albums"
+        ].firstMatch
+        XCTAssertTrue(albumsSection.waitForExistence(timeout: 20))
+        albumsSection.tap()
+        let seededAlbum = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "library.album.open.")
+        ).firstMatch
+        XCTAssertTrue(seededAlbum.waitForExistence(timeout: 30))
+        seededAlbum.tap()
+
+        let collectionMenu = app.buttons["library.collection.menu"].firstMatch
+        XCTAssertTrue(collectionMenu.waitForExistence(timeout: 30))
+        collectionMenu.tap()
+        let editButton = app.buttons.matching(
+            NSPredicate(format: "label == %@ OR label == %@", "编辑专辑", "Edit Album")
+        ).firstMatch
+        XCTAssertTrue(editButton.waitForExistence(timeout: 30))
+        editButton.tap()
+
+        let editor = app.descendants(matching: .any)["library.albumEditor"].firstMatch
+        XCTAssertTrue(editor.waitForExistence(timeout: 15))
+        XCTAssertTrue(
+            app.textFields["library.albumEditor.title"].waitForExistence(timeout: 10),
+            "Album editor must expose the title field."
+        )
+        XCTAssertTrue(
+            app.textFields["library.albumEditor.artist"].waitForExistence(timeout: 10),
+            "Album editor must expose the artist relationship field."
+        )
+        XCTAssertTrue(
+            app.textFields["library.albumEditor.year"].waitForExistence(timeout: 10),
+            "Album editor must expose the release year field."
+        )
+        XCTAssertTrue(
+            app.buttons["library.albumEditor.coverPicker"].waitForExistence(timeout: 10),
+            "Album editor must expose the manual cover picker."
+        )
+        XCTAssertTrue(
+            app.buttons["library.albumEditor.coverRemove"].waitForExistence(timeout: 10),
+            "Album editor must expose the manual cover removal action."
+        )
+        XCTAssertTrue(
+            app.buttons["library.albumEditor.refreshSource"].waitForExistence(timeout: 10),
+            "Album editor must expose the remote source refresh action."
+        )
+        let cancelButton = app.buttons.matching(
+            NSPredicate(format: "label == %@ OR label == %@", "取消", "Cancel")
+        ).firstMatch
+        let saveButton = app.buttons.matching(
+            NSPredicate(format: "label == %@ OR label == %@", "保存", "Save")
+        ).firstMatch
+        XCTAssertTrue(cancelButton.waitForExistence(timeout: 10))
+        XCTAssertTrue(saveButton.waitForExistence(timeout: 10))
+        attachScreenshot(named: "uikit-album-editor")
+
+        cancelButton.tap()
+        XCTAssertTrue(
+            app.descendants(matching: .any)["library.collectionDetail"].firstMatch
+                .waitForExistence(timeout: 10),
+            "Cancelling the album editor must return to the native collection detail."
+        )
+    }
+
+    @MainActor
+    func testUIKitShellLibraryTrackDetailRendersNativeSurface() {
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        app.launchArguments = [
+            "--uikit-shell",
+            "--bvt-seed-audio",
+            "--bvt-seed-layout-library",
+            "--bvt-reset-user-interface-preferences",
+        ]
+        app.launch()
+
+        assertMainTabs(in: app)
+        app.descendants(matching: .any)["library.home.section.albums"].firstMatch.tap()
+        let seededAlbum = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "library.album.open.")
+        ).firstMatch
+        XCTAssertTrue(seededAlbum.waitForExistence(timeout: 30))
+        seededAlbum.tap()
+
+        let detailCollection = app.collectionViews[
+            "library.collectionDetail.collection"
+        ].firstMatch
+        XCTAssertTrue(
+            detailCollection.waitForExistence(timeout: 15),
+            "The album detail must expose its native track collection before opening song details."
+        )
+        let detailTrack = detailCollection.cells.matching(
+            NSPredicate(
+                format: "identifier BEGINSWITH %@ AND label == %@",
+                "library.collection.track.play.",
+                trackTitle
+            )
+        ).firstMatch
+        XCTAssertTrue(detailTrack.waitForExistence(timeout: 30))
+        XCTAssertTrue(detailTrack.isHittable)
+        // A normal tap is the established playback action. Song details are
+        // intentionally exposed through the native long-press context menu.
+        detailTrack.press(forDuration: 1.0)
+        let viewDetails = app.descendants(matching: .any).matching(
+            NSPredicate(
+                format: "label ==[c] %@ OR label ==[c] %@",
+                "View song details",
+                "查看歌曲详情"
+            )
+        ).firstMatch
+        XCTAssertTrue(
+            viewDetails.waitForExistence(timeout: 5),
+            "Long-pressing a song must expose the native View song details action."
+        )
+        viewDetails.tap()
+
+        let detail = app.descendants(matching: .any)["library.trackDetail"].firstMatch
+        XCTAssertTrue(
+            detail.waitForExistence(timeout: 15),
+            "Selecting View song details must push the native track detail surface."
+        )
+        let title = detail.descendants(matching: .any)[
+            "library.trackDetail.title"
+        ].firstMatch
+        XCTAssertTrue(title.waitForExistence(timeout: 15))
+        XCTAssertEqual(title.label, trackTitle)
+        XCTAssertTrue(
+            detail.descendants(matching: .any)["library.trackDetail.favorite"]
+                .firstMatch.waitForExistence(timeout: 10)
+        )
+        XCTAssertTrue(
+            app.buttons["library.trackDetail.addToPlaylist"].firstMatch
+                .waitForExistence(timeout: 10)
+        )
+        attachScreenshot(named: "uikit-track-detail")
+    }
+
+    @MainActor
     private func assertMainTabs(in app: XCUIApplication) {
         let tabBar = app.tabBars.firstMatch
         XCTAssertTrue(
             tabBar.waitForExistence(timeout: 15),
             "The app must expose its main navigation as a native tab bar."
         )
-        for title in ["Library", "Playlists", "Settings"] {
+        for title in ["Library", "Playlists", "Online Sources", "Settings"] {
             let button = tabBar.buttons[title].firstMatch
             XCTAssertTrue(button.exists, "Missing native tab: \(title)")
             XCTAssertTrue(button.isHittable, "Native tab is not hittable: \(title)")
@@ -48,10 +562,856 @@ final class MusicFreeBVTUITests: XCTestCase {
     }
 
     @MainActor
+    func testRegularWidthUsesThreeColumnNavigationShell() throws {
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        app.launchArguments = [
+            "--bvt-seed-audio",
+            "--bvt-reset-user-interface-preferences",
+        ]
+        app.launch()
+
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 15))
+        guard window.frame.width >= 700 else {
+            throw XCTSkip("Three-column shell requires a regular-width destination.")
+        }
+
+        let sidebar = app.descendants(matching: .any)["app.sidebar"].firstMatch
+        let secondary = app.descendants(matching: .any)["app.secondaryColumn"].firstMatch
+        let detail = app.descendants(matching: .any)["app.detailColumn"].firstMatch
+        XCTAssertTrue(sidebar.waitForExistence(timeout: 10))
+        XCTAssertTrue(secondary.waitForExistence(timeout: 10))
+        XCTAssertTrue(detail.waitForExistence(timeout: 10))
+        XCTAssertTrue(
+            app.descendants(matching: .any)["app.route.library"].firstMatch
+                .waitForExistence(timeout: 5),
+            "Wide regular layouts must expose the primary sidebar instead of starting collapsed."
+        )
+        XCTAssertFalse(app.tabBars.firstMatch.exists)
+
+        let favoritesSection = app.buttons["library.section.favorites"].firstMatch
+        let albumsSection = app.buttons["library.section.albums"].firstMatch
+        let tracksSection = app.buttons["library.section.tracks"].firstMatch
+        XCTAssertTrue(favoritesSection.waitForExistence(timeout: 5))
+        XCTAssertTrue(albumsSection.waitForExistence(timeout: 5))
+        XCTAssertTrue(tracksSection.waitForExistence(timeout: 5))
+
+        favoritesSection.tap()
+        XCTAssertTrue(app.navigationBars["Favorites"].firstMatch.waitForExistence(timeout: 10))
+
+        albumsSection.tap()
+        XCTAssertTrue(app.navigationBars["Albums"].firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(
+            detail.descendants(matching: .any)["library.tracks"].firstMatch
+                .waitForNonExistence(timeout: 10),
+            "Selecting Albums in the secondary column must remove the song list."
+        )
+
+        tracksSection.tap()
+        XCTAssertTrue(app.navigationBars["Songs"].firstMatch.waitForExistence(timeout: 10))
+
+        let track = app.staticTexts[trackTitle].firstMatch
+        XCTAssertTrue(track.waitForExistence(timeout: 30))
+        XCTAssertTrue(track.isHittable)
+        track.tap()
+
+        let miniPlayerProgress = app.descendants(matching: .any)[
+            "player.mini.progress"
+        ].firstMatch
+        XCTAssertTrue(
+            miniPlayerProgress.waitForExistence(timeout: 15),
+            "Regular-width Mini Player should expose a seek progress control."
+        )
+        let seekSlider = miniPlayerProgress.sliders.firstMatch
+        XCTAssertTrue(seekSlider.waitForExistence(timeout: 5))
+        XCTAssertTrue(seekSlider.isEnabled)
+
+        let settingsRoute = app.descendants(matching: .any)["app.route.settings"].firstMatch
+        if !settingsRoute.waitForExistence(timeout: 2) {
+            let showSidebar = app.buttons["Show Sidebar"].firstMatch
+            XCTAssertTrue(showSidebar.waitForExistence(timeout: 2))
+            showSidebar.tap()
+        }
+        XCTAssertTrue(settingsRoute.waitForExistence(timeout: 5))
+        settingsRoute.tap()
+        XCTAssertTrue(secondary.staticTexts["General"].firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(
+            detail.buttons["settings.language"].firstMatch.waitForExistence(timeout: 10)
+        )
+    }
+
+    @MainActor
+    func testOnlineSourcesBVTCompletesPrivacyMultiSourceCatalogSearchAndImportFlow() {
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        // The first launch resets the durable fixture. Later relaunches, if
+        // this test is interrupted, keep the accepted source state intact so
+        // the flow can still prove persistence rather than re-seeding over it.
+        app.launchArguments = [
+            "--bvt-seed-online-sources",
+            "--bvt-reset-online-sources",
+            "--bvt-reset-user-interface-preferences"
+        ]
+        app.launch()
+
+        assertMainTabs(in: app)
+        tapTab("Online Sources", in: app)
+
+        // The application disclosure is shown on the first visit to the tab,
+        // before any source-level action is available.
+        let applicationPrivacySheet = app.descendants(matching: .any)[
+            "onlineSources.applicationPrivacy.sheet"
+        ].firstMatch
+        XCTAssertTrue(applicationPrivacySheet.waitForExistence(timeout: 15))
+        let applicationPrivacyCancel = button(
+            identifier: "onlineSources.applicationPrivacy.cancel",
+            labels: ["Cancel", "取消"],
+            in: app
+        )
+        XCTAssertTrue(applicationPrivacyCancel.waitForExistence(timeout: 5))
+        applicationPrivacyCancel.tap()
+        XCTAssertTrue(applicationPrivacySheet.waitForNonExistence(timeout: 10))
+
+        // Adding a source is gated by the application agreement. Verify that
+        // cancelling the disclosure does not leak the add sheet, then accept
+        // it and add a second Google Drive instance.
+        let addButton = app.buttons["onlineSources.add"].firstMatch
+        XCTAssertTrue(addButton.waitForExistence(timeout: 10))
+        addButton.tap()
+        let googleDriveOption = app.buttons["Google Drive"].firstMatch
+        XCTAssertTrue(
+            googleDriveOption.waitForExistence(timeout: 5),
+            "The add button must present the provider menu before any provider consent is shown."
+        )
+        googleDriveOption.tap()
+        XCTAssertTrue(applicationPrivacySheet.waitForExistence(timeout: 10))
+        XCTAssertTrue(applicationPrivacyCancel.waitForExistence(timeout: 5))
+        applicationPrivacyCancel.tap()
+        XCTAssertTrue(applicationPrivacySheet.waitForNonExistence(timeout: 10))
+        XCTAssertFalse(app.descendants(matching: .any)["onlineSources.add.sheet"].exists)
+
+        addButton.tap()
+        XCTAssertTrue(googleDriveOption.waitForExistence(timeout: 5))
+        googleDriveOption.tap()
+        XCTAssertTrue(applicationPrivacySheet.waitForExistence(timeout: 10))
+        let applicationPrivacyConfirm = button(
+            identifier: "onlineSources.applicationPrivacy.confirm",
+            labels: ["Agree", "同意"],
+            in: app
+        )
+        XCTAssertTrue(applicationPrivacyConfirm.waitForExistence(timeout: 5))
+        applicationPrivacyConfirm.tap()
+        XCTAssertTrue(applicationPrivacySheet.waitForNonExistence(timeout: 10))
+
+        let addSheet = app.descendants(matching: .any)["onlineSources.add.sheet"].firstMatch
+        XCTAssertTrue(addSheet.waitForExistence(timeout: 10))
+
+        let addedDisplayName = "BVT Extra Google Drive"
+        let displayNameField = app.textFields["onlineSources.add.displayName"].firstMatch
+        XCTAssertTrue(displayNameField.waitForExistence(timeout: 5))
+        displayNameField.tap()
+        displayNameField.typeText(addedDisplayName)
+        let submitAddButton = button(
+            identifier: "onlineSources.add.submit",
+            labels: ["Add", "添加"],
+            in: app
+        )
+        XCTAssertTrue(submitAddButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(submitAddButton.isEnabled)
+        submitAddButton.tap()
+        XCTAssertTrue(addSheet.waitForNonExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts[addedDisplayName].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["BVT DS Audio"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["BVT Google Drive"].waitForExistence(timeout: 10))
+        attachScreenshot(named: "26-online-sources-root")
+
+        enableOnlineSourcesService(in: app)
+
+        // DS Audio: source-level consent, source toggle, browse, search,
+        // temporary audition entry, download, and local import.
+        openOnlineSource(named: "BVT DS Audio", in: app)
+        acceptOnlineSourcePrivacy(sourceID: "bvt.dsaudio", in: app)
+        enableOnlineSource(sourceID: "bvt.dsaudio", in: app)
+
+        let catalogCollectionView = app.collectionViews[
+            "onlineSources.catalog.list"
+        ].firstMatch
+        XCTAssertTrue(
+            catalogCollectionView.waitForExistence(timeout: 10),
+            "The catalog must expose a native collection surface for pull-to-refresh."
+        )
+        XCTAssertFalse(
+            app.navigationBars.buttons.matching(
+                NSPredicate(format: "identifier CONTAINS[c] 'refresh' OR label CONTAINS[c] 'refresh' OR label CONTAINS[c] '刷新'")
+            ).firstMatch.exists,
+            "Catalog refresh must be performed with pull-to-refresh, not a toolbar button."
+        )
+        attachScreenshot(named: "27-online-source-detail-root")
+
+        let dsAlbumCategory = app.collectionViews["onlineSources.catalog.list"].cells[
+            "onlineSources.detail.bvt.dsaudio.category.albums"
+        ].firstMatch
+        XCTAssertTrue(
+            dsAlbumCategory.waitForExistence(timeout: 15),
+            "DS Audio must expose an album browsing dimension at the catalog root."
+        )
+        dsAlbumCategory.tap()
+        let dsAlbum = app.collectionViews["onlineSources.catalog.list"].cells[
+            "onlineSources.detail.bvt.dsaudio.item.bvt-album.open"
+        ].firstMatch
+        XCTAssertTrue(
+            dsAlbum.waitForExistence(timeout: 15),
+            "The album browsing page must render album containers."
+        )
+        dsAlbum.tap()
+        XCTAssertTrue(
+            app.staticTexts["BVT DS Audio Album Tone"].waitForExistence(timeout: 15),
+            "Opening an album must load its audio items."
+        )
+        tapSystemNavigationBack(in: app, expectedPreviousTitle: "BVT DS Audio Album")
+        tapSystemNavigationBack(in: app, expectedPreviousTitle: "BVT DS Audio")
+
+        let dsArtistCategory = app.collectionViews["onlineSources.catalog.list"].cells[
+            "onlineSources.detail.bvt.dsaudio.category.artists"
+        ].firstMatch
+        XCTAssertTrue(
+            dsArtistCategory.waitForExistence(timeout: 15),
+            "DS Audio must expose an artist browsing dimension at the catalog root."
+        )
+        dsArtistCategory.tap()
+        let dsArtist = app.collectionViews["onlineSources.catalog.list"].cells[
+            "onlineSources.detail.bvt.dsaudio.item.bvt-artist.open"
+        ].firstMatch
+        XCTAssertTrue(
+            dsArtist.waitForExistence(timeout: 15),
+            "The artist browsing page must render artist containers."
+        )
+        dsArtist.tap()
+        XCTAssertTrue(
+            app.staticTexts["BVT DS Audio Artist Tone"].waitForExistence(timeout: 15),
+            "Opening an artist must load its audio items."
+        )
+        tapSystemNavigationBack(in: app, expectedPreviousTitle: "BVT DS Audio Artist")
+        tapSystemNavigationBack(in: app, expectedPreviousTitle: "BVT DS Audio")
+
+        let dsFolder = app.collectionViews["onlineSources.catalog.list"].cells[
+            "onlineSources.detail.bvt.dsaudio.item.bvt-folder.open"
+        ].firstMatch
+        XCTAssertTrue(dsFolder.waitForExistence(timeout: 20))
+        dsFolder.tap()
+
+        let dsSubfolder = app.collectionViews["onlineSources.catalog.list"].cells[
+            "onlineSources.detail.bvt.dsaudio.item.bvt-subfolder.open"
+        ].firstMatch
+        XCTAssertTrue(dsSubfolder.waitForExistence(timeout: 15))
+        attachScreenshot(named: "28-online-source-detail-folder")
+
+        let dsFolderImport = app.buttons[
+            "onlineSources.detail.bvt.dsaudio.item.bvt-folder.downloadAndImportAll"
+        ].firstMatch
+        XCTAssertTrue(
+            dsFolderImport.waitForExistence(timeout: 10),
+            "An entered DS Audio folder must expose the top-right recursive import action."
+        )
+
+        // Starting an import must leave a task behind even when the source
+        // detail is no longer visible. Double-tapping the selected Online
+        // Sources tab is the native tab re-selection path back to the source
+        // list.
+        dsFolderImport.tap()
+        tapTab("Playlists", in: app)
+        let onlineSourcesTab = app.tabBars.buttons["Online Sources"].firstMatch
+        XCTAssertTrue(onlineSourcesTab.waitForExistence(timeout: 10))
+        onlineSourcesTab.doubleTap()
+        // A native UITableView disclosure row remains an XCUIElementTypeCell
+        // even when it carries the button accessibility trait. Match by the
+        // stable identifier instead of coupling this BVT to an element type.
+        let queueEntry = app.descendants(matching: .any)[
+            "onlineSources.downloadQueue"
+        ].firstMatch
+        XCTAssertTrue(
+            queueEntry.waitForExistence(timeout: 15),
+            "The source list must keep a separate download/import queue entry."
+        )
+        queueEntry.tap()
+        XCTAssertTrue(
+            app.descendants(matching: .any)["onlineSources.downloadQueue.view"].firstMatch
+                .waitForExistence(timeout: 10)
+        )
+        XCTAssertTrue(
+            app.staticTexts["BVT DS Audio Folder"].waitForExistence(timeout: 10),
+            "The queue must retain the task after leaving the source detail."
+        )
+        tapSystemNavigationBack(in: app, expectedPreviousTitle: "Online Sources")
+        XCTAssertTrue(app.buttons["onlineSources.add"].firstMatch.waitForExistence(timeout: 10))
+        openOnlineSource(named: "BVT DS Audio", in: app)
+        XCTAssertTrue(dsFolder.waitForExistence(timeout: 15))
+        dsFolder.tap()
+        dsSubfolder.tap()
+
+        let dsAudioTitle = "BVT DS Audio Tone"
+        let dsAudioFile = "BVT DS Audio Tone"
+        XCTAssertTrue(app.staticTexts[dsAudioFile].waitForExistence(timeout: 15))
+
+        XCTAssertFalse(
+            app.buttons["onlineSources.detail.bvt.dsaudio.catalog.back"].exists,
+            "The catalog must use the system NavigationStack back button."
+        )
+        tapSystemNavigationBack(in: app, expectedPreviousTitle: "BVT DS Audio")
+        XCTAssertTrue(dsSubfolder.waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts[dsAudioFile].waitForNonExistence(timeout: 10))
+        tapSystemNavigationBack(in: app, expectedPreviousTitle: "BVT DS Audio Folder")
+        XCTAssertTrue(
+            dsFolder.waitForExistence(timeout: 15),
+            "Returning to the online source root must restore the root folder."
+        )
+        XCTAssertTrue(dsSubfolder.waitForNonExistence(timeout: 10))
+        dsFolder.tap()
+        XCTAssertTrue(dsSubfolder.waitForExistence(timeout: 15))
+        dsSubfolder.tap()
+        XCTAssertTrue(app.staticTexts[dsAudioFile].waitForExistence(timeout: 15))
+
+        let dsAudition = app.buttons[
+            "onlineSources.detail.bvt.dsaudio.item.bvt-audio.audition"
+        ].firstMatch
+        XCTAssertTrue(dsAudition.waitForExistence(timeout: 10))
+        dsAudition.tap()
+        let dsStopAudition = app.buttons[
+            "onlineSources.detail.bvt.dsaudio.item.bvt-audio.stopAudition"
+        ].firstMatch
+        let auditionFailureAlert = app.alerts.firstMatch
+        XCTAssertTrue(
+            waitForEither(dsStopAudition, auditionFailureAlert, timeout: 15),
+            "Audition must either enter its transient playback state or present a recoverable playback error."
+        )
+        if auditionFailureAlert.exists {
+            auditionFailureAlert.buttons.element(boundBy: 0).tap()
+        } else if dsStopAudition.exists {
+            dsStopAudition.tap()
+            XCTAssertTrue(dsStopAudition.waitForNonExistence(timeout: 10))
+        }
+
+        let dsDownload = app.buttons[
+            "onlineSources.detail.bvt.dsaudio.item.bvt-audio.downloadAndImport"
+        ].firstMatch
+        let dsCompleted = app.descendants(matching: .any)[
+            "onlineSources.detail.bvt.dsaudio.item.bvt-audio.completed"
+        ].firstMatch
+        let dsAlreadyImported = app.descendants(matching: .any)[
+            "onlineSources.detail.bvt.dsaudio.item.bvt-audio.alreadyImported"
+        ].firstMatch
+        let dsSkipped = app.descendants(matching: .any)[
+            "onlineSources.detail.bvt.dsaudio.item.bvt-audio.skipped"
+        ].firstMatch
+        let dsRetry = app.buttons[
+            "onlineSources.detail.bvt.dsaudio.item.bvt-audio.retryDownload"
+        ].firstMatch
+        if dsDownload.waitForExistence(timeout: 10) {
+            XCTAssertGreaterThanOrEqual(dsAudition.frame.width, 40)
+            XCTAssertGreaterThanOrEqual(dsDownload.frame.width, 40)
+            XCTAssertFalse(
+                dsAudition.frame.intersects(dsDownload.frame),
+                "Audition and download accessories must keep independent hit areas."
+            )
+            XCTAssertLessThanOrEqual(
+                dsDownload.frame.maxX,
+                catalogCollectionView.frame.maxX + 1,
+                "The trailing download accessory must remain inside the catalog cell."
+            )
+            dsDownload.tap()
+        } else {
+            XCTAssertTrue(
+                dsAlreadyImported.waitForExistence(timeout: 5)
+                    || dsCompleted.waitForExistence(timeout: 5)
+                    || dsSkipped.waitForExistence(timeout: 5),
+                "DS Audio fixture must expose an import action or an existing successful terminal state."
+            )
+        }
+        let importDeadline = Date().addingTimeInterval(45)
+        while Date() < importDeadline
+            && !dsCompleted.exists
+            && !dsAlreadyImported.exists
+            && !dsSkipped.exists
+            && !dsRetry.exists {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        }
+        XCTAssertTrue(
+            dsCompleted.exists || dsAlreadyImported.exists || dsSkipped.exists,
+            "DS Audio import must reach a successful terminal state; retry is only valid for a real failure."
+        )
+
+        // Search is performed inside the folder. The fixture deliberately
+        // accepts the parent ID while returning the same source-owned result,
+        // which keeps the test focused on the UI search submission path.
+        // The UIKit catalog owns a native UISearchController. Keep this
+        // assertion scoped to the catalog page so a global Library search
+        // control can never mask a missing catalog search field.
+        let searchField = app.searchFields[
+            "onlineSources.detail.bvt.dsaudio.searchField"
+        ].firstMatch
+        XCTAssertTrue(searchField.waitForExistence(timeout: 15))
+        searchField.tap()
+        searchField.typeText(dsAudioTitle)
+        let keyboardSearch = app.keyboards.buttons["Search"].firstMatch
+        if keyboardSearch.waitForExistence(timeout: 3) {
+            keyboardSearch.tap()
+        } else {
+            let keyboardReturn = app.keyboards.buttons["return"].firstMatch
+            if keyboardReturn.exists {
+                keyboardReturn.tap()
+            }
+        }
+        XCTAssertTrue(app.staticTexts[dsAudioFile].waitForExistence(timeout: 15))
+
+        // Revoke only DS Audio from Settings. The source remains configured,
+        // but entering it again must present its source-level disclosure.
+        tapSystemNavigationBack(in: app, expectedPreviousTitle: "BVT DS Audio Subfolder")
+        tapSystemNavigationBack(in: app, expectedPreviousTitle: "BVT DS Audio Folder")
+        tapSystemNavigationBack(in: app, expectedPreviousTitle: "BVT DS Audio")
+        returnToOnlineSourceList(in: app)
+        revokeOnlineSourcePrivacyInSettings(sourceID: "bvt.dsaudio", in: app)
+        XCTAssertTrue(app.staticTexts["BVT DS Audio"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["BVT Google Drive"].waitForExistence(timeout: 10))
+
+        openOnlineSource(named: "BVT DS Audio", in: app)
+        let dsPrivacySheet = app.descendants(matching: .any)[
+            "onlineSources.source.bvt.dsaudio.privacy.sheet"
+        ].firstMatch
+        XCTAssertTrue(dsPrivacySheet.waitForExistence(timeout: 15))
+        let closePrivacy = button(
+            identifier: "onlineSources.sourcePrivacy.close",
+            labels: ["Close", "关闭", "Cancel", "取消"],
+            in: app
+        )
+        XCTAssertTrue(closePrivacy.waitForExistence(timeout: 10))
+        closePrivacy.tap()
+        XCTAssertTrue(dsPrivacySheet.waitForNonExistence(timeout: 10))
+        XCTAssertTrue(
+            app.buttons["onlineSources.add"].firstMatch.waitForExistence(timeout: 10),
+            "Cancelling source consent must remain on the UIKit Online Sources root."
+        )
+
+        // Google Drive: the seeded second instance gets an independent
+        // disclosure and can be authorized, browsed, and downloaded.
+        openOnlineSource(named: "BVT Google Drive", in: app)
+        acceptOnlineSourcePrivacy(sourceID: "bvt.google-drive", in: app)
+        enableOnlineSource(sourceID: "bvt.google-drive", in: app)
+
+        let authorizeGoogleDrive = app.buttons[
+            "onlineSources.source.bvt.google-drive.googleDrive.authorize"
+        ].firstMatch
+        XCTAssertTrue(authorizeGoogleDrive.waitForExistence(timeout: 10))
+        authorizeGoogleDrive.tap()
+        XCTAssertTrue(app.staticTexts["Google Drive 已授权"].waitForExistence(timeout: 15))
+
+        let googleFolder = app.collectionViews["onlineSources.catalog.list"].cells[
+            "onlineSources.detail.bvt.google-drive.item.bvt-folder.open"
+        ].firstMatch
+        XCTAssertTrue(googleFolder.waitForExistence(timeout: 20))
+        XCTAssertTrue(scrollToAnyElement(googleFolder, in: app, maximumSwipes: 8))
+        googleFolder.tap()
+        let googleSubfolder = app.collectionViews["onlineSources.catalog.list"].cells[
+            "onlineSources.detail.bvt.google-drive.item.bvt-subfolder.open"
+        ].firstMatch
+        XCTAssertTrue(googleSubfolder.waitForExistence(timeout: 15))
+        XCTAssertTrue(scrollToAnyElement(googleSubfolder, in: app, maximumSwipes: 8))
+        XCTAssertTrue(googleSubfolder.isHittable)
+        XCTAssertTrue(googleSubfolder.isEnabled)
+        googleSubfolder.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)
+        ).tap()
+        XCTAssertTrue(app.staticTexts["BVT Google Drive Tone"].waitForExistence(timeout: 15))
+
+        XCTAssertFalse(
+            app.buttons["onlineSources.detail.bvt.google-drive.catalog.back"].exists,
+            "Google Drive catalog must use the system NavigationStack back button."
+        )
+        tapSystemNavigationBack(in: app, expectedPreviousTitle: "BVT Google Drive Folder")
+        XCTAssertTrue(googleSubfolder.waitForExistence(timeout: 15))
+        tapSystemNavigationBack(in: app, expectedPreviousTitle: "BVT Google Drive")
+        XCTAssertTrue(googleFolder.waitForExistence(timeout: 15))
+        googleFolder.tap()
+        XCTAssertTrue(googleSubfolder.waitForExistence(timeout: 15))
+        XCTAssertTrue(scrollToAnyElement(googleSubfolder, in: app, maximumSwipes: 8))
+        googleSubfolder.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)
+        ).tap()
+        XCTAssertTrue(app.staticTexts["BVT Google Drive Tone"].waitForExistence(timeout: 15))
+
+        let googleDownload = app.buttons[
+            "onlineSources.detail.bvt.google-drive.item.bvt-audio.downloadAndImport"
+        ].firstMatch
+        XCTAssertTrue(googleDownload.waitForExistence(timeout: 10))
+        googleDownload.tap()
+        let googleCompleted = app.descendants(matching: .any)[
+            "onlineSources.detail.bvt.google-drive.item.bvt-audio.completed"
+        ].firstMatch
+        let googleAlreadyImported = app.descendants(matching: .any)[
+            "onlineSources.detail.bvt.google-drive.item.bvt-audio.alreadyImported"
+        ].firstMatch
+        let googleSkipped = app.descendants(matching: .any)[
+            "onlineSources.detail.bvt.google-drive.item.bvt-audio.skipped"
+        ].firstMatch
+        let googleRetry = app.buttons[
+            "onlineSources.detail.bvt.google-drive.item.bvt-audio.retryDownload"
+        ].firstMatch
+        let googleImportDeadline = Date().addingTimeInterval(45)
+        while Date() < googleImportDeadline
+            && !googleCompleted.exists
+            && !googleAlreadyImported.exists
+            && !googleSkipped.exists
+            && !googleRetry.exists {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        }
+        XCTAssertTrue(
+            googleCompleted.exists || googleAlreadyImported.exists || googleSkipped.exists,
+            "Google Drive import must reach a successful terminal state; a retry state indicates a real download/import failure."
+        )
+
+        returnToOnlineSourceList(in: app)
+
+        // The imported DS Audio media must be visible through the existing
+        // local library path, proving that online downloads do not create a
+        // second playback/library pipeline.
+        tapTab("Library", in: app)
+        openLibrarySection("Songs", in: app)
+        XCTAssertTrue(app.staticTexts[dsAudioTitle].waitForExistence(timeout: 30))
+
+        // Application-level revocation disables every online source while
+        // retaining the configured source rows and already imported media.
+        tapTab("Settings", in: app)
+        waitForSettingsForm(in: app)
+        let privacyEntry = app.descendants(matching: .any)["settings.privacy"].firstMatch
+        XCTAssertTrue(scrollToElement(privacyEntry, in: app, maximumSwipes: 16))
+        privacyEntry.tap()
+
+        let applicationRevoke = app.buttons[
+            "settings.privacy.application.revoke"
+        ].firstMatch
+        XCTAssertTrue(scrollToAnyElement(applicationRevoke, in: app, maximumSwipes: 16))
+        applicationRevoke.tap()
+        let applicationRevokeConfirm = app.buttons[
+            "settings.privacy.application.revoke.confirm"
+        ].firstMatch
+        XCTAssertTrue(applicationRevokeConfirm.waitForExistence(timeout: 5))
+        applicationRevokeConfirm.tap()
+        XCTAssertTrue(
+            app.buttons["settings.privacy.application.accept"].firstMatch
+                .waitForExistence(timeout: 15)
+        )
+
+        tapTab("Online Sources", in: app)
+        XCTAssertTrue(
+            applicationPrivacySheet.waitForExistence(timeout: 15),
+            "Revoking the application privacy agreement must present the disclosure again on the next Online Sources visit."
+        )
+        XCTAssertTrue(
+            app.buttons["onlineSources.applicationPrivacy.confirm"].firstMatch
+                .waitForExistence(timeout: 10)
+        )
+        XCTAssertTrue(app.staticTexts["BVT DS Audio"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["BVT Google Drive"].waitForExistence(timeout: 10))
+    }
+
+    @MainActor
+    func testOnlineSourceCatalogDimensionsPaginateAndSort() {
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        app.launchArguments = [
+            "--bvt-seed-online-sources",
+            "--bvt-reset-online-sources",
+            "--bvt-reset-user-interface-preferences",
+        ]
+        app.launch()
+
+        assertMainTabs(in: app)
+        tapTab("Online Sources", in: app)
+
+        let applicationPrivacySheet = app.descendants(matching: .any)[
+            "onlineSources.applicationPrivacy.sheet"
+        ].firstMatch
+        XCTAssertTrue(applicationPrivacySheet.waitForExistence(timeout: 15))
+        let applicationPrivacyConfirm = app.buttons[
+            "onlineSources.applicationPrivacy.confirm"
+        ].firstMatch
+        XCTAssertTrue(applicationPrivacyConfirm.waitForExistence(timeout: 5))
+        applicationPrivacyConfirm.tap()
+        XCTAssertTrue(applicationPrivacySheet.waitForNonExistence(timeout: 10))
+
+        enableOnlineSourcesService(in: app)
+        openOnlineSource(named: "BVT DS Audio", in: app)
+        acceptOnlineSourcePrivacy(sourceID: "bvt.dsaudio", in: app)
+        enableOnlineSource(sourceID: "bvt.dsaudio", in: app)
+
+        let catalog = app.collectionViews["onlineSources.catalog.list"].firstMatch
+        XCTAssertTrue(catalog.waitForExistence(timeout: 15))
+
+        let albumCategory = catalog.cells[
+            "onlineSources.detail.bvt.dsaudio.category.albums"
+        ].firstMatch
+        XCTAssertTrue(albumCategory.waitForExistence(timeout: 15))
+        albumCategory.tap()
+
+        let albumSort = app.navigationBars.buttons[
+            "onlineSources.detail.bvt.dsaudio.sort"
+        ].firstMatch
+        XCTAssertTrue(albumSort.waitForExistence(timeout: 10))
+        let albumDescending = app.descendants(matching: .any).matching(
+            NSPredicate(
+                format: "label CONTAINS[c] 'Descending' OR label CONTAINS[c] '降序'"
+            )
+        ).firstMatch
+        albumSort.tap()
+        XCTAssertTrue(
+            albumDescending.waitForExistence(timeout: 5),
+            "The catalog sort menu must expose a descending option."
+        )
+        albumDescending.tap()
+
+        XCTAssertTrue(
+            catalog.cells[
+                "onlineSources.detail.bvt.dsaudio.item.bvt-album-84.open"
+            ].firstMatch.waitForExistence(timeout: 20),
+            "Changing sort must reload the first page in the selected order."
+        )
+        let lastSortedAlbum = catalog.cells[
+            "onlineSources.detail.bvt.dsaudio.item.bvt-album.open"
+        ].firstMatch
+        XCTAssertTrue(
+            scrollToAnyElement(lastSortedAlbum, in: app, maximumSwipes: 20),
+            "The sorted album catalog must expose its later page."
+        )
+        XCTAssertTrue(lastSortedAlbum.waitForExistence(timeout: 20))
+        tapSystemNavigationBack(in: app, expectedPreviousTitle: "BVT DS Audio")
+
+        let artistCategory = catalog.cells[
+            "onlineSources.detail.bvt.dsaudio.category.artists"
+        ].firstMatch
+        XCTAssertTrue(artistCategory.waitForExistence(timeout: 15))
+        artistCategory.tap()
+        XCTAssertTrue(
+            catalog.cells[
+                "onlineSources.detail.bvt.dsaudio.item.bvt-artist.open"
+            ].firstMatch.waitForExistence(timeout: 15)
+        )
+        let lastArtist = catalog.cells[
+            "onlineSources.detail.bvt.dsaudio.item.bvt-artist-84.open"
+        ].firstMatch
+        XCTAssertTrue(
+            scrollToAnyElement(lastArtist, in: app, maximumSwipes: 20),
+            "The artist catalog must expose its later page."
+        )
+        XCTAssertTrue(lastArtist.waitForExistence(timeout: 20))
+        tapSystemNavigationBack(in: app, expectedPreviousTitle: "BVT DS Audio")
+
+        let allMusicCategory = catalog.cells[
+            "onlineSources.detail.bvt.dsaudio.category.allMusic"
+        ].firstMatch
+        XCTAssertTrue(allMusicCategory.waitForExistence(timeout: 15))
+        allMusicCategory.tap()
+        let firstAllMusicItem = app.staticTexts["BVT DS Audio Tone"].firstMatch
+        XCTAssertTrue(
+            scrollToAnyElement(firstAllMusicItem, in: app, maximumSwipes: 20),
+            "The all-music catalog must render audio rows with their titles."
+        )
+        let lastAllMusicItem = app.staticTexts["BVT DS Audio Tone 84"].firstMatch
+        XCTAssertTrue(
+            scrollToAnyElement(lastAllMusicItem, in: app, maximumSwipes: 20),
+            "The all-music catalog must expose its later page."
+        )
+        XCTAssertTrue(lastAllMusicItem.waitForExistence(timeout: 20))
+    }
+
+    @MainActor
+    func testLiveDSAudioBrowseAndImportIfEnabled() throws {
+#if !LIVE_DSAUDIO
+        guard ProcessInfo.processInfo.environment["MUSICFREE_LIVE_DSAUDIO"] == "1" else {
+            throw XCTSkip("Set MUSICFREE_LIVE_DSAUDIO=1 to run against the logged-in DSM source.")
+        }
+#endif
+
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        app.launch()
+
+        assertMainTabs(in: app)
+        tapTab("Online Sources", in: app)
+
+        let dsAudioSource = app.buttons.matching(
+            NSPredicate(
+                format: "identifier BEGINSWITH %@",
+                "onlineSources.source.dsAudio."
+            )
+        ).firstMatch
+        guard dsAudioSource.waitForExistence(timeout: 20) else {
+            throw XCTSkip(
+                "No persisted real DS Audio source was found on this simulator; "
+                    + "complete DSM login and source setup before running the live test."
+            )
+        }
+        XCTAssertTrue(
+            dsAudioSource.isHittable,
+            "The persisted real DS Audio source must be enterable."
+        )
+        dsAudioSource.tap()
+
+        let firstFolder = waitForLiveButton(
+            withIdentifierSuffix: ".open",
+            in: app,
+            maximumSwipes: 12,
+            timeout: 30
+        )
+
+        // Prove that Browse means folder navigation, not a flat one-shot list.
+        if let firstFolder {
+            firstFolder.tap()
+            let catalogBack = app.navigationBars.buttons["BackButton"].firstMatch
+            XCTAssertTrue(
+                catalogBack.waitForExistence(timeout: 15),
+                "Entering a DS Audio folder must expose the system navigation back action."
+            )
+            XCTAssertTrue(
+                catalogBack.isHittable,
+                "The system navigation back action must remain available from the navigation bar."
+            )
+            XCTAssertFalse(
+                app.buttons.matching(
+                    NSPredicate(format: "identifier ENDSWITH '.catalog.back'")
+                ).firstMatch.exists,
+                "The catalog must not add a second custom back button."
+            )
+            XCTAssertTrue(
+                waitForLiveButton(
+                    withIdentifierSuffix: ".open",
+                    in: app,
+                    maximumSwipes: 12,
+                    timeout: 15
+                ) != nil
+                    || waitForLiveButton(
+                        withIdentifierSuffix: ".downloadAndImport",
+                        in: app,
+                        maximumSwipes: 12,
+                        timeout: 15
+                    ) != nil,
+                "The entered DS Audio folder must expose child content."
+            )
+            catalogBack.tap()
+            XCTAssertTrue(
+                waitForLiveButton(
+                    withIdentifierSuffix: ".open",
+                    in: app,
+                    maximumSwipes: 12,
+                    timeout: 15
+                ) != nil
+                    || waitForLiveButton(
+                        withIdentifierSuffix: ".downloadAndImport",
+                        in: app,
+                        maximumSwipes: 12,
+                        timeout: 15
+                    ) != nil,
+                "Returning from a DS Audio folder must restore the parent catalog."
+            )
+        } else {
+            XCTAssertNotNil(
+                waitForLiveButton(
+                    withIdentifierSuffix: ".downloadAndImport",
+                    in: app,
+                    maximumSwipes: 12,
+                    timeout: 10
+                ),
+                "DS Audio catalog did not expose a folder or audio file."
+            )
+        }
+
+        // Exercise recursive discovery without waiting for an arbitrarily large
+        // NAS folder to finish. Once at least one item is processed, cancel the
+        // batch and prove that every active import control settles before the
+        // test starts one bounded single-file import.
+        guard let rootFolder = waitForLiveButton(
+            withIdentifierSuffix: ".open",
+            in: app,
+            maximumSwipes: 12,
+            timeout: 10
+        ) else {
+            XCTFail("The real DS Audio source must expose a folder for recursive import testing.")
+            return
+        }
+        rootFolder.tap()
+        guard let folderImport = waitForLiveButton(
+            withIdentifierSuffix: ".downloadAndImportAll",
+            in: app,
+            maximumSwipes: 12,
+            timeout: 10
+        ) else {
+            XCTFail("An entered DS Audio folder must expose a fixed recursive import action.")
+            return
+        }
+        folderImport.tap()
+        waitForLiveBatchImportProgressThenCancel(in: app, timeout: 120)
+
+        guard let importedTitle = importFreshLiveDSAudioItem(in: app, maximumAttempts: 8) else {
+            return
+        }
+
+        tapTab("Library", in: app)
+        openLibrarySection("Songs", in: app)
+        let tracks = app.descendants(matching: .any)["library.tracks"].firstMatch
+        XCTAssertTrue(
+            tracks.waitForExistence(timeout: 30),
+            "The local library must remain available after a real DS Audio import."
+        )
+        guard let importedRow = waitForLibraryTrack(
+            titled: importedTitle,
+            in: tracks,
+            maximumSwipes: 40
+        ) else {
+            XCTFail("The newly imported DS Audio item is missing from the local library: \(importedTitle)")
+            return
+        }
+        XCTAssertFalse(
+            importedRow.label.range(
+                of: #"^[0-9A-Fa-f-]{36}\.[A-Za-z0-9]+$"#,
+                options: .regularExpression
+            ) != nil,
+            "The imported title must not expose an internal UUID staging filename."
+        )
+        importedRow.press(forDuration: 1.0)
+        let details = app.buttons["View song details"].firstMatch
+        XCTAssertTrue(details.waitForExistence(timeout: 10))
+        details.tap()
+
+        let detail = app.descendants(matching: .any)["library.trackDetail"].firstMatch
+        XCTAssertTrue(detail.waitForExistence(timeout: 15))
+        let detailTitle = detail.descendants(matching: .any)[
+            "library.trackDetail.title"
+        ].firstMatch
+        XCTAssertTrue(detailTitle.waitForExistence(timeout: 10))
+        XCTAssertEqual(detailTitle.label, importedTitle)
+        XCTAssertFalse(
+            detailTitle.label.range(
+                of: #"^[0-9A-Fa-f-]{36}\.[A-Za-z0-9]+$"#,
+                options: .regularExpression
+            ) != nil,
+            "The DS Audio detail title must remain human readable after import."
+        )
+        XCTAssertTrue(
+            detail.descendants(matching: .any)["library.trackDetail.artist"].firstMatch
+                .waitForExistence(timeout: 15),
+            "The real DS Audio import should retain catalog or embedded artist metadata."
+        )
+        XCTAssertTrue(
+            detail.descendants(matching: .any)["library.trackDetail.album"].firstMatch
+                .waitForExistence(timeout: 15),
+            "The real DS Audio import should retain catalog or embedded album metadata."
+        )
+    }
+
+    @MainActor
     private func createPlaylist(in app: XCUIApplication) {
         tapTab("Playlists", in: app)
 
-        let playlistRow = app.buttons.containing(
+        let playlistRow = app.cells.containing(
             .staticText,
             identifier: playlistName
         ).firstMatch
@@ -128,7 +1488,7 @@ final class MusicFreeBVTUITests: XCTestCase {
         backButton.tap()
         tapTab("Playlists", in: app)
 
-        let playlistRow = app.buttons.containing(
+        let playlistRow = app.cells.containing(
             .staticText,
             identifier: playlistName
         ).firstMatch
@@ -184,7 +1544,7 @@ final class MusicFreeBVTUITests: XCTestCase {
         XCTAssertTrue(trackRow.waitForExistence(timeout: 5))
         trackRow.tap()
 
-        let miniPlayer = app.descendants(matching: .any)["player.mini"]
+        let miniPlayer = app.buttons["player.mini"].firstMatch
         XCTAssertTrue(miniPlayer.waitForExistence(timeout: 15))
         XCTAssertTrue(
             miniPlayer.staticTexts[trackTitle].waitForExistence(timeout: 15),
@@ -219,7 +1579,7 @@ final class MusicFreeBVTUITests: XCTestCase {
     @MainActor
     private func assertPlaylistPersisted(in app: XCUIApplication) {
         tapTab("Playlists", in: app)
-        let playlistRow = app.buttons.containing(
+        let playlistRow = app.cells.containing(
             .staticText,
             identifier: playlistName
         ).firstMatch
@@ -294,10 +1654,42 @@ final class MusicFreeBVTUITests: XCTestCase {
             return
         }
 
+        for _ in 0..<4 {
+            // Only use the system navigation-back control here. Selecting the
+            // first toolbar button is unsafe on Online Sources because the
+            // source-list root puts its Add action in that position.
+            let backButton = app.navigationBars.buttons["BackButton"].firstMatch
+            guard backButton.exists, backButton.isHittable else { break }
+            backButton.tap()
+            if nativeButton.waitForExistence(timeout: 2), nativeButton.isHittable {
+                nativeButton.tap()
+                return
+            }
+            if fallbackButton.exists, fallbackButton.isHittable {
+                fallbackButton.tap()
+                return
+            }
+        }
+
         let settingsForm = app.collectionViews["settings.form"].firstMatch
         if settingsForm.exists {
             for _ in 0..<8 {
                 settingsForm.swipeDown()
+                if nativeButton.exists, nativeButton.isHittable {
+                    nativeButton.tap()
+                    return
+                }
+                if fallbackButton.exists, fallbackButton.isHittable {
+                    fallbackButton.tap()
+                    return
+                }
+            }
+        }
+
+        let visibleCollection = app.collectionViews.firstMatch
+        if visibleCollection.exists {
+            for _ in 0..<4 {
+                visibleCollection.swipeDown()
                 if nativeButton.exists, nativeButton.isHittable {
                     nativeButton.tap()
                     return
@@ -314,6 +1706,568 @@ final class MusicFreeBVTUITests: XCTestCase {
                 + "(nativeExists: \(nativeButton.exists), "
                 + "fallbackExists: \(fallbackButton.exists))."
         )
+    }
+
+    @MainActor
+    private func openOnlineSource(named displayName: String, in app: XCUIApplication) {
+        let label = app.staticTexts[displayName].firstMatch
+        XCTAssertTrue(label.waitForExistence(timeout: 15))
+        XCTAssertTrue(label.isHittable, "Online source row is not hittable: \(displayName)")
+        label.tap()
+    }
+
+    @MainActor
+    private func button(
+        identifier: String,
+        labels: [String],
+        in app: XCUIApplication
+    ) -> XCUIElement {
+        app.buttons.matching(
+            NSPredicate(
+                format: "identifier == %@ OR label IN %@",
+                identifier,
+                labels
+            )
+        ).firstMatch
+    }
+
+    @MainActor
+    private func acceptOnlineSourcePrivacy(sourceID: String, in app: XCUIApplication) {
+        let detail = app.descendants(matching: .any)[
+            "onlineSources.detail.\(sourceID)"
+        ].firstMatch
+        let sheet = app.descendants(matching: .any)[
+            "onlineSources.source.\(sourceID).privacy.sheet"
+        ].firstMatch
+        if !sheet.waitForExistence(timeout: 3) {
+            XCTAssertTrue(
+                detail.waitForExistence(timeout: 12),
+                "The source must either request consent or open its already-consented UIKit detail."
+            )
+            return
+        }
+        let confirm = button(
+            identifier: "onlineSources.source.\(sourceID).privacy.accept.confirm",
+            labels: ["Agree", "同意"],
+            in: app
+        )
+        XCTAssertTrue(confirm.waitForExistence(timeout: 10))
+        confirm.tap()
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 15))
+        XCTAssertTrue(
+            detail.waitForExistence(timeout: 15),
+            "Accepting source privacy must finish the UIKit push before the next cross-tab action."
+        )
+    }
+
+    @MainActor
+    private func enableOnlineSource(sourceID: String, in app: XCUIApplication) {
+        openPrivacySettings(in: app)
+        let toggle = app.switches[
+            "settings.privacy.onlineSource.\(sourceID).enabled"
+        ].firstMatch
+        XCTAssertTrue(toggle.waitForExistence(timeout: 15))
+        XCTAssertTrue(toggle.isEnabled, "Online source setting is still gated: \(sourceID)")
+        if !isOnValue(toggle.value) {
+            toggle.coordinate(
+                withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5)
+            ).tap()
+        }
+        waitForOnValue(on: toggle, timeout: 10)
+        tapTab("Online Sources", in: app)
+    }
+
+    @MainActor
+    private func enableOnlineSourcesService(in app: XCUIApplication) {
+        openPrivacySettings(in: app)
+        let toggle = app.switches["settings.privacy.onlineSources.toggle"].firstMatch
+        XCTAssertTrue(toggle.waitForExistence(timeout: 15))
+        XCTAssertTrue(toggle.isEnabled, "The application privacy agreement should unlock the online-source switch.")
+        if !isOnValue(toggle.value) {
+            toggle.coordinate(
+                withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5)
+            ).tap()
+        }
+        waitForOnValue(on: toggle, timeout: 10)
+        tapTab("Online Sources", in: app)
+    }
+
+    @MainActor
+    private func openPrivacySettings(in app: XCUIApplication) {
+        tapTab("Settings", in: app)
+        let onlineSourcesToggle = app.descendants(matching: .any)[
+            "settings.privacy.onlineSources.toggle"
+        ].firstMatch
+        if onlineSourcesToggle.waitForExistence(timeout: 2) {
+            return
+        }
+
+        waitForSettingsForm(in: app)
+        let privacyEntry = app.descendants(matching: .any)["settings.privacy"].firstMatch
+        XCTAssertTrue(scrollToElement(privacyEntry, in: app, maximumSwipes: 16))
+        privacyEntry.tap()
+        XCTAssertTrue(
+            onlineSourcesToggle.waitForExistence(timeout: 15),
+            "The independent online-source settings section must be reachable from Privacy."
+        )
+    }
+
+    @MainActor
+    private func revokeOnlineSourcePrivacyInSettings(
+        sourceID: String,
+        in app: XCUIApplication
+    ) {
+        openPrivacySettings(in: app)
+        let privacyRow = app.descendants(matching: .any)[
+            "settings.privacy.onlineSource.\(sourceID).privacy"
+        ].firstMatch
+        XCTAssertTrue(
+            scrollToElement(privacyRow, in: app, maximumSwipes: 16),
+            "The source privacy detail row must be reachable in the independent settings section."
+        )
+        privacyRow.tap()
+
+        let revoke = app.buttons[
+            "settings.privacy.onlineSource.\(sourceID).revoke"
+        ].firstMatch
+        XCTAssertTrue(
+            scrollToElement(revoke, in: app, maximumSwipes: 16),
+            "The source privacy revoke action must be reachable in the independent settings section."
+        )
+        revoke.tap()
+        let confirm = app.buttons[
+            "settings.privacy.onlineSource.\(sourceID).revoke.confirm"
+        ].firstMatch
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        confirm.tap()
+        tapTab("Online Sources", in: app)
+    }
+
+    @MainActor
+    private func tapSystemNavigationBack(
+        in app: XCUIApplication,
+        expectedPreviousTitle: String
+    ) {
+        // A native searchable navigation bar owns the leading control while
+        // its search context is active. Exit that context first, then use the
+        // system NavigationStack back action.
+        let cancelSearch = app.buttons.matching(
+            NSPredicate(format: "label == 'Cancel' OR label == '取消'")
+        ).firstMatch
+        if cancelSearch.waitForExistence(timeout: 2) {
+            // On iOS 26 the searchable drawer can report the system Cancel
+            // button as temporarily non-hittable while the keyboard is
+            // dismissing. Tapping its own coordinate still exercises the
+            // same native control and lets NavigationStack expose its back
+            // button on the next run-loop turn.
+            cancelSearch.coordinate(
+                withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)
+            ).tap()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+        }
+
+        let backButton = app.navigationBars.buttons["BackButton"].firstMatch
+        if backButton.waitForExistence(timeout: 10) {
+            if backButton.isHittable {
+                backButton.tap()
+            } else {
+                backButton.coordinate(
+                    withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)
+                ).tap()
+            }
+            return
+        }
+
+        let titledBackButton = app.navigationBars.buttons[expectedPreviousTitle].firstMatch
+        XCTAssertTrue(
+            titledBackButton.waitForExistence(timeout: 5),
+            "The system navigation bar must expose a back action to \(expectedPreviousTitle)."
+        )
+        if titledBackButton.isHittable {
+            titledBackButton.tap()
+        } else {
+            // iOS 26.5 can keep the native back button non-hittable while the
+            // searchable navigation bar settles. Its coordinate still targets
+            // the same system control and avoids falling back to app content.
+            titledBackButton.coordinate(
+                withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)
+            ).tap()
+        }
+    }
+
+    @MainActor
+    private func isOnValue(_ value: Any?) -> Bool {
+        switch String(describing: value ?? "") {
+        case "1", "true", "True", "on", "On", "ON", "已开启":
+            return true
+        default:
+            return false
+        }
+    }
+
+    @MainActor
+    private func waitForOnValue(
+        on element: XCUIElement,
+        timeout: TimeInterval
+    ) {
+        let expectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate { object, _ in
+                guard let element = object as? XCUIElement else { return false }
+                return self.isOnValue(element.value)
+            },
+            object: element
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [expectation], timeout: timeout),
+            .completed,
+            "Expected \(element.identifier) to be on, actual value: \(String(describing: element.value))."
+        )
+    }
+
+    @MainActor
+    private func returnToOnlineSourceList(in app: XCUIApplication) {
+        for _ in 0..<8 {
+            if app.buttons["onlineSources.add"].waitForExistence(timeout: 2) {
+                return
+            }
+            let backButton = app.navigationBars.buttons["BackButton"].firstMatch
+            if backButton.waitForExistence(timeout: 2), backButton.isHittable {
+                backButton.tap()
+                continue
+            }
+            let titledBackButton = app.navigationBars.buttons["Online Sources"].firstMatch
+            if titledBackButton.waitForExistence(timeout: 2), titledBackButton.isHittable {
+                titledBackButton.tap()
+                continue
+            }
+            break
+        }
+        XCTAssertTrue(
+            app.buttons["onlineSources.add"].firstMatch.waitForExistence(timeout: 10)
+        )
+    }
+
+    @MainActor
+    private func waitForValue(
+        _ expectedValue: String,
+        on element: XCUIElement,
+        timeout: TimeInterval
+    ) {
+        let expectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", expectedValue),
+            object: element
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [expectation], timeout: timeout),
+            .completed,
+            "Expected \(element.identifier) to have value \(expectedValue), "
+                + "actual value: \(String(describing: element.value))."
+        )
+    }
+
+    @MainActor
+    private func waitForEither(
+        _ first: XCUIElement,
+        _ second: XCUIElement,
+        timeout: TimeInterval
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if first.exists || second.exists {
+                return true
+            }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        }
+        return first.exists || second.exists
+    }
+
+    @MainActor
+    private func scrollToAnyElement(
+        _ element: XCUIElement,
+        in app: XCUIApplication,
+        maximumSwipes: Int
+    ) -> Bool {
+        if element.waitForExistence(timeout: 2), element.isHittable {
+            return true
+        }
+        let collection = app.collectionViews.firstMatch
+        for _ in 0..<maximumSwipes {
+            if collection.exists {
+                collection.swipeUp()
+            } else {
+                app.swipeUp()
+            }
+            if element.waitForExistence(timeout: 1), element.isHittable {
+                return true
+            }
+        }
+        return false
+    }
+
+    @MainActor
+    private func waitForLiveButton(
+        withIdentifierSuffix suffix: String,
+        in app: XCUIApplication,
+        maximumSwipes: Int,
+        timeout: TimeInterval
+    ) -> XCUIElement? {
+        let deadline = Date().addingTimeInterval(timeout)
+        let predicate = NSPredicate(format: "identifier ENDSWITH %@", suffix)
+        while Date() < deadline {
+            let buttons = app.buttons.matching(predicate).allElementsBoundByIndex
+            if let button = buttons.first(where: {
+                $0.exists && $0.isEnabled && $0.isHittable
+            }) {
+                return button
+            }
+
+            let collection = app.collectionViews.firstMatch
+            if collection.exists {
+                collection.swipeUp()
+            } else {
+                app.swipeUp()
+            }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.25))
+        }
+        return nil
+    }
+
+    @MainActor
+    private func waitForLiveBatchImportProgressThenCancel(
+        in app: XCUIApplication,
+        timeout: TimeInterval
+    ) {
+        let deadline = Date().addingTimeInterval(timeout)
+        let progressPredicate = NSPredicate(format: "identifier ENDSWITH '.importProgress'")
+        let failedIdentifierPredicate = NSPredicate(
+            format: "identifier ENDSWITH '.importFailed'"
+        )
+        let progress = app.descendants(matching: .any).matching(progressPredicate).firstMatch
+        XCTAssertTrue(
+            progress.waitForExistence(timeout: 30),
+            "Recursive DS Audio import must publish progress."
+        )
+
+        var didProcessItem = false
+        while Date() < deadline {
+            let progressDescription = [
+                progress.label,
+                String(describing: progress.value ?? ""),
+            ].joined(separator: " ")
+            if progressDescription.range(
+                of: #"[1-9][0-9]*/[1-9][0-9]*"#,
+                options: .regularExpression
+            ) != nil {
+                didProcessItem = true
+                break
+            }
+            if app.descendants(matching: .any)
+                .matching(failedIdentifierPredicate).firstMatch.exists {
+                XCTFail("Recursive DS Audio import reported a failure.")
+                return
+            }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+        }
+        let currentDirectoryCancel = app.buttons.matching(
+            NSPredicate(format: "identifier ENDSWITH '.cancelImport'")
+        ).firstMatch
+        let inlineCancel = app.buttons.matching(
+            NSPredicate(format: "identifier ENDSWITH '.cancelImport'")
+        ).firstMatch
+        guard didProcessItem else {
+            if waitForEither(currentDirectoryCancel, inlineCancel, timeout: 5) {
+                let cancel = currentDirectoryCancel.exists
+                    ? currentDirectoryCancel
+                    : inlineCancel
+                if cancel.isHittable {
+                    cancel.tap()
+                }
+            }
+            XCTFail(
+                "Recursive DS Audio import did not publish non-zero progress within \(timeout) seconds."
+            )
+            return
+        }
+
+        XCTAssertTrue(
+            waitForEither(currentDirectoryCancel, inlineCancel, timeout: 15),
+            "A running recursive DS Audio import must expose cancellation."
+        )
+        let cancel = currentDirectoryCancel.exists ? currentDirectoryCancel : inlineCancel
+        XCTAssertTrue(cancel.isHittable)
+        cancel.tap()
+
+        let restart = app.buttons.matching(
+            NSPredicate(
+                format: "identifier ENDSWITH '.downloadAndImportAll'"
+            )
+        ).firstMatch
+        XCTAssertTrue(
+            restart.waitForExistence(timeout: 20),
+            "Cancelling a recursive import must restore the current-directory import action."
+        )
+        let activeCancel = app.buttons.matching(
+            NSPredicate(
+                format: "identifier ENDSWITH '.cancelDownload' OR identifier ENDSWITH '.cancelImport'"
+            )
+        ).firstMatch
+        XCTAssertTrue(
+            activeCancel.waitForNonExistence(timeout: 20),
+            "Cancelling a recursive import must stop every active download/import control."
+        )
+        for _ in 0..<4 {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.75))
+            XCTAssertFalse(
+                activeCancel.exists,
+                "A cancelled recursive import must not restart an active child task."
+            )
+        }
+    }
+
+    @MainActor
+    private func importFreshLiveDSAudioItem(
+        in app: XCUIApplication,
+        maximumAttempts: Int
+    ) -> String? {
+        let collection = app.collectionViews.firstMatch
+        var alreadyImportedCandidate: (title: String, actionIdentifier: String)?
+        for _ in 0..<24 {
+            if collection.exists {
+                collection.swipeUp()
+            } else {
+                app.swipeUp()
+            }
+        }
+
+        for attempt in 1...maximumAttempts {
+            guard let download = waitForLiveButton(
+                withIdentifierSuffix: ".downloadAndImport",
+                in: app,
+                maximumSwipes: 6,
+                timeout: 20
+            ) else {
+                if let alreadyImportedCandidate {
+                    let attachment = XCTAttachment(
+                        string: "outcome=alreadyImported title=\(alreadyImportedCandidate.title) "
+                            + "action=\(alreadyImportedCandidate.actionIdentifier)"
+                    )
+                    attachment.name = "Live DS Audio existing imported item"
+                    attachment.lifetime = .keepAlways
+                    add(attachment)
+                    return alreadyImportedCandidate.title
+                }
+                XCTFail("The DS Audio folder exposed no remaining single-file import action.")
+                return nil
+            }
+            let title = liveCatalogTitle(for: download, in: app)
+            let actionSuffix = ".downloadAndImport"
+            let actionIdentifier = download.identifier
+            guard actionIdentifier.hasSuffix(actionSuffix) else {
+                XCTFail("Unexpected DS Audio import identifier: \(actionIdentifier)")
+                return nil
+            }
+            let itemPrefix = String(actionIdentifier.dropLast(actionSuffix.count))
+            let completed = app.descendants(matching: .any)[
+                "\(itemPrefix).completed"
+            ].firstMatch
+            let alreadyImported = app.descendants(matching: .any)[
+                "\(itemPrefix).alreadyImported"
+            ].firstMatch
+            let failedOrCancelled = app.descendants(matching: .any)[
+                "\(itemPrefix).retryDownload"
+            ].firstMatch
+
+            download.tap()
+            let deadline = Date().addingTimeInterval(150)
+            while Date() < deadline {
+                if completed.exists {
+                    let attachment = XCTAttachment(
+                        string: "attempt=\(attempt) title=\(title) action=\(actionIdentifier)"
+                    )
+                    attachment.name = "Live DS Audio imported item"
+                    attachment.lifetime = .keepAlways
+                    add(attachment)
+                    return title
+                }
+                if alreadyImported.exists {
+                    if alreadyImportedCandidate == nil {
+                        alreadyImportedCandidate = (title, actionIdentifier)
+                    }
+                    break
+                }
+                if failedOrCancelled.exists {
+                    XCTFail("The selected DS Audio file failed to download or import: \(title)")
+                    return nil
+                }
+                RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+            }
+            if !alreadyImported.exists {
+                XCTFail("The selected DS Audio file did not reach a terminal state: \(title)")
+                return nil
+            }
+        }
+
+        if let alreadyImportedCandidate {
+            let attachment = XCTAttachment(
+                string: "outcome=alreadyImported title=\(alreadyImportedCandidate.title) "
+                    + "action=\(alreadyImportedCandidate.actionIdentifier)"
+            )
+            attachment.name = "Live DS Audio existing imported item"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            return alreadyImportedCandidate.title
+        }
+
+        XCTFail(
+            "Could not find a not-yet-imported DS Audio file after \(maximumAttempts) attempts."
+        )
+        return nil
+    }
+
+    @MainActor
+    private func liveCatalogTitle(
+        for download: XCUIElement,
+        in app: XCUIApplication
+    ) -> String {
+        let value = String(describing: download.value ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !value.isEmpty, value != "nil" {
+            return value
+        }
+
+        let row = app.cells.containing(
+            .button,
+            identifier: download.identifier
+        ).firstMatch
+        if row.waitForExistence(timeout: 5),
+           let displayName = row.staticTexts.allElementsBoundByIndex
+            .map(\.label)
+            .first(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+            return URL(fileURLWithPath: displayName)
+                .deletingPathExtension()
+                .lastPathComponent
+        }
+        return URL(fileURLWithPath: download.identifier)
+            .deletingPathExtension()
+            .lastPathComponent
+    }
+
+    @MainActor
+    private func waitForLibraryTrack(
+        titled title: String,
+        in tracks: XCUIElement,
+        maximumSwipes: Int
+    ) -> XCUIElement? {
+        let predicate = NSPredicate(format: "label == %@", title)
+        for _ in 0...maximumSwipes {
+            let row = tracks.cells.matching(predicate).firstMatch
+            if row.exists, row.isHittable {
+                return row
+            }
+            tracks.swipeUp()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.25))
+        }
+        return nil
     }
 
     @MainActor
@@ -374,4 +2328,13 @@ final class MusicFreeBVTUITests: XCTestCase {
         let settingsForm = app.collectionViews["settings.form"].firstMatch
         return settingsForm.waitForExistence(timeout: 2) ? settingsForm : app
     }
+
+    @MainActor
+    private func attachScreenshot(named name: String) {
+        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
 }

@@ -66,6 +66,12 @@ public final class SwiftDataLibraryRepository: LibraryRepository, Sendable {
         try await store.isArtworkReferenced(artworkID)
     }
 
+    public func referencedArtworkIDs(
+        in candidates: Set<ArtworkID>
+    ) async throws -> Set<ArtworkID> {
+        try await store.referencedArtworkIDs(in: candidates)
+    }
+
     public func isMediaAssetReferenced(
         _ assetID: MediaAssetID,
         excluding itemIDs: Set<MediaItemID>
@@ -85,6 +91,12 @@ public final class SwiftDataLibraryRepository: LibraryRepository, Sendable {
         page: LibraryPageRequest
     ) async throws -> LibraryPage<Album> {
         try await store.albums(matching: query, page: page)
+    }
+
+    public func searchLibrary(
+        _ request: LibrarySearchRequest
+    ) async throws -> LibrarySearchResults {
+        try await store.searchLibrary(request)
     }
 
     public func artists(
@@ -111,6 +123,10 @@ public final class SwiftDataLibraryRepository: LibraryRepository, Sendable {
 
     public func remove(_ itemIDs: Set<MediaItemID>) async throws {
         try await store.remove(itemIDs)
+    }
+
+    public func repairMetadata() async throws -> LibraryMetadataRepairResult {
+        try await store.repairMetadata()
     }
 
     public func changes() -> AsyncStream<LibraryChange> {

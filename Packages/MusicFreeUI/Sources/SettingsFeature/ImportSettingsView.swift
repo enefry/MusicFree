@@ -5,15 +5,18 @@ struct ImportSettingsView: View {
     let viewModel: SettingsViewModel
     let metadataServerEnabled: Bool
     let lyricsEnabled: Bool
+    let onNavigate: ((SettingsDestination) -> Void)?
 
     init(
         viewModel: SettingsViewModel,
         metadataServerEnabled: Bool = true,
-        lyricsEnabled: Bool = true
+        lyricsEnabled: Bool = true,
+        onNavigate: ((SettingsDestination) -> Void)? = nil
     ) {
         self.viewModel = viewModel
         self.metadataServerEnabled = metadataServerEnabled
         self.lyricsEnabled = lyricsEnabled
+        self.onNavigate = onNavigate
     }
 
     var body: some View {
@@ -36,6 +39,7 @@ struct ImportSettingsView: View {
                     metadataServerEnabled: metadataServerEnabled,
                     lyricsEnabled: lyricsEnabled
                 )
+                .onAppear { onNavigate?(.importing) }
             } label: {
                 HStack(spacing: MusicFreeSpacingTokens.small) {
                     Label(L("元数据填充"), systemImage: "wand.and.stars")
