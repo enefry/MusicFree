@@ -1,4 +1,5 @@
 @testable import LibraryFeature
+import Combine
 import AppServices
 import DesignSystem
 import Foundation
@@ -8,6 +9,193 @@ import MusicDomain
 import MusicTestSupport
 import Testing
 import UIKit
+
+@MainActor
+@Test("Album refresh keeps loaded pages until one atomic replacement")
+func albumRefreshPreservesLoadedWindow() async throws {
+    let service = FakeLibraryService()
+    let albums = (0..<6).map { makeAlbum("Album \($0)") }
+    service.albumResponses = [
+        .success(LibraryPage(elements: Array(albums.prefix(3)), nextCursor: LibraryCursor("p2"))),
+        .success(LibraryPage(elements: Array(albums.suffix(3)), nextCursor: LibraryCursor("p3"))),
+        .success(LibraryPage(elements: Array(albums[1...3]), nextCursor: LibraryCursor("new2"))),
+        .success(LibraryPage(elements: Array(albums[4...5])))
+    ]
+    let model = LibraryViewModel(library: service, selection: .albums, pageSize: 3)
+    model.load(section: .albums, reset: true)
+    await settle()
+    model.loadNextPage(for: .albums)
+    await settle()
+    #expect(model.albums.count == 6)
+    var publishedCounts: [Int] = []
+    let observation = model.$albums.sink { publishedCounts.append($0.count) }
+    model.refresh(section: .albums)
+    #expect(model.albums.count == 6)
+    #expect(model.state(for: .albums) == .loaded)
+    await settle()
+    #expect(model.albums == Array(albums.dropFirst()))
+    #expect(publishedCounts == [6, 5])
+    #expect(service.albumPageRequests.last?.cursor == LibraryCursor("new2"))
+    observation.cancel()
+}
+
+@MainActor
+@Test("Batch album deletion gathers all pages and makes one deduplicated removal")
+func albumBatchDeletionUsesOneTransaction() async throws {
+    let service = FakeLibraryService()
+    service.allowsDeletion = true
+    let a = Track(id: makeTrack("a").id, title: "a", albumID: AlbumID("one"))
+    let b = Track(id: makeTrack("b").id, title: "b", albumID: AlbumID("two"))
+    let other = Track(id: makeTrack("c").id, title: "c", albumID: AlbumID("other"))
+    service.trackResponses = [
+        .success(LibraryPage(elements: [a, other], nextCursor: LibraryCursor("p2"))),
+        .success(LibraryPage(elements: [a, b]))
+    ]
+    let model = LibraryViewModel(library: service)
+    try await model.deleteAlbums([AlbumID("one"), AlbumID("two")])
+    #expect(service.deletedBatches == [Set([a.id, b.id])])
+    #expect(service.trackRequests.count == 2)
+    #expect(service.albumRequests.isEmpty)
+}
+
+@MainActor
+@Test("Successful album deletion immediately removes the displayed album without a change event")
+func albumDeletionUpdatesDisplayedAlbumsWithoutEvent() async throws {
+    let service = FakeLibraryService()
+    service.allowsDeletion = true
+    let removed = makeAlbum("Removed")
+    let retained = makeAlbum("Retained")
+    service.defaultAlbums = [removed, retained]
+    let model = LibraryViewModel(library: service)
+    model.load(section: .albums, reset: true)
+    await settle()
+    let track = Track(id: makeTrack("removed-track").id, title: "Song", albumID: removed.id)
+    service.trackResponses = [.success(LibraryPage(elements: [track]))]
+    try await model.deleteAlbums([removed.id])
+    #expect(model.albums == [retained])
+    #expect(model.state(for: .albums) == .loaded)
+    #expect(service.deletedBatches == [Set([track.id])])
+    let lastTrack = Track(id: makeTrack("last-track").id, title: "Last", albumID: retained.id)
+    service.trackResponses = [.success(LibraryPage(elements: [lastTrack]))]
+    try await model.deleteAlbums([retained.id])
+    #expect(model.albums.isEmpty)
+    #expect(model.state(for: .albums) == .empty)
+    #expect(service.albumRequests.count == 1)
+}
+
+@MainActor
+@Test("A stale album page cannot resurrect an album after deletion")
+func albumDeletionRejectsInflightStalePage() async throws {
+    let service = FakeLibraryService()
+    service.allowsDeletion = true
+    let removed = makeAlbum("Removed")
+    let retained = makeAlbum("Retained")
+    service.defaultAlbums = [removed, retained]
+    let model = LibraryViewModel(library: service)
+    model.load(section: .albums, reset: true)
+    await settle()
+    service.holdNextAlbumPage = true
+    model.refresh(section: .albums)
+    await settleUntil { service.heldAlbumPage != nil }
+    #expect(service.heldAlbumPage != nil)
+    defer { service.releaseHeldAlbumPage() }
+    service.defaultAlbums = [retained]
+    let track = Track(id: makeTrack("removed-track").id, title: "Song", albumID: removed.id)
+    service.trackResponses = [.success(LibraryPage(elements: [track]))]
+    try await model.deleteAlbums([removed.id])
+    #expect(model.albums == [retained])
+    await settle()
+    service.releaseHeldAlbumPage()
+    await settle()
+    #expect(model.albums == [retained])
+    #expect(model.state(for: .albums) == .loaded)
+    #expect(!model.isLoading(.albums))
+}
+
+@MainActor
+@Test("A failed album deletion leaves the displayed album intact")
+func failedAlbumDeletionPreservesDisplayedAlbums() async throws {
+    let service = FakeLibraryService()
+    let album = makeAlbum("Retained")
+    service.defaultAlbums = [album]
+    let model = LibraryViewModel(library: service)
+    model.load(section: .albums, reset: true)
+    await settle()
+    let track = Track(id: makeTrack("song").id, title: "Song", albumID: album.id)
+    service.trackResponses = [.success(LibraryPage(elements: [track]))]
+    await #expect(throws: LibraryTestError.self) { try await model.deleteAlbums([album.id]) }
+    #expect(model.albums == [album])
+    #expect(model.state(for: .albums) == .loaded)
+}
+
+@MainActor
+@Test("Album refresh retains the visible surviving cell in grid and list")
+func albumCollectionRefreshKeepsScrollAnchor() async throws {
+    let service = FakeLibraryService()
+    service.defaultAlbums = (0..<80).map { makeAlbum(String(format: "Album %03d", $0)) }
+    let model = LibraryViewModel(library: service)
+    model.load(section: .albums, reset: true)
+    await settle()
+    let controller = LibraryCollectionsViewController(viewModel: model, section: .albums)
+    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+    window.rootViewController = UINavigationController(rootViewController: controller)
+    window.makeKeyAndVisible()
+    defer { window.isHidden = true; window.rootViewController = nil }
+    controller.loadViewIfNeeded()
+    await settle(100_000_000)
+    #expect(model.selection == .albums)
+    let collection = try #require(controller.contentScrollView(for: .top) as? UICollectionView)
+    for list in [false, true] {
+        controller.setAlbumDisplayMode(list ? .list : .grid)
+        collection.layoutIfNeeded()
+        collection.setContentOffset(CGPoint(x: 0, y: 1200), animated: false)
+        collection.layoutIfNeeded()
+        let cell = try #require(collection.visibleCells.sorted { $0.frame.minY < $1.frame.minY }.first)
+        let identifier = cell.accessibilityIdentifier
+        let distance = cell.frame.minY - collection.contentOffset.y
+        service.defaultAlbums.removeFirst(2)
+        service.publish(LibraryChange(
+            revision: LibraryRevision(list ? 2 : 1),
+            categories: [.albums, .deletions], affectedIDs: LibraryAffectedIDs()
+        ))
+        await settle(150_000_000)
+        collection.layoutIfNeeded()
+        #expect(model.albums == service.defaultAlbums)
+        #expect(collection.numberOfItems(inSection: 0) == service.defaultAlbums.count)
+        let surviving = try #require(collection.visibleCells.first { $0.accessibilityIdentifier == identifier })
+        #expect(abs(surviving.frame.minY - collection.contentOffset.y - distance) < 2)
+        #expect(collection.contentOffset.y > 500)
+    }
+    service.allowsDeletion = true
+    let visibleCell = try #require(collection.visibleCells.first)
+    let removedAlbum = try #require(model.albums.first {
+        visibleCell.accessibilityIdentifier == "library.album.open.\($0.id.rawValue)"
+    })
+    let deletedIdentifier = visibleCell.accessibilityIdentifier
+    let deletedTrack = Track(id: makeTrack("visible-track").id, title: "Song", albumID: removedAlbum.id)
+    service.trackResponses = [.success(LibraryPage(elements: [deletedTrack]))]
+    try await model.deleteAlbums([removedAlbum.id])
+    service.defaultAlbums.removeAll { $0.id == removedAlbum.id }
+    await settle(100_000_000)
+    collection.layoutIfNeeded()
+    #expect(!model.albums.contains { $0.id == removedAlbum.id })
+    #expect(collection.numberOfItems(inSection: 0) == service.defaultAlbums.count)
+    #expect(!collection.visibleCells.contains { $0.accessibilityIdentifier == deletedIdentifier })
+    #expect(collection.contentOffset.y > 500)
+    // Returning from another section must restore the active query target.
+    model.select(.tracks)
+    controller.viewWillAppear(false)
+    #expect(model.selection == .albums)
+    controller.setAlbumSelection(true)
+    let index = try #require(collection.indexPathsForVisibleItems.sorted().first)
+    collection.delegate?.collectionView?(collection, didSelectItemAt: index)
+    #expect(controller.title == "已选择 1 张专辑" || controller.title?.contains("1") == true)
+    #expect(collection.cellForItem(at: index)?.accessibilityTraits.contains(.selected) == true)
+    collection.delegate?.collectionView?(collection, didSelectItemAt: index)
+    #expect(collection.cellForItem(at: index)?.accessibilityTraits.contains(.selected) == false)
+    controller.viewWillDisappear(false)
+    model.stopObservingChanges()
+}
 
 @Test("Track metadata editor preserves, edits, and clears relationship lists")
 func trackMetadataEditorRelationshipNames() {
@@ -1591,6 +1779,16 @@ private final class FakeLibraryService: LibraryServing {
     var trackResponsesByQuery: [TrackQuery: [Result<LibraryPage<Track>, Error>]] = [:]
     var trackRequests: [TrackQuery] = []
     var trackPageRequests: [LibraryPageRequest] = []
+    var defaultAlbums: [Album] = []
+    var holdNextAlbumPage = false
+    var heldAlbumPage: CheckedContinuation<Void, Never>?
+
+    func releaseHeldAlbumPage() {
+        heldAlbumPage?.resume()
+        heldAlbumPage = nil
+    }
+    var deletedBatches: [Set<MediaItemID>] = []
+    var allowsDeletion = false
     var albumResponses: [Result<LibraryPage<Album>, Error>] = []
     var albumRequests: [AlbumQuery] = []
     var albumPageRequests: [LibraryPageRequest] = []
@@ -1599,7 +1797,7 @@ private final class FakeLibraryService: LibraryServing {
     var clearHistoryError: Error?
     private(set) var clearHistoryCallCount = 0
     var cancelledQueries: [String] = []
-    var changeContinuation: AsyncStream<LibraryChange>.Continuation?
+    var changeContinuations: [AsyncStream<LibraryChange>.Continuation] = []
     var storedTracks: [MediaItemID: Track] = [:]
     var blocksFirstFavoriteMutation = false
     private(set) var favoriteWrites: [Bool] = []
@@ -1643,8 +1841,14 @@ private final class FakeLibraryService: LibraryServing {
     ) async throws -> LibraryPage<Album> {
         albumRequests.append(query)
         albumPageRequests.append(page)
-        guard !albumResponses.isEmpty else { return LibraryPage(elements: []) }
-        return try albumResponses.removeFirst().get()
+        let response: Result<LibraryPage<Album>, Error> = albumResponses.isEmpty
+            ? .success(LibraryPage(elements: defaultAlbums)) : albumResponses.removeFirst()
+        if holdNextAlbumPage {
+            holdNextAlbumPage = false
+            // Deliberately ignore cancellation to test the model's stale-token guard.
+            await withCheckedContinuation { heldAlbumPage = $0 }
+        }
+        return try response.get()
     }
 
     func searchLibrary(
@@ -1729,7 +1933,9 @@ private final class FakeLibraryService: LibraryServing {
     }
 
     func delete(_ itemIDs: Set<MediaItemID>) async throws -> LibraryDeletionResult {
-        throw LibraryTestError.unavailable
+        guard allowsDeletion else { throw LibraryTestError.unavailable }
+        deletedBatches.append(itemIDs)
+        return LibraryDeletionResult(itemIDs: itemIDs, status: .committed)
     }
 
     func recoverPendingRemovals() async throws -> LibraryRecoveryResult {
@@ -1738,12 +1944,12 @@ private final class FakeLibraryService: LibraryServing {
 
     func makeChangeStream() async -> AsyncStream<LibraryChange> {
         AsyncStream { continuation in
-            changeContinuation = continuation
+            changeContinuations.append(continuation)
         }
     }
 
     func publish(_ change: LibraryChange) {
-        changeContinuation?.yield(change)
+        for continuation in changeContinuations { continuation.yield(change) }
     }
 
     func waitUntilFirstFavoriteMutationStarts() async {

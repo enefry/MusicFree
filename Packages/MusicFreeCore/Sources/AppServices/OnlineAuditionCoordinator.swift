@@ -29,6 +29,10 @@ public final class OnlineAuditionCoordinator: OnlineAuditionServing {
     private var sessionID: UUID?
     private var currentOperationID: UUID?
     private var activeGeneration: PlaybackGeneration?
+    /// Some engines report natural EOF as a stopped phase followed by an
+    /// ended event. Keep that generation eligible for the terminal event even
+    /// if another engine callback clears the active generation in between.
+    private var pendingNaturalEndGeneration: PlaybackGeneration?
     private var hasStartedActiveGeneration = false
     private var isInterrupted = false
 
@@ -100,6 +104,7 @@ public final class OnlineAuditionCoordinator: OnlineAuditionServing {
             throw OnlineAuditionError.itemNotInQueue
         }
 
+        let hadExistingSession = self.sessionID != nil
         let sessionID = UUID()
         let operationID = UUID()
         self.sessionID = sessionID
@@ -108,6 +113,7 @@ public final class OnlineAuditionCoordinator: OnlineAuditionServing {
         currentIndex = selectedIndex
         sourceDisplayName = nil
         activeGeneration = nil
+        pendingNaturalEndGeneration = nil
         hasStartedActiveGeneration = false
         isInterrupted = false
         publishCurrent(phase: .preparing)
@@ -119,7 +125,7 @@ public final class OnlineAuditionCoordinator: OnlineAuditionServing {
             guard self.sessionID == sessionID,
                   self.currentOperationID == operationID
             else { return }
-            self.stopEngine()
+            self.stopEngine(force: hadExistingSession)
         }
         try requireCurrent(operationID, sessionID: sessionID)
 
@@ -255,6 +261,7 @@ public final class OnlineAuditionCoordinator: OnlineAuditionServing {
         let operationID = UUID()
         currentOperationID = operationID
         activeGeneration = nil
+        pendingNaturalEndGeneration = nil
         hasStartedActiveGeneration = false
         isInterrupted = false
         await withEngineMutation {
@@ -269,10 +276,10 @@ public final class OnlineAuditionCoordinator: OnlineAuditionServing {
     /// Explicit close clears the temporary queue and removes the global
     /// audition entry. It never resumes formal playback.
     public func close() async {
-        let sessionID = self.sessionID
         currentOperationID = nil
         self.sessionID = nil
         activeGeneration = nil
+        pendingNaturalEndGeneration = nil
         hasStartedActiveGeneration = false
         isInterrupted = false
         await withEngineMutation {
@@ -291,6 +298,7 @@ public final class OnlineAuditionCoordinator: OnlineAuditionServing {
             isInterrupted = true
             currentOperationID = nil
             activeGeneration = nil
+            pendingNaturalEndGeneration = nil
             hasStartedActiveGeneration = false
             let sessionID = self.sessionID
             guard let sessionID, snapshot.phase != .idle else { return }
@@ -351,6 +359,7 @@ public final class OnlineAuditionCoordinator: OnlineAuditionServing {
             : snapshot.position
         currentOperationID = operationID
         activeGeneration = nil
+        pendingNaturalEndGeneration = nil
         hasStartedActiveGeneration = false
         isInterrupted = false
         publishCurrent(
@@ -391,6 +400,7 @@ public final class OnlineAuditionCoordinator: OnlineAuditionServing {
         currentOperationID = operationID
         currentIndex = index
         activeGeneration = nil
+        pendingNaturalEndGeneration = nil
         hasStartedActiveGeneration = false
         isInterrupted = false
         publishCurrent(phase: .preparing, position: .zero, failureReason: nil)
@@ -577,7 +587,15 @@ public final class OnlineAuditionCoordinator: OnlineAuditionServing {
     }
 
     private func receive(_ event: PlaybackEvent) async {
-        guard event.generation == activeGeneration else { return }
+        let isEndedEvent: Bool
+        if case .ended = event {
+            isEndedEvent = true
+        } else {
+            isEndedEvent = false
+        }
+        guard event.generation == activeGeneration
+                || (isEndedEvent && event.generation == pendingNaturalEndGeneration)
+        else { return }
         if let itemID = event.itemID,
            itemID.externalID != snapshot.itemID?.externalID
             || itemID.sourceID != snapshot.itemID?.sourceID
@@ -597,9 +615,24 @@ public final class OnlineAuditionCoordinator: OnlineAuditionServing {
                 hasStartedActiveGeneration = true
             }
             if phase == .stopped {
+                // A natural VLC EOF is delivered as `.phaseChanged(.stopped)`
+                // followed by `.ended` for the same generation. Keep the
+                // generation alive until the terminal event so handleEnded()
+                // can advance the frozen audition queue, and avoid publishing
+                // a transient stopped snapshot that would hide the global bar
+                // or make the catalog row briefly look idle. Explicit stops
+                // clear the generation before calling engine.stop(), so their
+                // resulting stopped event is ignored by the guard above.
                 currentOperationID = nil
-                activeGeneration = nil
-                hasStartedActiveGeneration = false
+                // The event stream can be delivered after the command that
+                // started playback has published its state, so do not rely on
+                // the local started marker here. An explicit stop clears
+                // activeGeneration before calling engine.stop() and is
+                // filtered by the guard above; a stopped event that reaches
+                // this branch therefore represents the current generation's
+                // natural terminal path.
+                pendingNaturalEndGeneration = event.generation
+                return
             }
             publishState(engine?.state, fallbackPhase: Self.auditionPhase(for: phase))
         case .positionChanged(_, _, let position, let duration):
@@ -630,6 +663,7 @@ public final class OnlineAuditionCoordinator: OnlineAuditionServing {
               queue.indices.contains(currentIndex)
         else { return }
         activeGeneration = nil
+        pendingNaturalEndGeneration = nil
         hasStartedActiveGeneration = false
         currentOperationID = nil
 
@@ -754,10 +788,16 @@ public final class OnlineAuditionCoordinator: OnlineAuditionServing {
         continuations.values.forEach { $0.yield(value) }
     }
 
-    private func stopEngine() {
+    private func stopEngine(force: Bool = false) {
         activeGeneration = nil
+        pendingNaturalEndGeneration = nil
         hasStartedActiveGeneration = false
-        engine?.stop()
+        guard let engine else { return }
+        guard force
+                || engine.state.itemID != nil
+                || [.preparing, .buffering, .playing, .paused].contains(engine.state.phase)
+        else { return }
+        engine.stop()
     }
 
     private func withEngineMutation<Result>(

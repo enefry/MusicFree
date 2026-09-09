@@ -43,7 +43,6 @@ final class MusicFreeSceneDelegate: UIResponder, UIWindowSceneDelegate {
         }
         (window?.rootViewController as? RootViewController)?.sceneWillResignActive()
         appDelegate.container.lifecycleCoordinator.handle(.inactive)
-        Task { await appDelegate.container.serviceContainer?.onlineAudition.stop() }
     }
 
     func sceneDidEnterBackground(_: UIScene) {
@@ -51,8 +50,11 @@ final class MusicFreeSceneDelegate: UIResponder, UIWindowSceneDelegate {
             return
         }
         (window?.rootViewController as? RootViewController)?.sceneWillResignActive()
+        // Backgrounding is not an explicit audition stop. The user may only
+        // be switching apps briefly; retain the queue and current position.
+        // Audio interruptions are handled by OnlineAuditionCoordinator and
+        // pause the engine without clearing the session.
         appDelegate.container.lifecycleCoordinator.handle(.background)
-        Task { await appDelegate.container.serviceContainer?.onlineAudition.stop() }
     }
 
     func sceneDidDisconnect(_: UIScene) {

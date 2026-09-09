@@ -505,6 +505,53 @@ public final class OnlineSourcesViewController: UIViewController,
 
     public func tableView(
         _ tableView: UITableView,
+        contextMenuConfigurationForRowAt indexPath: IndexPath,
+        point: CGPoint
+    ) -> UIContextMenuConfiguration? {
+        let rows = sourceRows
+        guard indexPath.section == 1, rows.indices.contains(indexPath.row) else { return nil }
+        let sourceID = rows[indexPath.row].sourceID
+        return UIContextMenuConfiguration(identifier: sourceID.rawValue as NSString, previewProvider: nil) { [weak self] _ in
+            UIMenu(children: [UIAction(title: L("重命名"), image: UIImage(systemName: "pencil")) { [weak self] _ in
+                self?.presentRenameEditor(for: sourceID)
+            }])
+        }
+    }
+
+    private func presentRenameEditor(for sourceID: MediaSourceID) {
+        guard presentedViewController == nil,
+              let source = model.snapshot.sources.first(where: { $0.sourceID == sourceID })
+        else { return }
+        let alert = UIAlertController(title: L("重命名"), message: nil, preferredStyle: .alert)
+        alert.addTextField { field in
+            field.text = source.displayName
+            field.placeholder = L("显示名称")
+            field.clearButtonMode = .whileEditing
+            field.accessibilityIdentifier = "onlineSources.rename.name"
+        }
+        alert.addAction(UIAlertAction(title: L("取消"), style: .cancel))
+        let save = UIAlertAction(title: L("保存"), style: .default) { [weak self, weak alert] _ in
+            guard let self, let name = alert?.textFields?.first?.text else { return }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                _ = await model.renameSource(sourceID, to: name)
+                render(force: true)
+                await waitForPresentedControllerDismissal()
+                presentModelErrorIfNeeded()
+            }
+        }
+        save.accessibilityIdentifier = "onlineSources.rename.save"
+        alert.addAction(save)
+        alert.preferredAction = save
+        alert.textFields?.first?.addAction(UIAction { [weak save] action in
+            guard let field = action.sender as? UITextField else { return }
+            save?.isEnabled = !((field.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }, for: .editingChanged)
+        present(alert, animated: true)
+    }
+
+    public func tableView(
+        _ tableView: UITableView,
         trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath
     ) -> UISwipeActionsConfiguration? {
         guard indexPath.section == 1 else { return nil }
@@ -1808,8 +1855,7 @@ private final class OnlineSourceCatalogViewController: UIViewController,
                 itemID.externalID,
                 item.map { catalogItemTitle($0) } ?? "",
                 String(describing: item?.kind),
-                String(latestAuditionSnapshot.isActive && latestAuditionSnapshot.itemID == itemID),
-                String(pendingAuditionItemID == itemID),
+                catalogAuditionActionState(for: itemID).identifier,
                 String(describing: download?.phase),
                 download?.failureReason ?? "",
             ].joined(separator: "|")
@@ -2016,94 +2062,115 @@ private final class OnlineSourceCatalogViewController: UIViewController,
     private func makeCatalogAuditionButton(
         _ item: SourceCatalogItem
     ) -> OnlineSourceCatalogActionButton {
-        let isActive = isAuditionActive(for: item.id)
-        let isFailed = !isActive
-            && latestAuditionSnapshot.phase == .failed
-            && latestAuditionSnapshot.itemID == item.id
+        let state = catalogAuditionActionState(for: item.id)
         let button = makeCatalogActionButton(
-            systemImage: isActive
-                ? "stop.fill"
-                : isFailed ? "exclamationmark.triangle" : "play.fill",
-            label: isActive
-                ? L("停止试听")
-                : isFailed ? L("试听失败，重试") : L("试听"),
-            identifier: itemAccessibilityID(
-                item,
-                action: isActive
-                    ? "stopAudition"
-                    : isFailed ? "retryAudition" : "audition"
-            )
+            systemImage: state.systemImage,
+            label: state.label,
+            identifier: itemAccessibilityID(item, action: state.identifier)
         ) { }
         button.setActivationHandler { [weak self, weak button] in
             guard let self else { return }
-            let wasActive = self.isAuditionActive(for: item.id)
             Self.logger.info(
                 "audition button activated source=\(self.sourceID.rawValue) item=\(item.id.externalID)"
             )
-            // A retry of the same failed request must be allowed to present a
-            // fresh error. The snapshot can keep the same failure identity
-            // across attempts, so clear the presentation guard at activation.
             lastPresentedAuditionFailureKey = nil
-            if wasActive {
-                pendingAuditionItemID = nil
-                latestAuditionSnapshot = OnlineAuditionSnapshot(
-                    phase: .stopped,
-                    sourceID: sourceID,
-                    itemID: item.id,
-                    displayName: catalogItemTitle(item),
-                    duration: item.duration
+            let action = catalogAuditionActionState(for: item.id)
+            if let button {
+                configureCatalogActionButton(
+                    button,
+                    systemImage: action.systemImage,
+                    label: action.label,
+                    identifier: itemAccessibilityID(item, action: action.identifier)
                 )
-                if let button {
-                    configureCatalogActionButton(
-                        button,
-                        systemImage: "play.fill",
-                        label: L("试听"),
-                        identifier: itemAccessibilityID(item, action: "audition")
-                    )
-                }
-                scheduleCatalogRender()
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    await model.stopAudition()
-                    latestAuditionSnapshot = model.auditionSnapshot
-                    Self.logger.info(
-                        "audition stop completed source=\(self.sourceID.rawValue) item=\(item.id.externalID) phase=\(self.latestAuditionSnapshot.phase.rawValue)"
-                    )
-                    scheduleCatalogRender()
-                    presentModelErrorIfNeeded()
-                }
-            } else {
+            }
+            let auditionItems = action == .start ? self.items : []
+            if action == .start {
                 pendingAuditionItemID = item.id
-                latestAuditionSnapshot = OnlineAuditionSnapshot(
-                    phase: .preparing,
-                    sourceID: sourceID,
-                    itemID: item.id,
-                    displayName: catalogItemTitle(item),
-                    duration: item.duration
-                )
-                if let button {
-                    configureCatalogActionButton(
-                        button,
-                        systemImage: "stop.fill",
-                        label: L("停止试听"),
-                        identifier: itemAccessibilityID(item, action: "stopAudition")
+            }
+            scheduleCatalogRender()
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                switch action {
+                case .cancel:
+                    await model.stopAudition()
+                case .pause:
+                    await model.pauseAudition()
+                case .resume:
+                    await model.resumeAudition()
+                case .retry:
+                    await model.retryAudition()
+                case .start:
+                    // The visible catalog was captured before yielding to the
+                    // async coordinator, so pagination cannot extend this session.
+                    await model.startAudition(
+                        sourceID: sourceID,
+                        items: auditionItems,
+                        startingItemID: item.id
                     )
-                }
-                scheduleCatalogRender()
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    await model.startAudition(sourceID: sourceID, items: items, startingItemID: item.id)
                     pendingAuditionItemID = nil
-                    latestAuditionSnapshot = model.auditionSnapshot
-                    Self.logger.info(
-                        "audition action completed source=\(self.sourceID.rawValue) item=\(item.id.externalID) phase=\(self.latestAuditionSnapshot.phase.rawValue) error=\(self.latestAuditionSnapshot.failureReason ?? "none")"
-                    )
-                    scheduleCatalogRender()
-                    presentModelErrorIfNeeded()
                 }
+                latestAuditionSnapshot = model.auditionSnapshot
+                Self.logger.info(
+                    "audition action completed source=\(self.sourceID.rawValue) item=\(item.id.externalID) phase=\(latestAuditionSnapshot.phase.rawValue) error=\(latestAuditionSnapshot.failureReason ?? "none")"
+                )
+                scheduleCatalogRender()
+                presentModelErrorIfNeeded()
             }
         }
         return button
+    }
+
+    private enum CatalogAuditionAction: Equatable {
+        case start
+        case cancel
+        case pause
+        case resume
+        case retry
+
+        var systemImage: String {
+            switch self {
+            case .start: "play.fill"
+            case .cancel: "xmark"
+            case .pause: "pause.fill"
+            case .resume: "play.fill"
+            case .retry: "arrow.clockwise"
+            }
+        }
+
+        var label: String {
+            switch self {
+            case .start: L("试听")
+            case .cancel: L("取消试听")
+            case .pause: L("暂停试听")
+            case .resume: L("继续试听")
+            case .retry: L("重试试听")
+            }
+        }
+
+        var identifier: String {
+            switch self {
+            case .start: "audition"
+            case .cancel: "cancelAudition"
+            case .pause: "pauseAudition"
+            case .resume: "resumeAudition"
+            case .retry: "retryAudition"
+            }
+        }
+    }
+
+    private func catalogAuditionActionState(
+        for itemID: SourceObjectID
+    ) -> CatalogAuditionAction {
+        let isPending = pendingAuditionItemID == itemID
+        let isCurrent = latestAuditionSnapshot.itemID == itemID
+        guard isPending || isCurrent else { return .start }
+        if isPending || latestAuditionSnapshot.phase == .preparing { return .cancel }
+        switch latestAuditionSnapshot.phase {
+        case .buffering, .playing: return .pause
+        case .paused: return .resume
+        case .failed, .ended: return .retry
+        case .idle, .stopped, .preparing: return .start
+        }
     }
 
     private func isAuditionActive(for itemID: SourceObjectID) -> Bool {
@@ -2250,18 +2317,7 @@ private final class OnlineSourceCatalogViewController: UIViewController,
     }
 
     private func startDownload(_ item: SourceCatalogItem) {
-        model.startDownload(
-            sourceID: sourceID,
-            itemID: item.id,
-            displayName: item.displayName,
-            metadataHint: MediaImportMetadataHint(
-                displayName: item.displayName,
-                title: item.title,
-                artist: item.artist,
-                album: item.album,
-                duration: item.duration
-            )
-        )
+        model.startImport(sourceID: sourceID, item: item)
         scheduleCatalogRender(force: true)
     }
 
@@ -3184,30 +3240,104 @@ private final class OnlineSourceCatalogViewController: UIViewController,
         return [
             String(item.isPlayable && summary.capabilities.contains(.onlinePlayback)),
             String(item.isDownloadable && summary.capabilities.contains(.downloading)),
-            String(model.auditionSnapshot.isActive && model.auditionSnapshot.itemID == item.id),
+            auditionActionState(for: item.id).identifier,
             String(describing: download?.phase),
             download?.failureReason ?? ""
         ].joined(separator: "\u{001F}")
     }
 
     private func makeAuditionButton(_ item: SourceCatalogItem) -> UIButton {
-        let isActive = model.auditionSnapshot.isActive && model.auditionSnapshot.itemID == item.id
+        let state = auditionActionState(for: item.id)
         return makePlainActionButton(
-            title: isActive ? L("停止") : L("试听"),
-            systemImage: isActive ? "stop.fill" : "play.fill",
-            identifier: itemAccessibilityID(item, action: isActive ? "stopAudition" : "audition")
+            title: state.title,
+            systemImage: state.systemImage,
+            identifier: itemAccessibilityID(item, action: state.identifier)
         ) { [weak self] in
             guard let self else { return }
+            let action = auditionActionState(for: item.id)
+            let auditionItems = action == .start ? self.items : []
+            if action == .start {
+                pendingAuditionItemID = item.id
+            }
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                if isActive {
+                switch action {
+                case .cancel:
                     await model.stopAudition()
-                } else {
-                    await model.startAudition(sourceID: sourceID, items: items, startingItemID: item.id)
+                case .pause:
+                    await model.pauseAudition()
+                case .resume:
+                    await model.resumeAudition()
+                case .retry:
+                    await model.retryAudition()
+                case .start:
+                    // The visible catalog was captured before yielding to the
+                    // async coordinator, so a concurrent page load cannot change
+                    // the session's queue.
+                    await model.startAudition(
+                        sourceID: sourceID,
+                        items: auditionItems,
+                        startingItemID: item.id
+                    )
+                }
+                if action == .start {
+                    pendingAuditionItemID = nil
                 }
                 refreshCatalogControls()
                 presentModelErrorIfNeeded()
             }
+        }
+    }
+
+    private enum AuditionAction: Equatable {
+        case start
+        case cancel
+        case pause
+        case resume
+        case retry
+
+        var title: String {
+            switch self {
+            case .start: L("试听")
+            case .cancel: L("取消")
+            case .pause: L("暂停")
+            case .resume: L("继续")
+            case .retry: L("重试")
+            }
+        }
+
+        var systemImage: String {
+            switch self {
+            case .start: "play.fill"
+            case .cancel: "xmark"
+            case .pause: "pause.fill"
+            case .resume: "play.fill"
+            case .retry: "arrow.clockwise"
+            }
+        }
+
+        var identifier: String {
+            switch self {
+            case .start: "audition"
+            case .cancel: "cancelAudition"
+            case .pause: "pauseAudition"
+            case .resume: "resumeAudition"
+            case .retry: "retryAudition"
+            }
+        }
+    }
+
+    private func auditionActionState(for itemID: SourceObjectID) -> AuditionAction {
+        let snapshot = model.auditionSnapshot
+        let isPending = pendingAuditionItemID == itemID
+        let isCurrent = snapshot.itemID == itemID
+        guard isPending || isCurrent else { return .start }
+        if isPending || snapshot.phase == .preparing { return .cancel }
+        switch snapshot.phase {
+        case .buffering, .playing: return .pause
+        case .paused: return .resume
+        case .failed, .ended: return .retry
+        case .idle, .stopped, .preparing: return .start
         }
     }
 
@@ -3268,18 +3398,7 @@ private final class OnlineSourceCatalogViewController: UIViewController,
     }
 
     private func legacyStartDownload(_ item: SourceCatalogItem) {
-        model.startDownload(
-            sourceID: sourceID,
-            itemID: item.id,
-            displayName: item.displayName,
-            metadataHint: MediaImportMetadataHint(
-                displayName: item.displayName,
-                title: item.title,
-                artist: item.artist,
-                album: item.album,
-                duration: item.duration
-            )
-        )
+        model.startImport(sourceID: sourceID, item: item)
         refreshCatalogControls()
     }
 

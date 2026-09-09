@@ -95,6 +95,24 @@ public struct OnlineSourceConfiguration: Codable, Equatable, Hashable, Sendable 
     self.isEnabled = isEnabled
   }
 
+  /// Changes only the user-visible name, preserving every connection and consent field.
+  public func renaming(to displayName: String) throws -> Self {
+    let name = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !name.isEmpty else {
+      throw OnlineSourceConfigurationError.emptyDisplayName
+    }
+    return Self.unchecked(
+      sourceID: sourceID,
+      providerKind: providerKind,
+      displayName: name,
+      endpoint: endpoint,
+      rootObjectID: rootObjectID,
+      credentialRecordID: credentialRecordID,
+      privacyPolicyVersion: privacyPolicyVersion,
+      isEnabled: isEnabled
+    )
+  }
+
   public func settingEnabled(_ enabled: Bool) -> Self {
     Self.unchecked(
       sourceID: sourceID,

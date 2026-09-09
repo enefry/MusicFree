@@ -642,6 +642,140 @@ final class MusicFreeBVTUITests: XCTestCase {
     }
 
     @MainActor
+    func testAuditionSharesNativeMiniPlayerSlot() {
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        app.launchArguments = [
+            "--bvt-seed-audio", "--bvt-seed-uikit-songs",
+            "--bvt-seed-online-sources", "--bvt-reset-online-sources",
+            "--bvt-reset-user-interface-preferences",
+        ]
+        app.launch()
+        assertMainTabs(in: app)
+        tapTab("Library", in: app)
+        let songs = app.descendants(matching: .any)["library.home.section.tracks"].firstMatch
+        XCTAssertTrue(songs.waitForExistence(timeout: 20))
+        songs.tap()
+        let track = app.collectionViews["library.tracks.collection"].cells
+            .matching(NSPredicate(format: "label == %@", trackTitle)).firstMatch
+        XCTAssertTrue(track.waitForExistence(timeout: 20))
+        track.tap()
+        let formalTitle = app.staticTexts["player.mini.title"].firstMatch
+        XCTAssertTrue(formalTitle.waitForExistence(timeout: 20))
+        let formalPlay = app.buttons["player.mini.playPause"].firstMatch
+        if formalPlay.label == "暂停" || formalPlay.label == "Pause" { formalPlay.tap() }
+        let pausedTitle = formalTitle.label
+
+        tapTab("Online Sources", in: app)
+        let consent = app.buttons["onlineSources.applicationPrivacy.confirm"].firstMatch
+        XCTAssertTrue(consent.waitForExistence(timeout: 15))
+        consent.tap()
+        enableOnlineSourcesService(in: app)
+        openOnlineSource(named: "BVT DS Audio", in: app)
+        acceptOnlineSourcePrivacy(sourceID: "bvt.dsaudio", in: app)
+        enableOnlineSource(sourceID: "bvt.dsaudio", in: app)
+        let catalog = app.collectionViews["onlineSources.catalog.list"].firstMatch
+        let allMusic = catalog.cells["onlineSources.detail.bvt.dsaudio.category.allMusic"].firstMatch
+        XCTAssertTrue(allMusic.waitForExistence(timeout: 15))
+        allMusic.tap()
+        let auditions = catalog.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@",
+            "onlineSources.detail.bvt.dsaudio.item.", ".audition"
+        ))
+        XCTAssertTrue(auditions.firstMatch.waitForExistence(timeout: 15))
+        guard let audition = auditions.allElementsBoundByIndex.first(where: { $0.isHittable }) else {
+            XCTFail("The loaded catalog must expose a visible audition action.")
+            return
+        }
+        audition.tap()
+        let auditionTitle = app.staticTexts["player.onlineAudition.title"].firstMatch
+        XCTAssertTrue(auditionTitle.waitForExistence(timeout: 15))
+        if app.alerts.firstMatch.waitForExistence(timeout: 3) {
+            app.alerts.firstMatch.buttons.element(boundBy: 0).tap()
+        }
+        XCTAssertTrue(formalTitle.waitForNonExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["player.onlineAudition.close"].exists)
+        attachScreenshot(named: "audition-native-expanded")
+
+        catalog.swipeUp()
+        catalog.swipeUp()
+        let subtitle = app.staticTexts["player.onlineAudition.subtitle"].firstMatch
+        XCTAssertTrue(subtitle.waitForNonExistence(timeout: 5), "Native inline mode must hide secondary metadata.")
+        XCTAssertTrue(auditionTitle.exists)
+        XCTAssertFalse(app.buttons["player.onlineAudition.next"].exists)
+        attachScreenshot(named: "audition-native-inline")
+        auditionTitle.tap()
+        let dismiss = app.buttons["player.onlineAudition.sheet.dismiss"].firstMatch
+        XCTAssertTrue(dismiss.waitForExistence(timeout: 5))
+        dismiss.tap()
+        XCTAssertTrue(auditionTitle.waitForExistence(timeout: 5))
+
+        let collapse = app.buttons["player.onlineAudition.collapse"].firstMatch
+        for _ in 0..<4 {
+            catalog.swipeDown()
+            if collapse.waitForExistence(timeout: 2) { break }
+        }
+        XCTAssertTrue(collapse.exists, "Scrolling back must restore the expanded native accessory.")
+        collapse.tap()
+        let capsule = app.staticTexts["player.onlineAudition.capsule.title"].firstMatch
+        XCTAssertTrue(capsule.waitForExistence(timeout: 5))
+        attachScreenshot(named: "audition-native-manual-collapse")
+        capsule.tap()
+        XCTAssertTrue(auditionTitle.waitForExistence(timeout: 5))
+        auditionTitle.tap()
+        let close = app.buttons["player.onlineAudition.sheet.close"].firstMatch
+        XCTAssertTrue(close.waitForExistence(timeout: 5))
+        close.tap()
+        XCTAssertTrue(formalTitle.waitForExistence(timeout: 10))
+        XCTAssertEqual(formalTitle.label, pausedTitle)
+        XCTAssertTrue(formalPlay.label == "播放" || formalPlay.label == "Play")
+        XCTAssertTrue(auditionTitle.waitForNonExistence(timeout: 5))
+        attachScreenshot(named: "audition-native-formal-restored")
+    }
+
+    @MainActor
+    func testOnlineSourceLongPressRenamesOnlyName() {
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        app.launchArguments = [
+            "--bvt-seed-online-sources", "--bvt-reset-online-sources",
+            "--bvt-reset-user-interface-preferences"
+        ]
+        app.launch()
+        assertMainTabs(in: app)
+        tapTab("Online Sources", in: app)
+        let cancelPrivacy = app.buttons["onlineSources.applicationPrivacy.cancel"].firstMatch
+        XCTAssertTrue(cancelPrivacy.waitForExistence(timeout: 15))
+        cancelPrivacy.tap()
+        let source = app.cells["onlineSources.source.bvt.dsaudio"].firstMatch
+        XCTAssertTrue(source.waitForExistence(timeout: 10))
+        source.press(forDuration: 1.0)
+        let rename = app.buttons.matching(NSPredicate(format: "label IN %@", ["Rename", "重命名"])).firstMatch
+        XCTAssertTrue(rename.waitForExistence(timeout: 5))
+        rename.tap()
+        let name = app.textFields["onlineSources.rename.name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        XCTAssertEqual(app.alerts.textFields.count, 1)
+        XCTAssertEqual(app.alerts.secureTextFields.count, 0)
+        name.tap()
+        let original = name.value as? String ?? ""
+        name.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: original.count))
+        let save = app.buttons["onlineSources.rename.save"].firstMatch
+        XCTAssertFalse(save.isEnabled)
+        name.typeText("Renamed NAS")
+        XCTAssertTrue(save.isEnabled)
+        save.tap()
+        XCTAssertTrue(source.staticTexts["Renamed NAS"].waitForExistence(timeout: 10))
+        app.terminate()
+        app.launchArguments = ["--bvt-seed-online-sources"]
+        app.launch()
+        tapTab("Online Sources", in: app)
+        XCTAssertTrue(cancelPrivacy.waitForExistence(timeout: 15))
+        cancelPrivacy.tap()
+        XCTAssertTrue(source.staticTexts["Renamed NAS"].waitForExistence(timeout: 10))
+    }
+
+    @MainActor
     func testOnlineSourcesBVTCompletesPrivacyMultiSourceCatalogSearchAndImportFlow() {
         let app = XCUIApplication()
         defer { app.terminate() }
@@ -885,11 +1019,92 @@ final class MusicFreeBVTUITests: XCTestCase {
             waitForEither(dsStopAudition, auditionFailureAlert, timeout: 15),
             "Audition must either enter its transient playback state or present a recoverable playback error."
         )
+        var auditionRetainedSurface = false
         if auditionFailureAlert.exists {
             auditionFailureAlert.buttons.element(boundBy: 0).tap()
+            auditionRetainedSurface = true
         } else if dsStopAudition.exists {
+            // A successful fixture exposes a stop action. Stopping the session
+            // is expected to hide the global audition surface, so no failure
+            // surface assertions should run after this branch.
             dsStopAudition.tap()
             XCTAssertTrue(dsStopAudition.waitForNonExistence(timeout: 10))
+            XCTAssertTrue(
+                app.descendants(matching: .any)["player.onlineAudition.surface"]
+                    .firstMatch.waitForNonExistence(timeout: 10),
+                "Stopping a successful audition must hide the global player surface."
+            )
+        }
+
+        if auditionRetainedSurface {
+            // The transient player is global to the root shell. Exercise its
+            // collapsed state and native Sheet when the fixture returns a
+            // recoverable HTTP failure; the failure state must retain the
+            // player entry for retry.
+            let auditionSurface = app.descendants(matching: .any)[
+                "player.onlineAudition.surface"
+            ].firstMatch
+            XCTAssertTrue(
+                auditionSurface.waitForExistence(timeout: 10),
+                "A failed audition must retain the global player surface."
+            )
+            XCTAssertTrue(
+                app.staticTexts["player.onlineAudition.title"].firstMatch
+                    .waitForExistence(timeout: 5)
+            )
+            let collapseAudition = app.buttons["player.onlineAudition.collapse"].firstMatch
+            XCTAssertTrue(collapseAudition.waitForExistence(timeout: 5))
+            XCTAssertFalse(
+                app.buttons["player.onlineAudition.close"].exists,
+                "The compact audition bar must not expose a close action."
+            )
+            collapseAudition.tap()
+            let auditionCapsule = app.descendants(matching: .any)[
+                "player.onlineAudition.capsule"
+            ].firstMatch
+            XCTAssertTrue(auditionCapsule.waitForExistence(timeout: 5))
+            app.staticTexts["player.onlineAudition.capsule.title"].firstMatch.tap()
+            XCTAssertTrue(auditionSurface.waitForExistence(timeout: 5))
+            app.staticTexts["player.onlineAudition.title"].firstMatch.tap()
+            let auditionSheet = app.navigationBars["试听"].firstMatch
+            XCTAssertTrue(
+                auditionSheet.waitForExistence(timeout: 5),
+                "Tapping the audition title must open the native queue Sheet."
+            )
+            XCTAssertTrue(
+                app.sliders["player.onlineAudition.sheet.progress"].firstMatch.exists,
+                "The audition Sheet must expose a seek control."
+            )
+            XCTAssertTrue(
+                app.buttons["player.onlineAudition.sheet.previous"].firstMatch.exists
+                    && app.buttons["player.onlineAudition.sheet.next"].firstMatch.exists,
+                "The audition Sheet must expose previous and next controls."
+            )
+            let sheetDismiss = app.buttons["player.onlineAudition.sheet.dismiss"].firstMatch
+            sheetDismiss.tap()
+            XCTAssertTrue(
+                auditionSurface.waitForExistence(timeout: 5),
+                "The Sheet chevron must only collapse the panel and retain audition."
+            )
+            app.staticTexts["player.onlineAudition.title"].firstMatch.tap()
+            XCTAssertTrue(auditionSheet.waitForExistence(timeout: 5))
+            auditionSheet.swipeDown()
+            XCTAssertTrue(
+                auditionSurface.waitForExistence(timeout: 5),
+                "Interactive Sheet dismissal must only collapse the panel and retain audition."
+            )
+            app.staticTexts["player.onlineAudition.title"].firstMatch.tap()
+            let sheetClose = app.buttons["player.onlineAudition.sheet.close"].firstMatch
+            XCTAssertTrue(sheetClose.waitForExistence(timeout: 5))
+            sheetClose.tap()
+            XCTAssertTrue(
+                auditionSurface.waitForNonExistence(timeout: 10),
+                "Ending audition from the Sheet must clear the global audition surface."
+            )
+            XCTAssertTrue(
+                auditionCapsule.waitForNonExistence(timeout: 10),
+                "Ending audition from the Sheet must clear the compact capsule."
+            )
         }
 
         let dsDownload = app.buttons[
@@ -1762,9 +1977,9 @@ final class MusicFreeBVTUITests: XCTestCase {
 
     @MainActor
     private func enableOnlineSource(sourceID: String, in app: XCUIApplication) {
-        openPrivacySettings(in: app)
+        openOnlineSourceAvailabilitySettings(in: app)
         let toggle = app.switches[
-            "settings.privacy.onlineSource.\(sourceID).enabled"
+            "settings.import.onlineSource.\(sourceID).enabled"
         ].firstMatch
         XCTAssertTrue(toggle.waitForExistence(timeout: 15))
         XCTAssertTrue(toggle.isEnabled, "Online source setting is still gated: \(sourceID)")
@@ -1779,8 +1994,8 @@ final class MusicFreeBVTUITests: XCTestCase {
 
     @MainActor
     private func enableOnlineSourcesService(in app: XCUIApplication) {
-        openPrivacySettings(in: app)
-        let toggle = app.switches["settings.privacy.onlineSources.toggle"].firstMatch
+        openOnlineSourceAvailabilitySettings(in: app)
+        let toggle = app.switches["settings.import.onlineSources.toggle"].firstMatch
         XCTAssertTrue(toggle.waitForExistence(timeout: 15))
         XCTAssertTrue(toggle.isEnabled, "The application privacy agreement should unlock the online-source switch.")
         if !isOnValue(toggle.value) {
@@ -1793,22 +2008,45 @@ final class MusicFreeBVTUITests: XCTestCase {
     }
 
     @MainActor
-    private func openPrivacySettings(in app: XCUIApplication) {
+    private func openOnlineSourceAvailabilitySettings(in app: XCUIApplication) {
         tapTab("Settings", in: app)
         let onlineSourcesToggle = app.descendants(matching: .any)[
-            "settings.privacy.onlineSources.toggle"
+            "settings.import.onlineSources.toggle"
         ].firstMatch
         if onlineSourcesToggle.waitForExistence(timeout: 2) {
             return
         }
 
         waitForSettingsForm(in: app)
-        let privacyEntry = app.descendants(matching: .any)["settings.privacy"].firstMatch
-        XCTAssertTrue(scrollToElement(privacyEntry, in: app, maximumSwipes: 16))
-        privacyEntry.tap()
+        let entry = app.descendants(matching: .any)[
+            "settings.import.onlineSourceAvailability.entry"
+        ].firstMatch
+        XCTAssertTrue(scrollToElement(entry, in: app, maximumSwipes: 16))
+        entry.tap()
         XCTAssertTrue(
             onlineSourcesToggle.waitForExistence(timeout: 15),
-            "The independent online-source settings section must be reachable from Privacy."
+            "Online-source availability must be reachable from Import and Library."
+        )
+    }
+
+    @MainActor
+    private func openPrivacySettings(in app: XCUIApplication) {
+        tapTab("Settings", in: app)
+        let privacyEntry = app.descendants(matching: .any)[
+            "settings.privacy"
+        ].firstMatch
+        if privacyEntry.waitForExistence(timeout: 2) {
+            return
+        }
+
+        waitForSettingsForm(in: app)
+        XCTAssertTrue(scrollToElement(privacyEntry, in: app, maximumSwipes: 16))
+        privacyEntry.tap()
+        let privacyAccept = app.buttons["settings.privacy.application.accept"].firstMatch
+        let privacyRevoke = app.buttons["settings.privacy.application.revoke"].firstMatch
+        XCTAssertTrue(
+            waitForEither(privacyAccept, privacyRevoke, timeout: 15),
+            "Privacy settings must remain reachable for agreement management."
         )
     }
 

@@ -623,7 +623,6 @@ struct PrivacySettingsView: View {
     var body: some View {
         List {
             applicationPrivacySection
-            onlineSourceAvailabilitySection
             onlineSourcePrivacySection
 
             Section {
@@ -709,69 +708,6 @@ struct PrivacySettingsView: View {
     }
 
     @ViewBuilder
-    private var onlineSourceAvailabilitySection: some View {
-        Section {
-            Toggle(
-                L("启用在线源服务"),
-                isOn: Binding(
-                    get: { viewModel.isPrivacyPolicyAccepted && viewModel.isOnlineSourcesEnabled },
-                    set: { viewModel.setOnlineSourcesEnabled($0) }
-                )
-            )
-            .disabled(viewModel.isSaving || !viewModel.isPrivacyPolicyAccepted)
-            .accessibilityValue(onlineSourcesAvailabilityStatus)
-            .accessibilityIdentifier("settings.privacy.onlineSources.toggle")
-
-            if !viewModel.isPrivacyPolicyAccepted {
-                Text(L("请先同意应用隐私政策，在线源服务会保持关闭。"))
-                    .font(MusicFreeTypographyTokens.secondary)
-                    .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
-            }
-
-            if viewModel.onlineSourceConfigurations.isEmpty {
-                Text(L("还没有配置在线源。请从在线源 Tab 添加来源。"))
-                    .font(MusicFreeTypographyTokens.secondary)
-                    .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
-            } else {
-                ForEach(viewModel.onlineSourceConfigurations, id: \.sourceID) { configuration in
-                    Toggle(
-                        isOn: Binding(
-                            get: {
-                                viewModel.onlineSourceConfigurations
-                                    .first(where: { $0.sourceID == configuration.sourceID })?
-                                    .isEnabled == true
-                            },
-                            set: { viewModel.setOnlineSourceEnabled(configuration.sourceID, $0) }
-                        )
-                    ) {
-                        VStack(alignment: .leading, spacing: MusicFreeSpacingTokens.xSmall) {
-                            Text(configuration.displayName)
-                            Text(onlineSourceProviderTitle(configuration.providerKind))
-                                .font(MusicFreeTypographyTokens.caption)
-                                .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
-                            Text(sourceAvailabilityStatus(configuration))
-                                .font(MusicFreeTypographyTokens.caption)
-                                .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
-                        }
-                    }
-                    .disabled(
-                        viewModel.isSaving
-                            || !viewModel.isPrivacyPolicyAccepted
-                            || !isOnlineSourcePrivacyAccepted(configuration)
-                    )
-                    .accessibilityIdentifier(
-                        "settings.privacy.onlineSource.\(configuration.sourceID.rawValue).enabled"
-                    )
-                }
-            }
-        } header: {
-            Text(L("在线源可用性"))
-        } footer: {
-            Text(L("总开关控制在线源服务；每个来源还可以独立启用或关闭。已经导入本地的媒体不受影响。"))
-        }
-    }
-
-    @ViewBuilder
     private var onlineSourcePrivacySection: some View {
         Section {
             if viewModel.onlineSourceConfigurations.isEmpty {
@@ -817,35 +753,6 @@ struct PrivacySettingsView: View {
         } footer: {
             Text(L("每个来源单独保存同意状态。点击来源查看协议详情并撤销；撤销某个来源会立即停用它，撤销应用隐私协议会同时清除所有来源同意。"))
         }
-    }
-
-    private var onlineSourcesAvailabilityStatus: String {
-        guard viewModel.isPrivacyPolicyAccepted else {
-            return L("需要先同意应用隐私政策")
-        }
-        return viewModel.isOnlineSourcesEnabled ? L("已开启") : L("已关闭")
-    }
-
-    private func sourceAvailabilityStatus(
-        _ configuration: OnlineSourceConfiguration
-    ) -> String {
-        guard viewModel.isPrivacyPolicyAccepted else {
-            return L("需要先同意应用隐私政策")
-        }
-        guard isOnlineSourcePrivacyAccepted(configuration) else {
-            return L("需要先同意来源隐私协议")
-        }
-        if configuration.isEnabled {
-            return viewModel.isOnlineSourcesEnabled ? L("已启用") : L("已启用，但总开关已关闭")
-        }
-        return L("已关闭")
-    }
-
-    private func isOnlineSourcePrivacyAccepted(
-        _ configuration: OnlineSourceConfiguration
-    ) -> Bool {
-        configuration.privacyPolicyVersion
-            == configuration.providerKind.defaultPrivacyPolicyVersion
     }
 
     private var providerDescriptors: [PrivacyProviderDescriptor] {
@@ -894,7 +801,12 @@ struct PrivacySettingsView: View {
     }
 }
 
-private func onlineSourceProviderTitle(_ providerKind: OnlineProviderKind) -> String {
+func isOnlineSourcePrivacyAccepted(_ configuration: OnlineSourceConfiguration) -> Bool {
+    configuration.privacyPolicyVersion
+        == configuration.providerKind.defaultPrivacyPolicyVersion
+}
+
+func onlineSourceProviderTitle(_ providerKind: OnlineProviderKind) -> String {
     switch providerKind {
     case .dsAudio: return "DS Audio"
     case .googleDrive: return "Google Drive"
@@ -903,7 +815,7 @@ private func onlineSourceProviderTitle(_ providerKind: OnlineProviderKind) -> St
     }
 }
 
-private func onlineSourceProviderSymbol(_ providerKind: OnlineProviderKind) -> String {
+func onlineSourceProviderSymbol(_ providerKind: OnlineProviderKind) -> String {
     switch providerKind {
     case .dsAudio: return "waveform"
     case .googleDrive: return "externaldrive"

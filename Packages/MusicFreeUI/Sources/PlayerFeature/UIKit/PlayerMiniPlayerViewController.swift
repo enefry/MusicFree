@@ -454,11 +454,9 @@ private final class PlayerMiniPlayerRootView: UIButton {
     override var intrinsicContentSize: CGSize {
         let height: CGFloat
         if #available(iOS 26.0, *), traitCollection.tabAccessoryEnvironment == .inline {
-            height = 44
+            height = MusicFreeLayoutMetrics.miniPlayerInlineHeight
         } else {
-            // Match the Figma Mini Player surface. The parent accessory adds
-            // its own capsule and spacing; the content itself is 48pt high.
-            height = 48
+            height = MusicFreeLayoutMetrics.miniPlayerContentHeight
         }
         return CGSize(width: UIView.noIntrinsicMetric, height: height)
     }
@@ -486,9 +484,9 @@ private final class PlayerMiniPlayerContainerView: UIView {
     override var intrinsicContentSize: CGSize {
         let height: CGFloat
         if #available(iOS 26.0, *), traitCollection.tabAccessoryEnvironment == .inline {
-            height = 44
+            height = MusicFreeLayoutMetrics.miniPlayerInlineHeight
         } else {
-            height = 48
+            height = MusicFreeLayoutMetrics.miniPlayerContentHeight
         }
         return CGSize(width: UIView.noIntrinsicMetric, height: height)
     }

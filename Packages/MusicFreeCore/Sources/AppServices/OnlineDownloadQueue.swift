@@ -125,15 +125,18 @@ public struct OnlineDownloadQueueDownloadTask: Codable, Equatable, Sendable {
     public let itemID: SourceObjectID
     public let displayName: String
     public let metadataHint: MediaImportMetadataHint
+    public let supportingParentID: SourceObjectID?
 
     public init(
         itemID: SourceObjectID,
         displayName: String,
-        metadataHint: MediaImportMetadataHint
+        metadataHint: MediaImportMetadataHint,
+        supportingParentID: SourceObjectID? = nil
     ) {
         self.itemID = itemID
         self.displayName = displayName
         self.metadataHint = metadataHint
+        self.supportingParentID = supportingParentID
     }
 }
 
@@ -202,6 +205,11 @@ public final class OnlineDownloadQueue {
         var total: Int {
             imported + duplicate + skipped + failed
         }
+    }
+
+    private struct DiscoveredImportItem: Sendable {
+        let media: SourceCatalogItem
+        let supportingItems: [SourceCatalogItem]
     }
 
     private enum BatchItemResult: Sendable {
@@ -321,7 +329,8 @@ public final class OnlineDownloadQueue {
                 sourceID: task.itemID.sourceID,
                 itemID: task.itemID,
                 displayName: task.displayName,
-                metadataHint: task.metadataHint
+                metadataHint: task.metadataHint,
+                supportingParentID: task.supportingParentID
             )
         }
 
@@ -415,7 +424,8 @@ public final class OnlineDownloadQueue {
         sourceID: MediaSourceID,
         itemID: SourceObjectID,
         displayName: String,
-        metadataHint: MediaImportMetadataHint? = nil
+        metadataHint: MediaImportMetadataHint? = nil,
+        supportingParentID: SourceObjectID? = nil
     ) {
         guard !isShutDown, downloadTasks[itemID] == nil else { return }
 
@@ -424,7 +434,8 @@ public final class OnlineDownloadQueue {
             itemID: itemID,
             displayName: displayName,
             metadataHint: metadataHint
-                ?? MediaImportMetadataHint(displayName: displayName)
+                ?? MediaImportMetadataHint(displayName: displayName),
+            supportingParentID: supportingParentID
         )
         downloadOperationIDs[itemID] = operationID
         publishDownload(
@@ -441,6 +452,7 @@ public final class OnlineDownloadQueue {
                 itemID: itemID,
                 displayName: displayName,
                 metadataHint: resolvedMetadataHint,
+                supportingParentID: supportingParentID,
                 operationID: operationID
             )
         }
@@ -456,7 +468,9 @@ public final class OnlineDownloadQueue {
                 sourceID: sourceID,
                 itemID: item.id,
                 displayName: item.displayName,
-                metadataHint: Self.importMetadataHint(for: item)
+                metadataHint: Self.importMetadataHint(for: item),
+                supportingParentID: item.parentID
+                    ?? SourceObjectID(sourceID: sourceID, externalID: Self.virtualRootExternalID)
             )
             return
         }
@@ -616,6 +630,7 @@ public final class OnlineDownloadQueue {
         itemID: SourceObjectID,
         displayName: String,
         metadataHint: MediaImportMetadataHint,
+        supportingParentID: SourceObjectID?,
         operationID: UUID
     ) async {
         defer {
@@ -642,13 +657,55 @@ public final class OnlineDownloadQueue {
         }
 
         do {
+            let supportingItems: [SourceCatalogItem]
+            if let supportingParentID {
+                supportingItems = (try? await discoverSupportingItems(
+                    sourceID: sourceID,
+                    parentID: supportingParentID,
+                    mediaDisplayName: displayName
+                )) ?? []
+            } else {
+                supportingItems = []
+            }
             let receipt = try await onlineSources.download(
                 sourceID: sourceID,
                 itemID: itemID,
                 options: DownloadOptions(preferredFileName: displayName)
             )
-            let stagedURL = receipt.fileURL
-            defer { try? FileManager.default.removeItem(at: stagedURL) }
+            let bundleRoot = FileManager.default.temporaryDirectory
+                .appendingPathComponent("MusicFreeOnlineImportBundles", isDirectory: true)
+                .appendingPathComponent(UUID().uuidString.lowercased(), isDirectory: true)
+            try FileManager.default.createDirectory(at: bundleRoot, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: bundleRoot) }
+            let stagedURL = try Self.moveDownloadedFile(
+                from: receipt.fileURL,
+                preferredFileName: displayName,
+                into: bundleRoot
+            )
+            var importURLs = [stagedURL]
+            for supportingItem in supportingItems {
+                try Task.checkCancellation()
+                do {
+                    let supportingReceipt = try await onlineSources.download(
+                        sourceID: sourceID,
+                        itemID: supportingItem.id,
+                        options: DownloadOptions(preferredFileName: supportingItem.displayName)
+                    )
+                    do {
+                        importURLs.append(try Self.moveDownloadedFile(
+                            from: supportingReceipt.fileURL,
+                            preferredFileName: supportingItem.displayName,
+                            into: bundleRoot
+                        ))
+                    } catch {
+                        try? FileManager.default.removeItem(at: supportingReceipt.fileURL)
+                    }
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    continue
+                }
+            }
             try Task.checkCancellation()
 
             let importID = UUID()
@@ -656,7 +713,7 @@ public final class OnlineDownloadQueue {
             let stream = try await importer.start(
                 MediaImportRequest(
                     importID: importID,
-                    urls: [stagedURL],
+                    urls: importURLs,
                     duplicatePolicy: .report,
                     metadataHints: [stagedURL: metadataHint]
                 )
@@ -726,43 +783,83 @@ public final class OnlineDownloadQueue {
 
     private func downloadAndImportItem(
         sourceID: MediaSourceID,
-        item: SourceCatalogItem
+        item: DiscoveredImportItem
     ) async throws -> ImportedItemOutcome {
         guard let importer else { throw QueueError.importerUnavailable }
 
+        let media = item.media
+
         publishDownload(
-            itemID: item.id,
-            displayName: item.displayName,
+            itemID: media.id,
+            displayName: media.displayName,
             phase: .downloading
         )
         let receipt = try await onlineSources.download(
             sourceID: sourceID,
-            itemID: item.id,
-            options: DownloadOptions(preferredFileName: item.displayName)
+            itemID: media.id,
+            options: DownloadOptions(preferredFileName: media.displayName)
         )
-        let stagedURL = receipt.fileURL
-        defer { try? FileManager.default.removeItem(at: stagedURL) }
+        let bundleRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MusicFreeOnlineImportBundles", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString.lowercased(), isDirectory: true)
+        try FileManager.default.createDirectory(at: bundleRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: bundleRoot) }
+
+        let stagedURL = try Self.moveDownloadedFile(
+            from: receipt.fileURL,
+            preferredFileName: media.displayName,
+            into: bundleRoot
+        )
+        var importURLs = [stagedURL]
+        for supportingItem in item.supportingItems {
+            try Task.checkCancellation()
+            do {
+                let supportingReceipt = try await onlineSources.download(
+                    sourceID: sourceID,
+                    itemID: supportingItem.id,
+                    options: DownloadOptions(preferredFileName: supportingItem.displayName)
+                )
+                let supportingURL: URL
+                do {
+                    supportingURL = try Self.moveDownloadedFile(
+                        from: supportingReceipt.fileURL,
+                        preferredFileName: supportingItem.displayName,
+                        into: bundleRoot
+                    )
+                } catch {
+                    try? FileManager.default.removeItem(at: supportingReceipt.fileURL)
+                    throw error
+                }
+                importURLs.append(supportingURL)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                // A missing optional cover or lyric must not prevent the audio
+                // itself from being imported.
+                continue
+            }
+        }
         try Task.checkCancellation()
 
         let importID = UUID()
-        downloadImportIDs[item.id] = importID
+        downloadImportIDs[media.id] = importID
         defer {
-            if downloadImportIDs[item.id] == importID {
-                downloadImportIDs.removeValue(forKey: item.id)
+            if downloadImportIDs[media.id] == importID {
+                downloadImportIDs.removeValue(forKey: media.id)
             }
         }
 
         let stream = try await importer.start(
             MediaImportRequest(
                 importID: importID,
-                urls: [stagedURL],
+                urls: importURLs,
                 duplicatePolicy: .report,
-                metadataHints: [stagedURL: Self.importMetadataHint(for: item)]
+                metadataHints: [stagedURL: Self.importMetadataHint(for: media)]
             )
         )
         publishDownload(
-            itemID: item.id,
-            displayName: item.displayName,
+            itemID: media.id,
+            displayName: media.displayName,
             phase: .importing
         )
 
@@ -780,8 +877,8 @@ public final class OnlineDownloadQueue {
                     throw QueueError.importStreamEnded
                 }
                 publishDownload(
-                    itemID: item.id,
-                    displayName: item.displayName,
+                    itemID: media.id,
+                    displayName: media.displayName,
                     phase: Self.downloadPhase(for: result),
                     failureReason: result.failed > 0 ? "import_failed" : nil
                 )
@@ -797,20 +894,20 @@ public final class OnlineDownloadQueue {
 
     private func batchItemResult(
         sourceID: MediaSourceID,
-        item: SourceCatalogItem
+        item: DiscoveredImportItem
     ) async throws -> BatchItemResult {
         do {
             let outcome = try await downloadAndImportItem(
                 sourceID: sourceID,
                 item: item
             )
-            return .completed(item, outcome)
+            return .completed(item.media, outcome)
         } catch is CancellationError {
             throw CancellationError()
         } catch let error as OnlineSourceAuthenticationError {
             throw error
         } catch {
-            return .failed(item)
+            return .failed(item.media)
         }
     }
 
@@ -869,7 +966,7 @@ public final class OnlineDownloadQueue {
                 for _ in 0..<concurrencyLimit {
                     let item = items[nextIndex]
                     nextIndex += 1
-                    importActiveItemIDs[rootItem.id, default: []].insert(item.id)
+                    importActiveItemIDs[rootItem.id, default: []].insert(item.media.id)
                     group.addTask { [weak self] in
                         guard let self else { throw CancellationError() }
                         return try await self.batchItemResult(
@@ -912,7 +1009,7 @@ public final class OnlineDownloadQueue {
                     if nextIndex < items.count {
                         let item = items[nextIndex]
                         nextIndex += 1
-                        importActiveItemIDs[rootItem.id, default: []].insert(item.id)
+                        importActiveItemIDs[rootItem.id, default: []].insert(item.media.id)
                         group.addTask { [weak self] in
                             guard let self else { throw CancellationError() }
                             return try await self.batchItemResult(
@@ -984,15 +1081,17 @@ public final class OnlineDownloadQueue {
     private func discoverImportItems(
         sourceID: MediaSourceID,
         rootItem: SourceCatalogItem
-    ) async throws -> [SourceCatalogItem] {
+    ) async throws -> [DiscoveredImportItem] {
         guard rootItem.kind.isContainer else {
-            return rootItem.isDownloadable ? [rootItem] : []
+            return rootItem.isDownloadable
+                ? [DiscoveredImportItem(media: rootItem, supportingItems: [])]
+                : []
         }
 
         var pending: [(item: SourceCatalogItem, depth: Int)] = [(rootItem, 0)]
         var visitedContainers: Set<SourceObjectID> = [rootItem.id]
         var collectedIDs = Set<SourceObjectID>()
-        var items: [SourceCatalogItem] = []
+        var items: [DiscoveredImportItem] = []
 
         while !pending.isEmpty {
             try Task.checkCancellation()
@@ -1002,6 +1101,7 @@ public final class OnlineDownloadQueue {
             }
 
             var pageToken: MediaSourceCursor?
+            var directoryFiles: [SourceCatalogItem] = []
             repeat {
                 try Task.checkCancellation()
                 let browseParentID = next.item.id.externalID == Self.virtualRootExternalID
@@ -1020,18 +1120,114 @@ public final class OnlineDownloadQueue {
                         if visitedContainers.insert(child.id).inserted {
                             pending.append((child, next.depth + 1))
                         }
-                    } else if child.isDownloadable,
-                              collectedIDs.insert(child.id).inserted {
-                        items.append(child)
-                        guard items.count <= Self.maxItems else {
-                            throw QueueError.catalogTooLarge
-                        }
+                    } else {
+                        directoryFiles.append(child)
                     }
                 }
                 pageToken = page.nextPageToken
             } while pageToken != nil
+
+            let supportingItems = directoryFiles.filter(Self.isImportSupportingItem)
+            for media in directoryFiles where media.isDownloadable {
+                guard collectedIDs.insert(media.id).inserted else { continue }
+                items.append(DiscoveredImportItem(
+                    media: media,
+                    supportingItems: Self.supportingItems(
+                        for: media,
+                        candidates: supportingItems
+                    )
+                ))
+                guard items.count <= Self.maxItems else {
+                    throw QueueError.catalogTooLarge
+                }
+            }
         }
         return items
+    }
+
+    private static func isImportSupportingItem(_ item: SourceCatalogItem) -> Bool {
+        let fileExtension = URL(fileURLWithPath: item.displayName).pathExtension.lowercased()
+        return ["jpg", "jpeg", "png", "webp", "heic", "heif", "lrc", "srt"].contains(fileExtension)
+    }
+
+    private static func supportingItems(
+        for media: SourceCatalogItem,
+        candidates: [SourceCatalogItem]
+    ) -> [SourceCatalogItem] {
+        supportingItems(forMediaNamed: media.displayName, candidates: candidates)
+    }
+
+    private static func supportingItems(
+        forMediaNamed mediaDisplayName: String,
+        candidates: [SourceCatalogItem]
+    ) -> [SourceCatalogItem] {
+        let mediaStem = URL(fileURLWithPath: mediaDisplayName)
+            .deletingPathExtension().lastPathComponent
+        return candidates.filter { candidate in
+            let url = URL(fileURLWithPath: candidate.displayName)
+            switch url.pathExtension.lowercased() {
+            case "lrc", "srt":
+                return url.deletingPathExtension().lastPathComponent
+                    .caseInsensitiveCompare(mediaStem) == .orderedSame
+            default:
+                return true
+            }
+        }.sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
+    }
+
+    private func discoverSupportingItems(
+        sourceID: MediaSourceID,
+        parentID: SourceObjectID,
+        mediaDisplayName: String
+    ) async throws -> [SourceCatalogItem] {
+        let browseParentID = parentID.externalID == Self.virtualRootExternalID ? nil : parentID
+        var pageToken: MediaSourceCursor?
+        var candidates: [SourceCatalogItem] = []
+        repeat {
+            try Task.checkCancellation()
+            let page = try await onlineSources.browse(
+                sourceID: sourceID,
+                request: SourceBrowseRequest(
+                    parentID: browseParentID,
+                    pageSize: 500,
+                    pageToken: pageToken
+                )
+            )
+            candidates.append(contentsOf: page.items.filter {
+                $0.id.sourceID == sourceID
+                    && !$0.kind.isContainer
+                    && Self.isImportSupportingItem($0)
+            })
+            pageToken = page.nextPageToken
+        } while pageToken != nil
+        return Self.supportingItems(
+            forMediaNamed: mediaDisplayName,
+            candidates: candidates
+        )
+    }
+
+    private static func moveDownloadedFile(
+        from sourceURL: URL,
+        preferredFileName: String,
+        into directory: URL
+    ) throws -> URL {
+        let invalid = CharacterSet(charactersIn: "/\\:\0")
+        let sanitized = preferredFileName.components(separatedBy: invalid).joined(separator: "_")
+        let fileName = sanitized.isEmpty ? sourceURL.lastPathComponent : sanitized
+        var destination = directory.appendingPathComponent(fileName, isDirectory: false)
+        if FileManager.default.fileExists(atPath: destination.path) {
+            let url = URL(fileURLWithPath: fileName)
+            let suffix = UUID().uuidString.lowercased().prefix(8)
+            let stem = url.deletingPathExtension().lastPathComponent
+            destination = directory.appendingPathComponent(
+                url.pathExtension.isEmpty
+                    ? "\(stem)-\(suffix)"
+                    : "\(stem)-\(suffix).\(url.pathExtension)",
+                isDirectory: false
+            )
+        }
+        try FileManager.default.moveItem(at: sourceURL, to: destination)
+        return destination
     }
 
     private func snapshotImports(

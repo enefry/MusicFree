@@ -299,6 +299,40 @@ public final class LibraryViewModel: ObservableObject {
         load(section: section, reset: true)
     }
 
+    /// Resolve every selected album before making one removal transaction.
+    /// Remove committed albums immediately; change notifications reconcile
+    /// the remaining metadata and pagination without clearing the snapshot.
+    func deleteAlbums(_ albumIDs: Set<AlbumID>) async throws {
+        guard !albumIDs.isEmpty else { return }
+        let itemIDs = Set(try await LibraryCollectionTrackLoader.itemIDs(
+            for: .albums(albumIDs.sorted { $0.rawValue < $1.rawValue }),
+            from: library
+        ))
+        guard !itemIDs.isEmpty else {
+            throw AppServiceError.invalidRequest(operation: "library.deleteAlbums.empty")
+        }
+        try Task.checkCancellation()
+        let result = try await library.delete(itemIDs)
+        // An in-flight page may have been read before the deletion committed.
+        // Invalidate its token so it cannot put the removed albums back.
+        let reloadAlbums = isLoading(.albums)
+        if reloadAlbums { cancelLoad(for: .albums) }
+        removeDeletedTracks(result.itemIDs)
+        let remainingAlbums = albums.filter { !albumIDs.contains($0.id) }
+        if albums != remainingAlbums { albums = remainingAlbums }
+        let remainingRecent = recentAlbums.filter { !albumIDs.contains($0.id) }
+        if recentAlbums != remainingRecent { recentAlbums = remainingRecent }
+        let remainingSearch = searchAlbums.filter { !albumIDs.contains($0.id) }
+        if searchAlbums != remainingSearch { searchAlbums = remainingSearch }
+        if albums.isEmpty, state(for: .albums) == .loaded {
+            states[.albums] = .empty
+        }
+        if searchState == .loaded, searchTracks.isEmpty, searchAlbums.isEmpty {
+            searchState = .empty
+        }
+        if reloadAlbums { load(section: .albums, reset: true) }
+    }
+
     public func removeDeletedTrack(_ itemID: MediaItemID) {
         removeDeletedTracks([itemID])
     }
@@ -754,9 +788,12 @@ public final class LibraryViewModel: ObservableObject {
         }
 
         let query = query(for: section)
+        let albumRefreshCount = reset && section == .albums ? albums.count : 0
         if reset {
-            clearResults(for: section)
-            states[section] = .loading
+            if albumRefreshCount == 0 {
+                clearResults(for: section)
+                states[section] = .loading
+            }
         } else if itemsCount(for: section) == 0 {
             states[section] = .loading
         }
@@ -780,7 +817,22 @@ public final class LibraryViewModel: ObservableObject {
                         token: token
                     )
                 case .albums:
-                    let page = try await service.browseAlbums(matching: query.albums, page: request)
+                    // Keep the entire visible window until its replacement is
+                    // ready; querying only page one would discard scrolled pages.
+                    var page = try await service.browseAlbums(matching: query.albums, page: request)
+                    var elements = page.elements
+                    var seenCursors = Set<LibraryCursor>()
+                    while elements.count < albumRefreshCount,
+                          let cursor = page.nextCursor,
+                          seenCursors.insert(cursor).inserted {
+                        try Task.checkCancellation()
+                        page = try await service.browseAlbums(
+                            matching: query.albums,
+                            page: LibraryPageRequest(limit: self?.pageSize ?? request.limit, cursor: cursor)
+                        )
+                        elements.append(contentsOf: page.elements)
+                    }
+                    page = LibraryPage(elements: elements, nextCursor: page.nextCursor)
                     guard let self, !Task.isCancelled else { return }
                     self.apply(
                         page,
@@ -913,8 +965,7 @@ public final class LibraryViewModel: ObservableObject {
         token: UInt64
     ) {
         guard canApply(section: section, token: token) else { return }
-        if reset { albums.removeAll(keepingCapacity: true) }
-        albums = mergeUnique(albums, with: page.elements, by: \.id)
+        albums = mergeUnique(reset ? [] : albums, with: page.elements, by: \.id)
         nextCursors[section] = page.nextCursor
         states[section] = albums.isEmpty ? .empty : .loaded
         paginationErrors[section] = nil

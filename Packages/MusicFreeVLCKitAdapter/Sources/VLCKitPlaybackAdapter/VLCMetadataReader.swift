@@ -48,6 +48,7 @@ public final class VLCMetadataReader: @unchecked Sendable, MetadataReading {
         for: resource,
         fallback: vlcDuration
       )
+      let videoArtwork = try await AVFoundationLocalMediaFallback.videoArtwork(resource)
       return RawMediaMetadata(
         title: metadata.title,
         artist: metadata.artist,
@@ -63,7 +64,7 @@ public final class VLCMetadataReader: @unchecked Sendable, MetadataReading {
         discNumber: metadata.discNumber == 0 ? nil : Int(metadata.discNumber),
         year: parseYear(metadata.date),
         duration: reliableDuration,
-        artworks: artworkValues(from: metadata)
+        artworks: videoArtwork ?? artworkValues(from: metadata)
       )
     } catch let error as MediaSourceError {
       throw error

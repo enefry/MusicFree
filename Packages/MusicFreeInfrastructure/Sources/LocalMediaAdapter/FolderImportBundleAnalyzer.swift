@@ -90,7 +90,7 @@ struct FolderImportBundleAnalyzer: Sendable {
     switch url.pathExtension.lowercased() {
     case "cue":
       return .cue
-    case "lrc":
+    case "lrc", "srt":
       return .lyrics
     case "jpg", "jpeg", "png", "webp", "heic", "heif":
       return .artwork
@@ -110,6 +110,7 @@ struct FolderImportBundleAnalyzer: Sendable {
 }
 
 enum FolderArtworkReason: String, Equatable, Sendable {
+  case matchingMediaFile
   case coverFile
   case frontFile
   case folderFile
@@ -136,9 +137,35 @@ struct FolderArtworkResolver: Sendable {
   ) -> FolderArtworkSelection? {
     let audioDirectory = audioURL.deletingLastPathComponent().standardizedFileURL
     let root = bundle.rootURL.standardizedFileURL
+    // A same-stem sidecar belongs to this media file even in a mixed-album
+    // root. Never promote another track's sidecar to shared folder artwork.
+    let stem = audioURL.deletingPathExtension().lastPathComponent
+    let matching = bundle.artworkFiles.compactMap { file -> FolderArtworkSelection? in
+      let url = file.url.standardizedFileURL
+      guard url.deletingLastPathComponent() == audioDirectory,
+            url.deletingPathExtension().lastPathComponent.compare(
+              stem, options: [.caseInsensitive, .literal]
+            ) == .orderedSame,
+            let image = decode(url)
+      else { return nil }
+      return FolderArtworkSelection(
+        url: image.url, data: image.data,
+        pixelWidth: image.pixelWidth, pixelHeight: image.pixelHeight,
+        reason: .matchingMediaFile
+      )
+    }
+    if let image = matching.sorted(by: { $0.url.path < $1.url.path }).first {
+      return image
+    }
+    let mediaStems = Set(bundle.mediaCandidates.map {
+      $0.url.deletingPathExtension().standardizedFileURL.path.lowercased()
+    })
     let candidates = bundle.artworkFiles.compactMap { file -> RankedArtwork? in
       let imageURL = file.url.standardizedFileURL
       let imageDirectory = imageURL.deletingLastPathComponent()
+      guard !mediaStems.contains(imageURL.deletingPathExtension().path.lowercased()) else {
+        return nil
+      }
       guard let distance = ancestorDistance(from: audioDirectory, to: imageDirectory),
             imageDirectory != root || allowRootArtwork,
             let decoded = decode(imageURL)

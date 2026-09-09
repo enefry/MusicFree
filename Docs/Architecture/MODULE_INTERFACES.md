@@ -233,7 +233,7 @@ public protocol PlaybackSource: DownloadSource {
 
 - 下载源必须支持浏览和下载；搜索是可选能力，UI 只能依据 `OnlineSourceCapabilities.searching` 暴露搜索入口。
 - 播放源继承下载源，因此播放源理论上都具备下载能力。`playbackAccess` 可以返回 HTTP 试听请求、HTTP 转码请求描述，或明确要求先下载。
-- 1.2 的在线播放只支持 `PlaybackPurpose.audition`：不进入正式队列、不写播放历史、不承诺后台连续播放、锁屏控制或自动切歌。VLC 的 HTTP 播放由适配器负责，API 不直接暴露 VLC 类型。
+- 1.2 的在线播放只支持 `PlaybackPurpose.audition`：不进入正式队列、不写播放历史；试听会话在短暂离开 App 或进入后台时保留，但当前版本不承诺锁屏控制或后台长时间连续播放。试听按当前已加载列表顺序自动切歌，末曲结束后保留结束状态。VLC 的 HTTP 播放由适配器负责，API 不直接暴露 VLC 类型。
 - `DownloadReceipt` 和 `PlaybackAccess` 都是短生命周期、不可 Codable 的值；文件 URL、HTTP header、授权信息和短期 URL 只能在一次下载/试听调用链中传递。
 
 #### 1.2 Provider 边界

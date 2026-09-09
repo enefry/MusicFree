@@ -125,6 +125,7 @@ public final class OnlineSourcesSceneModel {
     /// snapshot so privacy consent is not requested again on the next render.
     private var pendingApplicationPrivacy: Bool?
     private var pendingSourcePrivacy: [MediaSourceID: Bool] = [:]
+    private var pendingSourceNames: [MediaSourceID: String] = [:]
     private var pendingSourceEnabled: [MediaSourceID: Bool] = [:]
     private var pendingGlobalEnabled: Bool?
     private var catalogFailureDetails: [CatalogFailureKey: String] = [:]
@@ -231,6 +232,9 @@ public final class OnlineSourcesSceneModel {
         )
         for configuration in onlinePreferences.sources {
             guard let summary = runtimeSources[configuration.sourceID] else { continue }
+            if summary.displayName != configuration.displayName {
+                pendingSourceNames[configuration.sourceID] = configuration.displayName
+            }
             if pendingSourceEnabled[configuration.sourceID] == nil,
                summary.isEnabled != configuration.isEnabled {
                 pendingSourceEnabled[configuration.sourceID] = configuration.isEnabled
@@ -597,6 +601,26 @@ public final class OnlineSourcesSceneModel {
         }
     }
 
+    @discardableResult
+    public func renameSource(_ sourceID: MediaSourceID, to displayName: String) async -> Bool {
+        do {
+            let current = try await settingsServing.load()
+            let preferences = current.importPreferences.onlineSourcePreferences
+            guard let configuration = preferences.source(for: sourceID) else {
+                throw OnlineSourcePreferencesError.sourceNotFound(sourceID)
+            }
+            let renamed = try configuration.renaming(to: displayName)
+            try await settingsServing.updateOnlineSourcePreferences(preferences.updating(renamed))
+            pendingSourceNames[sourceID] = renamed.displayName
+            snapshot = projectSnapshot(snapshot)
+            clearError()
+            return true
+        } catch {
+            setError(error)
+            return false
+        }
+    }
+
     public func setSourceEnabled(
         _ sourceID: MediaSourceID,
         isEnabled: Bool
@@ -685,6 +709,7 @@ public final class OnlineSourcesSceneModel {
                 sources: snapshot.sources.filter { $0.sourceID != sourceID }
             )
             pendingSourcePrivacy.removeValue(forKey: sourceID)
+            pendingSourceNames.removeValue(forKey: sourceID)
             pendingSourceEnabled.removeValue(forKey: sourceID)
 
             downloadQueue.discardSnapshots(for: sourceID)
@@ -1012,6 +1037,47 @@ public final class OnlineSourcesSceneModel {
         }
     }
 
+    public func pauseAudition() async {
+        await auditionServing.pause()
+        auditionSnapshot = auditionServing.snapshot
+    }
+
+    public func resumeAudition() async {
+        do {
+            try await auditionServing.resume()
+            auditionSnapshot = auditionServing.snapshot
+            lastError = nil
+            lastErrorDiagnostic = nil
+        } catch {
+            auditionSnapshot = auditionServing.snapshot
+            if let sourceID = auditionSnapshot.sourceID {
+                if !handleAuthenticationChallenge(error, sourceID: sourceID) {
+                    setError(error)
+                }
+            } else {
+                setError(error)
+            }
+        }
+    }
+
+    public func retryAudition() async {
+        do {
+            try await auditionServing.retry()
+            auditionSnapshot = auditionServing.snapshot
+            lastError = nil
+            lastErrorDiagnostic = nil
+        } catch {
+            auditionSnapshot = auditionServing.snapshot
+            if let sourceID = auditionSnapshot.sourceID {
+                if !handleAuthenticationChallenge(error, sourceID: sourceID) {
+                    setError(error)
+                }
+            } else {
+                setError(error)
+            }
+        }
+    }
+
     public func stopAudition() async {
         let sourceID = auditionSnapshot.sourceID
         await auditionServing.stop()
@@ -1021,7 +1087,7 @@ public final class OnlineSourcesSceneModel {
 
     public func stopAudition(for sourceID: MediaSourceID) async {
         guard auditionSnapshot.sourceID == sourceID,
-              auditionSnapshot.isActive
+              auditionSnapshot.hasRetainedSession
         else {
             return
         }
@@ -1246,7 +1312,7 @@ public final class OnlineSourcesSceneModel {
         return OnlineSourceSummary(
             sourceID: summary.sourceID,
             providerKind: summary.providerKind,
-            displayName: summary.displayName,
+            displayName: pendingSourceNames[summary.sourceID] ?? summary.displayName,
             capabilities: summary.capabilities,
             privacyPolicyVersion: summary.privacyPolicyVersion,
             isRegistered: summary.isRegistered,
@@ -1269,9 +1335,13 @@ public final class OnlineSourcesSceneModel {
             pendingApplicationPrivacy = nil
         }
         let sourceIDs = Set(nextSnapshot.sources.map(\.sourceID))
+        pendingSourceNames = pendingSourceNames.filter { sourceIDs.contains($0.key) }
         pendingSourcePrivacy = pendingSourcePrivacy.filter { sourceIDs.contains($0.key) }
         pendingSourceEnabled = pendingSourceEnabled.filter { sourceIDs.contains($0.key) }
         for summary in nextSnapshot.sources {
+            if pendingSourceNames[summary.sourceID] == summary.displayName {
+                pendingSourceNames.removeValue(forKey: summary.sourceID)
+            }
             if pendingSourcePrivacy[summary.sourceID] == summary.isPrivacyAccepted {
                 pendingSourcePrivacy.removeValue(forKey: summary.sourceID)
             }
@@ -1286,9 +1356,10 @@ public final class OnlineSourcesSceneModel {
         await downloadQueue.stopUnavailable(using: projectedSnapshot)
 
         if let auditionSourceID = auditionSnapshot.sourceID,
-           auditionSnapshot.isActive,
+           auditionSnapshot.hasRetainedSession,
            !isRuntimeEnabled(projectedSnapshot, sourceID: auditionSourceID) {
-            await auditionServing.stop()
+            await auditionServing.close()
+            auditionSnapshot = auditionServing.snapshot
         }
     }
 
@@ -1316,10 +1387,12 @@ public final class OnlineSourcesSceneModel {
         await downloadQueue.stop(for: sourceID)
         if let sourceID,
            auditionSnapshot.sourceID == sourceID,
-           auditionSnapshot.isActive {
-            await auditionServing.stop()
-        } else if sourceID == nil, auditionSnapshot.isActive {
-            await auditionServing.stop()
+           auditionSnapshot.hasRetainedSession {
+            await auditionServing.close()
+            auditionSnapshot = auditionServing.snapshot
+        } else if sourceID == nil, auditionSnapshot.hasRetainedSession {
+            await auditionServing.close()
+            auditionSnapshot = auditionServing.snapshot
         }
     }
 

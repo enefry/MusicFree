@@ -4,6 +4,8 @@ import MediaSourceAPI
 #if canImport(AVFoundation)
 import AVFoundation
 import CoreMedia
+import ImageIO
+import UniformTypeIdentifiers
 
 /// Recovers local files that the asynchronous VLC preparser rejects even
 /// though the system media stack can open and decode their audio tracks.
@@ -80,6 +82,8 @@ internal enum AVFoundationLocalMediaFallback {
       in: metadata
     )
 
+    let artwork = try await videoArtwork(resource)
+    let embedded = await artworkValues(in: metadata)
     return RawMediaMetadata(
       title: await stringValue(.commonIdentifierTitle, in: metadata),
       artist: await stringValue(.commonIdentifierArtist, in: metadata),
@@ -87,8 +91,46 @@ internal enum AVFoundationLocalMediaFallback {
       comment: await stringValue(.commonIdentifierDescription, in: metadata),
       year: parseYear(creationDate),
       duration: duration,
-      artworks: await artworkValues(in: metadata)
+      artworks: artwork ?? embedded
     )
+  }
+
+  /// Local video artwork must be read from the asset, since VLC's artworkURL
+  /// can resolve a neighbouring image and does not imply an embedded cover.
+  /// nil means this is not a system-readable video; [] means no artwork could
+  /// be extracted and deliberately prevents reuse of VLC's folder fallback.
+  static func videoArtwork(_ resource: PlaybackResource) async throws -> [RawArtwork]? {
+    guard case .localFile(let url) = resource else { return nil }
+    let asset = AVURLAsset(url: url)
+    guard let videos = try? await asset.loadTracks(withMediaType: .video),
+          !videos.isEmpty else { return nil }
+    try Task.checkCancellation()
+    let metadata = (try? await asset.load(.commonMetadata)) ?? []
+    let embedded = await artworkValues(in: metadata)
+    if !embedded.isEmpty { return embedded }
+
+    let generator = AVAssetImageGenerator(asset: asset)
+    generator.appliesPreferredTrackTransform = true
+    generator.maximumSize = CGSize(width: 1024, height: 1024)
+    do {
+      let result = try await generator.image(at: .zero)
+      try Task.checkCancellation()
+      let data = NSMutableData()
+      guard let destination = CGImageDestinationCreateWithData(
+        data, UTType.jpeg.identifier as CFString, 1, nil
+      ) else { return [] }
+      CGImageDestinationAddImage(destination, result.image, [
+        kCGImageDestinationLossyCompressionQuality: 0.9
+      ] as CFDictionary)
+      guard CGImageDestinationFinalize(destination) else { return [] }
+      return [RawArtwork(
+        data: data as Data, mimeType: "image/jpeg",
+        pixelWidth: result.image.width, pixelHeight: result.image.height
+      )]
+    } catch {
+      try Task.checkCancellation()
+      return []
+    }
   }
 
   private static func duration(of asset: AVURLAsset) async -> Duration? {

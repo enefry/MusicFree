@@ -37,7 +37,7 @@ public final class LibraryCollectionsViewController: UIViewController {
         category: "library-collections"
     )
 
-    private enum AlbumDisplayMode: String {
+    enum AlbumDisplayMode: String {
         case grid
         case list
     }
@@ -91,6 +91,9 @@ public final class LibraryCollectionsViewController: UIViewController {
     private var noAlbumTrackCount = 0
     private var hasLoadedNoAlbumCount = false
     private var initialPreparationCompleted = false
+    private var isSelectingAlbums = false
+    private var selectedAlbumIDs = Set<AlbumID>()
+    private var snapshotGeneration = 0
 
     public init(
         viewModel: LibraryViewModel,
@@ -126,6 +129,7 @@ public final class LibraryCollectionsViewController: UIViewController {
         super.viewDidLoad()
         view.backgroundColor = MusicFreeUIColorTokens.backgroundPrimary
         view.accessibilityIdentifier = "library.\(section.rawValue)"
+        viewModel.select(section)
 
         configureCollectionView()
         configureDataSource()
@@ -141,7 +145,11 @@ public final class LibraryCollectionsViewController: UIViewController {
 
     override public func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        // This model is shared with Songs and other browse controllers. Its
+        // active section determines which committed changes trigger a query.
+        viewModel.select(section)
         prepareAndLoadIfNeeded()
+        observeLibraryChanges()
         Task { @MainActor [weak self] in
             await self?.viewModel.startObservingChanges()
         }
@@ -281,6 +289,10 @@ public final class LibraryCollectionsViewController: UIViewController {
                     )
                     albumCell.accessibilityIdentifier = "library.album.open.\(albumID.rawValue)"
                 }
+                (cell as? LibrarySelectableAlbumCell)?.configureSelection(
+                    editing: self.isSelectingAlbums,
+                    selected: self.selectedAlbumIDs.contains(albumID)
+                )
                 return cell
 
             case .noAlbum:
@@ -539,6 +551,18 @@ public final class LibraryCollectionsViewController: UIViewController {
             }
         )
         let previousSnapshot = dataSource.snapshot()
+        let oldOffset = collectionView.contentOffset
+        let nextItems = Set(snapshot.itemIdentifiers)
+        let anchor = collectionView.indexPathsForVisibleItems.sorted().compactMap { indexPath
+            -> (CollectionItem, CGFloat)? in
+            guard let item = dataSource.itemIdentifier(for: indexPath),
+                  nextItems.contains(item),
+                  let attributes = collectionView.layoutAttributesForItem(at: indexPath)
+            else { return nil }
+            return (item, attributes.frame.minY - oldOffset.y)
+        }.first
+        selectedAlbumIDs.formIntersection(Set(albumsByID.keys))
+        if isSelectingAlbums { updateNavigationItems() }
         let structureChanged = previousSnapshot.sectionIdentifiers != snapshot.sectionIdentifiers
             || previousSnapshot.itemIdentifiers != snapshot.itemIdentifiers
         let existingItems = Set(previousSnapshot.itemIdentifiers)
@@ -553,9 +577,26 @@ public final class LibraryCollectionsViewController: UIViewController {
         if #available(iOS 15.0, *), !itemsToReconfigure.isEmpty {
             snapshot.reconfigureItems(itemsToReconfigure)
         }
-        dataSource.apply(snapshot, animatingDifferences: false)
-        if structureChanged {
-            collectionView.collectionViewLayout.invalidateLayout()
+        snapshotGeneration += 1
+        let generation = snapshotGeneration
+        dataSource.apply(snapshot, animatingDifferences: false) { [weak self] in
+            guard let self, self.snapshotGeneration == generation else { return }
+            self.collectionView.layoutIfNeeded()
+            guard structureChanged, !previousSnapshot.itemIdentifiers.isEmpty,
+                  !self.collectionView.isDragging, !self.collectionView.isDecelerating
+            else { return }
+            var y = oldOffset.y
+            if let (item, distance) = anchor,
+               let indexPath = self.dataSource.indexPath(for: item),
+               let attributes = self.collectionView.layoutAttributesForItem(at: indexPath) {
+                y = attributes.frame.minY - distance
+            }
+            let minimum = -self.collectionView.adjustedContentInset.top
+            let maximum = max(minimum, self.collectionView.contentSize.height
+                - self.collectionView.bounds.height + self.collectionView.adjustedContentInset.bottom)
+            self.collectionView.setContentOffset(
+                CGPoint(x: oldOffset.x, y: min(maximum, max(minimum, y))), animated: false
+            )
         }
     }
 
@@ -892,6 +933,24 @@ public final class LibraryCollectionsViewController: UIViewController {
 
     private func updateNavigationItems() {
         guard isViewLoaded else { return }
+        if isSelectingAlbums {
+            title = L("已选择 %d 张专辑", selectedAlbumIDs.count)
+            let done = UIBarButtonItem(title: L("完成"), primaryAction: UIAction { [weak self] _ in
+                self?.setAlbumSelection(false)
+            })
+            done.accessibilityIdentifier = "library.albums.selection.done"
+            let delete = UIBarButtonItem(
+                title: L("删除 (%d)", selectedAlbumIDs.count),
+                primaryAction: UIAction { [weak self] _ in self?.requestDeleteSelectedAlbums() }
+            )
+            delete.tintColor = .systemRed
+            delete.isEnabled = !selectedAlbumIDs.isEmpty && collectionActionTask == nil
+            done.isEnabled = collectionActionTask == nil
+            delete.accessibilityIdentifier = "library.albums.selection.delete"
+            navigationItem.rightBarButtonItems = [done, delete]
+            return
+        }
+        title = section.title
         let refreshAction = UIAction(
             title: L("刷新资料库"),
             image: UIImage(systemName: "arrow.clockwise")
@@ -954,10 +1013,48 @@ public final class LibraryCollectionsViewController: UIViewController {
         )
         sortItem.accessibilityLabel = L("显示与排序")
         sortItem.accessibilityIdentifier = "library.albums.sort"
-        navigationItem.rightBarButtonItems = [optionsItem, sortItem]
+        let selectItem = UIBarButtonItem(
+            title: L("选择"), primaryAction: UIAction { [weak self] _ in
+                self?.setAlbumSelection(true)
+            }
+        )
+        selectItem.accessibilityIdentifier = "library.albums.select"
+        navigationItem.rightBarButtonItems = [optionsItem, selectItem, sortItem]
     }
 
-    private func setAlbumDisplayMode(_ mode: AlbumDisplayMode) {
+    func setAlbumSelection(_ selecting: Bool) {
+        guard collectionActionTask == nil else { return }
+        isSelectingAlbums = selecting
+        if !selecting { selectedAlbumIDs.removeAll() }
+        updateNavigationItems()
+        updateVisibleAlbumSelection()
+    }
+
+    private func updateVisibleAlbumSelection() {
+        for indexPath in collectionView.indexPathsForVisibleItems {
+            guard case let .album(id) = dataSource.itemIdentifier(for: indexPath),
+                  let cell = collectionView.cellForItem(at: indexPath) as? LibrarySelectableAlbumCell
+            else { continue }
+            cell.configureSelection(editing: isSelectingAlbums, selected: selectedAlbumIDs.contains(id))
+        }
+    }
+
+    private func requestDeleteSelectedAlbums() {
+        let ids = selectedAlbumIDs
+        guard !ids.isEmpty, collectionActionTask == nil, presentedViewController == nil else { return }
+        let alert = UIAlertController(
+            title: L("删除所选专辑？"),
+            message: L("将删除所选的 %d 张专辑及其中的全部歌曲。", ids.count),
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: L("取消"), style: .cancel))
+        alert.addAction(UIAlertAction(title: L("删除"), style: .destructive) { [weak self] _ in
+            self?.deleteAlbums(ids)
+        })
+        present(alert, animated: true)
+    }
+
+    func setAlbumDisplayMode(_ mode: AlbumDisplayMode) {
         guard albumDisplayMode != mode else { return }
         albumDisplayMode = mode
         updateNavigationItems()
@@ -1174,38 +1271,30 @@ public final class LibraryCollectionsViewController: UIViewController {
         )
         alert.addAction(UIAlertAction(title: L("取消"), style: .cancel))
         alert.addAction(UIAlertAction(title: L("删除"), style: .destructive) { [weak self] _ in
-            self?.deleteAlbum(target)
+            if case let .album(id) = target { self?.deleteAlbums([id]) }
         })
         present(alert, animated: true)
     }
 
-    private func deleteAlbum(_ target: LibraryCollectionQueueTarget) {
-        guard case .album = target, collectionActionTask == nil else { return }
+    private func deleteAlbums(_ ids: Set<AlbumID>) {
+        guard !ids.isEmpty, collectionActionTask == nil else { return }
         collectionActionTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            defer { self.collectionActionTask = nil }
+            defer {
+                self.collectionActionTask = nil
+                self.updateNavigationItems()
+            }
             do {
-                let itemIDs = Set(try await LibraryCollectionTrackLoader.itemIDs(
-                    for: target,
-                    from: self.viewModel.library
-                ))
-                guard !itemIDs.isEmpty else {
-                    self.presentMessage(
-                        title: L("无法删除专辑"),
-                        message: L("这张专辑没有可删除的歌曲。")
-                    )
-                    return
-                }
-                _ = try await self.viewModel.library.delete(itemIDs)
-                self.viewModel.removeDeletedTracks(itemIDs)
-                self.viewModel.refresh(section: .albums)
-                self.viewModel.refreshOverview()
+                try await self.viewModel.deleteAlbums(ids)
+                self.selectedAlbumIDs.subtract(ids)
+                self.updateVisibleAlbumSelection()
             } catch is CancellationError {
                 return
             } catch {
                 self.presentMessage(title: L("无法删除专辑"), message: error.localizedDescription)
             }
         }
+        updateNavigationItems()
     }
 
     private func presentMessage(title: String, message: String) {
@@ -1222,6 +1311,14 @@ extension LibraryCollectionsViewController: UICollectionViewDelegate {
         didSelectItemAt indexPath: IndexPath
     ) {
         guard let item = dataSource.itemIdentifier(for: indexPath) else { return }
+        collectionView.deselectItem(at: indexPath, animated: false)
+        if isSelectingAlbums {
+            guard collectionActionTask == nil, case let .album(id) = item else { return }
+            if !selectedAlbumIDs.insert(id).inserted { selectedAlbumIDs.remove(id) }
+            updateNavigationItems()
+            updateVisibleAlbumSelection()
+            return
+        }
         switch item {
         case let .album(id): onSelectAlbum?(id)
         case .noAlbum: onSelectNoAlbum?()
@@ -1237,7 +1334,8 @@ extension LibraryCollectionsViewController: UICollectionViewDelegate {
         contextMenuConfigurationForItemAt indexPath: IndexPath,
         point _: CGPoint
     ) -> UIContextMenuConfiguration? {
-        guard let item = dataSource.itemIdentifier(for: indexPath),
+        guard !isSelectingAlbums,
+              let item = dataSource.itemIdentifier(for: indexPath),
               let menu = makeCollectionContextMenu(for: item)
         else { return nil }
         let configuration = UIContextMenuConfiguration(
@@ -1272,7 +1370,34 @@ extension LibraryCollectionsViewController: UICollectionViewDelegate {
 }
 
 @MainActor
-final class LibraryCollectionAlbumListCell: UICollectionViewCell {
+class LibrarySelectableAlbumCell: UICollectionViewCell {
+    private let selectionBadge = UIImageView()
+
+    func configureSelection(editing: Bool, selected: Bool) {
+        if selectionBadge.superview == nil {
+            selectionBadge.translatesAutoresizingMaskIntoConstraints = false
+            selectionBadge.backgroundColor = MusicFreeUIColorTokens.backgroundPrimary
+            selectionBadge.layer.cornerRadius = 13
+            selectionBadge.clipsToBounds = true
+            selectionBadge.contentMode = .scaleAspectFit
+            contentView.addSubview(selectionBadge)
+            NSLayoutConstraint.activate([
+                selectionBadge.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -6),
+                selectionBadge.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 6),
+                selectionBadge.widthAnchor.constraint(equalToConstant: 26),
+                selectionBadge.heightAnchor.constraint(equalToConstant: 26),
+            ])
+        }
+        contentView.bringSubviewToFront(selectionBadge)
+        selectionBadge.isHidden = !editing
+        selectionBadge.tintColor = tintColor
+        selectionBadge.image = UIImage(systemName: selected ? "checkmark.circle.fill" : "circle")
+        if editing && selected { accessibilityTraits.insert(.selected) }
+        else { accessibilityTraits.remove(.selected) }
+    }
+}
+
+final class LibraryCollectionAlbumListCell: LibrarySelectableAlbumCell {
     static let reuseIdentifier = "LibraryCollectionAlbumListCell"
 
     private let artworkView = MusicFreeUIKitArtworkView()
@@ -1348,7 +1473,7 @@ final class LibraryCollectionAlbumListCell: UICollectionViewCell {
 }
 
 @MainActor
-final class LibraryCollectionAlbumCell: UICollectionViewCell {
+final class LibraryCollectionAlbumCell: LibrarySelectableAlbumCell {
     static let reuseIdentifier = "LibraryCollectionAlbumCell"
 
     private let artworkView = MusicFreeUIKitArtworkView(fillsAvailableWidth: true)

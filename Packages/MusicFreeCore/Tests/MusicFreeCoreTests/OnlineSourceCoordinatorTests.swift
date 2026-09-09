@@ -234,6 +234,146 @@ func onlineAuditionPreparesTransientRemoteResource() async throws {
 }
 
 @MainActor
+@Test("online audition advances after natural stop and ended events")
+func onlineAuditionAdvancesAfterNaturalEnd() async throws {
+    let sourceID = MediaSourceID("coordinator.audition.queue")
+    let first = SourceCatalogItem(
+        id: SourceObjectID(sourceID: sourceID, externalID: "queue-first"),
+        kind: .track,
+        displayName: "Queue First",
+        duration: .seconds(30),
+        isPlayable: true
+    )
+    let second = SourceCatalogItem(
+        id: SourceObjectID(sourceID: sourceID, externalID: "queue-second"),
+        kind: .track,
+        displayName: "Queue Second",
+        duration: .seconds(30),
+        isPlayable: true
+    )
+    let third = SourceCatalogItem(
+        id: SourceObjectID(sourceID: sourceID, externalID: "queue-third"),
+        kind: .track,
+        displayName: "Queue Third",
+        duration: .seconds(30),
+        isPlayable: true
+    )
+    let source = CoordinatorFixtureSource(
+        sourceID: sourceID,
+        playbackAccess: .http(
+            request: RemotePlaybackRequest(
+                url: URL(string: "https://audio.example.test/queue")!,
+                expiresAt: Date().addingTimeInterval(60)
+            ),
+            transcode: nil
+        )
+    )
+    let onlineSources = try OnlineSourceCoordinator(sources: [source])
+    let configuration = try OnlineSourceConfiguration(
+        sourceID: sourceID,
+        providerKind: .dsAudio,
+        displayName: source.descriptor.displayName,
+        isEnabled: true
+    ).acceptingPrivacyPolicy(version: source.privacyPolicyVersion)
+    onlineSources.apply(
+        ImportPreferences(
+            privacyPreferences: PrivacyPreferences.defaults.acceptingPrivacyPolicy(),
+            onlineSourcePreferences: try OnlineSourcePreferences().adding(configuration)
+        )
+    )
+
+    let engine = FakePlaybackEngine()
+    let coordinator = OnlineAuditionCoordinator(onlineSources: onlineSources, engine: engine)
+    try await coordinator.start(
+        sourceID: sourceID,
+        items: [first, second, third],
+        startingItemID: first.id
+    )
+
+    let firstGeneration = engine.state.generation
+    engine.emit(
+        .phaseChanged(
+            generation: firstGeneration,
+            itemID: MediaItemID(sourceID: sourceID, externalID: first.id.externalID),
+            phase: .stopped
+        )
+    )
+    engine.emit(
+        .ended(
+            generation: firstGeneration,
+            itemID: MediaItemID(sourceID: sourceID, externalID: first.id.externalID),
+            reason: .ended
+        )
+    )
+
+    for _ in 0..<2_000 where coordinator.snapshot.itemID != second.id {
+        try? await Task.sleep(for: .milliseconds(1))
+    }
+
+    #expect(coordinator.snapshot.itemID == second.id)
+    #expect(coordinator.snapshot.currentIndex == 1)
+    #expect(coordinator.snapshot.phase == .playing)
+    #expect(coordinator.snapshot.queue.map(\.itemID) == [first.id, second.id, third.id])
+    #expect(engine.prepareCalls.count == 2)
+    #expect(engine.prepareCalls.last?.item.itemID == MediaItemID(
+        sourceID: sourceID,
+        externalID: second.id.externalID
+    ))
+
+    await coordinator.close()
+}
+
+@MainActor
+@Test("online audition retains its queue when the scene moves to background")
+func onlineAuditionRetainsQueueAcrossLifecycleBoundary() async throws {
+    let sourceID = MediaSourceID("coordinator.audition.lifecycle")
+    let source = CoordinatorFixtureSource(
+        sourceID: sourceID,
+        playbackAccess: .http(
+            request: RemotePlaybackRequest(
+                url: URL(string: "https://audio.example.test/lifecycle")!,
+                expiresAt: Date().addingTimeInterval(60)
+            ),
+            transcode: nil
+        )
+    )
+    let onlineSources = try OnlineSourceCoordinator(sources: [source])
+    let configuration = try OnlineSourceConfiguration(
+        sourceID: sourceID,
+        providerKind: .dsAudio,
+        displayName: source.descriptor.displayName,
+        isEnabled: true
+    ).acceptingPrivacyPolicy(version: source.privacyPolicyVersion)
+    onlineSources.apply(
+        ImportPreferences(
+            privacyPreferences: PrivacyPreferences.defaults.acceptingPrivacyPolicy(),
+            onlineSourcePreferences: try OnlineSourcePreferences().adding(configuration)
+        )
+    )
+    let engine = FakePlaybackEngine()
+    let coordinator = OnlineAuditionCoordinator(onlineSources: onlineSources, engine: engine)
+    let item = SourceCatalogItem(
+        id: SourceObjectID(sourceID: sourceID, externalID: "lifecycle-track"),
+        kind: .track,
+        displayName: "Lifecycle Track",
+        duration: .seconds(30),
+        isPlayable: true
+    )
+
+    try await coordinator.audition(sourceID: sourceID, item: item)
+    let beforeBackground = coordinator.snapshot
+
+    // Scene backgrounding intentionally has no coordinator command. This
+    // assertion documents the contract that the retained session remains
+    // available until an explicit close or stop.
+    #expect(coordinator.snapshot.queue == beforeBackground.queue)
+    #expect(coordinator.snapshot.itemID == beforeBackground.itemID)
+    #expect(coordinator.snapshot.phase == .playing)
+
+    await coordinator.close()
+}
+
+@MainActor
 @Test("online audition rejects expired access before preparing the engine")
 func onlineAuditionRejectsExpiredAccess() async throws {
     let sourceID = MediaSourceID("coordinator.audition.expired")
@@ -323,11 +463,11 @@ func formalPlaybackResumingStopsOnlineAudition() async throws {
     #expect(coordinator.snapshot.phase == .playing)
 
     formalPlayback.publish(phase: .playing)
-    for _ in 0..<2_000 where coordinator.snapshot.phase != .stopped {
+    for _ in 0..<2_000 where coordinator.snapshot.phase != .idle {
         await Task.yield()
     }
 
-    #expect(coordinator.snapshot.phase == .stopped)
+    #expect(coordinator.snapshot.phase == .idle)
     #expect(engine.stopCallCount > 0)
 }
 

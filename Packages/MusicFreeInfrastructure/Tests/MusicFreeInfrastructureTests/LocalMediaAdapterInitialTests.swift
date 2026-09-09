@@ -185,6 +185,7 @@ struct LocalMediaAdapterInitialTests {
     let audioURL = albumRoot.appendingPathComponent("01 Song.flac")
     let cueURL = albumRoot.appendingPathComponent("album.cue")
     let lyricsURL = albumRoot.appendingPathComponent("01 Song.lrc")
+    let srtURL = albumRoot.appendingPathComponent("02 Song.srt")
     let coverURL = albumRoot.appendingPathComponent("cover.jpg")
     let frontURL = albumRoot.appendingPathComponent("front.png")
     let notesURL = albumRoot.appendingPathComponent("notes.nfo")
@@ -192,6 +193,7 @@ struct LocalMediaAdapterInitialTests {
     try Data("audio".utf8).write(to: audioURL)
     try Data("FILE \"01 Song.flac\" WAVE".utf8).write(to: cueURL)
     try Data("[00:01]line".utf8).write(to: lyricsURL)
+    try Data("1\n00:00:02,500 --> 00:00:04,000\nsecond line".utf8).write(to: srtURL)
     try Data("damaged".utf8).write(to: coverURL)
     try validPNGData().write(to: frontURL)
     try Data("notes".utf8).write(to: notesURL)
@@ -202,7 +204,7 @@ struct LocalMediaAdapterInitialTests {
 
     #expect(bundle.mediaCandidates.map(\.url) == [audioURL])
     #expect(bundle.cueFiles.map(\.url) == [cueURL])
-    #expect(bundle.lyricsFiles.map(\.url) == [lyricsURL])
+    #expect(bundle.lyricsFiles.map(\.url) == [lyricsURL, srtURL])
     #expect(bundle.artworkFiles.map(\.url) == [coverURL, frontURL])
     #expect(bundle.resources.first(where: { $0.file.url == notesURL })?.kind == .sidecar)
     #expect(bundle.resources.first(where: { $0.file.url == checksumURL })?.kind == .sidecar)
@@ -216,6 +218,61 @@ struct LocalMediaAdapterInitialTests {
     #expect(artwork.reason == .frontFile)
     #expect(artwork.pixelWidth > 0)
     #expect(artwork.pixelHeight > 0)
+  }
+
+  @Test("Same-stem artwork is per media even in a mixed-album root")
+  func matchingArtworkInMixedAlbumFolder() throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let first = fixture.inputRoot.appendingPathComponent("First.mp4")
+    let second = fixture.inputRoot.appendingPathComponent("Second.mp4")
+    let firstImage = fixture.inputRoot.appendingPathComponent("First.jpg")
+    let secondImage = fixture.inputRoot.appendingPathComponent("Second.png")
+    for url in [first, second] { try Data("media".utf8).write(to: url) }
+    for url in [firstImage, secondImage] { try validPNGData().write(to: url) }
+    let files = try ImportFileEnumerator(configuration: fixture.configuration).enumerate(fixture.inputRoot)
+    let bundle = try FolderImportBundleAnalyzer().analyze(inputURL: fixture.inputRoot, files: files)
+    let resolver = FolderArtworkResolver()
+    #expect(resolver.selection(for: first, in: bundle, allowRootArtwork: false)?.url == firstImage)
+    #expect(resolver.selection(for: second, in: bundle, allowRootArtwork: false)?.url == secondImage)
+    #expect(resolver.selection(for: first, in: bundle, allowRootArtwork: false)?.reason == .matchingMediaFile)
+  }
+
+  @Test("A lone media sidecar cannot become another track's folder cover")
+  func matchingArtworkDoesNotLeakToOtherMedia() throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let first = fixture.inputRoot.appendingPathComponent("First.mp4")
+    let second = fixture.inputRoot.appendingPathComponent("Second.mp4")
+    for url in [first, second] { try Data("media".utf8).write(to: url) }
+    try validPNGData().write(to: fixture.inputRoot.appendingPathComponent("First.jpg"))
+    let files = try ImportFileEnumerator(configuration: fixture.configuration).enumerate(fixture.inputRoot)
+    let bundle = try FolderImportBundleAnalyzer().analyze(inputURL: fixture.inputRoot, files: files)
+    #expect(FolderArtworkResolver().selection(for: second, in: bundle, allowRootArtwork: true) == nil)
+  }
+
+  @Test("SRT sidecar lyrics convert to the existing LRC timeline format")
+  func srtSidecarLyricsConvertToLRC() throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let mediaURL = fixture.inputRoot.appendingPathComponent("subtitle-song.mp3")
+    let sidecarURL = fixture.inputRoot.appendingPathComponent("subtitle-song.srt")
+    try Data("audio".utf8).write(to: mediaURL)
+    try Data("""
+    1
+    00:00:01,250 --> 00:00:03,000
+    First line
+
+    2
+    00:01:02.005 --> 00:01:04.000
+    Second
+    line
+    """.utf8).write(to: sidecarURL)
+
+    #expect(
+      try LocalLyricsReader.readSidecar(for: mediaURL)
+        == "[00:01.250]First line\n[01:02.005]Second line"
+    )
   }
 
   @Test("Remote metadata hints fill missing tags and preserve the source filename")

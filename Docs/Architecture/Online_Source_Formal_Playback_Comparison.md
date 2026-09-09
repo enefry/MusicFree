@@ -1,6 +1,6 @@
 # 在线源：增强试听与正式播放器接入对比
 
-状态：基于当前工作区代码的静态评估；未修改播放实现，未进行本轮构建或真机验证。工时为方案估算，不是已完成工作量或交付承诺。
+状态：基于 2026-09-08 当前工作区代码的对比评估。A（独立增强试听）主链路已经落地代码，试听相关行为测试已有通过记录，最新 iOS generic `build-for-testing` 已通过；真实在线源和真机长播仍未验收。B/C 仍是后续正式播放器接入方案。工时为方案估算，不是已完成工作量或交付承诺。
 
 已确认的试听方案见 [在线源试听体验优化规划](Online_Source_Audition_Enhancement_Plan.md)。本文只比较替代路径，不撤销已确认的独立悬浮条选择。
 
@@ -29,8 +29,8 @@
 | 队列 UI | [PlayerQueueViewController](../../Packages/MusicFreeUI/Sources/PlayerFeature/UIKit/PlayerQueueViewController.swift) 从 LibraryServing.track 读取歌曲，故资源解析成功不代表队列能正确显示歌曲信息。 |
 | 历史与统计 | [LibraryPersistenceStore](../../Packages/MusicFreeInfrastructure/Sources/LibraryPersistenceAdapter/LibraryPersistenceStore.swift) 的播放事件写入要求 track 已存在，否则报 danglingReference；PlaybackCoordinator 对部分历史写入采用 try?，不能用“未报错”证明历史有效。 |
 | 歌词 | [LyricsCoordinator](../../Packages/MusicFreeCore/Sources/AppServices/LyricsCoordinator.swift) 查询依赖 library.track，不能直接沿用到只存在内存目录中的歌曲。 |
-| 后台与系统控制 | PlaybackCoordinator 已有 AudioSession、NowPlaying、RemoteCommand 集成；[Info.plist](../../App/Info.plist) 已声明 audio 后台模式。存在代码能力不等于已验证在线长播及地址续期。 |
-| 现有试听 | [OnlineAuditionCoordinator](../../Packages/MusicFreeCore/Sources/AppServices/OnlineAuditionCoordinator.swift) 使用独立引擎；[SceneDelegate](../../App/SceneDelegate.swift) 失焦及后台停止试听。保留试听时仍需协调它与正式远程播放。 |
+| 后台与系统控制 | PlaybackCoordinator 已有 AudioSession、NowPlaying、RemoteCommand 集成；[Info.plist](../../App/Info.plist) 已声明 audio 后台模式。试听会话在失焦和后台阶段保留，不主动停止；这不等于已经验证在线长播、后台出声及地址续期。 |
+| 现有试听 | [OnlineAuditionCoordinator](../../Packages/MusicFreeCore/Sources/AppServices/OnlineAuditionCoordinator.swift) 使用独立引擎；[SceneDelegate](../../App/SceneDelegate.swift) 在失焦及后台阶段不再主动停止试听，会话和队列由试听服务保留。启动正式播放时仍需协调它与正式远程播放。 |
 
 ## 成本与效果
 
@@ -41,7 +41,7 @@
 | 首轮投入估算 | 4–7 人日 | 7–12 人日 | 15–25 人日 |
 | 界面 | 新增悬浮条、展开面板和临时列表 | 复用主播放条、详情和队列，补在线标识及能力判断 | 与本地统一，增加在线项的可用性和管理语义 |
 | 连播 | 点击时已加载歌曲，顺序播放 | 复用队列、循环和随机能力 | 同 B，并支持稳定恢复及本地／在线混排 |
-| 后台／锁屏 | 不支持，后台结束 | 纳入交付，但需验证认证、地址有效期与中断恢复 | 同 B，增加跨启动的恢复能力 |
+| 后台／锁屏 | 试听会话和队列在离开/后台阶段保留，不主动停止；后台出声、锁屏控制和地址续期仍需验证 | 纳入交付，但需验证认证、地址有效期与中断恢复 | 同 B，增加跨启动的恢复能力 |
 | 正式本地队列 | 保留原队列，试听结束不自动恢复声音 | 建议保存原本地队列和位置；结束在线会话后恢复为暂停 | 可使用同一持久化队列，开始播放时需明确替换／追加动作 |
 | 重启恢复 | 无 | 不恢复临时在线会话，保留原本地队列 | 可恢复稳定 ID、元数据及位置，播放时重新获取访问地址 |
 | 历史／收藏／歌词 | 不包含 | 首版按能力禁用，不冒充已支持 | 需要完善存储、查询及在线元数据关联后支持 |
@@ -84,10 +84,10 @@
 - **队列兼容**：本地播放、混合队列（C）、临时会话恢复（B）、重复歌曲、随机循环、上次位置、来源失效均需回归。
 - **产品完整性**：C 必须读回验证历史／统计和收藏歌单；未入库在线项不能被 try? 吞错后仍宣称记录成功。
 - **真实设备**：至少验证 DS Audio 连续多曲播放、锁屏切歌、耳机控制、系统中断、网络切换和过期地址重取；源服务不可达时应记为未验证，不记为通过。
-- 构建复用 .noindex/DerivedData；本次仅落地文档，不启动上述实现或测试。
+- 构建复用 .noindex/DerivedData；A 的实现状态和验收矩阵见 [在线源试听体验优化规划](Online_Source_Audition_Enhancement_Plan.md)。当前仍需补齐真实在线源、真机后台音频、连续播放、定位和系统控制证据。B/C 的正式播放器验证路径仍按本文后续步骤执行。
 
 ## 建议
 
-当前选定的 A 已包含全局入口、展开面板和连播，投入明显超过最小试听。若下一步很可能要求锁屏、后台和循环随机，建议在实现 A 前先完成第一步的正式播放器验证，再决定走 B 或 C，避免先完整实现第二套播放器控制。
+当前已落地的 A 已包含全局入口、展开面板和连播，投入明显超过最小试听。若下一步要求锁屏、后台和循环随机，建议先完成第一步的正式播放器验证，再决定走 B 或 C，避免在目标尚未确定时维护第二套完整播放器控制。
 
 若明确坚持独立悬浮入口、仅前台试听且不影响正式队列，继续 A 更直接。若目标是长期在线听歌，B 可先交付核心播放体验，C 才是媒体库层面的完整整合。本文评估不代表用户已经选择切换路线。

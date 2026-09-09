@@ -69,7 +69,7 @@ UIKit App Shell
 - Player Sheet、透明 presentation background 和交互下拉；
 - Mini Player 安全区插入；
 - 播放快照、在线源选择、设置选择和资料库选择的状态同步；
-- scenePhase、文档扫描、在线试听停止和后台生命周期。
+- scenePhase、文档扫描、试听会话保留和后台生命周期。
 
 这说明迁移的第一风险不是单个页面，而是**根容器状态和系统生命周期的所有权**。应先把根容器从 SwiftUI View 拆成 UIKit 控制器，再逐页替换。
 
@@ -261,7 +261,7 @@ SettingsFeature/
 - 实现 Settings 的 `UIHostingController` 宿主；
 - 实现 UIKit Mini Player 容器，但初期可以嵌入现有 Mini Player 作为过渡；
 - 不保留 `RootScene` 或任何 SwiftUI 根壳回滚路径；
-- 处理 appearance、locale、scenePhase、后台试听停止和文档扫描触发。
+- 处理 appearance、locale、scenePhase、试听会话保留和文档扫描触发。
 
 验收：
 
@@ -601,7 +601,7 @@ UIKit Controller 不复制业务状态，只保存视图生命周期状态：
 - `viewWillDisappear`：取消页面级一次性任务和图片预取；
 - `deinit`：断言 cancellable、Task 和 child controller 已释放；
 - App 生命周期仍由 `AppContainer`/`AppLifecycleCoordinator` 管理，Controller 不直接 stop 全局服务；
-- Online audition 继续在 scene 非 active 时停止，避免迁移后行为漂移。
+- Online audition 在 scene 非 active、短暂离开 App 或进入后台时保留会话；仅由用户明确关闭、正式播放抢占、音频中断策略或来源权限撤销结束。
 
 ## 9. 视觉一致性和 Figma 闭环
 

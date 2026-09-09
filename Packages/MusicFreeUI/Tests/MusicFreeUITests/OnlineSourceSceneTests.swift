@@ -103,6 +103,7 @@ private actor OnlineSourceDownloadTestService: OnlineSourceServing {
     private let items: [SourceCatalogItem]
     private var activeDownloads = 0
     private var maximumActiveDownloads = 0
+    private var downloadedItemIDs: [SourceObjectID] = []
 
     init(
         sourceID: MediaSourceID,
@@ -163,6 +164,7 @@ private actor OnlineSourceDownloadTestService: OnlineSourceServing {
             "online-source-scene-\(UUID().uuidString)-\(fileName)"
         )
         try Data(itemID.externalID.utf8).write(to: fileURL)
+        downloadedItemIDs.append(itemID)
         return DownloadReceipt(
             sourceID: sourceID,
             itemID: itemID,
@@ -180,6 +182,10 @@ private actor OnlineSourceDownloadTestService: OnlineSourceServing {
 
     func maximumConcurrentDownloads() -> Int {
         maximumActiveDownloads
+    }
+
+    func downloadedIDs() -> [SourceObjectID] {
+        downloadedItemIDs
     }
 }
 
@@ -802,6 +808,117 @@ func folderImportUsesBoundedConcurrencyAndReportsOutcomes() async throws {
 }
 
 @MainActor
+@Test("Folder imports attach remote artwork and SRT lyrics to each audio import")
+func folderImportIncludesRemoteArtworkAndSRTSidecars() async throws {
+    let sourceID = MediaSourceID("drive.sidecars.fixture")
+    let rootID = SourceObjectID(sourceID: sourceID, externalID: "album-folder")
+    let rootItem = SourceCatalogItem(
+        id: rootID,
+        kind: .folder,
+        displayName: "Album Folder"
+    )
+    let track = SourceCatalogItem(
+        id: SourceObjectID(sourceID: sourceID, externalID: "track"),
+        kind: .audioFile,
+        displayName: "Song.mp3",
+        parentID: rootID,
+        mimeType: "audio/mpeg",
+        isPlayable: true
+    )
+    let cover = SourceCatalogItem(
+        id: SourceObjectID(sourceID: sourceID, externalID: "cover"),
+        kind: .unknown,
+        displayName: "cover.jpg",
+        parentID: rootID,
+        mimeType: "image/jpeg"
+    )
+    let lyrics = SourceCatalogItem(
+        id: SourceObjectID(sourceID: sourceID, externalID: "lyrics"),
+        kind: .unknown,
+        displayName: "Song.srt",
+        parentID: rootID,
+        mimeType: "application/x-subrip"
+    )
+    let serving = OnlineSourceDownloadTestService(
+        sourceID: sourceID,
+        rootItemID: rootID,
+        items: [track, cover, lyrics]
+    )
+    let importer = OnlineSourceImportTestService()
+    let model = OnlineSourcesSceneModel(
+        serving: serving,
+        auditionServing: OnlineSourceSceneAuditionService(),
+        settingsServing: OnlineSourceSceneSettingsStore(settings: .defaults),
+        importer: importer
+    )
+
+    model.startImport(sourceID: sourceID, item: rootItem)
+    let finished = await waitUntil {
+        model.importSnapshots[rootID]?.phase == .completed
+    }
+    let request = try #require(await importer.capturedRequests().first)
+
+    #expect(finished)
+    #expect(request.urls.map(\.lastPathComponent).sorted() == ["Song.mp3", "Song.srt", "cover.jpg"])
+    #expect(request.metadataHints.keys.map(\.lastPathComponent) == ["Song.mp3"])
+    #expect(Set(await serving.downloadedIDs()) == Set([track.id, cover.id, lyrics.id]))
+    #expect(model.importSnapshots[rootID]?.totalItems == 1)
+    #expect(model.importSnapshots[rootID]?.importedItems == 1)
+}
+
+@MainActor
+@Test("Single-track imports automatically attach sibling artwork and lyrics")
+func singleTrackImportIncludesSiblingArtworkAndLyrics() async throws {
+    let sourceID = MediaSourceID("drive.single-track-sidecars.fixture")
+    let rootID = SourceObjectID(sourceID: sourceID, externalID: "album-folder")
+    let track = SourceCatalogItem(
+        id: SourceObjectID(sourceID: sourceID, externalID: "track"),
+        kind: .audioFile,
+        displayName: "Song.mp3",
+        parentID: rootID,
+        mimeType: "audio/mpeg",
+        isPlayable: true
+    )
+    let cover = SourceCatalogItem(
+        id: SourceObjectID(sourceID: sourceID, externalID: "cover"),
+        kind: .unknown,
+        displayName: "cover.jpg",
+        parentID: rootID,
+        mimeType: "image/jpeg"
+    )
+    let lyrics = SourceCatalogItem(
+        id: SourceObjectID(sourceID: sourceID, externalID: "lyrics"),
+        kind: .unknown,
+        displayName: "Song.srt",
+        parentID: rootID,
+        mimeType: "application/x-subrip"
+    )
+    let serving = OnlineSourceDownloadTestService(
+        sourceID: sourceID,
+        rootItemID: rootID,
+        items: [track, cover, lyrics]
+    )
+    let importer = OnlineSourceImportTestService()
+    let model = OnlineSourcesSceneModel(
+        serving: serving,
+        auditionServing: OnlineSourceSceneAuditionService(),
+        settingsServing: OnlineSourceSceneSettingsStore(settings: .defaults),
+        importer: importer
+    )
+
+    model.startImport(sourceID: sourceID, item: track)
+    let finished = await waitUntil {
+        model.downloadSnapshots[track.id]?.phase == .completed
+    }
+    let request = try #require(await importer.capturedRequests().first)
+
+    #expect(finished)
+    #expect(request.urls.map(\.lastPathComponent).sorted() == ["Song.mp3", "Song.srt", "cover.jpg"])
+    #expect(request.metadataHints.keys.map(\.lastPathComponent) == ["Song.mp3"])
+    #expect(Set(await serving.downloadedIDs()) == Set([track.id, cover.id, lyrics.id]))
+}
+
+@MainActor
 @Test("Cancelling a folder import cancels every active local import")
 func cancellingFolderImportCancelsEveryActiveImport() async throws {
     let sourceID = MediaSourceID("dsaudio.batch-cancel.fixture")
@@ -1056,4 +1173,61 @@ private func waitUntil(
         try? await Task.sleep(for: .milliseconds(10))
     }
     return false
+}
+
+@MainActor
+@Test("Renaming a source preserves all other settings and survives a stale runtime snapshot", arguments: [OnlineProviderKind.dsAudio, .googleDrive, .gateway])
+func renamingOnlineSourcePreservesConfiguration(provider: OnlineProviderKind) async throws {
+    let sourceID = MediaSourceID("rename.fixture")
+    let configuration = try OnlineSourceConfiguration(
+        sourceID: sourceID,
+        providerKind: provider,
+        displayName: "Original",
+        endpoint: URL(string: "https://nas.example.test/audio"),
+        rootObjectID: SourceObjectID(sourceID: sourceID, externalID: "music"),
+        credentialRecordID: "existing-credential",
+        privacyPolicyVersion: "1.2.0",
+        isEnabled: false
+    )
+    let settings = AppSettings(importPreferences: ImportPreferences(
+        onlineSourcePreferences: OnlineSourcePreferences(isEnabled: false, sources: [configuration])
+    ))
+    let store = OnlineSourceSceneSettingsStore(settings: settings)
+    let service = OnlineSourceSceneService(snapshot: OnlineSourceSnapshot(sources: [
+        OnlineSourceSummary(
+            sourceID: sourceID, providerKind: provider, displayName: "Original",
+            privacyPolicyVersion: "1.2.0", isRegistered: true,
+            isPrivacyAccepted: true, isEnabled: false, isRuntimeEnabled: false
+        )
+    ]))
+    let model = OnlineSourcesSceneModel(
+        serving: service, auditionServing: OnlineSourceSceneAuditionService(), settingsServing: store
+    )
+    await model.start()
+    #expect(await model.renameSource(sourceID, to: "  New name \n"))
+    let saved = try await store.load()
+    let renamed = try #require(saved.importPreferences.onlineSourcePreferences.source(for: sourceID))
+    #expect(renamed.displayName == "New name")
+    // Comparing the entire settings value catches changes to credentials, root,
+    // provider, consent, enablement, and unrelated settings in this mutation.
+    let restored = try saved.importPreferences.onlineSourcePreferences.updating(renamed.renaming(to: "Original"))
+    let restoredSettings = AppSettings(
+        importPreferences: saved.importPreferences.settingOnlineSourcePreferences(restored),
+        playbackPreferences: saved.playbackPreferences,
+        storagePreferences: saved.storagePreferences,
+        loggingPreferences: saved.loggingPreferences
+    )
+    #expect(restoredSettings == settings)
+    #expect(model.snapshot.sources.first?.displayName == "New name")
+    await model.refreshPersistedState()
+    #expect(model.snapshot.sources.first?.displayName == "New name")
+    #expect(!(await model.renameSource(sourceID, to: " \n ")))
+    #expect(try await store.load() == saved)
+    #expect(!(await model.renameSource(MediaSourceID("missing"), to: "Another")))
+    #expect(try await store.load() == saved)
+    let reopened = OnlineSourcesSceneModel(
+        serving: service, auditionServing: OnlineSourceSceneAuditionService(), settingsServing: store
+    )
+    await reopened.start()
+    #expect(reopened.snapshot.sources.first?.displayName == "New name")
 }
