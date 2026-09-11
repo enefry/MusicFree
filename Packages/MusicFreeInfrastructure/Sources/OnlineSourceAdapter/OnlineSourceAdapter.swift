@@ -57,6 +57,17 @@ public enum OnlineSourceAdapterError: Error, Equatable, Sendable, LocalizedError
     }
 }
 
+extension OnlineSourceAdapterError: OnlineSourceAuthorizationRecoverableError {
+    public var requiresUserAuthorization: Bool {
+        switch self {
+        case .authorizationRequired, .invalidCredential:
+            true
+        default:
+            false
+        }
+    }
+}
+
 /// A credential reference contains no secret. Adapters resolve it through a
 /// Keychain-backed provider only for the duration of one request.
 public protocol OnlineCredentialProviding: Sendable {

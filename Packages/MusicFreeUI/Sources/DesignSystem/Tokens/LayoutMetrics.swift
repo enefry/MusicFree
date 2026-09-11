@@ -11,9 +11,9 @@ public enum MusicFreeLayoutMetrics {
     public static let controlCornerRadius: CGFloat = 22
 
     /// Shared Mini Player geometry used by both the formal player and the
-    /// transient online audition bar. The legacy host includes its vertical
-    /// safe-area reservation; the content heights match the iOS 26 accessory
-    /// environments.
+    /// transient online audition bar. Legacy hosts may reserve an additional
+    /// bottom gap around this content height; the content heights match the
+    /// iOS 26 accessory environments.
     public static let miniPlayerLegacyHeight: CGFloat = 64
     public static let miniPlayerContentHeight: CGFloat = 48
     public static let miniPlayerInlineHeight: CGFloat = 44

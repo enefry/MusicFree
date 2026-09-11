@@ -644,7 +644,12 @@ final class MusicFreeBVTUITests: XCTestCase {
     @MainActor
     func testAuditionSharesNativeMiniPlayerSlot() {
         let app = XCUIApplication()
-        defer { app.terminate() }
+        let device = XCUIDevice.shared
+        device.orientation = .portrait
+        defer {
+            device.orientation = .portrait
+            app.terminate()
+        }
         app.launchArguments = [
             "--bvt-seed-audio", "--bvt-seed-uikit-songs",
             "--bvt-seed-online-sources", "--bvt-reset-online-sources",
@@ -670,10 +675,28 @@ final class MusicFreeBVTUITests: XCTestCase {
         let consent = app.buttons["onlineSources.applicationPrivacy.confirm"].firstMatch
         XCTAssertTrue(consent.waitForExistence(timeout: 15))
         consent.tap()
-        enableOnlineSourcesService(in: app)
         openOnlineSource(named: "BVT DS Audio", in: app)
         acceptOnlineSourcePrivacy(sourceID: "bvt.dsaudio", in: app)
-        enableOnlineSource(sourceID: "bvt.dsaudio", in: app)
+        let globalToggle = app.switches[
+            "onlineSources.detail.bvt.dsaudio.global.enabled"
+        ].firstMatch
+        XCTAssertTrue(globalToggle.waitForExistence(timeout: 15))
+        if !isOnValue(globalToggle.value) {
+            globalToggle.coordinate(
+                withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5)
+            ).tap()
+        }
+        // Enabling a recovery step replaces that cell immediately. Waiting on
+        // the next step avoids retaining a stale XCUIElement for the old switch.
+        let sourceToggle = app.switches[
+            "onlineSources.detail.bvt.dsaudio.source.enabled"
+        ].firstMatch
+        XCTAssertTrue(sourceToggle.waitForExistence(timeout: 15))
+        if !isOnValue(sourceToggle.value) {
+            sourceToggle.coordinate(
+                withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5)
+            ).tap()
+        }
         let catalog = app.collectionViews["onlineSources.catalog.list"].firstMatch
         let allMusic = catalog.cells["onlineSources.detail.bvt.dsaudio.category.allMusic"].firstMatch
         XCTAssertTrue(allMusic.waitForExistence(timeout: 15))
@@ -695,14 +718,79 @@ final class MusicFreeBVTUITests: XCTestCase {
         }
         XCTAssertTrue(formalTitle.waitForNonExistence(timeout: 5))
         XCTAssertFalse(app.buttons["player.onlineAudition.close"].exists)
+        let auditionSurface = app.descendants(matching: .any)[
+            "player.onlineAudition.surface"
+        ].firstMatch
+        XCTAssertTrue(auditionSurface.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["player.onlineAudition.collapse"].exists)
         attachScreenshot(named: "audition-native-expanded")
 
+        device.orientation = .landscapeLeft
+        let window = app.windows.firstMatch
+        let landscapeLayout = XCTNSPredicateExpectation(
+            predicate: NSPredicate { object, _ in
+                guard let surface = object as? XCUIElement else { return false }
+                let windowFrame = window.frame
+                let surfaceFrame = surface.frame
+                return windowFrame.width > windowFrame.height
+                    && surfaceFrame.width <= 642
+                    && abs(surfaceFrame.midX - windowFrame.midX) <= 2
+            },
+            object: auditionSurface
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [landscapeLayout], timeout: 10),
+            .completed,
+            "Landscape audition accessory must be centered and capped at 640 points."
+        )
+        XCTAssertLessThanOrEqual(auditionSurface.frame.width, 642)
+        XCTAssertEqual(auditionSurface.frame.midX, window.frame.midX, accuracy: 2)
+        attachScreenshot(named: "audition-native-landscape")
+
+        device.orientation = .portrait
+        let portraitLayout = XCTNSPredicateExpectation(
+            predicate: NSPredicate { object, _ in
+                guard let window = object as? XCUIElement else { return false }
+                return window.frame.height > window.frame.width
+            },
+            object: window
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [portraitLayout], timeout: 10), .completed)
+        XCTAssertTrue(auditionTitle.waitForExistence(timeout: 5))
+
+        let expandedFrame = auditionSurface.frame
         catalog.swipeUp()
         catalog.swipeUp()
         let subtitle = app.staticTexts["player.onlineAudition.subtitle"].firstMatch
-        XCTAssertTrue(subtitle.waitForNonExistence(timeout: 5), "Native inline mode must hide secondary metadata.")
+        XCTAssertTrue(
+            subtitle.waitForNonExistence(timeout: 5),
+            "Scrolling must move the audition into the native inline presentation."
+        )
         XCTAssertTrue(auditionTitle.exists)
         XCTAssertFalse(app.buttons["player.onlineAudition.next"].exists)
+        XCTAssertFalse(app.buttons["player.onlineAudition.collapse"].exists)
+        let inlinePlayButton = app.buttons["player.onlineAudition.play"].firstMatch
+        XCTAssertTrue(inlinePlayButton.isHittable)
+        XCTAssertEqual(
+            inlinePlayButton.frame.width,
+            44,
+            accuracy: 1,
+            "The inline play control must retain its 44-point icon target."
+        )
+        let inlineLayout = XCTNSPredicateExpectation(
+            predicate: NSPredicate { object, _ in
+                guard let surface = object as? XCUIElement else { return false }
+                let frame = surface.frame
+                return frame.width < expandedFrame.width - 40
+                    && frame.midY > expandedFrame.midY + 20
+                    && abs(frame.midX - window.frame.midX) < 20
+            },
+            object: auditionSurface
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [inlineLayout], timeout: 10), .completed,
+            "The accessory must physically shrink and move into the middle of the tab bar."
+        )
         attachScreenshot(named: "audition-native-inline")
         auditionTitle.tap()
         let dismiss = app.buttons["player.onlineAudition.sheet.dismiss"].firstMatch
@@ -710,22 +798,25 @@ final class MusicFreeBVTUITests: XCTestCase {
         dismiss.tap()
         XCTAssertTrue(auditionTitle.waitForExistence(timeout: 5))
 
-        let collapse = app.buttons["player.onlineAudition.collapse"].firstMatch
         for _ in 0..<4 {
-            catalog.swipeDown()
-            if collapse.waitForExistence(timeout: 2) { break }
+            // Keep the gesture within the visible list, below the search
+            // chrome and above the inline accessory. A full-screen fast
+            // swipe can overshoot the top before UIKit expands its tab bar.
+            catalog.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.35))
+                .press(forDuration: 0.05, thenDragTo:
+                    catalog.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75)))
+            if subtitle.waitForExistence(timeout: 2) { break }
         }
-        XCTAssertTrue(collapse.exists, "Scrolling back must restore the expanded native accessory.")
-        collapse.tap()
-        let capsule = app.staticTexts["player.onlineAudition.capsule.title"].firstMatch
-        XCTAssertTrue(capsule.waitForExistence(timeout: 5))
-        attachScreenshot(named: "audition-native-manual-collapse")
-        capsule.tap()
+        XCTAssertTrue(subtitle.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["player.onlineAudition.next"].exists)
+        XCTAssertFalse(app.buttons["player.onlineAudition.collapse"].exists)
+        attachScreenshot(named: "audition-native-expanded-restored")
         XCTAssertTrue(auditionTitle.waitForExistence(timeout: 5))
         auditionTitle.tap()
         let close = app.buttons["player.onlineAudition.sheet.close"].firstMatch
         XCTAssertTrue(close.waitForExistence(timeout: 5))
         close.tap()
+        XCTAssertTrue(close.waitForNonExistence(timeout: 5))
         XCTAssertTrue(formalTitle.waitForExistence(timeout: 10))
         XCTAssertEqual(formalTitle.label, pausedTitle)
         XCTAssertTrue(formalPlay.label == "播放" || formalPlay.label == "Play")
@@ -823,7 +914,7 @@ final class MusicFreeBVTUITests: XCTestCase {
         XCTAssertTrue(applicationPrivacyCancel.waitForExistence(timeout: 5))
         applicationPrivacyCancel.tap()
         XCTAssertTrue(applicationPrivacySheet.waitForNonExistence(timeout: 10))
-        XCTAssertFalse(app.descendants(matching: .any)["onlineSources.add.sheet"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["onlineSources.googleDrive.add.sheet"].exists)
 
         addButton.tap()
         XCTAssertTrue(googleDriveOption.waitForExistence(timeout: 5))
@@ -838,16 +929,16 @@ final class MusicFreeBVTUITests: XCTestCase {
         applicationPrivacyConfirm.tap()
         XCTAssertTrue(applicationPrivacySheet.waitForNonExistence(timeout: 10))
 
-        let addSheet = app.descendants(matching: .any)["onlineSources.add.sheet"].firstMatch
+        let addSheet = app.descendants(matching: .any)["onlineSources.googleDrive.add.sheet"].firstMatch
         XCTAssertTrue(addSheet.waitForExistence(timeout: 10))
 
         let addedDisplayName = "BVT Extra Google Drive"
-        let displayNameField = app.textFields["onlineSources.add.displayName"].firstMatch
+        let displayNameField = app.textFields["onlineSources.googleDrive.add.displayName"].firstMatch
         XCTAssertTrue(displayNameField.waitForExistence(timeout: 5))
         displayNameField.tap()
         displayNameField.typeText(addedDisplayName)
         let submitAddButton = button(
-            identifier: "onlineSources.add.submit",
+            identifier: "onlineSources.googleDrive.add.submit",
             labels: ["Add", "添加"],
             in: app
         )
@@ -856,16 +947,25 @@ final class MusicFreeBVTUITests: XCTestCase {
         submitAddButton.tap()
         XCTAssertTrue(addSheet.waitForNonExistence(timeout: 15))
         XCTAssertTrue(app.staticTexts[addedDisplayName].waitForExistence(timeout: 15))
+        let addedSourcePrivacyRecovery = app.buttons.matching(
+            NSPredicate(
+                format: "identifier BEGINSWITH 'onlineSources.detail.' AND identifier ENDSWITH '.sourcePrivacy.accept'"
+            )
+        ).firstMatch
+        XCTAssertTrue(
+            addedSourcePrivacyRecovery.waitForExistence(timeout: 10),
+            "A newly added source must enter its detail page and offer page-local recovery."
+        )
+        tapSystemNavigationBack(in: app, expectedPreviousTitle: "Online Sources")
         XCTAssertTrue(app.staticTexts["BVT DS Audio"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["BVT Google Drive"].waitForExistence(timeout: 10))
         attachScreenshot(named: "26-online-sources-root")
-
-        enableOnlineSourcesService(in: app)
 
         // DS Audio: source-level consent, source toggle, browse, search,
         // temporary audition entry, download, and local import.
         openOnlineSource(named: "BVT DS Audio", in: app)
         acceptOnlineSourcePrivacy(sourceID: "bvt.dsaudio", in: app)
+        enableOnlineSourcesService(in: app)
         enableOnlineSource(sourceID: "bvt.dsaudio", in: app)
 
         let catalogCollectionView = app.collectionViews[
@@ -1190,6 +1290,11 @@ final class MusicFreeBVTUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["BVT Google Drive"].waitForExistence(timeout: 10))
 
         openOnlineSource(named: "BVT DS Audio", in: app)
+        let dsPrivacyRecovery = app.buttons[
+            "onlineSources.detail.bvt.dsaudio.sourcePrivacy.accept"
+        ].firstMatch
+        XCTAssertTrue(dsPrivacyRecovery.waitForExistence(timeout: 15))
+        dsPrivacyRecovery.tap()
         let dsPrivacySheet = app.descendants(matching: .any)[
             "onlineSources.source.bvt.dsaudio.privacy.sheet"
         ].firstMatch
@@ -1354,9 +1459,9 @@ final class MusicFreeBVTUITests: XCTestCase {
         applicationPrivacyConfirm.tap()
         XCTAssertTrue(applicationPrivacySheet.waitForNonExistence(timeout: 10))
 
-        enableOnlineSourcesService(in: app)
         openOnlineSource(named: "BVT DS Audio", in: app)
         acceptOnlineSourcePrivacy(sourceID: "bvt.dsaudio", in: app)
+        enableOnlineSourcesService(in: app)
         enableOnlineSource(sourceID: "bvt.dsaudio", in: app)
 
         let catalog = app.collectionViews["onlineSources.catalog.list"].firstMatch
@@ -1957,9 +2062,13 @@ final class MusicFreeBVTUITests: XCTestCase {
         if !sheet.waitForExistence(timeout: 3) {
             XCTAssertTrue(
                 detail.waitForExistence(timeout: 12),
-                "The source must either request consent or open its already-consented UIKit detail."
+                "The source must open its UIKit detail before consent is requested."
             )
-            return
+            let recovery = app.buttons[
+                "onlineSources.detail.\(sourceID).sourcePrivacy.accept"
+            ].firstMatch
+            XCTAssertTrue(recovery.waitForExistence(timeout: 10))
+            recovery.tap()
         }
         let confirm = button(
             identifier: "onlineSources.source.\(sourceID).privacy.accept.confirm",
@@ -1977,34 +2086,52 @@ final class MusicFreeBVTUITests: XCTestCase {
 
     @MainActor
     private func enableOnlineSource(sourceID: String, in app: XCUIApplication) {
-        openOnlineSourceAvailabilitySettings(in: app)
         let toggle = app.switches[
-            "settings.import.onlineSource.\(sourceID).enabled"
+            "onlineSources.detail.\(sourceID).source.enabled"
         ].firstMatch
         XCTAssertTrue(toggle.waitForExistence(timeout: 15))
-        XCTAssertTrue(toggle.isEnabled, "Online source setting is still gated: \(sourceID)")
+        XCTAssertTrue(toggle.isEnabled, "Online source recovery switch is still gated: \(sourceID)")
         if !isOnValue(toggle.value) {
             toggle.coordinate(
                 withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5)
             ).tap()
         }
-        waitForOnValue(on: toggle, timeout: 10)
-        tapTab("Online Sources", in: app)
+        // The detail recovery row is replaced as soon as the source is enabled,
+        // so wait for the provider's next page-local state instead of retaining
+        // a stale switch reference.
+        let nextState: XCUIElement
+        if sourceID == "bvt.google-drive" {
+            nextState = app.buttons[
+                "onlineSources.source.\(sourceID).googleDrive.authorize"
+            ].firstMatch
+        } else {
+            nextState = app.collectionViews["onlineSources.catalog.list"].firstMatch
+        }
+        XCTAssertTrue(
+            nextState.waitForExistence(timeout: 15),
+            "Enabling \(sourceID) must advance the source detail state."
+        )
     }
 
     @MainActor
     private func enableOnlineSourcesService(in app: XCUIApplication) {
-        openOnlineSourceAvailabilitySettings(in: app)
-        let toggle = app.switches["settings.import.onlineSources.toggle"].firstMatch
+        let toggle = app.switches[
+            "onlineSources.detail.bvt.dsaudio.global.enabled"
+        ].firstMatch
         XCTAssertTrue(toggle.waitForExistence(timeout: 15))
-        XCTAssertTrue(toggle.isEnabled, "The application privacy agreement should unlock the online-source switch.")
+        XCTAssertTrue(toggle.isEnabled, "The application privacy agreement should unlock the online-source recovery switch.")
         if !isOnValue(toggle.value) {
             toggle.coordinate(
                 withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5)
             ).tap()
         }
-        waitForOnValue(on: toggle, timeout: 10)
-        tapTab("Online Sources", in: app)
+        let sourceToggle = app.switches[
+            "onlineSources.detail.bvt.dsaudio.source.enabled"
+        ].firstMatch
+        XCTAssertTrue(
+            sourceToggle.waitForExistence(timeout: 15),
+            "Enabling the global service must advance to the source-level recovery switch."
+        )
     }
 
     @MainActor

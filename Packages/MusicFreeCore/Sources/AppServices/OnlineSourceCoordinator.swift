@@ -118,7 +118,7 @@ final class OnlineSourceCoordinator: OnlineSourceServing {
             Self.logger.error(
                 "browse failed source=\(sourceID.rawValue) error=\(String(describing: error))"
             )
-            throw error
+            throw mapRuntimeError(error, sourceID: sourceID)
         }
     }
 
@@ -130,7 +130,11 @@ final class OnlineSourceCoordinator: OnlineSourceServing {
         guard let source = source as? any SearchableDownloadSource else {
             throw OnlineSourceServingError.operationUnsupported(sourceID, "search")
         }
-        return try await source.search(request)
+        do {
+            return try await source.search(request)
+        } catch {
+            throw mapRuntimeError(error, sourceID: sourceID)
+        }
     }
 
     func download(
@@ -145,7 +149,11 @@ final class OnlineSourceCoordinator: OnlineSourceServing {
         guard itemID.sourceID == sourceID else {
             throw OnlineSourceServingError.sourceNotConfigured(itemID.sourceID)
         }
-        return try await source.download(itemID, options: options)
+        do {
+            return try await source.download(itemID, options: options)
+        } catch {
+            throw mapRuntimeError(error, sourceID: sourceID)
+        }
     }
 
     func playbackAccess(
@@ -160,7 +168,11 @@ final class OnlineSourceCoordinator: OnlineSourceServing {
         guard itemID.sourceID == sourceID else {
             throw OnlineSourceServingError.sourceNotConfigured(itemID.sourceID)
         }
-        return try await source.playbackAccess(for: itemID, purpose: purpose)
+        do {
+            return try await source.playbackAccess(for: itemID, purpose: purpose)
+        } catch {
+            throw mapRuntimeError(error, sourceID: sourceID)
+        }
     }
 
     private func authorizedAdapter(for sourceID: MediaSourceID) throws -> any OnlineSource {
@@ -200,6 +212,18 @@ final class OnlineSourceCoordinator: OnlineSourceServing {
             throw OnlineSourceServingError.sourceUnavailable(sourceID)
         }
         return adapter
+    }
+
+    private func mapRuntimeError(_ error: Error, sourceID: MediaSourceID) -> Error {
+        guard let recoverable = error as? any OnlineSourceAuthorizationRecoverableError,
+              recoverable.requiresUserAuthorization
+        else {
+            return error
+        }
+        let provider = preferences.source(for: sourceID)?.providerKind
+        return provider == .googleDrive
+            ? OnlineSourceServingError.authenticationRequired(sourceID)
+            : OnlineSourceServingError.authenticationFailed(sourceID)
     }
 
     private func publishSnapshot() {

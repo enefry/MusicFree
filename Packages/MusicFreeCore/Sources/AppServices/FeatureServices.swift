@@ -342,6 +342,8 @@ public enum OnlineSourceServingError: Error, Equatable, Sendable, LocalizedError
     case sourcePrivacyRequired(MediaSourceID)
     case sourceDisabled(MediaSourceID)
     case sourceUnavailable(MediaSourceID)
+    case authenticationRequired(MediaSourceID)
+    case authenticationFailed(MediaSourceID)
     case operationUnsupported(MediaSourceID, String)
 
     public var errorDescription: String? { description }
@@ -358,6 +360,10 @@ public enum OnlineSourceServingError: Error, Equatable, Sendable, LocalizedError
             return "Online source \(sourceID) is disabled."
         case .sourceUnavailable(let sourceID):
             return "Online source \(sourceID) is not available in this build."
+        case .authenticationRequired(let sourceID):
+            return "Online source \(sourceID) requires authorization."
+        case .authenticationFailed(let sourceID):
+            return "Online source \(sourceID) authentication failed."
         case .operationUnsupported(let sourceID, let operation):
             return "Online source \(sourceID) does not support \(operation)."
         }
@@ -414,6 +420,44 @@ public struct OnlineSourceSnapshot: Codable, Equatable, Hashable, Sendable {
         self.isGloballyEnabled = isGloballyEnabled
         self.isApplicationPrivacyAccepted = isApplicationPrivacyAccepted
         self.sources = sources.sorted { $0.sourceID < $1.sourceID }
+    }
+}
+
+/// The first local condition that prevents one online-source operation.
+/// Keep this separate from credential/OAuth failures, which occur only after
+/// the local privacy and enablement gates are all satisfied.
+public enum OnlineSourceAvailabilityIssue: Equatable, Sendable {
+    case sourceNotConfigured
+    case providerUnavailable
+    case applicationPrivacyRequired
+    case sourcePrivacyRequired(policyVersion: String)
+    case globalServiceDisabled
+    case sourceDisabled
+    case capabilityUnsupported(OnlineSourceCapabilities)
+}
+
+public enum OnlineSourceAvailabilityEvaluator {
+    public static func issue(
+        in snapshot: OnlineSourceSnapshot,
+        sourceID: MediaSourceID,
+        requiring capability: OnlineSourceCapabilities? = nil
+    ) -> OnlineSourceAvailabilityIssue? {
+        guard let source = snapshot.sources.first(where: { $0.sourceID == sourceID }) else {
+            return .sourceNotConfigured
+        }
+        guard source.isRegistered else { return .providerUnavailable }
+        guard snapshot.isApplicationPrivacyAccepted else {
+            return .applicationPrivacyRequired
+        }
+        guard source.isPrivacyAccepted else {
+            return .sourcePrivacyRequired(policyVersion: source.privacyPolicyVersion)
+        }
+        guard snapshot.isGloballyEnabled else { return .globalServiceDisabled }
+        guard source.isEnabled else { return .sourceDisabled }
+        if let capability, !source.capabilities.contains(capability) {
+            return .capabilityUnsupported(capability)
+        }
+        return nil
     }
 }
 

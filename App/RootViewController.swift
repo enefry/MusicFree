@@ -2267,6 +2267,10 @@ private final class RootSurfaceContainerViewController: UIViewController {
             miniPlayerController.view.accessibilityElementsHidden = !isVisible
             miniPlayerAccessoryContainer.isHidden = !isVisible
             miniPlayerAccessoryContainer.accessibilityElementsHidden = !isVisible
+            if #available(iOS 26.0, *) {
+                compactTabBarController.tabBarMinimizeBehavior =
+                    (isVisible || isAuditionRetained) ? .never : .onScrollDown
+            }
             guard changed else { return }
 
             if #available(iOS 26.0, *) {
@@ -2313,9 +2317,10 @@ private final class RootSurfaceContainerViewController: UIViewController {
 
 @MainActor
 private final class PlayerMiniPlayerAccessoryContainerView: UIView {
+    fileprivate static let maximumRegularWidth: CGFloat = 640
+
     private let shadowView = UIView()
     private let backgroundView = UIView()
-    private var widthConstraint: NSLayoutConstraint?
     private var contentView: UIView?
     private var contentLeadingConstraint: NSLayoutConstraint?
     private var contentTrailingConstraint: NSLayoutConstraint?
@@ -2335,6 +2340,7 @@ private final class PlayerMiniPlayerAccessoryContainerView: UIView {
         backgroundColor = .clear
         isOpaque = false
         layer.masksToBounds = false
+        setContentHuggingPriority(UILayoutPriority(999), for: .horizontal)
 
         shadowView.translatesAutoresizingMaskIntoConstraints = false
         shadowView.backgroundColor = .clear
@@ -2414,7 +2420,6 @@ private final class PlayerMiniPlayerAccessoryContainerView: UIView {
         ])
         bringSubviewToFront(contentView)
         updateLayoutForAccessoryEnvironment()
-        updateSuperviewWidthConstraint()
     }
 
     override var intrinsicContentSize: CGSize {
@@ -2424,13 +2429,12 @@ private final class PlayerMiniPlayerAccessoryContainerView: UIView {
         } else {
             height = MusicFreeLayoutMetrics.miniPlayerContentHeight
         }
-        return CGSize(width: UIView.noIntrinsicMetric, height: height)
+        return CGSize(width: Self.maximumRegularWidth, height: height)
     }
 
     override func didMoveToSuperview() {
         super.didMoveToSuperview()
         updateBackgroundForAccessoryEnvironment()
-        updateSuperviewWidthConstraint()
     }
 
     private func updateBackgroundForAccessoryEnvironment() {
@@ -2459,15 +2463,6 @@ private final class PlayerMiniPlayerAccessoryContainerView: UIView {
         inlineTrailingConstraint?.isActive = isInline
         contentTopConstraint?.isActive = true
         contentBottomConstraint?.isActive = true
-    }
-
-    private func updateSuperviewWidthConstraint() {
-        widthConstraint?.isActive = false
-        widthConstraint = nil
-        guard let superview else { return }
-        let constraint = widthAnchor.constraint(equalTo: superview.widthAnchor)
-        constraint.isActive = true
-        widthConstraint = constraint
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -2507,17 +2502,27 @@ private struct RootTabDescriptor {
 private final class RootTabBarController: UITabBarController, UITabBarControllerDelegate {
     var onSelectRoute: ((AppRouter.Route) -> Void)?
 
-    /// Height of the docked Mini Player used before iOS 26 introduced
-    /// `UITabAccessory`.
+    /// Height of the visible Mini Player content used before iOS 26 introduced
+    /// `UITabAccessory`. The legacy slot reserves an additional gap below the
+    /// content so its rounded surface does not touch the system Tab Bar.
     private static let legacyMiniPlayerHeight =
         MusicFreeLayoutMetrics.miniPlayerLegacyHeight
+    private static let legacyMiniPlayerBottomGap =
+        MusicFreeLayoutMetrics.miniPlayerGap
+    private static let legacyMiniPlayerSlotHeight =
+        legacyMiniPlayerHeight + legacyMiniPlayerBottomGap
 
     private let playbackServing: any PlaybackServing
     private let auditionServing: any OnlineAuditionServing
     private let miniPlayerController: PlayerMiniPlayerViewController
     private let onlineAuditionController: OnlineAuditionViewController
+    private let landscapeMiniPlayerController: PlayerMiniPlayerViewController
+    private let landscapeOnlineAuditionController: OnlineAuditionViewController
     private let miniPlayerAccessoryContainer = PlayerMiniPlayerAccessoryContainerView()
+    private let landscapeAccessoryContainer = PlayerMiniPlayerAccessoryContainerView()
+    private let landscapeAccessoryHostView = UIVisualEffectView(effect: nil)
     private let legacyMiniPlayerHostView = UIView()
+    private var landscapeAccessoryBottomConstraint: NSLayoutConstraint?
     private var legacyMiniPlayerHeightConstraint: NSLayoutConstraint?
     private var descriptors: [RootTabDescriptor] = []
     private var playbackObservationTask: Task<Void, Never>?
@@ -2529,6 +2534,8 @@ private final class RootTabBarController: UITabBarController, UITabBarController
     private var boundContentScrollViewBaseInsets: UIEdgeInsets?
     private var boundContentScrollViewBaseIndicatorInsets: UIEdgeInsets?
     private var accessoryContainsAudition = false
+    private var landscapeAccessoryContainsAudition = false
+    private var isUsingLandscapeAccessoryHost = false
 
     /// `UITabAccessory` hosts the Mini Player from iOS 26 onwards. Earlier
     /// releases dock it manually above the tab bar.
@@ -2555,10 +2562,21 @@ private final class RootTabBarController: UITabBarController, UITabBarController
             artworkServing: artworkServing,
             onPresentPlayer: onPresentPlayer
         )
+        landscapeMiniPlayerController = PlayerMiniPlayerViewController(
+            serving: playbackServing,
+            audioServing: audioServing,
+            artworkServing: artworkServing,
+            onPresentPlayer: onPresentPlayer
+        )
         if #available(iOS 26.0, *) {
             onlineAuditionController = OnlineAuditionViewController(serving: auditionServing, usesSystemAccessory: true)
+            landscapeOnlineAuditionController = OnlineAuditionViewController(
+                serving: auditionServing,
+                usesSystemAccessory: true
+            )
         } else {
             onlineAuditionController = OnlineAuditionViewController(serving: auditionServing)
+            landscapeOnlineAuditionController = OnlineAuditionViewController(serving: auditionServing)
         }
         super.init(nibName: nil, bundle: nil)
         restorationIdentifier = "root.tabBar"
@@ -2690,6 +2708,7 @@ private final class RootTabBarController: UITabBarController, UITabBarController
         // collapsing the Mini Player into the Tab Bar.
         if #available(iOS 26.0, *) {
             tabBarMinimizeBehavior = .onScrollDown
+            installLandscapeAccessoryHost()
         }
         tabBar.accessibilityIdentifier = "app.tabBar"
         configureTabBarAppearance()
@@ -2712,15 +2731,38 @@ private final class RootTabBarController: UITabBarController, UITabBarController
         onlineAuditionController.view.translatesAutoresizingMaskIntoConstraints = false
         if usesBottomAccessory {
             accessoryContainsAudition = auditionServing.snapshot.hasRetainedSession
+            landscapeAccessoryContainsAudition = accessoryContainsAudition
             miniPlayerAccessoryContainer.setContentView(
                 accessoryContainsAudition ? onlineAuditionController.view : miniPlayerController.view
             )
+            addChild(landscapeMiniPlayerController)
+            landscapeMiniPlayerController.view.translatesAutoresizingMaskIntoConstraints = false
+            landscapeMiniPlayerController.didMove(toParent: self)
+            addChild(landscapeOnlineAuditionController)
+            landscapeOnlineAuditionController.view.translatesAutoresizingMaskIntoConstraints = false
+            landscapeOnlineAuditionController.didMove(toParent: self)
+            landscapeAccessoryContainer.setContentView(
+                landscapeAccessoryContainsAudition
+                    ? landscapeOnlineAuditionController.view
+                    : landscapeMiniPlayerController.view
+            )
+            onlineAuditionController.onCollapsedStateChange = {
+                [weak landscapeOnlineAuditionController] collapsed in
+                landscapeOnlineAuditionController?.setCollapsed(collapsed)
+            }
+            landscapeOnlineAuditionController.onCollapsedStateChange = {
+                [weak onlineAuditionController] collapsed in
+                onlineAuditionController?.setCollapsed(collapsed)
+            }
         } else {
             view.addSubview(onlineAuditionController.view)
             NSLayoutConstraint.activate([
                 onlineAuditionController.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
                 onlineAuditionController.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-                onlineAuditionController.view.bottomAnchor.constraint(equalTo: tabBar.topAnchor),
+                onlineAuditionController.view.bottomAnchor.constraint(
+                    equalTo: tabBar.topAnchor,
+                    constant: -Self.legacyMiniPlayerBottomGap
+                ),
                 onlineAuditionController.view.heightAnchor.constraint(equalToConstant: Self.legacyMiniPlayerHeight),
             ])
             installLegacyMiniPlayer()
@@ -2748,8 +2790,9 @@ private final class RootTabBarController: UITabBarController, UITabBarController
     }
 
     /// Before iOS 26 there is no `UITabAccessory`, so the Mini Player is docked
-    /// on an opaque surface directly above the tab bar. Pin it to
-    /// `tabBar.topAnchor` because the bar's height is only known after layout.
+    /// on a floating surface above the tab bar. Keep the content height and
+    /// bottom gap explicit because the tab bar's height is only known after
+    /// layout.
     private func installLegacyMiniPlayer() {
         legacyMiniPlayerHostView.translatesAutoresizingMaskIntoConstraints = false
         legacyMiniPlayerHostView.backgroundColor = MusicFreeUIColorTokens.backgroundPrimary
@@ -2772,7 +2815,10 @@ private final class RootTabBarController: UITabBarController, UITabBarController
         NSLayoutConstraint.activate([
             legacyMiniPlayerHostView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             legacyMiniPlayerHostView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            legacyMiniPlayerHostView.bottomAnchor.constraint(equalTo: tabBar.topAnchor),
+            legacyMiniPlayerHostView.bottomAnchor.constraint(
+                equalTo: tabBar.topAnchor,
+                constant: -Self.legacyMiniPlayerBottomGap
+            ),
             heightConstraint,
             separatorView.leadingAnchor.constraint(
                 equalTo: legacyMiniPlayerHostView.leadingAnchor
@@ -2793,6 +2839,62 @@ private final class RootTabBarController: UITabBarController, UITabBarController
             ),
             miniPlayerController.view.heightAnchor.constraint(
                 equalToConstant: Self.legacyMiniPlayerHeight
+            ),
+        ])
+    }
+
+    @available(iOS 26.0, *)
+    private func installLandscapeAccessoryHost() {
+        landscapeAccessoryHostView.translatesAutoresizingMaskIntoConstraints = false
+        landscapeAccessoryHostView.effect = UIGlassEffect(style: .regular)
+        landscapeAccessoryHostView.layer.cornerRadius = MusicFreeLayoutMetrics.miniPlayerCornerRadius
+        landscapeAccessoryHostView.layer.cornerCurve = .continuous
+        landscapeAccessoryHostView.clipsToBounds = true
+        landscapeAccessoryHostView.isHidden = true
+        landscapeAccessoryHostView.accessibilityElementsHidden = true
+        view.addSubview(landscapeAccessoryHostView)
+        landscapeAccessoryContainer.translatesAutoresizingMaskIntoConstraints = false
+        landscapeAccessoryHostView.contentView.addSubview(landscapeAccessoryContainer)
+
+        let preferredWidth = landscapeAccessoryHostView.widthAnchor.constraint(
+            equalToConstant: PlayerMiniPlayerAccessoryContainerView.maximumRegularWidth
+        )
+        preferredWidth.priority = UILayoutPriority(999)
+        let bottomConstraint = landscapeAccessoryHostView.bottomAnchor.constraint(
+            equalTo: view.bottomAnchor
+        )
+        landscapeAccessoryBottomConstraint = bottomConstraint
+        NSLayoutConstraint.activate([
+            landscapeAccessoryHostView.centerXAnchor.constraint(
+                equalTo: view.safeAreaLayoutGuide.centerXAnchor
+            ),
+            preferredWidth,
+            landscapeAccessoryHostView.widthAnchor.constraint(
+                lessThanOrEqualToConstant: PlayerMiniPlayerAccessoryContainerView.maximumRegularWidth
+            ),
+            landscapeAccessoryHostView.leadingAnchor.constraint(
+                greaterThanOrEqualTo: view.safeAreaLayoutGuide.leadingAnchor,
+                constant: MusicFreeLayoutMetrics.miniPlayerHorizontalInset
+            ),
+            landscapeAccessoryHostView.trailingAnchor.constraint(
+                lessThanOrEqualTo: view.safeAreaLayoutGuide.trailingAnchor,
+                constant: -MusicFreeLayoutMetrics.miniPlayerHorizontalInset
+            ),
+            bottomConstraint,
+            landscapeAccessoryHostView.heightAnchor.constraint(
+                equalToConstant: MusicFreeLayoutMetrics.miniPlayerContentHeight
+            ),
+            landscapeAccessoryContainer.leadingAnchor.constraint(
+                equalTo: landscapeAccessoryHostView.contentView.leadingAnchor
+            ),
+            landscapeAccessoryContainer.trailingAnchor.constraint(
+                equalTo: landscapeAccessoryHostView.contentView.trailingAnchor
+            ),
+            landscapeAccessoryContainer.topAnchor.constraint(
+                equalTo: landscapeAccessoryHostView.contentView.topAnchor
+            ),
+            landscapeAccessoryContainer.bottomAnchor.constraint(
+                equalTo: landscapeAccessoryHostView.contentView.bottomAnchor
             ),
         ])
     }
@@ -2827,6 +2929,10 @@ private final class RootTabBarController: UITabBarController, UITabBarController
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        if #available(iOS 26.0, *) {
+            updateLandscapeAccessoryPosition()
+            updateBottomAccessoryHost(animated: false)
+        }
         if !usesBottomAccessory, legacyMiniPlayerHostView.superview != nil {
             // Selecting a tab inserts the child's view above previously added
             // subviews, so restore the docked Mini Player and the tab bar to
@@ -2838,6 +2944,88 @@ private final class RootTabBarController: UITabBarController, UITabBarController
             view.bringSubviewToFront(onlineAuditionController.view)
         }
         bindSelectedContentScrollView()
+    }
+
+    @available(iOS 26.0, *)
+    private var shouldUseLandscapeAccessoryHost: Bool {
+        view.bounds.width > view.bounds.height
+    }
+
+    @available(iOS 26.0, *)
+    private func updateLandscapeAccessoryPosition() {
+        guard let bottomConstraint = landscapeAccessoryBottomConstraint else { return }
+
+        // On newer system versions UITabBar can be hosted outside this
+        // controller's view hierarchy. Keep the constraint inside our own
+        // hierarchy and use the tab bar's converted frame only to derive its
+        // bottom offset.
+        let fallbackBottom = view.safeAreaInsets.bottom + MusicFreeLayoutMetrics.miniPlayerGap
+        bottomConstraint.constant = -fallbackBottom
+
+        guard let window = view.window,
+              tabBar.window === window
+        else {
+            return
+        }
+
+        let tabBarFrame = tabBar.convert(tabBar.bounds, to: view)
+        guard tabBarFrame.height > 0,
+              tabBarFrame.minY >= 0,
+              tabBarFrame.minY <= view.bounds.maxY
+        else {
+            return
+        }
+
+        bottomConstraint.constant = tabBarFrame.minY
+            - MusicFreeLayoutMetrics.miniPlayerGap
+            - view.bounds.maxY
+    }
+
+    @available(iOS 26.0, *)
+    private func updateBottomAccessoryHost(animated: Bool) {
+        let needsAccessory = isMiniPlayerVisible || isAuditionRetained
+        let useLandscapeHost = needsAccessory && shouldUseLandscapeAccessoryHost
+        // A retained audition uses UIKit's regular-to-inline transition in
+        // portrait. Disabling minimization whenever a player exists prevents
+        // its accessory from ever joining the collapsed tab bar.
+        let minimizeBehavior: UITabBarController.MinimizeBehavior =
+            (useLandscapeHost || (isMiniPlayerVisible && !isAuditionRetained))
+                ? .never : .onScrollDown
+        if tabBarMinimizeBehavior != minimizeBehavior {
+            tabBarMinimizeBehavior = minimizeBehavior
+        }
+
+        miniPlayerAccessoryContainer.isHidden = !needsAccessory
+        miniPlayerAccessoryContainer.accessibilityElementsHidden = !needsAccessory
+        landscapeAccessoryContainer.isHidden = !needsAccessory
+        landscapeAccessoryContainer.accessibilityElementsHidden = !needsAccessory
+
+        if useLandscapeHost {
+            if !isUsingLandscapeAccessoryHost, bottomAccessory != nil {
+                setBottomAccessory(nil, animated: false)
+            }
+            isUsingLandscapeAccessoryHost = true
+            landscapeAccessoryHostView.isHidden = false
+            landscapeAccessoryHostView.accessibilityElementsHidden = false
+            view.bringSubviewToFront(landscapeAccessoryHostView)
+            view.bringSubviewToFront(tabBar)
+            return
+        }
+
+        landscapeAccessoryHostView.isHidden = true
+        landscapeAccessoryHostView.accessibilityElementsHidden = true
+        isUsingLandscapeAccessoryHost = false
+
+        if needsAccessory {
+            if bottomAccessory == nil {
+                setBottomAccessory(
+                    UITabAccessory(contentView: miniPlayerAccessoryContainer),
+                    animated: animated
+                )
+            }
+        } else if bottomAccessory != nil {
+            setBottomAccessory(nil, animated: false)
+        }
     }
 
     deinit {
@@ -2871,6 +3059,8 @@ private final class RootTabBarController: UITabBarController, UITabBarController
         isMiniPlayerVisible = isVisible
         miniPlayerController.view.isHidden = !isVisible
         miniPlayerController.view.accessibilityElementsHidden = !isVisible
+        landscapeMiniPlayerController.view.isHidden = !isVisible
+        landscapeMiniPlayerController.view.accessibilityElementsHidden = !isVisible
 
         if #available(iOS 26.0, *) {
             // Swap only the content; UIKit retains ownership of the glass,
@@ -2881,17 +3071,16 @@ private final class RootTabBarController: UITabBarController, UITabBarController
                     isAuditionRetained ? onlineAuditionController.view : miniPlayerController.view
                 )
             }
-            let needsAccessory = isVisible || isAuditionRetained
-            miniPlayerAccessoryContainer.isHidden = !needsAccessory
-            miniPlayerAccessoryContainer.accessibilityElementsHidden = !needsAccessory
-            if needsAccessory != (bottomAccessory != nil) {
-                setBottomAccessory(
-                    needsAccessory ? UITabAccessory(contentView: miniPlayerAccessoryContainer) : nil,
-                    // Hiding the child before an animated removal leaves an
-                    // empty glass capsule. Remove the accessory immediately.
-                    animated: needsAccessory && view.window != nil
+            if landscapeAccessoryContainsAudition != isAuditionRetained {
+                landscapeAccessoryContainsAudition = isAuditionRetained
+                landscapeAccessoryContainer.setContentView(
+                    isAuditionRetained
+                        ? landscapeOnlineAuditionController.view
+                        : landscapeMiniPlayerController.view
                 )
             }
+            let needsAccessory = isVisible || isAuditionRetained
+            updateBottomAccessoryHost(animated: needsAccessory && view.window != nil)
         } else {
             legacyMiniPlayerHostView.isHidden = !isVisible
             legacyMiniPlayerHeightConstraint?.constant = isVisible ? Self.legacyMiniPlayerHeight : 0
@@ -2908,7 +3097,9 @@ private final class RootTabBarController: UITabBarController, UITabBarController
     /// so its height has to be pushed into every destination's safe area. This
     /// covers bottom-pinned static content as well as scrolling collections.
     private func updateLegacyMiniPlayerSafeArea() {
-        let bottomInset = (isMiniPlayerVisible || isAuditionRetained) ? Self.legacyMiniPlayerHeight : 0
+        let bottomInset = (isMiniPlayerVisible || isAuditionRetained)
+            ? Self.legacyMiniPlayerSlotHeight
+            : 0
         for descriptor in descriptors {
             var insets = descriptor.controller.additionalSafeAreaInsets
             guard insets.bottom != bottomInset else { continue }

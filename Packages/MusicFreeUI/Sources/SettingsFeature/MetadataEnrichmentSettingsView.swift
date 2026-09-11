@@ -406,7 +406,7 @@ struct MetadataEnrichmentSettingsView: View {
         let isRegistered = status?.isRegistered == true
 
         VStack(alignment: .leading, spacing: MusicFreeSpacingTokens.xSmall) {
-            HStack(alignment: .top, spacing: MusicFreeSpacingTokens.small) {
+            HStack(alignment: .center, spacing: MusicFreeSpacingTokens.small) {
                 Toggle(
                     isOn: Binding(
                         get: {
@@ -422,6 +422,7 @@ struct MetadataEnrichmentSettingsView: View {
                         systemImage: providerIcon(preference.provider)
                     )
                 }
+                .border(Color.red)
                 .disabled(!isRegistered)
                 .accessibilityIdentifier(providerToggleIdentifier(preference.provider))
 
@@ -435,7 +436,8 @@ struct MetadataEnrichmentSettingsView: View {
                             : MusicFreeColorTokens.warning
                     )
                     .multilineTextAlignment(.trailing)
-            }
+                    .border(Color.blue)
+            }.border(Color.green)
 
             if let status,
                status.isRegistered,

@@ -105,6 +105,9 @@ public final class OnlineSourcesSceneModel {
     public private(set) var lastErrorDiagnostic: String?
     public private(set) var feedbackMessage: String?
     public private(set) var feedbackSourceID: MediaSourceID?
+    /// OAuth recovery is source-scoped. It is distinct from the DS Audio OTP
+    /// challenge, whose request data is retained only in memory.
+    public private(set) var authenticationRequiredSourceID: MediaSourceID?
     public private(set) var authenticationChallengeSourceID: MediaSourceID?
     public private(set) var authenticationFailureMessage: String?
     public private(set) var authenticationRetryToken = 0
@@ -127,6 +130,10 @@ public final class OnlineSourcesSceneModel {
     private var pendingSourcePrivacy: [MediaSourceID: Bool] = [:]
     private var pendingSourceNames: [MediaSourceID: String] = [:]
     private var pendingSourceEnabled: [MediaSourceID: Bool] = [:]
+    /// Configurations are saved before the runtime coordinator rebuilds its
+    /// provider registry. Keep a presentation-safe placeholder so adding one
+    /// source cannot hide other persisted sources during that handoff.
+    private var pendingConfiguredSources: [MediaSourceID: OnlineSourceSummary] = [:]
     private var pendingGlobalEnabled: Bool?
     private var catalogFailureDetails: [CatalogFailureKey: String] = [:]
     public init(
@@ -230,8 +237,18 @@ public final class OnlineSourcesSceneModel {
         let runtimeSources = Dictionary(
             uniqueKeysWithValues: runtimeSnapshot.sources.map { ($0.sourceID, $0) }
         )
+        let configuredSourceIDs = Set(onlinePreferences.sources.map(\.sourceID))
+        pendingConfiguredSources = pendingConfiguredSources.filter {
+            configuredSourceIDs.contains($0.key)
+        }
         for configuration in onlinePreferences.sources {
-            guard let summary = runtimeSources[configuration.sourceID] else { continue }
+            guard let summary = runtimeSources[configuration.sourceID] else {
+                pendingConfiguredSources[configuration.sourceID] = provisionalSummary(
+                    for: configuration
+                )
+                continue
+            }
+            pendingConfiguredSources.removeValue(forKey: configuration.sourceID)
             if summary.displayName != configuration.displayName {
                 pendingSourceNames[configuration.sourceID] = configuration.displayName
             }
@@ -254,6 +271,27 @@ public final class OnlineSourcesSceneModel {
     public func clearError() {
         lastError = nil
         lastErrorDiagnostic = nil
+    }
+
+    public func availabilityIssue(
+        for sourceID: MediaSourceID,
+        requiring capability: OnlineSourceCapabilities? = nil
+    ) -> OnlineSourceAvailabilityIssue? {
+        guard let summary = snapshot.sources.first(where: { $0.sourceID == sourceID }) else {
+            return .sourceNotConfigured
+        }
+        guard summary.providerKind != .googleDrive || isGoogleDriveOAuthConfigured else {
+            return .providerUnavailable
+        }
+        return OnlineSourceAvailabilityEvaluator.issue(
+            in: snapshot,
+            sourceID: sourceID,
+            requiring: capability
+        )
+    }
+
+    public func requiresGoogleDriveAuthorization(for sourceID: MediaSourceID) -> Bool {
+        authenticationRequiredSourceID == sourceID
     }
 
     /// Returns the failure for one visible catalog request. Failures are
@@ -335,6 +373,42 @@ public final class OnlineSourcesSceneModel {
             applyOptimisticSnapshot(applicationPrivacyAccepted: true)
         }
         return succeeded
+    }
+
+    public func addGoogleDriveSource(
+        sourceID: MediaSourceID,
+        displayName: String
+    ) async -> OnlineSourceCreationResult {
+        guard snapshot.isApplicationPrivacyAccepted else {
+            let message = OnlineSourceServingError.applicationPrivacyRequired.description
+            lastError = message
+            lastErrorDiagnostic = "application_privacy_required"
+            return .failed(message)
+        }
+        guard isGoogleDriveOAuthConfigured else {
+            let message = L("此版本未配置 Google Drive 连接能力。")
+            lastError = message
+            lastErrorDiagnostic = "google_drive_oauth_unconfigured"
+            return .failed(message)
+        }
+        do {
+            try await persistSourceConfiguration(
+                sourceID: sourceID,
+                providerKind: .googleDrive,
+                displayName: displayName,
+                endpoint: nil
+            )
+            authenticationRequiredSourceID = sourceID
+            lastError = nil
+            lastErrorDiagnostic = nil
+            setFeedback(L("Google Drive 已添加，请完成连接。"), sourceID: sourceID)
+            return .added(sourceID)
+        } catch {
+            let message = Self.userFacingMessage(for: error)
+            lastError = message
+            lastErrorDiagnostic = Self.diagnosticCode(for: error)
+            return .failed(message)
+        }
     }
 
     public func addSource(
@@ -452,7 +526,8 @@ public final class OnlineSourcesSceneModel {
             setFeedback(
                 providerKind == .dsAudio
                     ? L("群晖设备授权成功")
-                    : L("在线源已添加")
+                    : L("在线源已添加"),
+                sourceID: sourceID
             )
             return .added(sourceID)
         } catch {
@@ -569,18 +644,9 @@ public final class OnlineSourcesSceneModel {
         let preferences = try current.importPreferences.onlineSourcePreferences
             .adding(configuration)
         try await settingsServing.updateOnlineSourcePreferences(preferences)
-        applyOptimisticSnapshot(
-            adding: OnlineSourceSummary(
-                sourceID: sourceID,
-                providerKind: providerKind,
-                displayName: displayName,
-                privacyPolicyVersion: providerKind.defaultPrivacyPolicyVersion,
-                isRegistered: false,
-                isPrivacyAccepted: false,
-                isEnabled: true,
-                isRuntimeEnabled: false
-            )
-        )
+        let summary = provisionalSummary(for: configuration)
+        pendingConfiguredSources[sourceID] = summary
+        applyOptimisticSnapshot(adding: summary)
     }
 
     public func setGlobalEnabled(_ isEnabled: Bool) async {
@@ -711,6 +777,7 @@ public final class OnlineSourcesSceneModel {
             pendingSourcePrivacy.removeValue(forKey: sourceID)
             pendingSourceNames.removeValue(forKey: sourceID)
             pendingSourceEnabled.removeValue(forKey: sourceID)
+            pendingConfiguredSources.removeValue(forKey: sourceID)
 
             downloadQueue.discardSnapshots(for: sourceID)
             downloadSnapshots = downloadSnapshots.filter { $0.key.sourceID != sourceID }
@@ -720,8 +787,13 @@ public final class OnlineSourcesSceneModel {
             }
             catalogFailureMessages.removeValue(forKey: sourceID)
 
-            authenticationChallengeSourceID = nil
-            authenticationFailureMessage = nil
+            if authenticationChallengeSourceID == sourceID {
+                authenticationChallengeSourceID = nil
+                authenticationFailureMessage = nil
+            }
+            if authenticationRequiredSourceID == sourceID {
+                authenticationRequiredSourceID = nil
+            }
             feedbackMessage = L("在线源已删除")
             lastError = nil
 
@@ -742,32 +814,22 @@ public final class OnlineSourcesSceneModel {
     }
 
     public func authorizeGoogleDrive(for sourceID: MediaSourceID) async {
-        guard snapshot.isApplicationPrivacyAccepted else {
-            setError(OnlineSourceServingError.applicationPrivacyRequired)
-            return
-        }
-        guard let summary = snapshot.sources.first(where: { $0.sourceID == sourceID }) else {
+        guard snapshot.sources.first(where: { $0.sourceID == sourceID })?.providerKind == .googleDrive else {
             setError(OnlineSourceServingError.sourceNotConfigured(sourceID))
             return
         }
-        guard summary.isPrivacyAccepted else {
-            setError(OnlineSourceServingError.sourcePrivacyRequired(sourceID))
+        if let issue = availabilityIssue(for: sourceID, requiring: .browsing) {
+            setError(servingError(for: issue, sourceID: sourceID))
             return
         }
-        guard snapshot.isGloballyEnabled, summary.isEnabled else {
-            setError(OnlineSourceServingError.sourceDisabled(sourceID))
-            return
-        }
-        guard isGoogleDriveOAuthConfigured else {
-            setError(message: L("Google Drive OAuth 尚未配置"), diagnostic: "google_drive_oauth_unconfigured")
-            return
-        }
-        guard let authorizeGoogleDrive else {
-            setError(message: L("Google Drive OAuth 尚未配置"), diagnostic: "google_drive_authorizer_missing")
+        guard let authorizeGoogleDrive, isGoogleDriveOAuthConfigured else {
+            setError(OnlineSourceServingError.sourceUnavailable(sourceID))
             return
         }
         do {
             try await authorizeGoogleDrive(sourceID)
+            authenticationRequiredSourceID = nil
+            authenticationRetryToken += 1
             setFeedback(L("Google Drive 已授权"), sourceID: sourceID)
             lastError = nil
             lastErrorDiagnostic = nil
@@ -819,6 +881,7 @@ public final class OnlineSourcesSceneModel {
                     pageToken: pageToken
                 )
             )
+            clearAuthenticationRequirement(for: sourceID)
             lastError = nil
             if pageToken == nil {
                 clearCatalogFailures(
@@ -900,6 +963,7 @@ public final class OnlineSourcesSceneModel {
                     pageToken: pageToken
                 )
             )
+            clearAuthenticationRequirement(for: sourceID)
             lastError = nil
             if pageToken == nil {
                 clearCatalogFailures(
@@ -1335,9 +1399,13 @@ public final class OnlineSourcesSceneModel {
             pendingApplicationPrivacy = nil
         }
         let sourceIDs = Set(nextSnapshot.sources.map(\.sourceID))
-        pendingSourceNames = pendingSourceNames.filter { sourceIDs.contains($0.key) }
-        pendingSourcePrivacy = pendingSourcePrivacy.filter { sourceIDs.contains($0.key) }
-        pendingSourceEnabled = pendingSourceEnabled.filter { sourceIDs.contains($0.key) }
+        for sourceID in sourceIDs {
+            pendingConfiguredSources.removeValue(forKey: sourceID)
+        }
+        let projectedSourceIDs = sourceIDs.union(pendingConfiguredSources.keys)
+        pendingSourceNames = pendingSourceNames.filter { projectedSourceIDs.contains($0.key) }
+        pendingSourcePrivacy = pendingSourcePrivacy.filter { projectedSourceIDs.contains($0.key) }
+        pendingSourceEnabled = pendingSourceEnabled.filter { projectedSourceIDs.contains($0.key) }
         for summary in nextSnapshot.sources {
             if pendingSourceNames[summary.sourceID] == summary.displayName {
                 pendingSourceNames.removeValue(forKey: summary.sourceID)
@@ -1375,11 +1443,40 @@ public final class OnlineSourcesSceneModel {
                 privacyAccepted: pendingSourcePrivacy[summary.sourceID],
                 sourceEnabled: pendingSourceEnabled[summary.sourceID]
             )
-        }
+        } + pendingConfiguredSources.values
+            .filter { provisional in
+                !base.sources.contains(where: { $0.sourceID == provisional.sourceID })
+            }
+            .map { summary in
+                summaryWithRuntime(
+                    summary,
+                    globalEnabled: globalEnabled,
+                    applicationPrivacyAccepted: applicationPrivacyAccepted,
+                    privacyAccepted: pendingSourcePrivacy[summary.sourceID],
+                    sourceEnabled: pendingSourceEnabled[summary.sourceID]
+                )
+            }
         return OnlineSourceSnapshot(
             isGloballyEnabled: globalEnabled,
             isApplicationPrivacyAccepted: applicationPrivacyAccepted,
             sources: sources
+        )
+    }
+
+    private func provisionalSummary(
+        for configuration: OnlineSourceConfiguration
+    ) -> OnlineSourceSummary {
+        OnlineSourceSummary(
+            sourceID: configuration.sourceID,
+            providerKind: configuration.providerKind,
+            displayName: configuration.displayName,
+            privacyPolicyVersion: configuration.providerKind.defaultPrivacyPolicyVersion,
+            isRegistered: false,
+            isPrivacyAccepted: configuration.isPrivacyPolicyAccepted(
+                currentVersion: configuration.providerKind.defaultPrivacyPolicyVersion
+            ),
+            isEnabled: configuration.isEnabled,
+            isRuntimeEnabled: false
         )
     }
 
@@ -1407,6 +1504,14 @@ public final class OnlineSourcesSceneModel {
         _ error: Error,
         sourceID: MediaSourceID
     ) -> Bool {
+        if case let OnlineSourceServingError.authenticationRequired(requiredSourceID) = error,
+           requiredSourceID == sourceID {
+            authenticationRequiredSourceID = sourceID
+            authenticationRetryToken += 1
+            lastError = nil
+            lastErrorDiagnostic = Self.diagnosticCode(for: error)
+            return true
+        }
         guard let authenticationError = error as? OnlineSourceAuthenticationError else {
             return false
         }
@@ -1414,6 +1519,32 @@ public final class OnlineSourcesSceneModel {
         lastError = nil
         lastErrorDiagnostic = Self.diagnosticCode(for: authenticationError)
         return true
+    }
+
+    private func clearAuthenticationRequirement(for sourceID: MediaSourceID) {
+        guard authenticationRequiredSourceID == sourceID else { return }
+        authenticationRequiredSourceID = nil
+        authenticationRetryToken += 1
+    }
+
+    private func servingError(
+        for issue: OnlineSourceAvailabilityIssue,
+        sourceID: MediaSourceID
+    ) -> OnlineSourceServingError {
+        switch issue {
+        case .sourceNotConfigured:
+            .sourceNotConfigured(sourceID)
+        case .providerUnavailable:
+            .sourceUnavailable(sourceID)
+        case .applicationPrivacyRequired:
+            .applicationPrivacyRequired
+        case .sourcePrivacyRequired:
+            .sourcePrivacyRequired(sourceID)
+        case .globalServiceDisabled, .sourceDisabled:
+            .sourceDisabled(sourceID)
+        case let .capabilityUnsupported(capability):
+            .operationUnsupported(sourceID, String(describing: capability))
+        }
     }
 
     private func presentAuthenticationChallenge(
@@ -1477,6 +1608,10 @@ public final class OnlineSourcesSceneModel {
                 return "source_disabled"
             case .sourceUnavailable:
                 return "source_unavailable"
+            case .authenticationRequired:
+                return "authentication_required"
+            case .authenticationFailed:
+                return "authentication_failed"
             case .operationUnsupported:
                 return "operation_unsupported"
             }
@@ -1542,6 +1677,10 @@ public final class OnlineSourcesSceneModel {
                 return L("此在线源已停用，请在设置中重新启用。")
             case .sourceUnavailable:
                 return L("当前版本暂不支持此在线源。")
+            case .authenticationRequired:
+                return L("需要重新连接此在线源。")
+            case .authenticationFailed:
+                return L("在线源身份验证失败，请检查连接后重试。")
             case let .operationUnsupported(_, operation):
                 return L("此在线源暂不支持：%@。", operation)
             }

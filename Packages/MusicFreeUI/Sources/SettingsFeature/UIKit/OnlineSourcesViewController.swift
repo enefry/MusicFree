@@ -263,68 +263,54 @@ public final class OnlineSourcesViewController: UIViewController,
     }
 
     private func presentAddForm(providerKind: OnlineProviderKind) {
-        guard providerKind != .dsAudio else {
+        switch providerKind {
+        case .dsAudio:
             presentDSAudioAddForm()
-            return
+        case .googleDrive:
+            presentGoogleDriveAddForm()
+        default:
+            presentMessage(
+                title: L("无法添加在线源"),
+                message: L("当前版本暂不支持此在线源。")
+            )
         }
-        let alert = UIAlertController(title: L("添加在线源"), message: L("请填写来源配置"), preferredStyle: .alert)
-        alert.addTextField { field in
-            field.placeholder = L("显示名称")
-            field.accessibilityIdentifier = "onlineSources.add.displayName"
-        }
-        alert.addTextField { field in
-            field.placeholder = providerKind == .dsAudio ? L("DS Audio 地址") : L("服务地址（可选）")
-            field.keyboardType = .URL
-            field.accessibilityIdentifier = "onlineSources.add.endpoint"
-        }
-        if providerKind == .dsAudio {
-            alert.addTextField { field in
-                field.placeholder = L("DS Audio 账号")
-                field.accessibilityIdentifier = "onlineSources.add.account"
-            }
-            alert.addTextField { field in
-                field.placeholder = L("DS Audio 密码")
-                field.isSecureTextEntry = true
-                field.accessibilityIdentifier = "onlineSources.add.password"
-            }
-        }
-        alert.addAction(UIAlertAction(title: L("取消"), style: .cancel))
-        alert.addAction(UIAlertAction(title: L("添加"), style: .default) { [weak self, weak alert] _ in
-            guard let self, let alert else { return }
-            let name = alert.textFields?.first?.text ?? ""
-            let endpoint = alert.textFields?.dropFirst().first?.text ?? ""
-            let account = providerKind == .dsAudio ? alert.textFields?.dropFirst(2).first?.text ?? "" : ""
-            let password = providerKind == .dsAudio ? alert.textFields?.dropFirst(3).first?.text ?? "" : ""
-            let sourceID = MediaSourceID("\(providerKind.rawValue).\(UUID().uuidString.lowercased())")
+    }
+
+    private func presentGoogleDriveAddForm() {
+        let controller = GoogleDriveAddSourceViewController(model: model) { [weak self] sourceID in
+            guard let self else { return }
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                let result = await model.addSource(
-                    sourceID: sourceID,
-                    deviceName: "MusicFree-\(UUID().uuidString.lowercased())",
-                    providerKind: providerKind,
-                    displayName: name,
-                    endpointText: endpoint,
-                    account: account,
-                    password: password
-                )
-                render()
-                switch result {
-                case .added:
-                    break
-                case .verificationRequired:
-                    presentOneTimeCode(for: sourceID)
-                case let .failed(message):
-                    presentMessage(title: L("无法添加在线源"), message: message)
+                self.render(force: true)
+                await self.waitForPresentedControllerDismissal()
+                guard let summary = self.model.snapshot.sources.first(where: { $0.sourceID == sourceID }) else {
+                    return
                 }
+                self.openCatalog(for: summary)
             }
-        })
-        alert.view.accessibilityIdentifier = "onlineSources.add.sheet"
-        present(alert, animated: true)
+        }
+        let navigationController = UINavigationController(rootViewController: controller)
+        navigationController.modalPresentationStyle = .pageSheet
+        if let sheet = navigationController.sheetPresentationController {
+            sheet.detents = [.large()]
+            sheet.prefersGrabberVisible = true
+            sheet.preferredCornerRadius = 20
+        }
+        present(navigationController, animated: true)
     }
 
     private func presentDSAudioAddForm() {
-        let controller = DSAudioAddSourceViewController(model: model) { [weak self] in
-            self?.render(force: true)
+        let controller = DSAudioAddSourceViewController(model: model) { [weak self] sourceID in
+            guard let self else { return }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.render(force: true)
+                await self.waitForPresentedControllerDismissal()
+                guard let summary = self.model.snapshot.sources.first(where: { $0.sourceID == sourceID }) else {
+                    return
+                }
+                self.openCatalog(for: summary)
+            }
         }
         let navigationController = UINavigationController(rootViewController: controller)
         navigationController.modalPresentationStyle = .pageSheet
@@ -448,29 +434,7 @@ public final class OnlineSourcesViewController: UIViewController,
             content.imageProperties.tintColor = MusicFreeUIColorTokens.accent
             cell.accessibilityIdentifier = "onlineSources.source.\(summary.sourceID.rawValue)"
             cell.accessibilityValue = sourceStatus(summary)
-            if summary.isRegistered,
-               summary.isPrivacyAccepted,
-               !summary.isEnabled {
-                let enableSwitch = UISwitch()
-                enableSwitch.isOn = false
-                cell.selectionStyle = .none
-                enableSwitch.accessibilityLabel = L("启用在线源")
-                enableSwitch.accessibilityIdentifier =
-                    "onlineSources.source.\(summary.sourceID.rawValue).enabled"
-                enableSwitch.addAction(UIAction { [weak self, weak enableSwitch] _ in
-                    guard let self, let enableSwitch, enableSwitch.isOn else { return }
-                    enableSwitch.isEnabled = false
-                    Task { @MainActor [weak self] in
-                        guard let self else { return }
-                        await model.setSourceEnabled(summary.sourceID, isEnabled: true)
-                        render(force: true)
-                        presentModelErrorIfNeeded()
-                    }
-                }, for: .valueChanged)
-                cell.accessoryView = enableSwitch
-            } else {
-                cell.accessoryType = .disclosureIndicator
-            }
+            cell.accessoryType = .disclosureIndicator
         }
         cell.contentConfiguration = content
         return cell
@@ -492,14 +456,6 @@ public final class OnlineSourcesViewController: UIViewController,
             presentMessage(title: L("在线源不可用"), message: L("此来源当前没有可用的 Provider。"))
             return
         }
-        guard summary.isPrivacyAccepted else {
-            presentSourcePrivacy(for: summary)
-            return
-        }
-        // A disabled source exposes only its one-way enable affordance in the
-        // list. Do not push an empty catalog that can never load until the
-        // source is enabled from that switch or Settings.
-        guard summary.isEnabled else { return }
         openCatalog(for: summary)
     }
 
@@ -639,18 +595,264 @@ public final class OnlineSourcesViewController: UIViewController,
     }
 
     private func sourceStatus(_ summary: OnlineSourceSummary) -> String {
-        if !summary.isRegistered { return L("未接入") }
-        if !summary.isPrivacyAccepted { return L("待同意") }
-        if !summary.isEnabled { return L("已停用") }
-        if !summary.isRuntimeEnabled { return L("已关闭") }
+        if let issue = model.availabilityIssue(for: summary.sourceID, requiring: .browsing) {
+            switch issue {
+            case .sourceNotConfigured:
+                return L("配置不存在")
+            case .providerUnavailable:
+                return L("当前版本不可用")
+            case .applicationPrivacyRequired:
+                return L("需要同意应用协议")
+            case .sourcePrivacyRequired:
+                return L("需要同意来源协议")
+            case .globalServiceDisabled:
+                return L("在线源服务已关闭")
+            case .sourceDisabled:
+                return L("此来源已关闭")
+            case .capabilityUnsupported:
+                return L("不支持浏览")
+            }
+        }
+        if summary.providerKind == .googleDrive,
+           model.requiresGoogleDriveAuthorization(for: summary.sourceID) {
+            return L("需要连接 Google Drive")
+        }
         return L("可用")
+    }
+}
+
+@MainActor
+private final class GoogleDriveAddSourceViewController: UIViewController, UITextFieldDelegate {
+    private let model: OnlineSourcesSceneModel
+    private let onAdded: (MediaSourceID) -> Void
+    private let sourceID = MediaSourceID("google-drive.\(UUID().uuidString.lowercased())")
+
+    private let scrollView = UIScrollView()
+    private let contentStack = UIStackView()
+    private let displayNameField = UITextField()
+    private let statusLabel = UILabel()
+    private let errorLabel = UILabel()
+    private let activityIndicator = UIActivityIndicatorView(style: .medium)
+    private let submitButton = UIButton(type: .system)
+    private let navigationSubmitButton = UIBarButtonItem(
+        title: L("添加"),
+        style: .done,
+        target: nil,
+        action: nil
+    )
+    private var submitTask: Task<Void, Never>?
+
+    init(
+        model: OnlineSourcesSceneModel,
+        onAdded: @escaping (MediaSourceID) -> Void
+    ) {
+        self.model = model
+        self.onAdded = onAdded
+        super.init(nibName: nil, bundle: nil)
+        title = L("添加 Google Drive")
+        restorationIdentifier = "onlineSources.googleDrive.add"
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = MusicFreeUIColorTokens.backgroundGrouped
+        view.accessibilityIdentifier = "onlineSources.googleDrive.add.sheet"
+        navigationItem.leftBarButtonItem = UIBarButtonItem(
+            barButtonSystemItem: .cancel,
+            target: self,
+            action: #selector(cancel)
+        )
+        navigationItem.leftBarButtonItem?.accessibilityIdentifier = "onlineSources.googleDrive.add.cancel"
+        navigationSubmitButton.target = self
+        navigationSubmitButton.action = #selector(submitFromNavigation)
+        navigationSubmitButton.accessibilityIdentifier = "onlineSources.googleDrive.add.submit"
+        navigationItem.rightBarButtonItem = navigationSubmitButton
+        configureViews()
+        configureLayout()
+        updateSubmitting(false)
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        displayNameField.becomeFirstResponder()
+    }
+
+    deinit { submitTask?.cancel() }
+
+    private func configureViews() {
+        displayNameField.borderStyle = .roundedRect
+        displayNameField.clearButtonMode = .whileEditing
+        displayNameField.placeholder = L("Google Drive 来源名称")
+        displayNameField.textContentType = .name
+        displayNameField.returnKeyType = .done
+        displayNameField.delegate = self
+        displayNameField.accessibilityIdentifier = "onlineSources.googleDrive.add.displayName"
+        displayNameField.heightAnchor.constraint(equalToConstant: 46).isActive = true
+        displayNameField.addAction(UIAction { [weak self] _ in
+            self?.updateSubmitAvailability()
+        }, for: .editingChanged)
+
+        statusLabel.font = MusicFreeUIFontTokens.secondary
+        statusLabel.textColor = MusicFreeUIColorTokens.foregroundSecondary
+        statusLabel.numberOfLines = 0
+        statusLabel.text = L("账号连接使用应用内置 Google OAuth 配置；文件访问权限由 Google 授权页确认。")
+        statusLabel.accessibilityIdentifier = "onlineSources.googleDrive.add.status"
+
+        errorLabel.font = MusicFreeUIFontTokens.caption
+        errorLabel.textColor = MusicFreeUIColorTokens.destructive
+        errorLabel.numberOfLines = 0
+        errorLabel.isHidden = true
+        errorLabel.accessibilityIdentifier = "onlineSources.googleDrive.add.error"
+
+        var configuration = UIButton.Configuration.filled()
+        configuration.title = L("添加并继续")
+        configuration.image = UIImage(systemName: "arrow.right.circle")
+        configuration.imagePadding = 8
+        configuration.cornerStyle = .large
+        submitButton.configuration = configuration
+        submitButton.accessibilityIdentifier = "onlineSources.googleDrive.add.submit.primary"
+        submitButton.addAction(UIAction { [weak self] _ in
+            self?.submit()
+        }, for: .touchUpInside)
+    }
+
+    private func configureLayout() {
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.alwaysBounceVertical = true
+        scrollView.keyboardDismissMode = .onDrag
+        scrollView.accessibilityIdentifier = "onlineSources.googleDrive.add.scroll"
+
+        let heading = UILabel()
+        heading.text = L("连接 Google Drive")
+        heading.font = MusicFreeUIFontTokens.preferred(.title2, weight: .bold)
+        heading.textColor = MusicFreeUIColorTokens.foregroundPrimary
+
+        let nameLabel = UILabel()
+        nameLabel.text = L("名称")
+        nameLabel.font = MusicFreeUIFontTokens.caption
+        nameLabel.textColor = MusicFreeUIColorTokens.foregroundSecondary
+
+        let nameStack = UIStackView(arrangedSubviews: [nameLabel, displayNameField])
+        nameStack.axis = .vertical
+        nameStack.spacing = MusicFreeSpacingTokens.xSmall
+
+        let buttonRow = UIStackView(arrangedSubviews: [activityIndicator, submitButton])
+        buttonRow.axis = .horizontal
+        buttonRow.alignment = .center
+        buttonRow.spacing = MusicFreeSpacingTokens.small
+
+        contentStack.axis = .vertical
+        contentStack.alignment = .fill
+        contentStack.spacing = MusicFreeSpacingTokens.medium
+        contentStack.isLayoutMarginsRelativeArrangement = true
+        contentStack.directionalLayoutMargins = NSDirectionalEdgeInsets(
+            top: MusicFreeSpacingTokens.large,
+            leading: MusicFreeSpacingTokens.large,
+            bottom: MusicFreeSpacingTokens.large,
+            trailing: MusicFreeSpacingTokens.large
+        )
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.addArrangedSubview(heading)
+        contentStack.addArrangedSubview(statusLabel)
+        contentStack.addArrangedSubview(nameStack)
+        contentStack.addArrangedSubview(errorLabel)
+        contentStack.addArrangedSubview(buttonRow)
+        view.addSubview(scrollView)
+        scrollView.addSubview(contentStack)
+        NSLayoutConstraint.activate([
+            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scrollView.topAnchor.constraint(equalTo: view.topAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            contentStack.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+            contentStack.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+            contentStack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            contentStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            contentStack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
+        ])
+    }
+
+    @objc private func cancel() {
+        submitTask?.cancel()
+        dismiss(animated: true)
+    }
+
+    @objc private func submitFromNavigation() {
+        submit()
+    }
+
+    private func submit() {
+        guard !isSubmitting else { return }
+        let displayName = displayNameField.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !displayName.isEmpty else {
+            showError(L("请输入来源名称。"))
+            displayNameField.becomeFirstResponder()
+            return
+        }
+        showError(nil)
+        view.endEditing(true)
+        updateSubmitting(true)
+        submitTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let result = await model.addGoogleDriveSource(
+                sourceID: sourceID,
+                displayName: displayName
+            )
+            guard !Task.isCancelled else { return }
+            switch result {
+            case .added:
+                onAdded(sourceID)
+                dismiss(animated: true)
+            case .verificationRequired:
+                updateSubmitting(false)
+                showError(L("Google Drive 不需要一次性验证码，请重新尝试连接。"))
+            case let .failed(message):
+                updateSubmitting(false)
+                showError(message)
+                model.clearError()
+            }
+        }
+    }
+
+    private var isSubmitting: Bool { activityIndicator.isAnimating }
+
+    private func updateSubmitting(_ submitting: Bool) {
+        if submitting {
+            activityIndicator.startAnimating()
+        } else {
+            activityIndicator.stopAnimating()
+        }
+        displayNameField.isEnabled = !submitting
+        navigationItem.leftBarButtonItem?.isEnabled = !submitting
+        updateSubmitAvailability()
+    }
+
+    private func updateSubmitAvailability() {
+        let hasName = !(displayNameField.text ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .isEmpty
+        submitButton.isEnabled = !isSubmitting && hasName
+        navigationSubmitButton.isEnabled = !isSubmitting && hasName
+    }
+
+    func textFieldShouldReturn(_: UITextField) -> Bool {
+        submit()
+        return false
+    }
+
+    private func showError(_ message: String?) {
+        errorLabel.text = message
+        errorLabel.isHidden = message == nil
     }
 }
 
 @MainActor
 private final class DSAudioAddSourceViewController: UIViewController {
     private let model: OnlineSourcesSceneModel
-    private let onAdded: () -> Void
+    private let onAdded: (MediaSourceID) -> Void
     private let sourceID = MediaSourceID(
         "dsaudio.\(UUID().uuidString.lowercased())"
     )
@@ -670,7 +872,7 @@ private final class DSAudioAddSourceViewController: UIViewController {
     private let submitButton = UIButton(type: .system)
     private var submitTask: Task<Void, Never>?
 
-    init(model: OnlineSourcesSceneModel, onAdded: @escaping () -> Void) {
+    init(model: OnlineSourcesSceneModel, onAdded: @escaping (MediaSourceID) -> Void) {
         self.model = model
         self.onAdded = onAdded
         super.init(nibName: nil, bundle: nil)
@@ -992,7 +1194,7 @@ private final class DSAudioAddSourceViewController: UIViewController {
     private func finishSuccessfully() {
         updateSubmissionState(isSubmitting: false)
         statusLabel.text = L("DS Audio 已添加")
-        onAdded()
+        onAdded(sourceID)
         dismiss(animated: true)
     }
 
@@ -1290,6 +1492,19 @@ private final class OnlineSourceCatalogViewController: UIViewController,
         case items
     }
 
+    private enum CatalogState: String, Hashable {
+        case missingSource
+        case applicationPrivacyRequired
+        case sourcePrivacyRequired
+        case globalServiceDisabled
+        case sourceDisabled
+        case googleAuthorizationRequired
+        case providerUnavailable
+        case browsingUnsupported
+        case catalogFailure
+        case catalogEmpty
+    }
+
     private enum CatalogRow: Hashable {
         case category(SourceCatalogBrowseMode)
         case googleDriveAuthorization
@@ -1299,7 +1514,7 @@ private final class OnlineSourceCatalogViewController: UIViewController,
         case loadingMore
         case loadMore
         case loadMoreFailure
-        case state(String)
+        case state(CatalogState)
     }
 
     private static let virtualRootExternalID = "__online_source_root__"
@@ -1785,8 +2000,14 @@ private final class OnlineSourceCatalogViewController: UIViewController,
     }
 
     private func catalogRows(for summary: OnlineSourceSummary?) -> [CatalogRow] {
-        guard let summary else { return [.state("missingSource")] }
-        guard canBrowse(summary) else { return [.state("sourceUnavailable")] }
+        guard let summary else { return [.state(.missingSource)] }
+        if let issue = model.availabilityIssue(for: sourceID, requiring: .browsing) {
+            return [.state(recoveryState(for: issue))]
+        }
+        if summary.providerKind == .googleDrive,
+           model.requiresGoogleDriveAuthorization(for: sourceID) {
+            return [.state(.googleAuthorizationRequired)]
+        }
 
         var rows = [CatalogRow]()
         if isRoot,
@@ -1800,9 +2021,6 @@ private final class OnlineSourceCatalogViewController: UIViewController,
                 .category(.allMusic),
             ])
         }
-        if isRoot, summary.providerKind == .googleDrive {
-            rows.append(.googleDriveAuthorization)
-        }
         if let feedbackMessage = model.feedbackMessage,
            model.feedbackSourceID == sourceID {
             rows.append(.feedback(feedbackMessage))
@@ -1812,9 +2030,9 @@ private final class OnlineSourceCatalogViewController: UIViewController,
             if isLoadingCatalog {
                 rows.append(.loading)
             } else if currentCatalogFailureMessage != nil {
-                rows.append(.state("catalogFailure"))
+                rows.append(.state(.catalogFailure))
             } else {
-                rows.append(.state("catalogEmpty"))
+                rows.append(.state(.catalogEmpty))
             }
             return rows
         }
@@ -1864,7 +2082,8 @@ private final class OnlineSourceCatalogViewController: UIViewController,
         case .loadingMore: return "loadingMore"
         case .loadMore: return "loadMore"
         case .loadMoreFailure: return "loadMoreFailure:\(currentCatalogFailureMessage ?? "")"
-        case let .state(key): return "state:\(key):\(currentCatalogFailureMessage ?? "")"
+        case let .state(state):
+            return "state:\(state.rawValue):\(currentCatalogFailureMessage ?? "")"
         }
     }
 
@@ -1980,10 +2199,11 @@ private final class OnlineSourceCatalogViewController: UIViewController,
                 )]
             )
             cell.accessibilityIdentifier = "onlineSources.detail.\(sourceID.rawValue).loadMore.error"
-        case let .state(key):
-            let state = catalogState(key)
-            let retryButton: [UIView] = key == "catalogFailure"
-                ? [makeCatalogActionButton(
+        case let .state(state):
+            let content = catalogState(state)
+            let trailingViews: [UIView]
+            if state == .catalogFailure {
+                trailingViews = [makeCatalogActionButton(
                     systemImage: "arrow.clockwise",
                     label: L("重试"),
                     identifier: "onlineSources.detail.\(sourceID.rawValue).catalog.retry",
@@ -1991,28 +2211,213 @@ private final class OnlineSourceCatalogViewController: UIViewController,
                         self?.beginLoadingCatalog(query: self?.submittedSearchQuery)
                     }
                 )]
-                : []
+            } else {
+                trailingViews = recoveryTrailingViews(for: state)
+            }
             cell.configure(
-                title: state.title,
-                subtitle: state.message,
-                systemImage: state.systemImage,
+                title: content.title,
+                subtitle: content.message,
+                systemImage: content.systemImage,
                 tintColor: MusicFreeUIColorTokens.foregroundSecondary,
-                trailingViews: retryButton
+                trailingViews: trailingViews
             )
-            cell.accessibilityIdentifier = "onlineSources.detail.\(sourceID.rawValue).\(key)"
+            cell.accessibilityIdentifier = "onlineSources.detail.\(sourceID.rawValue).\(state.rawValue)"
         }
     }
 
-    private func catalogState(_ key: String) -> (title: String, message: String, systemImage: String) {
-        switch key {
-        case "missingSource":
+    private func catalogState(_ state: CatalogState) -> (title: String, message: String, systemImage: String) {
+        switch state {
+        case .missingSource:
             return (L("来源不存在"), L("此来源已从设置中移除。"), "questionmark.folder")
-        case "sourceUnavailable":
-            return (L("来源当前不可用"), L("请在设置中同意协议并启用来源。"), "pause.circle")
-        case "catalogFailure":
+        case .applicationPrivacyRequired:
+            return (L("需要同意应用隐私协议"), L("在线源发起网络请求前需要应用级许可。"), "hand.raised")
+        case .sourcePrivacyRequired:
+            return (L("需要同意来源隐私协议"), L("同意后可继续使用当前来源浏览远程目录。"), "doc.text")
+        case .globalServiceDisabled:
+            return (L("在线源服务已关闭"), L("开启后才允许已授权来源联网。"), "power")
+        case .sourceDisabled:
+            return (L("此来源已关闭"), L("只开启当前来源，不影响其他在线源。"), "pause.circle")
+        case .googleAuthorizationRequired:
+            return (L("尚未连接 Google Drive"), L("需要选择 Google 账号并授权只读 Drive 权限。"), "person.badge.key")
+        case .providerUnavailable:
+            return (L("此版本不支持该来源"), L("当前构建没有可用的连接能力。"), "xmark.circle")
+        case .browsingUnsupported:
+            return (L("此来源不支持浏览"), L("当前页面所需的目录浏览能力不可用。"), "nosign")
+        case .catalogFailure:
             return (L("目录加载失败"), currentCatalogFailureMessage ?? L("DSM 返回目录失败"), "exclamationmark.triangle")
-        default:
+        case .catalogEmpty:
             return (L("目录为空"), L("下拉刷新获取最新目录。"), "music.note")
+        }
+    }
+
+    private func recoveryState(for issue: OnlineSourceAvailabilityIssue) -> CatalogState {
+        switch issue {
+        case .sourceNotConfigured:
+            .missingSource
+        case .providerUnavailable:
+            .providerUnavailable
+        case .applicationPrivacyRequired:
+            .applicationPrivacyRequired
+        case .sourcePrivacyRequired:
+            .sourcePrivacyRequired
+        case .globalServiceDisabled:
+            .globalServiceDisabled
+        case .sourceDisabled:
+            .sourceDisabled
+        case .capabilityUnsupported:
+            .browsingUnsupported
+        }
+    }
+
+    private func recoveryTrailingViews(for state: CatalogState) -> [UIView] {
+        switch state {
+        case .applicationPrivacyRequired:
+            return [makeCatalogActionButton(
+                systemImage: "checkmark",
+                label: L("查看并同意"),
+                identifier: "onlineSources.detail.\(sourceID.rawValue).applicationPrivacy.accept",
+                action: { [weak self] in self?.presentApplicationPrivacy() }
+            )]
+        case .sourcePrivacyRequired:
+            return [makeCatalogActionButton(
+                systemImage: "checkmark",
+                label: L("查看并同意"),
+                identifier: "onlineSources.detail.\(sourceID.rawValue).sourcePrivacy.accept",
+                action: { [weak self] in self?.presentSourcePrivacy() }
+            )]
+        case .globalServiceDisabled:
+            return [makeRecoverySwitch(
+                isOn: model.snapshot.isGloballyEnabled,
+                label: L("启用在线源服务"),
+                identifier: "onlineSources.detail.\(sourceID.rawValue).global.enabled"
+            ) { [weak self] isOn in
+                self?.setGlobalEnabled(isOn)
+            }]
+        case .sourceDisabled:
+            return [makeRecoverySwitch(
+                isOn: summary?.isEnabled ?? false,
+                label: L("启用此来源"),
+                identifier: "onlineSources.detail.\(sourceID.rawValue).source.enabled"
+            ) { [weak self] isOn in
+                self?.setSourceEnabled(isOn)
+            }]
+        case .googleAuthorizationRequired:
+            return [makeCatalogActionButton(
+                systemImage: "person.badge.key",
+                label: L("连接 Google Drive"),
+                identifier: "onlineSources.source.\(sourceID.rawValue).googleDrive.authorize",
+                action: { [weak self] in self?.authorizeGoogleDrive() }
+            )]
+        case .missingSource, .providerUnavailable, .browsingUnsupported,
+             .catalogFailure, .catalogEmpty:
+            return []
+        }
+    }
+
+    private func makeRecoverySwitch(
+        isOn: Bool,
+        label: String,
+        identifier: String,
+        action: @escaping (Bool) -> Void
+    ) -> UISwitch {
+        let control = UISwitch()
+        control.isOn = isOn
+        control.accessibilityLabel = label
+        control.accessibilityIdentifier = identifier
+        control.addAction(UIAction { [weak control] _ in
+            guard let control else { return }
+            control.isEnabled = false
+            action(control.isOn)
+        }, for: .valueChanged)
+        return control
+    }
+
+    private func presentApplicationPrivacy() {
+        guard presentedViewController == nil else { return }
+        let alert = UIAlertController(
+            title: L("应用隐私协议"),
+            message: L("第一次使用在线源前，需要允许应用为你配置的来源发起浏览、下载和试听请求。远程 URL、Token、Cookie、Header 和播放器访问对象只在一次操作期间使用。"),
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: L("取消"), style: .cancel))
+        let accept = UIAlertAction(title: L("同意"), style: .default) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let accepted = await model.acceptApplicationPrivacy()
+                await waitForPresentedControllerDismissal()
+                guard accepted else {
+                    presentModelErrorIfNeeded()
+                    return
+                }
+                render(force: true)
+                ensureCatalogLoadIfNeeded()
+            }
+        }
+        accept.accessibilityIdentifier = "onlineSources.detail.\(sourceID.rawValue).applicationPrivacy.accept.confirm"
+        alert.addAction(accept)
+        alert.view.accessibilityIdentifier = "onlineSources.detail.\(sourceID.rawValue).applicationPrivacy.sheet"
+        present(alert, animated: true)
+    }
+
+    private func presentSourcePrivacy() {
+        guard let summary, presentedViewController == nil else { return }
+        let alert = UIAlertController(
+            title: L("来源隐私协议"),
+            message: L("来源：%@\n协议版本：%@\n协议用于浏览、下载和临时试听所需的远程目录数据。", summary.displayName, summary.privacyPolicyVersion),
+            preferredStyle: .alert
+        )
+        let cancel = UIAlertAction(title: L("取消"), style: .cancel)
+        cancel.accessibilityIdentifier = "onlineSources.sourcePrivacy.close"
+        alert.addAction(cancel)
+        let accept = UIAlertAction(title: L("同意"), style: .default) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let accepted = await model.acceptSourcePrivacy(sourceID)
+                await waitForPresentedControllerDismissal()
+                guard accepted else {
+                    presentModelErrorIfNeeded()
+                    return
+                }
+                render(force: true)
+                ensureCatalogLoadIfNeeded()
+            }
+        }
+        accept.accessibilityIdentifier = "onlineSources.source.\(sourceID.rawValue).privacy.accept.confirm"
+        alert.addAction(accept)
+        alert.view.accessibilityIdentifier = "onlineSources.source.\(sourceID.rawValue).privacy.sheet"
+        present(alert, animated: true)
+    }
+
+    private func waitForPresentedControllerDismissal() async {
+        for _ in 0..<30 {
+            guard presentedViewController != nil
+                    || transitionCoordinator != nil
+            else {
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+    }
+
+    private func setGlobalEnabled(_ isEnabled: Bool) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await model.setGlobalEnabled(isEnabled)
+            await waitForPresentedControllerDismissal()
+            render(force: true)
+            if model.lastError == nil { ensureCatalogLoadIfNeeded() }
+            presentModelErrorIfNeeded()
+        }
+    }
+
+    private func setSourceEnabled(_ isEnabled: Bool) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await model.setSourceEnabled(sourceID, isEnabled: isEnabled)
+            await waitForPresentedControllerDismissal()
+            render(force: true)
+            if model.lastError == nil { ensureCatalogLoadIfNeeded() }
+            presentModelErrorIfNeeded()
         }
     }
 
@@ -2405,11 +2810,60 @@ private final class OnlineSourceCatalogViewController: UIViewController,
             )
         case .loadMore, .loadMoreFailure:
             beginLoadingCatalog(appending: true)
-        case .state("catalogFailure"):
-            beginLoadingCatalog(query: submittedSearchQuery)
-        case .googleDriveAuthorization, .feedback, .loading, .loadingMore, .state:
+        case let .state(state):
+            handleCatalogStateSelection(state)
+        case .googleDriveAuthorization:
+            authorizeGoogleDrive()
+        case .feedback, .loading, .loadingMore:
             break
         }
+    }
+
+    private func handleCatalogStateSelection(_ state: CatalogState) {
+        switch state {
+        case .applicationPrivacyRequired:
+            presentApplicationPrivacy()
+        case .sourcePrivacyRequired:
+            presentSourcePrivacy()
+        case .globalServiceDisabled:
+            presentEnableConfirmation(for: state) { [weak self] in
+                self?.setGlobalEnabled(true)
+            }
+        case .sourceDisabled:
+            presentEnableConfirmation(for: state) { [weak self] in
+                self?.setSourceEnabled(true)
+            }
+        case .googleAuthorizationRequired:
+            authorizeGoogleDrive()
+        case .catalogFailure:
+            beginLoadingCatalog(query: submittedSearchQuery)
+        case .missingSource, .providerUnavailable, .browsingUnsupported, .catalogEmpty:
+            break
+        }
+    }
+
+    private func presentEnableConfirmation(
+        for state: CatalogState,
+        enable: @escaping () -> Void
+    ) {
+        guard presentedViewController == nil else { return }
+        let content = catalogState(state)
+        let alert = UIAlertController(
+            title: content.title,
+            message: content.message,
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: L("取消"), style: .cancel))
+        let enableAction = UIAlertAction(title: L("开启"), style: .default) { _ in
+            enable()
+        }
+        enableAction.accessibilityIdentifier = state == .globalServiceDisabled
+            ? "onlineSources.detail.\(self.sourceID.rawValue).global.enabled.confirm"
+            : "onlineSources.detail.\(self.sourceID.rawValue).source.enabled.confirm"
+        alert.addAction(enableAction)
+        alert.view.accessibilityIdentifier =
+            "onlineSources.detail.\(sourceID.rawValue).\(state.rawValue).sheet"
+        present(alert, animated: true)
     }
 
     func collectionView(
@@ -2759,11 +3213,9 @@ private final class OnlineSourceCatalogViewController: UIViewController,
     }
 
     private func canBrowse(_ summary: OnlineSourceSummary) -> Bool {
-        summary.isRegistered
-            && model.snapshot.isApplicationPrivacyAccepted
-            && summary.isPrivacyAccepted
-            && summary.isRuntimeEnabled
-            && summary.capabilities.contains(.browsing)
+        model.availabilityIssue(for: sourceID, requiring: .browsing) == nil
+            && !(summary.providerKind == .googleDrive
+                && model.requiresGoogleDriveAuthorization(for: sourceID))
     }
 
 

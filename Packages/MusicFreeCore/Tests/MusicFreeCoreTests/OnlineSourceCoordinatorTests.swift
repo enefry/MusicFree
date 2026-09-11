@@ -7,6 +7,71 @@ import SettingsAPI
 import Testing
 @testable import AppServices
 
+@Test("online source availability reports the first recoverable local gate")
+func onlineSourceAvailabilityReportsOrderedGates() {
+    let sourceID = MediaSourceID("availability.fixture")
+    let source = OnlineSourceSummary(
+        sourceID: sourceID,
+        providerKind: .googleDrive,
+        displayName: "Fixture",
+        capabilities: [.browsing],
+        privacyPolicyVersion: "fixture-policy",
+        isRegistered: true,
+        isPrivacyAccepted: false,
+        isEnabled: false,
+        isRuntimeEnabled: false
+    )
+    let base = OnlineSourceSnapshot(
+        isGloballyEnabled: false,
+        isApplicationPrivacyAccepted: false,
+        sources: [source]
+    )
+
+    #expect(
+        OnlineSourceAvailabilityEvaluator.issue(
+            in: base,
+            sourceID: sourceID,
+            requiring: .browsing
+        ) == .applicationPrivacyRequired
+    )
+
+    let sourcePrivacyRequired = OnlineSourceSnapshot(
+        isGloballyEnabled: false,
+        isApplicationPrivacyAccepted: true,
+        sources: [source]
+    )
+    #expect(
+        OnlineSourceAvailabilityEvaluator.issue(
+            in: sourcePrivacyRequired,
+            sourceID: sourceID,
+            requiring: .browsing
+        ) == .sourcePrivacyRequired(policyVersion: "fixture-policy")
+    )
+
+    let privacyAccepted = OnlineSourceSummary(
+        sourceID: sourceID,
+        providerKind: .googleDrive,
+        displayName: "Fixture",
+        capabilities: [.browsing],
+        privacyPolicyVersion: "fixture-policy",
+        isRegistered: true,
+        isPrivacyAccepted: true,
+        isEnabled: false,
+        isRuntimeEnabled: false
+    )
+    #expect(
+        OnlineSourceAvailabilityEvaluator.issue(
+            in: OnlineSourceSnapshot(
+                isGloballyEnabled: false,
+                isApplicationPrivacyAccepted: true,
+                sources: [privacyAccepted]
+            ),
+            sourceID: sourceID,
+            requiring: .browsing
+        ) == .globalServiceDisabled
+    )
+}
+
 @MainActor
 @Test("online source coordinator enforces application and source privacy gates")
 func onlineSourceCoordinatorEnforcesPrivacyGates() async throws {

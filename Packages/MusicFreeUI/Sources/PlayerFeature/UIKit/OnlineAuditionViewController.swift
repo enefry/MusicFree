@@ -21,6 +21,10 @@ public final class OnlineAuditionViewController: UIViewController {
     private var latest = OnlineAuditionSnapshot.idle
     private var isCollapsed = false
     private var isSheetPresented = false
+
+    /// Keeps presentation-only state aligned when the same audition controls
+    /// are hosted in separate portrait and landscape containers.
+    public var onCollapsedStateChange: ((Bool) -> Void)?
     private var surfaceLeadingConstraint: NSLayoutConstraint!
     private var surfaceTrailingConstraint: NSLayoutConstraint!
     private var surfaceWidthConstraint: NSLayoutConstraint!
@@ -102,6 +106,8 @@ public final class OnlineAuditionViewController: UIViewController {
         let controls = UIStackView(arrangedSubviews: [playButton, queueButton])
         controls.axis = .horizontal
         controls.spacing = 2
+        controls.distribution = .fill
+        controls.setContentHuggingPriority(.required, for: .horizontal)
         controls.setContentCompressionResistancePriority(.required, for: .horizontal)
         [labels, controls].forEach { $0.translatesAutoresizingMaskIntoConstraints = false }
         let row = UIStackView(arrangedSubviews: [collapseButton, labels, controls])
@@ -132,8 +138,11 @@ public final class OnlineAuditionViewController: UIViewController {
             row.centerYAnchor.constraint(equalTo: surface.contentView.centerYAnchor),
             row.topAnchor.constraint(greaterThanOrEqualTo: surface.contentView.topAnchor),
             row.bottomAnchor.constraint(lessThanOrEqualTo: surface.contentView.bottomAnchor),
-            playButton.widthAnchor.constraint(greaterThanOrEqualToConstant: MusicFreeLayoutMetrics.minimumHitTarget),
-            queueButton.widthAnchor.constraint(greaterThanOrEqualToConstant: MusicFreeLayoutMetrics.minimumHitTarget),
+            // These are icon-only controls. Their hit target must stay 44pt
+            // wide instead of absorbing the labels' remaining horizontal
+            // space when UIKit lays out the shared tab accessory.
+            playButton.widthAnchor.constraint(equalToConstant: MusicFreeLayoutMetrics.minimumHitTarget),
+            queueButton.widthAnchor.constraint(equalToConstant: MusicFreeLayoutMetrics.minimumHitTarget),
             collapseButton.widthAnchor.constraint(greaterThanOrEqualToConstant: MusicFreeLayoutMetrics.minimumHitTarget),
             playButton.heightAnchor.constraint(greaterThanOrEqualToConstant: MusicFreeLayoutMetrics.minimumHitTarget),
             queueButton.heightAnchor.constraint(greaterThanOrEqualToConstant: MusicFreeLayoutMetrics.minimumHitTarget),
@@ -244,7 +253,10 @@ public final class OnlineAuditionViewController: UIViewController {
             isInline = false
         }
         subtitleLabel.isHidden = isInline
-        collapseButton.isHidden = isInline
+        // UIKit owns the accessory's physical collapse. A manual toggle here
+        // only removes controls from a full-size bar and implies a transition
+        // it cannot perform. Keep manual collapse for standalone hosts only.
+        collapseButton.isHidden = usesSystemAccessory || isInline
         queueButton.isHidden = isInline
     }
 
@@ -311,7 +323,14 @@ public final class OnlineAuditionViewController: UIViewController {
 
     @objc private func toggle() { Task { if latest.phase == .failed || latest.phase == .ended { try? await serving.retry() } else if latest.phase == .playing { await serving.pause() } else { try? await serving.resume() } } }
     @objc private func toggleCollapsed() {
-        isCollapsed.toggle()
+        setCollapsed(!isCollapsed)
+        onCollapsedStateChange?(isCollapsed)
+    }
+
+    public func setCollapsed(_ collapsed: Bool) {
+        guard !usesSystemAccessory else { return }
+        guard isCollapsed != collapsed else { return }
+        isCollapsed = collapsed
         render(latest)
     }
 
@@ -319,8 +338,8 @@ public final class OnlineAuditionViewController: UIViewController {
     @objc private func expand(_ gesture: UITapGestureRecognizer) {
         let point = gesture.location(in: capsule)
         guard !capsulePlayButton.convert(capsulePlayButton.bounds, to: capsule).contains(point) else { return }
-        isCollapsed = false
-        render(latest)
+        setCollapsed(false)
+        onCollapsedStateChange?(isCollapsed)
     }
 
     @objc private func showQueue() {
@@ -585,9 +604,12 @@ private final class OnlineAuditionQueueViewController: UITableViewController {
     @objc private func dismissSheetOnly() { dismiss(animated: true, completion: onDismiss) }
 
     @objc private func endAudition() {
-        Task {
-            await serving.close()
-            dismiss(animated: true, completion: onDismiss)
+        // Closing the session swaps the presenting audition view out of the
+        // shared accessory. Finish dismissing while that presenter is still
+        // attached; otherwise UIKit can leave the sheet covering the player.
+        dismiss(animated: true) { [serving, onDismiss] in
+            onDismiss?()
+            Task { await serving.close() }
         }
     }
 

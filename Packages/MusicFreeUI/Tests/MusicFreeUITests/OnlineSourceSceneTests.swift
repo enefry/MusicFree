@@ -1042,6 +1042,117 @@ func dsAudioOneTimeCodeCompletesPendingAddFlow() async throws {
 }
 
 @MainActor
+@Test("Google Drive creation persists no service endpoint and enters page-local connection recovery")
+func googleDriveCreationUsesBuiltInConnectionConfiguration() async throws {
+    let sourceID = MediaSourceID("google-drive.add.fixture")
+    let settings = AppSettings(
+        importPreferences: ImportPreferences(
+            privacyPreferences: PrivacyPreferences(
+                privacyPolicyVersion: PrivacyPreferences.currentPrivacyPolicyVersion
+            )
+        )
+    )
+    let settingsStore = OnlineSourceSceneSettingsStore(settings: settings)
+    let model = OnlineSourcesSceneModel(
+        serving: OnlineSourceSceneService(
+            snapshot: OnlineSourceSnapshot(
+                isGloballyEnabled: true,
+                isApplicationPrivacyAccepted: true
+            )
+        ),
+        auditionServing: OnlineSourceSceneAuditionService(),
+        settingsServing: settingsStore,
+        isGoogleDriveOAuthConfigured: true
+    )
+
+    await model.start()
+    let result = await model.addGoogleDriveSource(
+        sourceID: sourceID,
+        displayName: "个人 Google Drive"
+    )
+    let saved = try await settingsStore.load()
+    let configuration = try #require(
+        saved.importPreferences.onlineSourcePreferences.source(for: sourceID)
+    )
+
+    guard case let .added(addedID) = result else {
+        Issue.record("Google Drive should be saved before account authorization.")
+        return
+    }
+    #expect(addedID == sourceID)
+    #expect(configuration.providerKind == .googleDrive)
+    #expect(configuration.displayName == "个人 Google Drive")
+    #expect(configuration.endpoint == nil)
+    #expect(configuration.credentialRecordID == sourceID.rawValue)
+    #expect(configuration.isEnabled)
+    #expect(model.requiresGoogleDriveAuthorization(for: sourceID))
+}
+
+@MainActor
+@Test("Adding Google Drive preserves persisted sources while the runtime registry is stale")
+func googleDriveCreationPreservesPersistedSourcesBeforeRuntimeRegistryCatchesUp() async throws {
+    let dsAudioID = MediaSourceID("dsaudio.persisted.fixture")
+    let existingGoogleID = MediaSourceID("google-drive.persisted.fixture")
+    let addedGoogleID = MediaSourceID("google-drive.added.fixture")
+    let dsAudio = try OnlineSourceConfiguration(
+        sourceID: dsAudioID,
+        providerKind: .dsAudio,
+        displayName: "Existing DS Audio",
+        endpoint: try #require(URL(string: "https://nas.example.test/dsaudio")),
+        isEnabled: false
+    )
+    let existingGoogle = try OnlineSourceConfiguration(
+        sourceID: existingGoogleID,
+        providerKind: .googleDrive,
+        displayName: "Existing Google Drive",
+        isEnabled: false
+    )
+    let settings = AppSettings(
+        importPreferences: ImportPreferences(
+            privacyPreferences: PrivacyPreferences(
+                privacyPolicyVersion: PrivacyPreferences.currentPrivacyPolicyVersion
+            ),
+            onlineSourcePreferences: OnlineSourcePreferences(
+                isEnabled: false,
+                sources: [dsAudio, existingGoogle]
+            )
+        )
+    )
+    let settingsStore = OnlineSourceSceneSettingsStore(settings: settings)
+    let model = OnlineSourcesSceneModel(
+        serving: OnlineSourceSceneService(snapshot: OnlineSourceSnapshot()),
+        auditionServing: OnlineSourceSceneAuditionService(),
+        settingsServing: settingsStore,
+        isGoogleDriveOAuthConfigured: true
+    )
+
+    await model.start()
+    #expect(Set(model.snapshot.sources.map(\.sourceID)) == [dsAudioID, existingGoogleID])
+
+    let result = await model.addGoogleDriveSource(
+        sourceID: addedGoogleID,
+        displayName: "Added Google Drive"
+    )
+    let saved = try await settingsStore.load()
+
+    guard case let .added(sourceID) = result else {
+        Issue.record("Google Drive should be added while the runtime registry is stale.")
+        return
+    }
+    #expect(sourceID == addedGoogleID)
+    #expect(Set(saved.importPreferences.onlineSourcePreferences.sources.map(\.sourceID)) == [
+        dsAudioID,
+        existingGoogleID,
+        addedGoogleID,
+    ])
+    #expect(Set(model.snapshot.sources.map(\.sourceID)) == [
+        dsAudioID,
+        existingGoogleID,
+        addedGoogleID,
+    ])
+}
+
+@MainActor
 @Test("Online catalog browsing exposes the next page to UIKit callers")
 func onlineCatalogBrowsingSupportsPagination() async throws {
     let sourceID = MediaSourceID("google-drive.catalog-pagination.fixture")
