@@ -1,6 +1,61 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Create a Client ID, add test users, and configure access" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Create a Client ID, add test users, and configure access" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "创建客户端 ID，添加测试用户并配置访问权限" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Client-ID erstellen, Testnutzer hinzufügen und Zugriff konfigurieren" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Crea un ID de cliente, añade usuarios de prueba y configura el acceso" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Créez un identifiant client, ajoutez des utilisateurs test et configurez l’accès" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "クライアント ID を作成し、テストユーザーを追加してアクセスを設定します" } }
+      }
+    },
+    "Google Drive setup guide" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Google Drive setup guide" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Google Drive 设置指南" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Google-Drive-Einrichtungsanleitung" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Guía de configuración de Google Drive" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Guide de configuration de Google Drive" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Google Drive 設定ガイド" } }
+      }
+    },
+    "Open in external browser" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Open in external browser" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "在外部浏览器中打开" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "In externem Browser öffnen" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Abrir en el navegador externo" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Ouvrir dans le navigateur externe" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "外部ブラウザで開く" } }
+      }
+    },
+    "The Google Drive setup guide could not be loaded." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "The Google Drive setup guide could not be loaded." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法加载 Google Drive 设置指南。" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Die Google-Drive-Einrichtungsanleitung konnte nicht geladen werden." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "No se ha podido cargar la guía de configuración de Google Drive." } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Impossible de charger le guide de configuration de Google Drive." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Google Drive 設定ガイドを読み込めませんでした。" } }
+      }
+    },
+    "View Google Drive setup guide" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "View Google Drive setup guide" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "查看 Google Drive 设置指南" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Google-Drive-Einrichtungsanleitung anzeigen" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Ver la guía de configuración de Google Drive" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Consulter le guide de configuration de Google Drive" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Google Drive 設定ガイドを表示" } }
+      }
+    },
     "“%@”不是可分享的本地文件。" : {
       "extractionState" : "manual",
       "localizations" : {
