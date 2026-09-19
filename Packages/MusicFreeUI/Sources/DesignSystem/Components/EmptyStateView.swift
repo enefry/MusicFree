@@ -62,19 +62,3 @@ public struct EmptyStateView: View {
         .accessibilityElement(children: .contain)
     }
 }
-
-// Existing placeholder Features keep their public call shape until they migrate
-// to EmptyStateView directly. The implementation now lives in the formal component.
-public struct MusicFreeEmptyState: View {
-    private let title: LocalizedStringKey
-    private let systemImage: String
-
-    public init(_ title: LocalizedStringKey, systemImage: String) {
-        self.title = title
-        self.systemImage = systemImage
-    }
-
-    public var body: some View {
-        EmptyStateView(title, systemImage: systemImage)
-    }
-}

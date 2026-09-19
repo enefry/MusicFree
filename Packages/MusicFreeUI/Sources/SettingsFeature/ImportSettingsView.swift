@@ -5,15 +5,18 @@ struct ImportSettingsView: View {
     let viewModel: SettingsViewModel
     let metadataServerEnabled: Bool
     let lyricsEnabled: Bool
+    let onNavigate: ((SettingsDestination) -> Void)?
 
     init(
         viewModel: SettingsViewModel,
         metadataServerEnabled: Bool = true,
-        lyricsEnabled: Bool = true
+        lyricsEnabled: Bool = true,
+        onNavigate: ((SettingsDestination) -> Void)? = nil
     ) {
         self.viewModel = viewModel
         self.metadataServerEnabled = metadataServerEnabled
         self.lyricsEnabled = lyricsEnabled
+        self.onNavigate = onNavigate
     }
 
     var body: some View {
@@ -36,6 +39,7 @@ struct ImportSettingsView: View {
                     metadataServerEnabled: metadataServerEnabled,
                     lyricsEnabled: lyricsEnabled
                 )
+                .onAppear { onNavigate?(.importing) }
             } label: {
                 HStack(spacing: MusicFreeSpacingTokens.small) {
                     Label(L("元数据填充"), systemImage: "wand.and.stars")
@@ -47,6 +51,22 @@ struct ImportSettingsView: View {
                 }
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("settings.import.metadataEnrichment.entry")
+            }
+
+            NavigationLink {
+                OnlineSourceAvailabilitySettingsView(viewModel: viewModel)
+                .onAppear { onNavigate?(.importing) }
+            } label: {
+                HStack(spacing: MusicFreeSpacingTokens.small) {
+                    Label(L("在线源可用性"), systemImage: "externaldrive.connected.to.line.below")
+                    Spacer(minLength: MusicFreeSpacingTokens.small)
+                    Text(onlineSourceAvailabilityEntryStatus)
+                        .font(MusicFreeTypographyTokens.caption)
+                        .foregroundStyle(MusicFreeColorTokens.foregroundSecondary)
+                        .multilineTextAlignment(.trailing)
+                }
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("settings.import.onlineSourceAvailability.entry")
             }
         }
     }
@@ -64,6 +84,19 @@ struct ImportSettingsView: View {
             enabledProviderIDs.contains($0.provider)
                 && $0.isRegistered
                 && $0.authorization == .authorized
+        }.count
+        guard availableCount > 0 else { return L("暂无可用来源") }
+        return L("%d 个来源可用", availableCount)
+    }
+
+    private var onlineSourceAvailabilityEntryStatus: String {
+        guard viewModel.isPrivacyPolicyAccepted else {
+            return L("需要先同意隐私政策")
+        }
+        guard viewModel.isOnlineSourcesEnabled else { return L("未开启") }
+
+        let availableCount = viewModel.onlineSourceConfigurations.filter {
+            $0.isEnabled && isOnlineSourcePrivacyAccepted($0)
         }.count
         guard availableCount > 0 else { return L("暂无可用来源") }
         return L("%d 个来源可用", availableCount)

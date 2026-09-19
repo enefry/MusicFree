@@ -98,15 +98,31 @@ final class NowPlayingHistoryLoader: ObservableObject {
     }
   }
 
-  func observeChanges() async {
-    guard let library else { return }
-    let changes = await library.makeChangeStream()
-    for await change in changes {
-      guard !Task.isCancelled else { return }
-      guard change.categories.contains(.playbackHistory) else { continue }
-      await load()
+    func observeChanges() async {
+        guard let library else { return }
+        let changes = await library.makeChangeStream()
+        for await change in changes {
+            guard !Task.isCancelled else { return }
+            if change.categories.contains(.playbackHistory) {
+                await load()
+                continue
+            }
+
+            let trackCategories: Set<LibraryChangeCategory> = [
+                .tracks,
+                .artwork,
+                .deletions
+            ]
+            guard !change.categories.isDisjoint(with: trackCategories),
+                  !change.affectedIDs.trackIDs.isEmpty
+            else { continue }
+            await refreshVisibleTracks(
+                ids: change.affectedIDs.trackIDs,
+                includesDeletions: change.categories.contains(.deletions),
+                library: library
+            )
+        }
     }
-  }
 
   func dismissFailure() {
     failureMessage = nil
@@ -120,6 +136,44 @@ final class NowPlayingHistoryLoader: ObservableObject {
       for: items.map(\.track),
       from: library
     )
+  }
+
+  private func refreshVisibleTracks(
+    ids: Set<MediaItemID>,
+    includesDeletions: Bool,
+    library: any LibraryServing
+  ) async {
+    let visibleIDs = Set(items.map { $0.track.id }).intersection(ids)
+    guard !visibleIDs.isEmpty else { return }
+
+    var refreshed = items
+    var changed = false
+    for id in visibleIDs {
+      let track: Track?
+      do {
+        track = try await library.track(id: id)
+      } catch {
+        continue
+      }
+      if let track {
+        for index in refreshed.indices where refreshed[index].track.id == id {
+          let replacement = refreshed[index].replacingTrack(track)
+          if replacement != refreshed[index] {
+            refreshed[index] = replacement
+            changed = true
+          }
+        }
+      } else if includesDeletions {
+        let next = refreshed.filter { $0.track.id != id }
+        changed = changed || next.count != refreshed.count
+        refreshed = next
+      }
+    }
+    guard changed, !Task.isCancelled else { return }
+    items = refreshed
+    if let names = try? await loadArtistNames(for: refreshed, library: library) {
+      artistNames = names
+    }
   }
 }
 

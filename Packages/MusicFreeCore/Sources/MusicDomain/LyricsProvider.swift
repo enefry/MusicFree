@@ -36,7 +36,8 @@ public struct LyricsQuery: Hashable, Sendable {
         durationSeconds: TimeInterval? = nil
     ) {
         self.itemID = itemID
-        self.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.title = MetadataTextRepair.repair(title)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         self.artistName = Self.normalized(artistName)
         self.albumName = Self.normalized(albumName)
         self.durationSeconds = durationSeconds.flatMap {
@@ -46,7 +47,8 @@ public struct LyricsQuery: Hashable, Sendable {
 
     private static func normalized(_ value: String?) -> String? {
         guard let value else { return nil }
-        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = MetadataTextRepair.repair(value)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         return normalized.isEmpty ? nil : normalized
     }
 }

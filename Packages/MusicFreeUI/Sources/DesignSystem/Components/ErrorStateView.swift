@@ -7,9 +7,9 @@ public struct ErrorStateView: View {
     private let retry: (() -> Void)?
 
     public init(
-        title: String = "Unable to load",
+        title: String = L("无法加载"),
         message: String,
-        retryTitle: String? = "Try Again",
+        retryTitle: String? = L("重试"),
         retry: (() -> Void)? = nil
     ) {
         self.title = title

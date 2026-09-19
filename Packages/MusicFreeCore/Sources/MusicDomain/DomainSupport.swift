@@ -13,6 +13,20 @@ internal func musicDomainOptionalText(_ value: String?) -> String? {
     return normalized.isEmpty ? nil : normalized
 }
 
+internal func musicDomainOptionalTechnicalText(_ value: String?) -> String? {
+    musicDomainOptionalText(value)
+}
+
+@inline(__always)
+internal func musicDomainRequiredMetadataText(_ value: String, field: String) -> String {
+    musicDomainRequiredText(MetadataTextRepair.repair(value), field: field)
+}
+
+internal func musicDomainOptionalMetadataText(_ value: String?) -> String? {
+    guard let value else { return nil }
+    return musicDomainOptionalText(MetadataTextRepair.repair(value))
+}
+
 @inline(__always)
 internal func musicDomainIdentifier(_ value: String, typeName: String) -> String {
     precondition(!value.isEmpty, "\(typeName) cannot be empty")

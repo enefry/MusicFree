@@ -1,7 +1,7 @@
 import Foundation
 import LibraryAPI
 import MediaSourceAPI
-import OSLog
+import MusicDomain
 
 /// Runtime configuration for the public MusicBrainz and Cover Art Archive
 /// services. MusicBrainz requires a descriptive User-Agent and asks clients to
@@ -139,7 +139,7 @@ public struct MusicBrainzAPIConfiguration: Sendable, Equatable {
 public actor MusicBrainzMetadataProvider: MetadataEnrichmentProviding {
     public let provider: MetadataEnrichmentProvider = .musicBrainz
 
-    private static let logger = Logger(
+    private static let logger = MusicLogger(
         subsystem: "com.musicfree.app",
         category: "musicbrainz-api"
     )
@@ -180,7 +180,7 @@ public actor MusicBrainzMetadataProvider: MetadataEnrichmentProviding {
                 artistName: artistName
             )
             Self.logger.info(
-                "search request title=\(trackName, privacy: .public) artist=\(artistName ?? "-", privacy: .public) variant=\(index + 1, privacy: .public)/\(trackNames.count, privacy: .public)"
+                "search request title=\(trackName) artist=\(artistName ?? "-") variant=\(index + 1)/\(trackNames.count)"
             )
             let request = try makeRequest(
                 baseURL: configuration.baseURL,
@@ -213,7 +213,7 @@ public actor MusicBrainzMetadataProvider: MetadataEnrichmentProviding {
                 )
             } catch {
                 Self.logger.error(
-                    "search response decode failed bytes=\(data.count, privacy: .public)"
+                    "search response decode failed bytes=\(data.count)"
                 )
                 throw MetadataEnrichmentError.requestFailed(
                     code: "musicbrainz_invalid_search_response",
@@ -430,7 +430,7 @@ public actor MusicBrainzMetadataProvider: MetadataEnrichmentProviding {
                 )
             }
             Self.logger.info(
-                "request completed operation=\(operation, privacy: .public) path=\(httpResponse.url?.path ?? "-", privacy: .public) status=\(httpResponse.statusCode, privacy: .public) bytes=\(data.count, privacy: .public)"
+                "request completed operation=\(operation) path=\(httpResponse.url?.path ?? "-") status=\(httpResponse.statusCode) bytes=\(data.count)"
             )
             if allowNotFound, httpResponse.statusCode == 404 {
                 return nil
@@ -688,7 +688,8 @@ public actor MusicBrainzMetadataProvider: MetadataEnrichmentProviding {
 
     private static func normalized(_ value: String?) -> String? {
         guard let value else { return nil }
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = MetadataTextRepair.repair(value)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
     }
 

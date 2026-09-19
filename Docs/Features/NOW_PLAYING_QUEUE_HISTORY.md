@@ -16,11 +16,11 @@
 
 ## 当前差异
 
-- `NowPlayingView.queueSurface` 目前只展示紧凑头部、播放模式和“继续播放”，没有历史区域。
-- `QueueView` 单独展示历史，但它是独立的播放队列页面，不能形成参考截图中的连续 Now Playing 体验。
+- `PlayerNowPlayingViewController` 的 queue surface 目前只展示紧凑头部、播放模式和“继续播放”，没有历史区域。
+- `PlayerQueueViewController` 单独展示历史，但它是独立的播放队列页面，不能形成参考截图中的连续 Now Playing 体验。
 - 完整队列页面初始定位当前歌曲，历史位于当前歌曲上方，需要下拉才能看到。
 - 当前历史行点击直接发送 `.play`，没有“立即播放”和“插入下一首”两种明确操作。
-- Now Playing 页面由 `RootScene` 的系统 `sheet` 展示，使用 `.presentationDetents([.large])` 与 `.presentationContentInteraction(.scrolls)` 交给系统协调页面下拉关闭和内部滚动。
+- Now Playing 页面由 `RootViewController` 使用 UIKit `UISheetPresentationController` 展示；内部队列滚动和页面下拉关闭由 UIKit Sheet 协调。
 
 ## 交互约定
 
@@ -53,13 +53,13 @@
 
 - 抽取共享的 Now Playing 队列内容、历史行、当前播放大行和继续播放行。
 - 为历史起点、当前播放和继续播放设置稳定滚动 ID。
-- 保留 `QueueView` 的编辑、排序和删除能力，但复用相同的行展示和数据语义。
+- 保留 `PlayerQueueViewController` 的编辑、排序和删除能力，但复用相同的行展示和数据语义。
 
 ### 阶段二：实现目标滚动布局
 
 - 将历史区域接入 Now Playing queue surface。
 - 将当前播放改为大尺寸展示，封面、标题、收藏和更多操作保持稳定布局。
-- 初始通过 `ScrollViewReader` 定位当前播放；用户下拉后可以露出历史。
+- 初始通过 UIKit scroll view 定位当前播放；用户下拉后可以露出历史。
 - 保持底部播放控制固定，并验证横竖屏、短屏和大字体布局。
 
 ### 阶段三：实现播放与插入
@@ -70,7 +70,7 @@
 
 ### 阶段四：系统 Sheet 与视觉细节
 
-- 保持 `RootScene` 使用系统 `sheet`，由 `.presentationContentInteraction(.scrolls)` 协调内部列表滚动和页面下拉关闭，避免增加第二套自定义拖拽状态机。
+- 保持 `RootViewController` 使用 UIKit `UISheetPresentationController`，由原生滚动容器协调内部列表滚动和页面下拉关闭，避免增加第二套自定义拖拽状态机。
 - 通过系统 `presentationDetents` 和拖拽指示器保持系统手势反馈；Sheet 内容单独使用深色播放器外观，不改变底层应用当前外观。
 - Now Playing 内容使用稳定的纯黑播放器底色；系统 Sheet 的 `presentationBackground` 必须保持透明，避免滑动关闭时用黑色、封面或渐变遮住底层页面。
 - 在基础交互稳定后，再增加列表行随滚动缩小的效果；该效果不阻塞前面阶段验收。
@@ -114,4 +114,4 @@ Now Playing 的任何代码、布局、背景、Sheet 或播放列表改动，�
 3. 运行 `testNowPlayingLargeHistoryScrollRemainsResponsive`。它会生成至少 80 条真实播放历史，确认历史数量、历史起点和终点都可到达，往返滚动后底部控制仍可交互，并记录滚动稳定性耗时。
 4. 变更后必须重新检查 `testAppleMusicPlayerScreenshots` 的默认封面、队列历史、歌词、横屏短高度和完整队列截图；不允许只复用旧的 `.xcresult` 作为本次通过证据。
 
-实现约束：`RootScene` 的系统 Sheet `.presentationBackground` 必须透明，生产环境 Now Playing 不得挂载全屏固定 backdrop，让系统下滑动画能显示底层页面；Now Playing 内容不得新增第二套背景加载器或自定义关闭拖拽状态机。队列历史必须保持在一个系统协调的 `ScrollView` 中，并使用惰性行布局承载大数量记录。
+实现约束：`RootViewController` 的 UIKit Sheet 使用透明/一致的呈现背景，生产环境 Now Playing 不得挂载全屏固定 backdrop，让系统下滑动画能显示底层页面；Now Playing 内容不得新增第二套背景加载器或自定义关闭拖拽状态机。队列历史必须保持在一个系统协调的原生滚动容器中，并使用惰性行布局承载大数量记录。

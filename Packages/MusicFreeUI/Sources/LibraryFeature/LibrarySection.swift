@@ -27,10 +27,12 @@ public enum LibrarySection: String, CaseIterable, Hashable, Identifiable, Sendab
 
     public var systemImage: String {
         switch self {
-        case .tracks: return "music.note.list"
+        // The App Store reference uses the single-note glyph on list rows;
+        // the list variant is reserved for the primary Library tab icon.
+        case .tracks: return "music.note"
         case .favorites: return "star"
         case .albums: return "square.stack"
-        case .artists: return "person.2"
+        case .artists: return "music.mic"
         case .genres: return "guitars"
         case .folders: return "folder"
         case .recent: return "clock"

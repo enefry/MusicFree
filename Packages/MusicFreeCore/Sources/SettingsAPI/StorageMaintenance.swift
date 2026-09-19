@@ -86,6 +86,13 @@ public protocol StorageMaintenanceServing: Sendable {
         to limit: StorageByteLimit,
         retainingStagingFor retention: Duration
     ) async throws -> StorageMaintenanceResult
+    /// Runs best-effort maintenance that is safe to defer until after the app
+    /// becomes usable. Adapters may override this to avoid the before/after
+    /// accounting required by user-initiated maintenance screens.
+    func performAutomaticMaintenance(
+        cacheLimit: StorageByteLimit?,
+        retainingStagingFor retention: Duration
+    ) async throws
 }
 
 public extension StorageMaintenanceServing {
@@ -103,5 +110,36 @@ public extension StorageMaintenanceServing {
     ) async throws -> StorageMaintenanceResult {
         let snapshot = try await usage()
         return StorageMaintenanceResult(usageBefore: snapshot, usageAfter: snapshot)
+    }
+
+    func performAutomaticMaintenance(
+        cacheLimit: StorageByteLimit?,
+        retainingStagingFor retention: Duration
+    ) async throws {
+        var firstFailure: (any Error)?
+        if let cacheLimit {
+            do {
+                _ = try await pruneCache(
+                    to: cacheLimit,
+                    retainingStagingFor: retention
+                )
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                firstFailure = error
+            }
+        }
+        do {
+            _ = try await pruneOrphanedArtwork()
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            if firstFailure == nil {
+                firstFailure = error
+            }
+        }
+        if let firstFailure {
+            throw firstFailure
+        }
     }
 }

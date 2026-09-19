@@ -5,16 +5,18 @@ import PackageDescription
 let package = Package(
     name: "MusicFreeInfrastructure",
     platforms: [
-        .iOS(.v26)
+        .iOS(.v17)
     ],
     products: [
         .library(name: "LocalMediaAdapter", targets: ["LocalMediaAdapter"]),
         .library(name: "LibraryPersistenceAdapter", targets: ["LibraryPersistenceAdapter"]),
         .library(name: "AppleSystemAdapter", targets: ["AppleSystemAdapter"]),
-        .library(name: "PreferencesPersistenceAdapter", targets: ["PreferencesPersistenceAdapter"])
+        .library(name: "PreferencesPersistenceAdapter", targets: ["PreferencesPersistenceAdapter"]),
+        .library(name: "OnlineSourceAdapter", targets: ["OnlineSourceAdapter"])
     ],
     dependencies: [
-        .package(path: "../MusicFreeCore")
+        .package(path: "../MusicFreeCore"),
+        .package(path: "../MusicFreeUI")
     ],
     targets: [
         .target(
@@ -45,7 +47,16 @@ let package = Package(
         .target(
             name: "PreferencesPersistenceAdapter",
             dependencies: [
-                .product(name: "SettingsAPI", package: "MusicFreeCore")
+                .product(name: "SettingsAPI", package: "MusicFreeCore"),
+                .product(name: "AppServices", package: "MusicFreeCore")
+            ]
+        ),
+        .target(
+            name: "OnlineSourceAdapter",
+            dependencies: [
+                .product(name: "DesignSystem", package: "MusicFreeUI"),
+                .product(name: "MusicDomain", package: "MusicFreeCore"),
+                .product(name: "MediaSourceAPI", package: "MusicFreeCore")
             ]
         ),
         .testTarget(
@@ -55,6 +66,7 @@ let package = Package(
                 "LibraryPersistenceAdapter",
                 "AppleSystemAdapter",
                 "PreferencesPersistenceAdapter",
+                "OnlineSourceAdapter",
                 .product(name: "MusicTestSupport", package: "MusicFreeCore")
             ]
         )

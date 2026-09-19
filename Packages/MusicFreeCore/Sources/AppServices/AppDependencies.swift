@@ -10,6 +10,8 @@ import SystemIntegrationAPI
 /// composition root. No adapter or framework is constructed by AppServices.
 public struct AppDependencies {
     public let mediaSources: [any MediaSource]
+    public let onlineSources: [any OnlineSource]
+    public let onlineSourceFactory: (any OnlineSourceFactory)?
     public let mediaImporter: (any MediaImporting)?
     public let managedMediaRemover: (any ManagedMediaRemoving)?
     /// Writes artwork bytes and returns a receipt that keeps a new file
@@ -20,11 +22,13 @@ public struct AppDependencies {
     public let playbackQueueRepository: (any PlaybackQueueRepository)?
     public let playbackHistoryRepository: (any PlaybackHistoryRepository)?
     public let settingsRepository: (any SettingsRepository)?
+    public let onlineDownloadQueueStore: (any OnlineDownloadQueueStore)?
     public let metadataEnrichmentProviders: [any MetadataEnrichmentProviding]
     public let lyricsProviders: [any LyricsProviding]
     public let metadataEnrichmentRecordRepository: (any MetadataEnrichmentRecordRepository)?
     public let storageMaintenance: (any StorageMaintenanceServing)?
     public let playbackEngine: (any PlaybackEngine)?
+    public let onlineAuditionEngine: (any PlaybackEngine)?
     public let audioSession: (any AudioSessionManaging)?
     public let nowPlaying: (any NowPlayingPublishing)?
     public let remoteCommands: (any RemoteCommandReceiving)?
@@ -41,6 +45,8 @@ public struct AppDependencies {
     @MainActor
     public init(
         mediaSources: [any MediaSource] = [],
+        onlineSources: [any OnlineSource] = [],
+        onlineSourceFactory: (any OnlineSourceFactory)? = nil,
         mediaImporter: (any MediaImporting)? = nil,
         managedMediaRemover: (any ManagedMediaRemoving)? = nil,
         artworkWriter: (@Sendable (Data, ArtworkID) async throws -> ArtworkWriteReceipt)? = nil,
@@ -49,6 +55,7 @@ public struct AppDependencies {
         playbackQueueRepository: (any PlaybackQueueRepository)? = nil,
         playbackHistoryRepository: (any PlaybackHistoryRepository)? = nil,
         settingsRepository: (any SettingsRepository)? = nil,
+        onlineDownloadQueueStore: (any OnlineDownloadQueueStore)? = nil,
         metadataEnrichmentProviders: [any MetadataEnrichmentProviding] = [],
         /// Compatibility injection for the original single-provider graph.
         metadataEnrichmentProvider: (any MetadataEnrichmentProviding)? = nil,
@@ -56,6 +63,7 @@ public struct AppDependencies {
         metadataEnrichmentRecordRepository: (any MetadataEnrichmentRecordRepository)? = nil,
         storageMaintenance: (any StorageMaintenanceServing)? = nil,
         playbackEngine: (any PlaybackEngine)? = nil,
+        onlineAuditionEngine: (any PlaybackEngine)? = nil,
         audioSession: (any AudioSessionManaging)? = nil,
         nowPlaying: (any NowPlayingPublishing)? = nil,
         remoteCommands: (any RemoteCommandReceiving)? = nil,
@@ -73,6 +81,13 @@ public struct AppDependencies {
             }
         }
 
+        var seenOnlineSources = Set<MediaSourceID>()
+        for source in onlineSources {
+            guard seenOnlineSources.insert(source.descriptor.sourceID).inserted else {
+                throw AppServiceError.duplicateSource(source.descriptor.sourceID)
+            }
+        }
+
         if systemCapabilities.supports(.audioSession), audioSession == nil {
             throw AppServiceError.incompatibleDependency("audioSession")
         }
@@ -84,6 +99,8 @@ public struct AppDependencies {
         }
 
         self.mediaSources = mediaSources
+        self.onlineSources = onlineSources
+        self.onlineSourceFactory = onlineSourceFactory
         self.mediaImporter = mediaImporter
         self.managedMediaRemover = managedMediaRemover
         self.artworkWriter = artworkWriter
@@ -92,6 +109,7 @@ public struct AppDependencies {
         self.playbackQueueRepository = playbackQueueRepository
         self.playbackHistoryRepository = playbackHistoryRepository
         self.settingsRepository = settingsRepository
+        self.onlineDownloadQueueStore = onlineDownloadQueueStore
         var resolvedMetadataProviders = metadataEnrichmentProviders
         if let metadataEnrichmentProvider {
             guard !resolvedMetadataProviders.contains(where: {
@@ -124,6 +142,7 @@ public struct AppDependencies {
         self.metadataEnrichmentRecordRepository = metadataEnrichmentRecordRepository
         self.storageMaintenance = storageMaintenance
         self.playbackEngine = playbackEngine
+        self.onlineAuditionEngine = onlineAuditionEngine
         self.audioSession = audioSession
         self.nowPlaying = nowPlaying
         self.remoteCommands = remoteCommands

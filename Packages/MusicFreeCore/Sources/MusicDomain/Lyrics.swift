@@ -10,7 +10,8 @@ public struct LyricLine: Codable, Equatable, Hashable, Sendable {
     public init(timestampMilliseconds: Int64, text: String) {
         precondition(timestampMilliseconds >= 0, "LyricLine timestamp cannot be negative")
         self.timestampMilliseconds = timestampMilliseconds
-        self.text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.text = MetadataTextRepair.repair(text)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -46,7 +47,8 @@ public struct TrackLyrics: Codable, Equatable, Hashable, Sendable {
     public let declaredOffsetMilliseconds: Int
 
     public init(rawText: String) {
-        let lineNormalized = rawText.replacingOccurrences(of: "\r\n", with: "\n")
+        let repairedText = MetadataTextRepair.repair(rawText)
+        let lineNormalized = repairedText.replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
         // UTF-8 LRC files commonly begin with a BOM. It is metadata about the
         // file encoding, not lyric text, so remove it only at the document start.
@@ -64,7 +66,8 @@ public struct TrackLyrics: Codable, Equatable, Hashable, Sendable {
         timedLines: [LyricLine],
         declaredOffsetMilliseconds: Int = 0
     ) {
-        self.rawText = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.rawText = MetadataTextRepair.repair(rawText)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         self.timedLines = timedLines.sorted {
             if $0.timestampMilliseconds != $1.timestampMilliseconds {
                 return $0.timestampMilliseconds < $1.timestampMilliseconds
@@ -72,6 +75,24 @@ public struct TrackLyrics: Codable, Equatable, Hashable, Sendable {
             return $0.text < $1.text
         }
         self.declaredOffsetMilliseconds = declaredOffsetMilliseconds
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case rawText
+        case timedLines
+        case declaredOffsetMilliseconds
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            rawText: try container.decode(String.self, forKey: .rawText),
+            timedLines: try container.decodeIfPresent([LyricLine].self, forKey: .timedLines) ?? [],
+            declaredOffsetMilliseconds: try container.decodeIfPresent(
+                Int.self,
+                forKey: .declaredOffsetMilliseconds
+            ) ?? 0
+        )
     }
 
     public var isEmpty: Bool {

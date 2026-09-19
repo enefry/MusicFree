@@ -83,6 +83,23 @@ func nowPlayingSnapshotPreservesValueSemantics() {
     #expect(snapshot == snapshot)
 }
 
+@Test("Now Playing snapshots clamp transient positions to the known duration")
+func nowPlayingSnapshotClampsTransientElapsedPosition() {
+    let itemID = MediaItemID(sourceID: .local, externalID: "track-clamp")
+
+    let snapshot = NowPlayingSnapshot(
+        itemID: itemID,
+        title: "Song",
+        duration: .seconds(180),
+        elapsed: .seconds(240),
+        isPlaying: true,
+        rate: 1
+    )
+
+    #expect(snapshot.elapsed == .seconds(180))
+    #expect(snapshot.projectedElapsed(at: Date().addingTimeInterval(30)) == .seconds(180))
+}
+
 @Test("Remote commands expose stable kinds and validation")
 func remoteCommandsPreserveKindsAndValueSemantics() throws {
     let commands: [RemotePlaybackCommand] = [

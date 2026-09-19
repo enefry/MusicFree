@@ -146,7 +146,8 @@ public struct TrackQuery: Codable, Hashable, Sendable {
 
     private static func normalizedSearchText(_ value: String?) -> String? {
         guard let value else { return nil }
-        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = MetadataTextRepair.repair(value)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         return normalized.isEmpty ? nil : normalized
     }
 }
@@ -175,7 +176,8 @@ public struct AlbumQuery: Codable, Hashable, Sendable {
 
     private static func normalizedSearchText(_ value: String?) -> String? {
         guard let value else { return nil }
-        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = MetadataTextRepair.repair(value)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         return normalized.isEmpty ? nil : normalized
     }
 }
@@ -198,7 +200,8 @@ public struct ArtistQuery: Codable, Hashable, Sendable {
 
     private static func normalizedSearchText(_ value: String?) -> String? {
         guard let value else { return nil }
-        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = MetadataTextRepair.repair(value)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         return normalized.isEmpty ? nil : normalized
     }
 }
@@ -237,7 +240,8 @@ public struct GenreQuery: Codable, Hashable, Sendable {
         sourceID: MediaSourceID? = nil,
         sort: GenreSortDescriptor = .default
     ) {
-        let normalized = searchText?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = searchText.map { MetadataTextRepair.repair($0) }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
         self.searchText = normalized?.isEmpty == false ? normalized : nil
         self.sourceID = sourceID
         self.sort = sort
@@ -277,5 +281,44 @@ public struct LibraryPageRequest: Codable, Hashable, Sendable {
             limit: container.decode(Int.self, forKey: .limit),
             cursor: container.decodeIfPresent(LibraryCursor.self, forKey: .cursor)
         )
+    }
+}
+
+/// A bounded library-wide search request. Results are independently capped per
+/// category so short queries cannot create an unbounded presentation update.
+public struct LibrarySearchRequest: Hashable, Sendable {
+    public let searchText: String?
+    public let sourceID: MediaSourceID?
+    public let limit: Int
+
+    public init(
+        searchText: String?,
+        sourceID: MediaSourceID? = nil,
+        limit: Int = LibraryPageRequest.defaultLimit
+    ) throws {
+        _ = try LibraryPageRequest(limit: limit)
+        let normalized = searchText.map { MetadataTextRepair.repair($0) }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        self.searchText = normalized?.isEmpty == false ? normalized : nil
+        self.sourceID = sourceID
+        self.limit = limit
+    }
+}
+
+/// The first bounded result set for the library search surface. Artists are
+/// supporting metadata for result subtitles and do not form a visible section.
+public struct LibrarySearchResults: Equatable, Sendable {
+    public let tracks: [Track]
+    public let albums: [Album]
+    public let artists: [Artist]
+
+    public init(
+        tracks: [Track] = [],
+        albums: [Album] = [],
+        artists: [Artist] = []
+    ) {
+        self.tracks = tracks
+        self.albums = albums
+        self.artists = artists
     }
 }

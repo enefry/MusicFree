@@ -1,4 +1,5 @@
 import Foundation
+import MediaSourceAPI
 import PlaybackAPI
 import SettingsAPI
 import SystemIntegrationAPI
@@ -6,6 +7,7 @@ import SystemIntegrationAPI
 public enum AppStartupFallback: String, Codable, Equatable, Hashable, Sendable {
     case settingsCorrupted
     case storagePruningFailed
+    case metadataRepairFailed
 }
 
 @available(macOS 13.0, iOS 16.0, *)
@@ -40,6 +42,10 @@ public final class AppServiceContainer {
     public let sleepTimer: any SleepTimerServing
     public let settings: any SettingsServing
     public let storageMaintenance: any StorageMaintenanceServing
+    public let onlineSources: any OnlineSourceServing
+    public let onlineAudition: any OnlineAuditionServing
+    public let onlineDownloadQueue: OnlineDownloadQueue
+    public let mediaSourceResolver: any MediaSourceResolving
 
     private let libraryCoordinator: LibraryCoordinator
     private let artworkCoordinator: ArtworkCoordinator
@@ -51,14 +57,26 @@ public final class AppServiceContainer {
     private let sleepTimerCoordinator: SleepTimerCoordinator
     private let settingsCoordinator: SettingsCoordinator
     private let storageMaintenanceCoordinator: StorageMaintenanceCoordinator
+    private let onlineSourceCoordinator: OnlineSourceCoordinator
+    private let onlineAuditionCoordinator: OnlineAuditionCoordinator
+    private let onlineDownloadQueueCoordinator: OnlineDownloadQueue
     private var settingsTask: Task<Void, Never>?
     private var startupReport: AppStartupReport?
     private var startTask: (id: UUID, task: Task<AppStartupReport, Error>)?
+    private var automaticMaintenanceTask: (
+        id: UUID,
+        task: Task<Set<AppStartupFallback>, Never>
+    )?
+    private var automaticMaintenanceFallbacks: Set<AppStartupFallback>?
     private var stopTask: (id: UUID, task: Task<Void, Never>)?
     private var isStopped = false
 
     public init(dependencies: AppDependencies) throws {
         let sourceRegistry = try MediaSourceRegistry(sources: dependencies.mediaSources)
+        let onlineSourceService = try OnlineSourceCoordinator(
+            sources: dependencies.onlineSources,
+            factory: dependencies.onlineSourceFactory
+        )
         let playbackService = PlaybackCoordinator(
             libraryRepository: dependencies.libraryRepository,
             sourceResolver: sourceRegistry,
@@ -74,6 +92,20 @@ public final class AppServiceContainer {
             idGenerator: dependencies.idGenerator,
             randomSource: dependencies.randomSource
         )
+        let onlineAuditionService = OnlineAuditionCoordinator(
+            onlineSources: onlineSourceService,
+            engine: dependencies.onlineAuditionEngine,
+            audioSession: dependencies.audioSession,
+            formalPlayback: playbackService
+        )
+        playbackService.setTransientPlaybackPreflight { [weak onlineAuditionService] in
+            guard let onlineAuditionService,
+                  onlineAuditionService.snapshot.hasRetainedSession
+            else {
+                return
+            }
+            await onlineAuditionService.close()
+        }
         let artworkPruner: (@Sendable () async throws -> Void)?
         if let storageMaintenance = dependencies.storageMaintenance {
             artworkPruner = { [storageMaintenance] in
@@ -110,6 +142,15 @@ public final class AppServiceContainer {
             providers: dependencies.lyricsProviders,
             library: libraryService
         )
+        let importService = ImportCoordinator(
+            importer: dependencies.mediaImporter,
+            metadataEnrichment: metadataEnrichmentService
+        )
+        let onlineDownloadQueueService = OnlineDownloadQueue(
+            onlineSources: onlineSourceService,
+            importer: importService,
+            persistence: dependencies.onlineDownloadQueueStore
+        )
 
         self.playbackCoordinator = playbackService
         self.sleepTimerCoordinator = sleepTimerService
@@ -117,10 +158,7 @@ public final class AppServiceContainer {
         self.artworkCoordinator = ArtworkCoordinator(sourceResolver: sourceRegistry)
         self.metadataEnrichmentCoordinator = metadataEnrichmentService
         self.lyricsCoordinator = lyricsService
-        self.importCoordinator = ImportCoordinator(
-            importer: dependencies.mediaImporter,
-            metadataEnrichment: metadataEnrichmentService
-        )
+        self.importCoordinator = importService
         self.playlistCoordinator = PlaylistCoordinator(repository: dependencies.playlistRepository)
         self.settingsCoordinator = SettingsCoordinator(
             repository: dependencies.settingsRepository,
@@ -132,6 +170,9 @@ public final class AppServiceContainer {
             adapter: dependencies.storageMaintenance,
             library: libraryService
         )
+        self.onlineSourceCoordinator = onlineSourceService
+        self.onlineAuditionCoordinator = onlineAuditionService
+        self.onlineDownloadQueueCoordinator = onlineDownloadQueueService
 
         library = libraryCoordinator
         artwork = artworkCoordinator
@@ -143,6 +184,10 @@ public final class AppServiceContainer {
         sleepTimer = sleepTimerCoordinator
         settings = settingsCoordinator
         storageMaintenance = storageMaintenanceCoordinator
+        onlineSources = onlineSourceCoordinator
+        onlineAudition = onlineAuditionCoordinator
+        onlineDownloadQueue = onlineDownloadQueueCoordinator
+        mediaSourceResolver = sourceRegistry
     }
 
     public var libraryServing: any LibraryServing { library }
@@ -157,6 +202,9 @@ public final class AppServiceContainer {
     public var sleepTimerServing: any SleepTimerServing { sleepTimer }
     public var settingsServing: any SettingsServing { settings }
     public var storageMaintenanceServing: any StorageMaintenanceServing { storageMaintenance }
+    public var onlineDownloadQueueServing: OnlineDownloadQueue {
+        onlineDownloadQueueCoordinator
+    }
 
     /// Starts recovery, loads user intent, applies capability clipping, and
     /// installs the settings-to-playback lifecycle subscription. Repeated
@@ -178,12 +226,12 @@ public final class AppServiceContainer {
             let attemptID = UUID()
             let task = Task { @MainActor [weak self] in
                 guard let self else { throw CancellationError() }
-
                 let recovery = try await self.libraryCoordinator.recoverPendingRemovals()
                 try Task.checkCancellation()
                 let settingsResult = try await self.effectiveSettingsOrDefault()
                 try Task.checkCancellation()
                 let importPreferences = settingsResult.effective.settings.importPreferences
+                await self.applyOnlineSourcePreferences(importPreferences)
                 await self.metadataEnrichmentCoordinator.setPrivacyPreferences(
                     importPreferences.privacyPreferences
                 )
@@ -200,17 +248,6 @@ public final class AppServiceContainer {
                 await self.lyricsCoordinator.setProviderPreferences(
                     importPreferences.runtimeLyricsProviders
                 )
-                try Task.checkCancellation()
-                var fallbacks = settingsResult.fallbacks
-                do {
-                    try await self.storageMaintenanceCoordinator.enforceAutomaticPruning(
-                        settingsResult.effective.settings.storagePreferences
-                    )
-                } catch is CancellationError {
-                    throw CancellationError()
-                } catch {
-                    fallbacks.insert(.storagePruningFailed)
-                }
                 try Task.checkCancellation()
                 await self.playbackCoordinator.apply(settingsResult.effective)
                 try Task.checkCancellation()
@@ -231,9 +268,12 @@ public final class AppServiceContainer {
                 let report = AppStartupReport(
                     recovery: recovery,
                     effectiveSettings: settingsResult.effective,
-                    fallbacks: fallbacks
+                    fallbacks: settingsResult.fallbacks
                 )
                 self.startupReport = report
+                self.scheduleAutomaticMaintenance(
+                    settingsResult.effective.settings.storagePreferences
+                )
                 return report
             }
             attempt = (attemptID, task)
@@ -263,6 +303,23 @@ public final class AppServiceContainer {
         await playbackCoordinator.updateCapabilities(capabilities)
     }
 
+    /// Automatic cache/artwork maintenance is deliberately outside the
+    /// launch-critical path. Callers can observe its eventual fallback without
+    /// delaying the first usable frame.
+    public func waitForPostStartupMaintenance() async -> Set<AppStartupFallback> {
+        if let automaticMaintenanceFallbacks {
+            return automaticMaintenanceFallbacks
+        }
+        guard let attempt = automaticMaintenanceTask else { return [] }
+
+        let fallbacks = await attempt.task.value
+        if automaticMaintenanceTask?.id == attempt.id {
+            automaticMaintenanceTask = nil
+            automaticMaintenanceFallbacks = fallbacks
+        }
+        return fallbacks
+    }
+
     public func updateSystemCapabilities(
         _ capabilities: SystemIntegrationCapabilitySnapshot
     ) async {
@@ -282,22 +339,31 @@ public final class AppServiceContainer {
         isStopped = true
         let stopID = UUID()
         let startAttempt = startTask
+        let maintenanceAttempt = automaticMaintenanceTask
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             startAttempt?.task.cancel()
+            maintenanceAttempt?.task.cancel()
             self.settingsTask?.cancel()
             self.settingsTask = nil
             await self.metadataEnrichmentCoordinator.setEnabled(false)
             self.sleepTimerCoordinator.stop()
+            await self.onlineDownloadQueueCoordinator.shutdown()
+            await self.onlineAuditionCoordinator.shutdown()
             await self.playbackCoordinator.shutdown()
             if let startAttempt {
                 _ = await startAttempt.task.result
+            }
+            if let maintenanceAttempt {
+                _ = await maintenanceAttempt.task.value
             }
 
             if self.startTask?.id == startAttempt?.id {
                 self.startTask = nil
             }
             self.startupReport = nil
+            self.automaticMaintenanceTask = nil
+            self.automaticMaintenanceFallbacks = nil
             if self.stopTask?.id == stopID {
                 self.stopTask = nil
             }
@@ -322,6 +388,37 @@ public final class AppServiceContainer {
                 throw error
             }
         }
+    }
+
+    private func scheduleAutomaticMaintenance(_ preferences: StoragePreferences) {
+        guard automaticMaintenanceTask == nil,
+              automaticMaintenanceFallbacks == nil
+        else {
+            return
+        }
+
+        let attemptID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return Set<AppStartupFallback>() }
+            var fallbacks = Set<AppStartupFallback>()
+            do {
+                _ = try await self.libraryCoordinator.repairMetadata()
+            } catch is CancellationError {
+                return fallbacks
+            } catch {
+                fallbacks.insert(.metadataRepairFailed)
+            }
+            do {
+                try await self.storageMaintenanceCoordinator.enforceAutomaticPruning(preferences)
+                return fallbacks
+            } catch is CancellationError {
+                return fallbacks
+            } catch {
+                fallbacks.insert(.storagePruningFailed)
+                return fallbacks
+            }
+        }
+        automaticMaintenanceTask = (attemptID, task)
     }
 
     private func defaultEffectiveSettings() async -> EffectivePlaybackSettings {
@@ -354,6 +451,7 @@ public final class AppServiceContainer {
                     preferences: effective.settings.playbackPreferences.sleepTimer
                 )
                 let importPreferences = effective.settings.importPreferences
+                await self.applyOnlineSourcePreferences(importPreferences)
                 await self.metadataEnrichmentCoordinator.setPrivacyPreferences(
                     importPreferences.privacyPreferences
                 )
@@ -372,6 +470,28 @@ public final class AppServiceContainer {
                 )
             }
         }
+    }
+
+    /// Applies the persisted online-source gate and stops a transient audition
+    /// in the same turn when settings revoke its runtime availability. Without
+    /// this boundary, the source list could correctly show a disabled source
+    /// while the dedicated audition engine kept playing its already-resolved
+    /// HTTP resource.
+    private func applyOnlineSourcePreferences(
+        _ importPreferences: ImportPreferences
+    ) async {
+        onlineSourceCoordinator.apply(importPreferences)
+        let onlineSnapshot = await onlineSourceCoordinator.snapshot()
+        onlineDownloadQueueCoordinator.restore(using: onlineSnapshot)
+        await onlineDownloadQueueCoordinator.stopUnavailable(using: onlineSnapshot)
+        let auditionSnapshot = onlineAuditionCoordinator.snapshot
+        guard auditionSnapshot.hasRetainedSession,
+              let sourceID = auditionSnapshot.sourceID,
+              onlineSnapshot.sources.first(where: { $0.sourceID == sourceID })?.isRuntimeEnabled != true
+        else {
+            return
+        }
+        await onlineAuditionCoordinator.close()
     }
 
     deinit {

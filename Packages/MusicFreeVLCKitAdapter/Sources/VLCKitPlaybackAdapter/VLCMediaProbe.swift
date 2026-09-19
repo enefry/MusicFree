@@ -10,15 +10,9 @@ import VLCKit
 public final class VLCMediaProbe: @unchecked Sendable, MediaProbing {
   private let configuration: VLCKitAdapterConfiguration
 
-#if canImport(VLCKit)
-  private let library: VLCLibrary
-#endif
-
   public init(configuration: VLCKitAdapterConfiguration) throws {
     self.configuration = configuration
-#if canImport(VLCKit)
-    self.library = try VLCLibraryFactory.shared(configuration: configuration)
-#else
+#if !canImport(VLCKit)
     throw VLCKitAdapterError.binaryUnavailable
 #endif
   }
@@ -27,6 +21,7 @@ public final class VLCMediaProbe: @unchecked Sendable, MediaProbing {
 #if canImport(VLCKit)
     do {
       try Task.checkCancellation()
+      let library = try VLCLibraryFactory.shared(configuration: configuration)
       let media = try VLCMediaFactory.makeMedia(
         for: resource,
         configuration: configuration
@@ -38,6 +33,7 @@ public final class VLCMediaProbe: @unchecked Sendable, MediaProbing {
       let waiter = VLCMediaParseWaiter(
         parser: parser,
         media: media,
+        library: library,
         timeoutMilliseconds: timeoutMilliseconds
       )
       _ = try await waiter.wait()
@@ -75,6 +71,18 @@ public final class VLCMediaProbe: @unchecked Sendable, MediaProbing {
     } catch let error as MediaSourceError {
       throw error
     } catch {
+      if shouldUseSystemFallback(for: error) {
+        do {
+          if let fallback = try await AVFoundationLocalMediaFallback.probe(resource) {
+            return try fallback.validated()
+          }
+        } catch is CancellationError {
+          throw MediaSourceError.cancelled
+        } catch {
+          // Preserve the original VLCKit failure when the system stack also
+          // cannot inspect the local resource.
+        }
+      }
       throw mapProbeError(error)
     }
 #else
@@ -109,6 +117,11 @@ public final class VLCMediaProbe: @unchecked Sendable, MediaProbing {
       }
     }
     return MediaSourceError.probeFailed(.readFailed)
+  }
+
+  private func shouldUseSystemFallback(for error: Error) -> Bool {
+    guard let adapterError = error as? VLCKitAdapterError else { return false }
+    return adapterError == .parserTimedOut || adapterError == .parserFailed
   }
 
   private func normalized(_ value: String?) -> String? {

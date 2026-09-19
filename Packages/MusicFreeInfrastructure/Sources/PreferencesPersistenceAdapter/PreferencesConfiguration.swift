@@ -13,6 +13,7 @@ public struct PreferencesConfiguration: Equatable, Sendable {
 
     public static let defaultSuiteName = "com.musicfree.preferences"
     public static let defaultKey = "com.musicfree.app-settings"
+    public static let onlineDownloadQueueKey = "com.musicfree.online-download-queue"
 
     /// The production configuration. Tests should provide a unique suite.
     public static let `default` = Self(

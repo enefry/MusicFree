@@ -42,6 +42,18 @@
         }
       }
     },
+    "CFBundleName" : {
+      "comment" : "Bundle name",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "MusicFree"
+          }
+        }
+      }
+    },
     "NSAppleMusicUsageDescription" : {
       "comment" : "Why the app requests Apple Music catalog access",
       "localizations" : {
@@ -59,14 +71,14 @@
         }
       }
     },
-    "CFBundleName" : {
-      "comment" : "Bundle name",
+    "NSLocalNetworkUsageDescription" : {
+      "comment" : "Privacy - Local Network Usage Description",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "MusicFree"
+            "value" : "用于连接你配置的 NAS、DS Audio 和其他局域网在线媒体源。"
           }
         }
       }

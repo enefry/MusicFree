@@ -8,9 +8,36 @@ scheme_name="MusicFree"
 team_id="${PUBLISH_TF_TEAM_ID:-34PEP7YC95}"
 timestamp="$(/bin/date '+%Y%m%d-%H%M%S')"
 output_root="${PUBLISH_TF_OUTPUT_ROOT:-$script_dir/dist}"
-derived_data_path="${PUBLISH_TF_DERIVED_DATA_PATH:-${TMPDIR:-/tmp}/MusicFree-TestFlight-$timestamp}"
+derived_data_path="${PUBLISH_TF_DERIVED_DATA_PATH:-$script_dir/.noindex/DerivedData/publish_tf}"
 no_upload="${PUBLISH_TF_NO_UPLOAD:-0}"
 upload_home=""
+
+google_drive_build_settings=()
+if [[ -n "${GOOGLE_DRIVE_OAUTH_ENABLED:-}" ]]; then
+    google_drive_build_settings+=(
+        "GOOGLE_DRIVE_OAUTH_ENABLED=${GOOGLE_DRIVE_OAUTH_ENABLED}"
+    )
+fi
+if [[ -n "${GOOGLE_DRIVE_OAUTH_CLIENT_ID:-}" ]]; then
+    google_drive_build_settings+=(
+        "GOOGLE_DRIVE_OAUTH_CLIENT_ID=${GOOGLE_DRIVE_OAUTH_CLIENT_ID}"
+    )
+fi
+if [[ -n "${GOOGLE_DRIVE_OAUTH_REVERSED_CLIENT_ID:-}" ]]; then
+    google_drive_build_settings+=(
+        "GOOGLE_DRIVE_OAUTH_REVERSED_CLIENT_ID=${GOOGLE_DRIVE_OAUTH_REVERSED_CLIENT_ID}"
+    )
+fi
+if [[ -n "${GOOGLE_DRIVE_OAUTH_REDIRECT_URL:-}" ]]; then
+    google_drive_build_settings+=(
+        "GOOGLE_DRIVE_OAUTH_REDIRECT_URL=${GOOGLE_DRIVE_OAUTH_REDIRECT_URL}"
+    )
+fi
+if [[ -n "${GOOGLE_DRIVE_OAUTH_URL_SCHEME:-}" ]]; then
+    google_drive_build_settings+=(
+        "GOOGLE_DRIVE_OAUTH_URL_SCHEME=${GOOGLE_DRIVE_OAUTH_URL_SCHEME}"
+    )
+fi
 
 if [[ "$output_root" != /* ]]; then
     output_root="$script_dir/$output_root"
@@ -27,6 +54,10 @@ Environment:
   APP_STORE_CONNECT_ISSUER_ID / ASC_ISSUER_ID
   APP_STORE_CONNECT_API_KEY_PATH / ASC_API_KEY_PATH
   APPLE_ID and APPLE_APP_SPECIFIC_PASSWORD
+  GOOGLE_DRIVE_OAUTH_ENABLED=YES (optional; defaults to disabled)
+  GOOGLE_DRIVE_OAUTH_CLIENT_ID (required only when Google Drive is enabled)
+  GOOGLE_DRIVE_OAUTH_REVERSED_CLIENT_ID (optional; used for the Google callback scheme)
+  GOOGLE_DRIVE_OAUTH_REDIRECT_URL / GOOGLE_DRIVE_OAUTH_URL_SCHEME (optional overrides)
   PUBLISH_TF_NO_UPLOAD=1
 EOF
 }
@@ -127,6 +158,7 @@ run_logged "$archive_log_path" xcodebuild \
     -allowProvisioningUpdates \
     DEVELOPMENT_TEAM="$team_id" \
     CODE_SIGN_STYLE=Automatic \
+    "${google_drive_build_settings[@]}" \
     archive || archive_status=$?
 
 if [[ "$archive_status" -ne 0 ]]; then

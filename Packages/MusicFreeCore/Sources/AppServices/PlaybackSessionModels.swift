@@ -3,6 +3,29 @@ import MusicDomain
 import PlaybackAPI
 import SystemIntegrationAPI
 
+/// The part of the playback queue that affects queue layout and editing.
+///
+/// `resumePosition` is intentionally excluded. It is persisted playback
+/// progress, not queue structure, and changes at engine-event frequency.
+public struct PlaybackQueueStructure: Codable, Equatable, Hashable, Sendable {
+    public let entries: [PlaybackQueueEntry]
+    public let currentEntryID: UUID?
+    public let repeatMode: PlaybackRepeatMode
+    public let shuffleMode: PlaybackShuffleMode
+    public let shuffleSeed: UInt64?
+    public let shuffleOrder: [UUID]
+
+    public init(summary: PlaybackQueueSummary) {
+        entries = summary.entries
+        currentEntryID = summary.currentEntryID
+        repeatMode = summary.repeatMode
+        shuffleMode = summary.shuffleMode
+        shuffleSeed = summary.shuffleSeed
+        shuffleOrder = summary.shuffleOrder
+    }
+
+}
+
 /// The queue value exposed to Feature targets. It contains no resolved resource.
 public struct PlaybackQueueSummary: Codable, Equatable, Hashable, Sendable {
     public let entries: [PlaybackQueueEntry]
@@ -60,6 +83,14 @@ public struct PlaybackQueueSummary: Codable, Equatable, Hashable, Sendable {
 
     public var isEmpty: Bool {
         entries.isEmpty
+    }
+
+    /// A stable projection for queue UI refresh decisions.
+    ///
+    /// Do not use the full summary as a queue layout key: resume progress is
+    /// updated while a track is playing and must only refresh playback UI.
+    public var structure: PlaybackQueueStructure {
+        PlaybackQueueStructure(summary: self)
     }
 
     public var snapshot: PlaybackQueueSnapshot {

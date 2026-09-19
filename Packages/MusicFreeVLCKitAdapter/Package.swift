@@ -5,16 +5,17 @@ import PackageDescription
 let package = Package(
     name: "MusicFreeVLCKitAdapter",
     platforms: [
-        .iOS(.v26)
+        .iOS(.v17)
     ],
     products: [
         .library(name: "VLCKitPlaybackAdapter", targets: ["VLCKitPlaybackAdapter"])
     ],
     dependencies: [
         .package(path: "../MusicFreeCore"),
+        .package(path: "../MusicFreeInfrastructure"),
         .package(
             url: "https://github.com/enefry/MusicFreeVLCKit.git",
-            exact: "4.0.0-audio.20260814.3"
+            exact: "4.0.0-audio.20260907.2"
         )
     ],
     targets: [
@@ -31,7 +32,12 @@ let package = Package(
             name: "MusicFreeVLCKitAdapterTests",
             dependencies: [
                 "VLCKitPlaybackAdapter",
-                .product(name: "MusicTestSupport", package: "MusicFreeCore")
+                .product(name: "MusicTestSupport", package: "MusicFreeCore"),
+                .product(name: "LocalMediaAdapter", package: "MusicFreeInfrastructure"),
+                .product(name: "LibraryPersistenceAdapter", package: "MusicFreeInfrastructure")
+            ],
+            resources: [
+                .copy("Fixtures")
             ]
         )
     ],

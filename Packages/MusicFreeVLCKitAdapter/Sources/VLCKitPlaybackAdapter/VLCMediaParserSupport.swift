@@ -1,4 +1,5 @@
 import Foundation
+import MusicDomain
 
 internal enum VLCMediaParseWaiterRegistration {
   case start
@@ -104,6 +105,22 @@ internal final class VLCMediaParseWaiterState: @unchecked Sendable {
 #if canImport(VLCKit)
 import VLCKit
 
+private final class VLCMediaParserDiagnostics: @unchecked Sendable {
+  static let shared = VLCMediaParserDiagnostics()
+
+  private let lock = NSLock()
+  private var seenLibraries: Set<ObjectIdentifier> = []
+
+  private init() {}
+
+  func makeTransaction(for library: VLCLibrary) -> (id: UUID, isFirstRequest: Bool) {
+    lock.lock()
+    let isFirstRequest = seenLibraries.insert(ObjectIdentifier(library)).inserted
+    lock.unlock()
+    return (UUID(), isFirstRequest)
+  }
+}
+
 internal final class VLCMediaParserBridge: NSObject, VLCMediaParserDelegate {
   private let completion: @Sendable (Int) -> Void
 
@@ -121,6 +138,11 @@ internal final class VLCMediaParserBridge: NSObject, VLCMediaParserDelegate {
 /// cancellable parse transaction. The state object protects the single-resume
 /// gate shared by the delegate, timeout task, and cancellation handler.
 internal final class VLCMediaParseWaiter: @unchecked Sendable {
+  private static let logger = MusicLogger(
+    subsystem: "com.musicfree.app",
+    category: "vlc-media-parser"
+  )
+
   private let parser: VLCMediaParser
   private let media: VLCMedia
   private lazy var bridge = VLCMediaParserBridge { [weak self] status in
@@ -128,11 +150,23 @@ internal final class VLCMediaParseWaiter: @unchecked Sendable {
   }
   private let timeoutMilliseconds: UInt64
   private let state = VLCMediaParseWaiterState()
+  private let transactionID: UUID
+  private let isFirstLibraryRequest: Bool
+  private let startedAtNanoseconds: UInt64
 
-  init(parser: VLCMediaParser, media: VLCMedia, timeoutMilliseconds: UInt64) {
+  init(
+    parser: VLCMediaParser,
+    media: VLCMedia,
+    library: VLCLibrary,
+    timeoutMilliseconds: UInt64
+  ) {
     self.parser = parser
     self.media = media
     self.timeoutMilliseconds = timeoutMilliseconds
+    let transaction = VLCMediaParserDiagnostics.shared.makeTransaction(for: library)
+    self.transactionID = transaction.id
+    self.isFirstLibraryRequest = transaction.isFirstRequest
+    self.startedAtNanoseconds = DispatchTime.now().uptimeNanoseconds
   }
 
   func wait() async throws -> Int {
@@ -153,10 +187,19 @@ internal final class VLCMediaParseWaiter: @unchecked Sendable {
   private func startParsing() {
     guard state.beginParserStart() else { return }
 
+    Self.logger.info(
+      "parser queue starting transaction=\(self.transactionID.uuidString) firstLibraryRequest=\(self.isFirstLibraryRequest) timeoutMs=\(self.timeoutMilliseconds)"
+    )
     parser.delegate = bridge
     let result = parser.queue(media, options: VLCMediaParsingOptions(rawValue: 1))
+    Self.logger.info(
+      "parser queue returned transaction=\(self.transactionID.uuidString) result=\(result) elapsedMs=\(self.elapsedMilliseconds)"
+    )
     let shouldCancel = state.endParserStart(succeeded: result == 0)
     guard result == 0 else {
+      Self.logger.error(
+        "parser queue failed transaction=\(self.transactionID.uuidString) result=\(result) firstLibraryRequest=\(self.isFirstLibraryRequest)"
+      )
       finish(error: VLCKitAdapterError.parserFailed)
       return
     }
@@ -180,6 +223,9 @@ internal final class VLCMediaParseWaiter: @unchecked Sendable {
   }
 
   private func cancel() {
+    Self.logger.warning(
+      "parser cancellation requested transaction=\(self.transactionID.uuidString) elapsedMs=\(self.elapsedMilliseconds)"
+    )
     let shouldCancelParser = state.requestCancellation()
     finish(error: VLCKitAdapterError.cancelled)
     if shouldCancelParser {
@@ -188,6 +234,9 @@ internal final class VLCMediaParseWaiter: @unchecked Sendable {
   }
 
   private func finish(status: Int) {
+    Self.logger.info(
+      "parser callback transaction=\(self.transactionID.uuidString) rawStatus=\(status) elapsedMs=\(self.elapsedMilliseconds) firstLibraryRequest=\(self.isFirstLibraryRequest)"
+    )
     switch status {
     case 6:
       finish(result: status)
@@ -211,9 +260,25 @@ internal final class VLCMediaParseWaiter: @unchecked Sendable {
   private func complete(_ result: Result<Int, Error>) {
     guard let completion = state.complete(result) else { return }
 
+    switch result {
+    case .success(let status):
+      Self.logger.info(
+        "parser completed transaction=\(self.transactionID.uuidString) rawStatus=\(status) elapsedMs=\(self.elapsedMilliseconds)"
+      )
+    case .failure(let error):
+      Self.logger.error(
+        "parser completed transaction=\(self.transactionID.uuidString) error=\(String(describing: error)) elapsedMs=\(self.elapsedMilliseconds)"
+      )
+    }
     parser.delegate = nil
     completion.timeoutTask?.cancel()
     completion.continuation?.resume(with: result)
+  }
+
+  private var elapsedMilliseconds: UInt64 {
+    let now = DispatchTime.now().uptimeNanoseconds
+    guard now >= startedAtNanoseconds else { return 0 }
+    return (now - startedAtNanoseconds) / 1_000_000
   }
 }
 #endif

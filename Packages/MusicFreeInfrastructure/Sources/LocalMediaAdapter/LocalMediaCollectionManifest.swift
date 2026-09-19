@@ -34,8 +34,13 @@ struct LocalMediaCollectionManifest: Sendable {
       throw LocalMediaError.metadataFailed
     }
     let value: RawManifest
+    guard let decodedText = MetadataTextRepair.decode(data),
+          let normalizedData = decodedText.data(using: .utf8)
+    else {
+      throw LocalMediaError.metadataFailed
+    }
     do {
-      value = try JSONDecoder().decode(RawManifest.self, from: data)
+      value = try JSONDecoder().decode(RawManifest.self, from: normalizedData)
     } catch {
       throw LocalMediaError.metadataFailed
     }
@@ -96,13 +101,15 @@ struct LocalMediaCollectionManifest: Sendable {
 
   private static func normalizedText(_ value: String?) -> String? {
     guard let value else { return nil }
-    let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    let normalized = MetadataTextRepair.repair(value)
+      .trimmingCharacters(in: .whitespacesAndNewlines)
     guard !normalized.isEmpty, normalized.count <= 512 else { return nil }
     return normalized
   }
 
   private static func normalizedRelativePath(_ value: String) -> String? {
-    let normalizedSeparators = value.replacingOccurrences(of: "\\", with: "/")
+    let normalizedSeparators = MetadataTextRepair.repair(value)
+      .replacingOccurrences(of: "\\", with: "/")
     let components = normalizedSeparators.split(separator: "/").map(String.init)
     guard !components.isEmpty,
           components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }),

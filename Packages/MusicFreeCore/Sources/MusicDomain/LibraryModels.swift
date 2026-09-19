@@ -82,8 +82,8 @@ public struct Track: Codable, Equatable, Hashable, Identifiable, Sendable {
         self.assetID = assetID ?? MediaAssetID(legacyVariantID: id)
         precondition(self.assetID.sourceID == id.sourceID, "Track and MediaAsset must share a source")
         self.playbackSelection = playbackSelection
-        self.title = musicDomainRequiredText(title, field: "Track.title")
-        self.sortTitle = musicDomainOptionalText(sortTitle)
+        self.title = musicDomainRequiredMetadataText(title, field: "Track.title")
+        self.sortTitle = musicDomainOptionalMetadataText(sortTitle)
         self.albumID = albumID
         self.artistIDs = musicDomainUnique(artistIDs)
         self.genreIDs = musicDomainUnique(genreIDs)
@@ -96,7 +96,7 @@ public struct Track: Codable, Equatable, Hashable, Identifiable, Sendable {
         self.duration = duration
         self.technicalInfo = technicalInfo
         self.year = year
-        self.comment = musicDomainOptionalText(comment)
+        self.comment = musicDomainOptionalMetadataText(comment)
         self.lyrics = lyrics.flatMap { $0.isEmpty ? nil : $0 }
         self.artwork = artwork
         self.isFavorite = isFavorite
@@ -219,7 +219,8 @@ public struct Track: Codable, Equatable, Hashable, Identifiable, Sendable {
 
     private static func normalizedFolderPath(_ value: String?) -> String? {
         guard let value else { return nil }
-        let components = value.split(separator: "/").map(String.init)
+        let repaired = MetadataTextRepair.repair(value)
+        let components = repaired.split(separator: "/").map(String.init)
         guard !components.isEmpty,
               components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." })
         else { return nil }
@@ -228,7 +229,8 @@ public struct Track: Codable, Equatable, Hashable, Identifiable, Sendable {
 
     private static func normalizedFileName(_ value: String?) -> String? {
         guard let value else { return nil }
-        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = MetadataTextRepair.repair(value)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty,
               !normalized.contains("/"),
               !normalized.contains("\\"),
@@ -309,7 +311,7 @@ public struct LibraryFolder: Codable, Equatable, Hashable, Identifiable, Sendabl
     public var id: String { path }
 
     public init(path: String, trackCount: Int) {
-        let components = path.split(separator: "/").map(String.init)
+        let components = MetadataTextRepair.repair(path).split(separator: "/").map(String.init)
         precondition(!components.isEmpty && components.allSatisfy { $0 != "." && $0 != ".." })
         precondition(trackCount >= 0)
         self.path = components.joined(separator: "/")
@@ -346,8 +348,8 @@ public struct Album: Codable, Equatable, Hashable, Identifiable, Sendable {
         }
 
         self.id = id
-        self.title = musicDomainRequiredText(title, field: "Album.title")
-        self.sortTitle = musicDomainOptionalText(sortTitle)
+        self.title = musicDomainRequiredMetadataText(title, field: "Album.title")
+        self.sortTitle = musicDomainOptionalMetadataText(sortTitle)
         self.artistIDs = musicDomainUnique(artistIDs)
         self.artwork = artwork
         self.releaseYear = releaseYear
@@ -424,8 +426,8 @@ public struct Artist: Codable, Equatable, Hashable, Identifiable, Sendable {
         artwork: ArtworkReference? = nil
     ) {
         self.id = id
-        self.name = musicDomainRequiredText(name, field: "Artist.name")
-        self.sortName = musicDomainOptionalText(sortName)
+        self.name = musicDomainRequiredMetadataText(name, field: "Artist.name")
+        self.sortName = musicDomainOptionalMetadataText(sortName)
         self.artwork = artwork
     }
 
@@ -471,8 +473,8 @@ public struct Genre: Codable, Equatable, Hashable, Identifiable, Sendable {
 
     public init(id: GenreID, name: String, sortName: String? = nil) {
         self.id = id
-        self.name = musicDomainRequiredText(name, field: "Genre.name")
-        self.sortName = musicDomainOptionalText(sortName)
+        self.name = musicDomainRequiredMetadataText(name, field: "Genre.name")
+        self.sortName = musicDomainOptionalMetadataText(sortName)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -524,8 +526,8 @@ public struct Playlist: Codable, Equatable, Hashable, Identifiable, Sendable {
         }
 
         self.id = id
-        self.name = musicDomainRequiredText(name, field: "Playlist.name")
-        self.sortName = musicDomainOptionalText(sortName)
+        self.name = musicDomainRequiredMetadataText(name, field: "Playlist.name")
+        self.sortName = musicDomainOptionalMetadataText(sortName)
         self.artwork = artwork
         self.createdAt = createdAt
         self.updatedAt = updatedAt

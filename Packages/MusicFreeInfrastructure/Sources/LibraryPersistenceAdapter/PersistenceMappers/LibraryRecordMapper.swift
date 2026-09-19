@@ -46,11 +46,43 @@ enum LibraryRecordMapper {
         let value = try PersistenceCodec.decode(Track.self, from: record.payload)
         guard value.id.sourceID.rawValue == record.sourceID,
               value.id.externalID == record.externalID,
-              PersistenceKey.item(value.id) == record.storageKey
+              PersistenceKey.item(value.id) == record.storageKey,
+              record.playCount >= 0
         else {
             throw LibraryPersistenceError.corruptedRecord
         }
-        return value
+        return Track(
+            id: value.id,
+            logicalTrackID: value.logicalTrackID,
+            assetID: value.assetID,
+            playbackSelection: value.playbackSelection,
+            title: value.title,
+            sortTitle: value.sortTitle,
+            albumID: value.albumID,
+            artistIDs: value.artistIDs,
+            genreIDs: value.genreIDs,
+            trackNumber: value.trackNumber,
+            trackTotal: value.trackTotal,
+            discNumber: value.discNumber,
+            discTotal: value.discTotal,
+            fileName: value.fileName,
+            folderPath: value.folderPath,
+            duration: value.duration,
+            technicalInfo: value.technicalInfo,
+            year: value.year,
+            comment: value.comment,
+            lyrics: value.lyrics,
+            artwork: value.artwork,
+            isFavorite: record.isFavorite,
+            statistics: PlaybackStatistics(
+                playCount: record.playCount,
+                completionCount: value.statistics.completionCount,
+                skipCount: value.statistics.skipCount,
+                lastPlayedAt: record.lastPlayedAt,
+                lastCompletionReason: value.statistics.lastCompletionReason,
+                totalListeningDuration: value.statistics.totalListeningDuration
+            )
+        )
     }
 
     static func makeAlbum(_ value: Album, dateAddedAt: Date = Date()) throws -> AlbumRecord {

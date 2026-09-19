@@ -86,17 +86,22 @@ public struct NowPlayingSnapshot: Sendable, Equatable, Hashable {
         artwork: NowPlayingArtworkReference? = nil,
         updatedAt: Date = Date()
     ) {
-        let normalizedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedTitle = MetadataTextRepair.repair(title)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         precondition(!normalizedTitle.isEmpty, "NowPlayingSnapshot.title cannot be empty")
         if let duration {
             precondition(duration >= .zero, "NowPlayingSnapshot.duration cannot be negative")
         }
-        precondition(elapsed >= .zero, "NowPlayingSnapshot.elapsed cannot be negative")
+        // Playback engines and restored queues can briefly report a position
+        // past EOF while duration metadata is being reconciled.  A system
+        // Now Playing publication must never crash the app for that transient
+        // state; normalize the value at this boundary instead of allowing an
+        // invalid snapshot to escape.
+        let normalizedElapsed: Duration
         if let duration {
-            precondition(
-                elapsed <= duration,
-                "NowPlayingSnapshot.elapsed cannot exceed duration"
-            )
+            normalizedElapsed = min(max(elapsed, .zero), duration)
+        } else {
+            normalizedElapsed = max(elapsed, .zero)
         }
         precondition(rate.isFinite && rate >= 0, "NowPlayingSnapshot.rate must be finite")
         if let queuePosition {
@@ -117,7 +122,7 @@ public struct NowPlayingSnapshot: Sendable, Equatable, Hashable {
         self.artist = Self.normalized(artist)
         self.album = Self.normalized(album)
         self.duration = duration
-        self.elapsed = elapsed
+        self.elapsed = normalizedElapsed
         self.playbackState = isPlaying ? .playing : .paused
         self.rate = rate
         self.queuePosition = queuePosition
@@ -165,7 +170,8 @@ public struct NowPlayingSnapshot: Sendable, Equatable, Hashable {
         guard let value else {
             return nil
         }
-        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = MetadataTextRepair.repair(value)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         return normalized.isEmpty ? nil : normalized
     }
 }

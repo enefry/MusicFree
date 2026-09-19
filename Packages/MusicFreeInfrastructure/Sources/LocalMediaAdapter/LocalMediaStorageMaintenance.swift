@@ -15,6 +15,11 @@ public actor LocalMediaStorageMaintenance: StorageMaintenanceServing {
         let modificationDate: Date
     }
 
+    private struct ArtworkEntry: Sendable {
+        let url: URL
+        let artworkID: ArtworkID
+    }
+
     private let configuration: LocalMediaConfiguration
     private let coordinator: ImportCoordinator
     private let store: ManagedMediaStore
@@ -155,6 +160,50 @@ public actor LocalMediaStorageMaintenance: StorageMaintenanceServing {
         }
     }
 
+    public func performAutomaticMaintenance(
+        cacheLimit: StorageByteLimit?,
+        retainingStagingFor retention: Duration
+    ) async throws {
+        let acquiredMaintenance = await coordinator.maintenanceGate.enterMaintenance()
+        if !acquiredMaintenance {
+            throw CancellationError()
+        }
+        var firstFailure: (any Error)?
+        do {
+            if let cacheLimit {
+                do {
+                    try pruneStaging(
+                        to: cacheLimit.bytes,
+                        retainingFor: retention,
+                        referenceDate: now()
+                    )
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    firstFailure = error
+                }
+            }
+            if let libraryRepository {
+                do {
+                    try await pruneOrphanedArtworkFiles(using: libraryRepository)
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    if firstFailure == nil {
+                        firstFailure = error
+                    }
+                }
+            }
+            if let firstFailure {
+                throw firstFailure
+            }
+            await coordinator.maintenanceGate.leaveMaintenance()
+        } catch {
+            await coordinator.maintenanceGate.leaveMaintenance()
+            throw error
+        }
+    }
+
     private func byteCount(in root: URL) throws -> Int64 {
         guard fileManager.fileExists(atPath: root.path) else { return 0 }
         let rootValues = try root.resourceValues(
@@ -174,6 +223,7 @@ public actor LocalMediaStorageMaintenance: StorageMaintenanceServing {
 
         var total: Int64 = 0
         for case let url as URL in enumerator {
+            try Task.checkCancellation()
             let values = try url.resourceValues(
                 forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]
             )
@@ -228,6 +278,7 @@ public actor LocalMediaStorageMaintenance: StorageMaintenanceServing {
 
         let staleEntries = entries.filter { $0.modificationDate <= staleCutoff }
         for entry in staleEntries {
+            try Task.checkCancellation()
             try removeCacheEntry(entry)
             totalBytes = max(0, totalBytes - entry.byteCount)
         }
@@ -235,6 +286,7 @@ public actor LocalMediaStorageMaintenance: StorageMaintenanceServing {
         guard totalBytes > byteLimit else { return }
         let staleURLs = Set(staleEntries.map(\.url))
         for entry in entries where !staleURLs.contains(entry.url) {
+            try Task.checkCancellation()
             try removeCacheEntry(entry)
             totalBytes = max(0, totalBytes - entry.byteCount)
             if totalBytes <= byteLimit { break }
@@ -251,23 +303,37 @@ public actor LocalMediaStorageMaintenance: StorageMaintenanceServing {
             options: []
         ).sorted { $0.lastPathComponent < $1.lastPathComponent }
 
+        var candidates: [ArtworkEntry] = []
+        candidates.reserveCapacity(entries.count)
         for entry in entries {
+            try Task.checkCancellation()
             guard let artworkID = Self.artworkID(for: entry),
                   try isSafeRegularFile(entry, inside: artworkRoot)
             else {
                 continue
             }
+            candidates.append(ArtworkEntry(url: entry, artworkID: artworkID))
+        }
 
+        let referencedArtworkIDs = try await repository.referencedArtworkIDs(
+            in: Set(candidates.map(\.artworkID))
+        )
+
+        for candidate in candidates {
+            try Task.checkCancellation()
             // Keep files referenced by any library object, even if the artwork
             // record itself is damaged or missing. Cleanup must not turn a
             // metadata inconsistency into data loss.
-            if try await repository.isArtworkReferenced(artworkID) {
+            if referencedArtworkIDs.contains(candidate.artworkID) {
                 continue
             }
-            guard try artworkFileMatchesIdentifier(entry, artworkID: artworkID) else {
+            guard try artworkFileMatchesIdentifier(
+                candidate.url,
+                artworkID: candidate.artworkID
+            ) else {
                 continue
             }
-            try fileManager.removeItem(at: entry)
+            try fileManager.removeItem(at: candidate.url)
         }
     }
 

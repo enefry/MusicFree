@@ -8,7 +8,18 @@ import SwiftUI
 struct PlaybackSettingsView: View {
     @Bindable var viewModel: SettingsViewModel
     let sleepTimerServing: (any SleepTimerServing)?
+    let onNavigate: ((SettingsDestination) -> Void)?
     @State private var isRateSliderExpanded = false
+
+    init(
+        viewModel: SettingsViewModel,
+        sleepTimerServing: (any SleepTimerServing)?,
+        onNavigate: ((SettingsDestination) -> Void)? = nil
+    ) {
+        _viewModel = Bindable(viewModel)
+        self.sleepTimerServing = sleepTimerServing
+        self.onNavigate = onNavigate
+    }
 
     var body: some View {
         Section(L("播放偏好")) {
@@ -43,6 +54,7 @@ struct PlaybackSettingsView: View {
                 settingsViewModel: viewModel,
                 serving: sleepTimerServing
             )
+            .onAppear { onNavigate?(.playback) }
         } label: {
             Label(L("Sleep timer"), systemImage: "moon.zzz")
         }
@@ -77,6 +89,7 @@ struct PlaybackSettingsView: View {
     private var equalizerLink: some View {
         NavigationLink {
             EqualizerSettingsView(viewModel: viewModel)
+                .onAppear { onNavigate?(.playback) }
         } label: {
             HStack(spacing: MusicFreeSpacingTokens.small) {
                 Label(L("均衡器"), systemImage: "slider.vertical.3")

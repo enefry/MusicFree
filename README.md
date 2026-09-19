@@ -22,6 +22,7 @@ release validation.
 
 ```sh
 xcodegen generate --spec project.yml
+xcodegen generate --spec project.debug.yml
 ```
 
 ## Validate the project

@@ -140,4 +140,18 @@ internal enum VLCPlaybackEventMapper {
     }
     return .milliseconds(milliseconds)
   }
+
+  static func recoveryPhase(
+    currentPhase: PlaybackPhase,
+    playbackStarted: Bool,
+    position: Duration
+  ) -> PlaybackPhase? {
+    guard currentPhase == .buffering,
+          playbackStarted,
+          position > .zero
+    else {
+      return nil
+    }
+    return .playing
+  }
 }

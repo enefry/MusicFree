@@ -15,8 +15,8 @@ public struct ProviderPrivacyConsent: Codable, Equatable, Hashable, Sendable, Id
 
 /// Persisted privacy acknowledgements for online enrichment services.
 public struct PrivacyPreferences: Codable, Equatable, Hashable, Sendable {
-    public static let currentPrivacyPolicyVersion = "1.1.0"
-    public static let currentProviderPolicyVersion = "1.1.0"
+    public static let currentPrivacyPolicyVersion = "1.2.0"
+    public static let currentProviderPolicyVersion = "1.2.0"
 
     public let privacyPolicyVersion: String?
     public let providerConsents: [ProviderPrivacyConsent]

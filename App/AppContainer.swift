@@ -7,6 +7,7 @@ import LibraryAPI
 import LocalMediaAdapter
 import MediaSourceAPI
 import MusicDomain
+import OnlineSourceAdapter
 import PreferencesPersistenceAdapter
 import SettingsAPI
 import VLCKitPlaybackAdapter
@@ -42,7 +43,7 @@ final class AppContainer: ObservableObject {
         let message: String
     }
 
-    let router: AppRouter
+    private(set) var router: AppRouter
     let lifecycleCoordinator: AppLifecycleCoordinator
     let diagnosticsExporter: AppDiagnosticsExporter
     private(set) var serviceContainer: AppServiceContainer?
@@ -53,6 +54,7 @@ final class AppContainer: ObservableObject {
     private let compositionFactory: CompositionFactory
     private var compositionTask: (id: UUID, task: Task<Bool, Never>)?
     private var teardownTask: (id: UUID, task: Task<Void, Never>)?
+    private var loggingObservationTask: Task<Void, Never>?
     private var activeSceneIDs: Set<UUID> = []
     private var serviceStartupIssues: [AppStartupIssue] = []
 
@@ -92,9 +94,11 @@ final class AppContainer: ObservableObject {
         _ = LocalMediaAdapterModule.self
         _ = LibraryPersistenceAdapterModule.self
         _ = AppleSystemAdapterModule.self
+        _ = OnlineSourceAdapterModule.self
         _ = PreferencesPersistenceAdapterModule.self
         _ = VLCKitPlaybackAdapterModule.self
 
+        configureFileLogging(fileLoggingEnabled: false)
         self.diagnosticsExporter.record(startupState: startupState)
     }
 
@@ -145,13 +149,50 @@ final class AppContainer: ObservableObject {
                 .settingsCorrupted
             case .storagePruningFailed:
                 .cacheUnavailable
+            case .metadataRepairFailed:
+                nil
             }
         } ?? []
+        updateStartupStateForCurrentIssues()
+
+        if let services = serviceContainer {
+            configureFileLogging(
+                fileLoggingEnabled: report?.effectiveSettings.settings
+                    .loggingPreferences.isFileLoggingEnabled ?? false,
+                observing: services
+            )
+        }
+    }
+
+    func completePostStartupMaintenance(
+        _ fallbacks: Set<AppStartupFallback>,
+        for services: AppServiceContainer
+    ) {
+        guard serviceContainer === services else { return }
+
+        serviceStartupIssues.removeAll { $0 == .cacheUnavailable }
+        if fallbacks.contains(.storagePruningFailed) {
+            serviceStartupIssues.append(.cacheUnavailable)
+            diagnosticsExporter.record(
+                code: "startup.storage-maintenance.failed",
+                message: "Deferred automatic storage maintenance did not complete."
+            )
+        }
+        if fallbacks.contains(.metadataRepairFailed) {
+            diagnosticsExporter.record(
+                code: "startup.metadata-repair.failed",
+                message: "Deferred metadata repair did not complete."
+            )
+        }
         updateStartupStateForCurrentIssues()
     }
 
     var activeSceneCount: Int {
         activeSceneIDs.count
+    }
+
+    func selectRoute(_ route: AppRouter.Route) {
+        router.select(route)
     }
 
     /// The service graph is app-owned so closing one window cannot dispose the
@@ -221,6 +262,7 @@ final class AppContainer: ObservableObject {
         let teardownID = UUID()
         let compositionAttempt = compositionTask
         let task = Task { @MainActor [weak self] in
+            self?.stopFileLoggingObservation()
             compositionAttempt?.task.cancel()
             if let compositionAttempt {
                 _ = await compositionAttempt.task.value
@@ -446,7 +488,12 @@ final class AppContainer: ObservableObject {
             ) as? String ?? "MyMusic",
             capabilityPolicy: VLCKitCapabilityPolicy(
                 enabledCapabilities: [.seeking, .variableRate, .equalizer]
-            )
+            ),
+            // Parsing selected files on iOS-on-Mac can take longer than the
+            // normal playback path, especially for Music.app ALAC files with
+            // attached artwork. Fifteen seconds is too short for this import
+            // path and is reported externally as corrupted media.
+            parserTimeout: .seconds(30)
         )
         var startupIssues: [AppStartupIssue] = []
         var diagnostics: [CompositionDiagnostic] = []
@@ -458,6 +505,20 @@ final class AppContainer: ObservableObject {
             startupIssues.append(.playbackUnavailable)
             diagnostics.append(.init(
                 code: "startup.vlckit.playback-unavailable",
+                message: String(describing: error)
+            ))
+        }
+
+        let onlineAuditionEngine: VLCPlaybackEngine?
+        do {
+            onlineAuditionEngine = try VLCPlaybackEngine(
+                configuration: vlcConfiguration,
+                loadsEqualizerDescriptor: false
+            )
+        } catch {
+            onlineAuditionEngine = nil
+            diagnostics.append(.init(
+                code: "startup.online-audition.playback-unavailable",
                 message: String(describing: error)
             ))
         }
@@ -576,6 +637,9 @@ final class AppContainer: ObservableObject {
         let settingsRepository = try UserDefaultsSettingsRepository(
             suiteName: PreferencesConfiguration.defaultSuiteName
         )
+        let onlineDownloadQueueStore = try UserDefaultsOnlineDownloadQueueStore(
+            suiteName: PreferencesConfiguration.defaultSuiteName
+        )
         let appleSystemConfiguration = AppleSystemConfiguration.standard
         let audioSession = try AppleAudioSessionManager(
             configuration: appleSystemConfiguration
@@ -586,6 +650,16 @@ final class AppContainer: ObservableObject {
         )
         let systemCapabilities = AppleSystemCapabilityDetector.current
         let mediaSources: [any MediaSource] = localSource.map { [$0] } ?? []
+        let onlineSourceFactory: any OnlineSourceFactory
+#if DEBUG
+        if AppBVTFixtureSeeder.shouldUseOnlineSourceFixtures() {
+            onlineSourceFactory = AppBVTFixtureSeeder.makeOnlineSourceFactory()
+        } else {
+            onlineSourceFactory = DefaultOnlineSourceFactory()
+        }
+#else
+        onlineSourceFactory = DefaultOnlineSourceFactory()
+#endif
         let artworkWriter: (@Sendable (Data, ArtworkID) async throws -> ArtworkWriteReceipt)?
         if let localSource {
             artworkWriter = { [localSource] data, artworkID in
@@ -596,6 +670,7 @@ final class AppContainer: ObservableObject {
         }
         let dependencies = try AppDependencies(
             mediaSources: mediaSources,
+            onlineSourceFactory: onlineSourceFactory,
             mediaImporter: importer,
             managedMediaRemover: remover,
             artworkWriter: artworkWriter,
@@ -604,11 +679,13 @@ final class AppContainer: ObservableObject {
             playbackQueueRepository: queueRepository,
             playbackHistoryRepository: historyRepository,
             settingsRepository: settingsRepository,
+            onlineDownloadQueueStore: onlineDownloadQueueStore,
             metadataEnrichmentProviders: metadataEnrichmentProviders,
             lyricsProviders: lyricsProviders,
             metadataEnrichmentRecordRepository: metadataEnrichmentRecordRepository,
             storageMaintenance: storageMaintenance,
             playbackEngine: playbackEngine,
+            onlineAuditionEngine: onlineAuditionEngine,
             audioSession: audioSession,
             nowPlaying: nowPlaying,
             remoteCommands: remoteCommands,
@@ -630,6 +707,67 @@ final class AppContainer: ObservableObject {
             startupIssues: startupIssues,
             diagnostics: diagnostics
         )
+    }
+
+    private static func defaultLogFileURL() -> URL? {
+        guard let applicationSupport = try? FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        ) else {
+            return nil
+        }
+
+        return applicationSupport
+            .appendingPathComponent("MusicFree", isDirectory: true)
+            .appendingPathComponent("Logs", isDirectory: true)
+            .appendingPathComponent(MusicLogger.fileName, isDirectory: false)
+    }
+
+    private func configureFileLogging(
+        fileLoggingEnabled: Bool,
+        observing services: AppServiceContainer? = nil
+    ) {
+        guard let fileURL = Self.defaultLogFileURL() else {
+            stopFileLoggingObservation()
+            return
+        }
+
+        MusicLogger.configureFileLogging(
+            fileURL: fileURL,
+            enabled: fileLoggingEnabled
+        )
+
+        loggingObservationTask?.cancel()
+        loggingObservationTask = nil
+        guard let services else { return }
+
+        loggingObservationTask = Task { @MainActor [weak self, services] in
+            let stream = await services.settingsServing.makeChangeStream()
+            if let settings = try? await services.settingsServing.load() {
+                MusicLogger.setFileLoggingEnabled(
+                    settings.loggingPreferences.isFileLoggingEnabled
+                )
+            }
+            for await settings in stream {
+                guard !Task.isCancelled,
+                      let self,
+                      self.serviceContainer === services
+                else {
+                    return
+                }
+                MusicLogger.setFileLoggingEnabled(
+                    settings.loggingPreferences.isFileLoggingEnabled
+                )
+            }
+        }
+    }
+
+    private func stopFileLoggingObservation() {
+        loggingObservationTask?.cancel()
+        loggingObservationTask = nil
+        MusicLogger.setFileLoggingEnabled(false)
     }
 
     private func record(_ diagnostics: [CompositionDiagnostic]) {
@@ -655,13 +793,18 @@ final class AppContainer: ObservableObject {
         let settingsRepository = try UserDefaultsSettingsRepository(
             suiteName: settingsSuiteName
         )
+        let onlineDownloadQueueStore = try UserDefaultsOnlineDownloadQueueStore(
+            suiteName: settingsSuiteName
+        )
         let dependencies = try AppDependencies(
+            onlineSourceFactory: DefaultOnlineSourceFactory(),
             mediaImporter: mediaImporter,
             libraryRepository: libraryRepository,
             playlistRepository: playlistRepository,
             playbackQueueRepository: queueRepository,
             playbackHistoryRepository: historyRepository,
             settingsRepository: settingsRepository,
+            onlineDownloadQueueStore: onlineDownloadQueueStore,
             storageMaintenance: storageMaintenance
         )
         return try AppServiceContainer(dependencies: dependencies)

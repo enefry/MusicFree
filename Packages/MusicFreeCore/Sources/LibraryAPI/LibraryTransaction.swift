@@ -74,6 +74,8 @@ public enum LibraryRelationMutation: Codable, Sendable {
     case setArtists(trackID: MediaItemID, artistIDs: [ArtistID])
     case setGenres(trackID: MediaItemID, genreIDs: [GenreID])
     case setArtwork(trackID: MediaItemID, artworkID: ArtworkID?)
+    /// Applies after album merging and updates every track in the resulting album.
+    case setAlbumTracksArtwork(albumID: AlbumID, artworkID: ArtworkID?)
 }
 
 /// A statistics replacement or delta applied atomically with library values.
@@ -94,11 +96,13 @@ public struct LibraryTransaction: Codable, Sendable {
     public let idempotencyKey: String
     public let expectedRevision: LibraryRevision?
     public let mutations: [LibraryMutation]
+    public let albumMerge: LibraryAlbumMerge?
 
     public init(
         idempotencyKey: String,
         expectedRevision: LibraryRevision? = nil,
-        mutations: [LibraryMutation]
+        mutations: [LibraryMutation],
+        albumMerge: LibraryAlbumMerge? = nil
     ) throws {
         let normalizedKey = idempotencyKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedKey.isEmpty else {
@@ -110,12 +114,14 @@ public struct LibraryTransaction: Codable, Sendable {
         self.idempotencyKey = normalizedKey
         self.expectedRevision = expectedRevision
         self.mutations = mutations
+        self.albumMerge = albumMerge
     }
 
     private enum CodingKeys: String, CodingKey {
         case idempotencyKey
         case expectedRevision
         case mutations
+        case albumMerge
     }
 
     public init(from decoder: Decoder) throws {
@@ -123,7 +129,8 @@ public struct LibraryTransaction: Codable, Sendable {
         try self.init(
             idempotencyKey: container.decode(String.self, forKey: .idempotencyKey),
             expectedRevision: container.decodeIfPresent(LibraryRevision.self, forKey: .expectedRevision),
-            mutations: container.decode([LibraryMutation].self, forKey: .mutations)
+            mutations: container.decode([LibraryMutation].self, forKey: .mutations),
+            albumMerge: container.decodeIfPresent(LibraryAlbumMerge.self, forKey: .albumMerge)
         )
     }
 }

@@ -1,8 +1,7 @@
 import Foundation
 import MusicDomain
-import OSLog
 
-private let logger = Logger(
+private let logger = MusicLogger(
     subsystem: "com.musicfree.app",
     category: "lrc-api"
 )
@@ -211,7 +210,8 @@ public actor LRCLIBLyricsProvider: LyricsProviding {
         ]
         let rawLyrics = rawCandidates.compactMap { (value: String?) -> String? in
             guard let value else { return nil }
-            let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            let normalized = MetadataTextRepair.repair(value)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             return normalized.isEmpty ? nil : normalized
         }
         guard let rawLyrics = rawLyrics.first else { return nil }

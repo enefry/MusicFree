@@ -5,7 +5,7 @@ import PackageDescription
 let package = Package(
     name: "MusicFreeCore",
     platforms: [
-        .iOS(.v26)
+        .iOS(.v17)
     ],
     products: [
         .library(name: "MusicDomain", targets: ["MusicDomain"]),
@@ -15,11 +15,25 @@ let package = Package(
         .library(name: "SystemIntegrationAPI", targets: ["SystemIntegrationAPI"]),
         .library(name: "SettingsAPI", targets: ["SettingsAPI"]),
         .library(name: "AppServices", targets: ["AppServices"]),
-        .library(name: "MusicTestSupport", targets: ["MusicTestSupport"])
+        .library(name: "MusicTestSupport", targets: ["MusicTestSupport"]),
+        .library(name: "BuildInfo", targets: ["BuildInfo"])
+    ],
+    dependencies: [
+        .package(
+            url: "https://github.com/CocoaLumberjack/CocoaLumberjack.git",
+            exact: "3.9.1"
+        )
     ],
     targets: [
+        .target(name: "BuildInfo"),
         .target(
-            name: "MusicDomain"
+            name: "MusicDomain",
+            dependencies: [
+                .product(
+                    name: "CocoaLumberjackSwift",
+                    package: "CocoaLumberjack"
+                )
+            ]
         ),
         .target(
             name: "MediaSourceAPI",
@@ -39,7 +53,7 @@ let package = Package(
         ),
         .target(
             name: "SettingsAPI",
-            dependencies: ["MusicDomain", "PlaybackAPI"]
+            dependencies: ["MusicDomain", "MediaSourceAPI", "PlaybackAPI"]
         ),
         .target(
             name: "AppServices",

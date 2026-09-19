@@ -532,7 +532,9 @@ public actor InMemoryLibraryRepository: LibraryRepository, PlaybackHistoryReposi
                     guard let track = nextTracks[trackID] else {
                         throw LibraryError.constraint(.danglingReference)
                     }
-                    nextTracks[trackID] = replacing(track, artworkID: artworkID)
+                    nextTracks[trackID] = replacing(track, artwork: artworkID.flatMap { nextArtwork[$0] })
+                case .setAlbumTracksArtwork:
+                    continue
                 }
                 trackIDs.insert(itemID)
                 categories.insert(.tracks)
@@ -559,6 +561,64 @@ public actor InMemoryLibraryRepository: LibraryRepository, PlaybackHistoryReposi
                 trackIDs.insert(itemID)
                 categories.insert(.playbackStatistics)
             }
+        }
+
+        if let merge = transaction.albumMerge {
+            let plan = try LibraryAlbumMergePlan(
+                merge: merge,
+                albums: nextAlbums,
+                tracks: Array(nextTracks.values),
+                logicalTracks: nextLogicalTracks,
+                variants: Array(nextTrackVariants.values),
+                releases: nextAlbumReleases,
+                discs: nextDiscs,
+                members: Array(nextCollectionMembers.values)
+            )
+            nextAlbums[plan.album.id] = plan.album
+            for albumID in merge.sourceAlbumIDs { nextAlbums.removeValue(forKey: albumID) }
+            for itemID in plan.movedTrackIDs {
+                guard let track = nextTracks[itemID] else { continue }
+                nextTracks[itemID] = replacing(track, albumID: plan.album.id)
+            }
+            for logical in plan.logicalTracks { nextLogicalTracks[logical.id] = logical }
+            for releaseID in plan.removedReleaseIDs { nextAlbumReleases.removeValue(forKey: releaseID) }
+            for discID in plan.removedDiscIDs { nextDiscs.removeValue(forKey: discID) }
+            nextAlbumReleases[plan.release.id] = plan.release
+            for disc in plan.discs { nextDiscs[disc.id] = disc }
+            nextCollectionMembers = nextCollectionMembers.filter { !plan.removedReleaseIDs.contains($0.value.releaseID) }
+            for member in plan.members { nextCollectionMembers[LibraryCollectionMemberKey(member)] = member }
+            trackIDs.formUnion(plan.movedTrackIDs)
+            albumIDs.formUnion(merge.sourceAlbumIDs.union([plan.album.id]))
+            categories.formUnion([.tracks, .albums, .deletions])
+        }
+
+        var artworkAlbumIDs = Set<AlbumID>()
+        for mutation in transaction.mutations {
+            guard case let .relation(.setAlbumTracksArtwork(albumID, artworkID)) = mutation else { continue }
+            guard artworkAlbumIDs.insert(albumID).inserted else {
+                throw LibraryError.constraint(.duplicateMutation)
+            }
+            guard nextAlbums[albumID] != nil,
+                  artworkID == nil || nextArtwork[artworkID!] != nil
+            else { throw LibraryError.constraint(.danglingReference) }
+            let artwork = artworkID.flatMap { nextArtwork[$0] }
+            var logicalIDs = Set<LogicalTrackID>()
+            for (itemID, track) in nextTracks where track.albumID == albumID {
+                nextTracks[itemID] = replacing(track, artwork: artwork)
+                trackIDs.insert(itemID)
+                logicalIDs.insert(track.logicalTrackID)
+            }
+            let releaseIDs = Set(nextAlbumReleases.values.filter { $0.legacyAlbumID == albumID }.map(\.id))
+                .union([AlbumReleaseID(legacyAlbumID: albumID)])
+            for logical in nextLogicalTracks.values
+            where logicalIDs.contains(logical.id) || logical.releaseID.map(releaseIDs.contains) == true {
+                nextLogicalTracks[logical.id] = logical.replacingArtwork(artwork)
+                logicalIDs.insert(logical.id)
+            }
+            trackIDs.formUnion(nextTrackVariants.values.filter { logicalIDs.contains($0.logicalTrackID) }.map(\.id))
+            albumIDs.insert(albumID)
+            artworkIDs.formUnion([artworkID].compactMap { $0 })
+            categories.formUnion([.tracks, .artwork])
         }
 
         guard nextTracks.values.allSatisfy({ value in
@@ -1244,7 +1304,7 @@ public actor InMemoryLibraryRepository: LibraryRepository, PlaybackHistoryReposi
         )
     }
 
-    private func replacing(_ track: Track, artworkID: ArtworkID?) -> Track {
+    private func replacing(_ track: Track, artwork: ArtworkReference?) -> Track {
         Track(
             id: track.id,
             logicalTrackID: track.logicalTrackID,
@@ -1266,7 +1326,7 @@ public actor InMemoryLibraryRepository: LibraryRepository, PlaybackHistoryReposi
             year: track.year,
             comment: track.comment,
             lyrics: track.lyrics,
-            artwork: artworkID.map { ArtworkReference(id: $0) },
+            artwork: artwork,
             isFavorite: track.isFavorite,
             statistics: track.statistics
         )

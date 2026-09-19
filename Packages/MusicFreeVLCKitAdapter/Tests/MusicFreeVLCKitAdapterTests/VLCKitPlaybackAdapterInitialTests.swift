@@ -74,6 +74,31 @@ struct VLCKitPlaybackAdapterInitialTests {
     )
   }
 
+  @Test("Advanced playback time recovers a stuck buffering phase")
+  func advancedPlaybackTimeRecoversBuffering() {
+    #expect(
+      VLCPlaybackEventMapper.recoveryPhase(
+        currentPhase: .buffering,
+        playbackStarted: true,
+        position: .seconds(3)
+      ) == .playing
+    )
+    #expect(
+      VLCPlaybackEventMapper.recoveryPhase(
+        currentPhase: .buffering,
+        playbackStarted: true,
+        position: .zero
+      ) == nil
+    )
+    #expect(
+      VLCPlaybackEventMapper.recoveryPhase(
+        currentPhase: .playing,
+        playbackStarted: true,
+        position: .seconds(3)
+      ) == nil
+    )
+  }
+
   @MainActor
   @Test("Buffering debounce commits once after a sustained request")
   func bufferingDebounceCommitsOnceAfterDelay() async throws {
@@ -384,6 +409,29 @@ struct VLCKitPlaybackAdapterInitialTests {
 
     try engine.apply(AudioEffectConfiguration(equalizer: equalizer))
     try engine.apply(.neutral)
+  }
+
+  @MainActor
+  @Test("Audition engine skips eager equalizer discovery")
+  func auditionEngineSkipsEqualizerDiscovery() throws {
+    let configuration = try VLCKitAdapterConfiguration(
+      applicationIdentifier: "com.example.musicfree",
+      applicationVersion: "1.0",
+      applicationName: "MusicFree",
+      capabilityPolicy: VLCKitCapabilityPolicy(
+        enabledCapabilities: [.seeking, .variableRate, .equalizer]
+      )
+    )
+    let engine = try VLCPlaybackEngine(
+      configuration: configuration,
+      loadsEqualizerDescriptor: false
+    )
+    defer { engine.dispose() }
+
+    #expect(engine.equalizerDescriptor == nil)
+    #expect(engine.capabilities.contains(.seeking))
+    #expect(engine.capabilities.contains(.variableRate))
+    #expect(!engine.capabilities.contains(.equalizer))
   }
 
   @MainActor

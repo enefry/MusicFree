@@ -5,7 +5,6 @@ import MediaSourceAPI
 import MusicDomain
 import PlaybackAPI
 @testable import PlayerFeature
-import SwiftUI
 import Testing
 import UIKit
 
@@ -105,6 +104,7 @@ func playerFeatureMapsPlaybackEvents() {
     )
   )
   #expect(viewModel.snapshot.phase == .playing)
+  #expect(viewModel.hasStartedPlayback)
 
   #expect(
     viewModel.receive(
@@ -117,6 +117,66 @@ func playerFeatureMapsPlaybackEvents() {
     )
   )
   #expect(viewModel.snapshot.position == .seconds(42))
+}
+
+@MainActor
+@Test("Playback loading ends after playing even when buffering reports zero position")
+func playerFeatureKeepsPlaybackButtonReadyAfterPlaying() {
+  let serving = RecordingPlaybackServing(
+    snapshot: makePlayerSnapshot(phase: .preparing, position: .zero)
+  )
+  let viewModel = PlayerViewModel(serving: serving, autoStart: false)
+
+  #expect(!viewModel.hasStartedPlayback)
+  #expect(
+    viewModel.receive(
+      .phaseChanged(
+        generation: viewModel.snapshot.generation,
+        itemID: viewModel.snapshot.currentItemID,
+        phase: .playing
+      )
+    )
+  )
+  #expect(viewModel.hasStartedPlayback)
+
+  #expect(
+    viewModel.receive(
+      .phaseChanged(
+        generation: viewModel.snapshot.generation,
+        itemID: viewModel.snapshot.currentItemID,
+        phase: .buffering
+      )
+    )
+  )
+  #expect(viewModel.hasStartedPlayback)
+}
+
+@MainActor
+@Test("A new playback item shows loading until it reaches playing")
+func playerFeatureResetsPlaybackStartedForNewItem() {
+  let serving = RecordingPlaybackServing(snapshot: makePlayerSnapshot(phase: .playing))
+  let viewModel = PlayerViewModel(serving: serving, autoStart: false)
+  let nextItemID = MediaItemID(sourceID: .local, externalID: "next-track")
+  let nextState = PlaybackState(
+    phase: .preparing,
+    generation: viewModel.snapshot.generation,
+    itemID: nextItemID
+  )
+
+  #expect(viewModel.hasStartedPlayback)
+  #expect(
+    viewModel.apply(
+      PlaybackSessionSnapshot(
+        state: nextState,
+        currentItem: nil,
+        queue: viewModel.snapshot.queue,
+        capabilities: viewModel.snapshot.capabilities,
+        effectiveEffects: viewModel.snapshot.effectiveEffects,
+        systemCapabilities: viewModel.snapshot.systemCapabilities
+      )
+    )
+  )
+  #expect(!viewModel.hasStartedPlayback)
 }
 
 @MainActor
@@ -151,43 +211,129 @@ func playerFeatureFiltersStaleGenerations() {
   #expect(viewModel.snapshot.position == .seconds(30))
 }
 
-@Test("Now Playing omits stale relationship labels after a Track is loaded")
-func nowPlayingMetadataDoesNotUseStaleRelationshipFallback() {
-  let track = Track(
-    id: MediaItemID(sourceID: .local, externalID: "loaded-track"),
-    title: "Loaded Track",
-    albumID: AlbumID("loaded-album"),
-    artistIDs: [ArtistID("loaded-artist")]
-  )
+@MainActor
+@Test("Now Playing exposes a close action only for the embedded fallback")
+func nowPlayingFallbackCloseAction() {
+  let serving = RecordingPlaybackServing(snapshot: makePlayerSnapshot())
+  let modalController = PlayerNowPlayingViewController(serving: serving)
+  modalController.loadViewIfNeeded()
+  #expect(findView(
+    withAccessibilityIdentifier: "player.nowPlaying.close",
+    in: modalController.view
+  ) == nil)
 
-  #expect(
-    NowPlayingHeaderMetadata.artistSubtitle(
-      for: track,
-      artistNames: [:],
-      fallback: "Old Artist"
-    ) == nil
+  var didClose = false
+  let fallbackController = PlayerNowPlayingViewController(serving: serving)
+  fallbackController.setFallbackCloseHandler { didClose = true }
+  fallbackController.loadViewIfNeeded()
+  let closeButton = findView(
+    withAccessibilityIdentifier: "player.nowPlaying.close",
+    in: fallbackController.view
+  ) as? UIButton
+
+  #expect(closeButton != nil)
+  fallbackController.closeFallbackPresentation()
+  #expect(didClose)
+}
+
+@MainActor
+@Test("Now Playing queue virtualizes large lists with UITableView reuse")
+func nowPlayingQueueVirtualizesLargeLists() {
+  let serving = RecordingPlaybackServing(
+    snapshot: makeQueuePlayerSnapshot(count: 500, currentIndex: 0)
   )
-  #expect(
-    NowPlayingHeaderMetadata.albumSubtitle(
-      for: track,
-      albumNames: [:],
-      fallback: "Old Album"
-    ) == nil
+  let controller = PlayerNowPlayingViewController(serving: serving)
+  let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+  window.rootViewController = controller
+  window.makeKeyAndVisible()
+  defer {
+    window.isHidden = true
+    window.rootViewController = nil
+  }
+
+  controller.loadViewIfNeeded()
+  controller.view.frame = window.bounds
+  controller.view.layoutIfNeeded()
+
+  let queueButton = findView(
+    withAccessibilityIdentifier: "player.queue.footer",
+    in: controller.view
+  ) as? UIButton
+  #expect(queueButton != nil)
+  let queueActionName = queueButton?.actions(
+    forTarget: controller,
+    forControlEvent: .touchUpInside
+  )?.first
+  #expect(queueActionName != nil)
+  guard let queueActionName else { return }
+  let queueAction = NSSelectorFromString(queueActionName)
+  _ = controller.perform(queueAction)
+  controller.view.layoutIfNeeded()
+  RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+  controller.view.layoutIfNeeded()
+
+  let tableView = findView(
+    withAccessibilityIdentifier: "player.nowPlaying.upperScroll",
+    in: controller.view
+  ) as? UITableView
+  let totalRows = tableView?.numberOfRows(inSection: 0) ?? 0
+  let visibleRows = tableView?.visibleCells.count ?? 0
+
+  #expect(totalRows >= 500)
+  #expect(visibleRows > 0)
+  #expect(visibleRows < 30)
+  #expect(visibleRows * 10 < totalRows)
+}
+
+@MainActor
+@Test("Now Playing queue mask only protects the initial anchor")
+func nowPlayingQueueMaskEndsWhenDragging() {
+  let serving = RecordingPlaybackServing(
+    snapshot: makeQueuePlayerSnapshot(count: 20, currentIndex: 10)
   )
-  #expect(
-    NowPlayingHeaderMetadata.artistSubtitle(
-      for: nil,
-      artistNames: [:],
-      fallback: "Snapshot Artist"
-    ) == "Snapshot Artist"
-  )
-  #expect(
-    NowPlayingHeaderMetadata.albumSubtitle(
-      for: nil,
-      albumNames: [:],
-      fallback: "Snapshot Album"
-    ) == "Snapshot Album"
-  )
+  let controller = PlayerNowPlayingViewController(serving: serving)
+  let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+  window.rootViewController = controller
+  window.makeKeyAndVisible()
+  defer {
+    window.isHidden = true
+    window.rootViewController = nil
+  }
+
+  controller.loadViewIfNeeded()
+  controller.view.frame = window.bounds
+  controller.view.layoutIfNeeded()
+
+  let queueButton = findView(
+    withAccessibilityIdentifier: "player.queue.footer",
+    in: controller.view
+  ) as? UIButton
+  #expect(queueButton != nil)
+  let queueActionName = queueButton?.actions(
+    forTarget: controller,
+    forControlEvent: .touchUpInside
+  )?.first
+  #expect(queueActionName != nil)
+  guard let queueActionName else { return }
+  let queueAction = NSSelectorFromString(queueActionName)
+  _ = controller.perform(queueAction)
+  controller.view.layoutIfNeeded()
+
+  let tableView = findView(
+    withAccessibilityIdentifier: "player.nowPlaying.upperScroll",
+    in: controller.view
+  ) as? UITableView
+  #expect(tableView?.layer.mask != nil)
+
+  if let tableView {
+    tableView.delegate?.scrollViewWillBeginDragging?(tableView)
+    #expect(tableView.layer.mask == nil)
+  }
+
+  _ = controller.perform(queueAction)
+  _ = controller.perform(queueAction)
+  controller.view.layoutIfNeeded()
+  #expect(tableView?.layer.mask != nil)
 }
 
 @MainActor
@@ -315,6 +461,40 @@ func miniPlayerVisibilityFollowsPlaybackPhase() {
     autoStart: false
   )
   #expect(!clearedQueue.isMiniPlayerVisible)
+
+  let preparingSnapshot = makePlayerSnapshot(phase: .preparing)
+  let transientPreparingSnapshot = PlaybackSessionSnapshot(
+    state: preparingSnapshot.state,
+    currentItem: nil,
+    queue: preparingSnapshot.queue,
+    capabilities: preparingSnapshot.capabilities,
+    effectiveEffects: preparingSnapshot.effectiveEffects,
+    systemCapabilities: preparingSnapshot.systemCapabilities
+  )
+  let transientPreparing = PlayerViewModel(
+    serving: RecordingPlaybackServing(snapshot: transientPreparingSnapshot),
+    autoStart: false
+  )
+  #expect(transientPreparing.hasCurrentPlaybackContent)
+  #expect(transientPreparing.isMiniPlayerVisible)
+
+  let stoppedWithoutDisplay = PlaybackSessionSnapshot(
+    state: PlaybackState(
+      phase: .stopped,
+      generation: preparingSnapshot.generation,
+      itemID: preparingSnapshot.currentItemID
+    ),
+    currentItem: nil,
+    queue: preparingSnapshot.queue,
+    capabilities: preparingSnapshot.capabilities,
+    effectiveEffects: preparingSnapshot.effectiveEffects,
+    systemCapabilities: preparingSnapshot.systemCapabilities
+  )
+  let stoppedViewModel = PlayerViewModel(
+    serving: RecordingPlaybackServing(snapshot: stoppedWithoutDisplay),
+    autoStart: false
+  )
+  #expect(!stoppedViewModel.hasCurrentPlaybackContent)
 }
 
 @Test("MiniPlayer horizontal swipes map to previous and next")
@@ -434,73 +614,6 @@ func miniPlayerAdjacentQueueEntriesFollowPlaybackOrder() {
   #expect(repeatingFirst.adjacentQueueEntry(direction: -1)?.itemID?.externalID == "queue-3")
 }
 
-@Test("Now Playing pins its queue only above the regular-height boundary")
-func nowPlayingVerticalLayoutUsesExplicitHeightBoundary() {
-  let minimumHeight = NowPlayingVerticalLayoutPolicy.minimumPinnedHeight
-
-  #expect(
-    NowPlayingVerticalLayoutPolicy.mode(
-      availableHeight: 667,
-      verticalSizeClass: .regular,
-      dynamicTypeSize: .large
-    ) == .pinnedQueue
-  )
-  #expect(
-    NowPlayingVerticalLayoutPolicy.mode(
-      availableHeight: minimumHeight,
-      verticalSizeClass: .regular,
-      dynamicTypeSize: .large
-    ) == .pinnedQueue
-  )
-  #expect(
-    NowPlayingVerticalLayoutPolicy.mode(
-      availableHeight: minimumHeight - 1,
-      verticalSizeClass: .regular,
-      dynamicTypeSize: .large
-    ) == .scrolling
-  )
-}
-
-@Test("Now Playing scrolls for compact height and accessibility Dynamic Type")
-func nowPlayingVerticalLayoutHonorsEnvironmentConstraints() {
-  #expect(
-    NowPlayingVerticalLayoutPolicy.mode(
-      availableHeight: 844,
-      verticalSizeClass: .compact,
-      dynamicTypeSize: .large
-    ) == .scrolling
-  )
-  #expect(
-    NowPlayingVerticalLayoutPolicy.mode(
-      availableHeight: 844,
-      verticalSizeClass: .regular,
-      dynamicTypeSize: .accessibility1
-    ) == .scrolling
-  )
-  #expect(
-    NowPlayingVerticalLayoutPolicy.mode(
-      availableHeight: 844,
-      verticalSizeClass: .regular,
-      dynamicTypeSize: .accessibility5
-    ) == .scrolling
-  )
-}
-
-@Test("Now Playing only presents a real artist subtitle")
-func nowPlayingArtistSubtitleRequiresArtistMetadata() {
-  #expect(NowPlayingHeaderMetadata.artistSubtitle("BVT Artist") == "BVT Artist")
-  #expect(NowPlayingHeaderMetadata.artistSubtitle(nil) == nil)
-  #expect(NowPlayingHeaderMetadata.artistSubtitle(" \n ") == nil)
-}
-
-@Test("Now Playing normalizes empty titles before rendering")
-func nowPlayingTitleRequiresVisibleMetadata() {
-  #expect(NowPlayingHeaderMetadata.title("BVT Title") == "BVT Title")
-  #expect(NowPlayingHeaderMetadata.title("  BVT Title \n") == "BVT Title")
-  #expect(NowPlayingHeaderMetadata.title(" \n ") == nil)
-  #expect(NowPlayingHeaderMetadata.title(nil) == nil)
-}
-
 @Test("Player progress displays the elapsed and remaining clocks")
 func playerFormattingUsesRemainingDuration() {
   #expect(PlayerFormatting.duration(.seconds(3)) == "0:03")
@@ -602,20 +715,6 @@ func nowPlayingHistoryFiltersCurrentUnfinishedSession() {
     $0.track.id == currentID && $0.lastCompletionReason == .ended
   }))
   #expect(visible.contains(where: { $0.track.id == otherID }))
-}
-
-@Test("Now Playing history actions reuse play and enqueue-next commands")
-func nowPlayingHistoryActionsMapToPlaybackCommands() {
-  let itemID = MediaItemID(sourceID: .local, externalID: "history-action")
-
-  #expect(
-    NowPlayingHistoryAction.play.command(for: itemID)
-      == .play(itemID: itemID)
-  )
-  #expect(
-    NowPlayingHistoryAction.enqueueNext.command(for: itemID)
-      == .enqueueNext(itemIDs: [itemID])
-  )
 }
 
 @MainActor
@@ -737,30 +836,6 @@ func playerFavoriteIgnoresOldItemCompletion() async {
   #expect(service.tracks[secondID]?.isFavorite == false)
 }
 
-@MainActor
-@Test("A newer player artwork request wins over an older failure")
-func playerArtworkLoaderIgnoresOlderFailure() async {
-  let service = PlayerArtworkRaceService()
-  let loader = ArtworkImageLoader()
-  let oldRequest = Task {
-    await loader.load(
-      artworkID: ArtworkID("old"),
-      sourceID: .local,
-      serving: service
-    )
-  }
-
-  await service.waitForOldRequest()
-  await loader.load(
-    artworkID: ArtworkID("new"),
-    sourceID: .local,
-    serving: service
-  )
-  await oldRequest.value
-
-  #expect(loader.image != nil)
-}
-
 @Test("Player artwork decoding rejects streams larger than 20 MiB")
 func playerArtworkDecodingRejectsOversizedStreams() async {
   let oversizedResource = ArtworkResource.inMemory(
@@ -797,30 +872,6 @@ func playerArtworkDecodingBoundsPixelDimensions() async throws {
 
   #expect(max(cgImage.width, cgImage.height) <= 2_048)
   #expect(cgImage.width == 2_048)
-}
-
-@MainActor
-@Test("Cancelling after player artwork decode starts prevents publication")
-func playerArtworkLoaderChecksCancellationAfterDecode() async throws {
-  let service = PlayerArtworkRaceService()
-  let decoder = PlayerControlledArtworkDecoder()
-  let loader = ArtworkImageLoader { resource in
-    await decoder.decode(resource)
-  }
-  let request = Task {
-    await loader.load(
-      artworkID: ArtworkID("new"),
-      sourceID: .local,
-      serving: service
-    )
-  }
-
-  await decoder.waitForDecode()
-  request.cancel()
-  await decoder.complete(with: UIImage(data: testArtworkData()))
-  await request.value
-
-  #expect(loader.image == nil)
 }
 
 @MainActor
@@ -911,6 +962,24 @@ func queueEditorIgnoresResumePositionChanges() {
 }
 
 @MainActor
+@Test("Queue structure projection excludes playback progress")
+func queueStructureProjectionExcludesPlaybackProgress() {
+  let queue = makeQueuePlayerSnapshot(currentIndex: 0).queue
+  let progressedQueue = PlaybackQueueSummary(
+    entries: queue.entries,
+    currentEntryID: queue.currentEntryID,
+    repeatMode: queue.repeatMode,
+    shuffleMode: queue.shuffleMode,
+    shuffleSeed: queue.shuffleSeed,
+    shuffleOrder: queue.shuffleOrder,
+    resumePosition: .seconds(18)
+  )
+
+  #expect(queue.resumePosition != progressedQueue.resumePosition)
+  #expect(queue.structure == progressedQueue.structure)
+}
+
+@MainActor
 @Test("Queue editor preserves the active shuffled playback order")
 func queueEditorPlansShuffledOrder() {
   let queue = makeQueuePlayerSnapshot(
@@ -982,10 +1051,6 @@ func queueEditorRecoversFromPartialCommitFailure() async {
   #expect(editor.phase == .editing)
   #expect(editor.entries.map(\.id) == [ids[2], ids[3]])
   #expect(editor.failureMessage != nil)
-}
-
-private enum ArtworkLoaderTestError: Error, Sendable {
-  case unavailable
 }
 
 @MainActor
@@ -1338,59 +1403,20 @@ private func makeQueuePlayerSnapshot(
   )
 }
 
-private actor PlayerArtworkRaceService: ArtworkServing {
-  private var oldRequestStarted = false
-  private var oldRequestContinuation: CheckedContinuation<Void, Never>?
-
-  func artwork(
-    for artworkID: ArtworkID,
-    sourceID _: MediaSourceID
-  ) async throws -> ArtworkResource? {
-    if artworkID == ArtworkID("old") {
-      oldRequestStarted = true
-      oldRequestContinuation?.resume()
-      oldRequestContinuation = nil
-      try await Task.sleep(nanoseconds: 50_000_000)
-      throw ArtworkLoaderTestError.unavailable
-    }
-
-    return .inMemory(testArtworkData())
+@MainActor
+private func findView(
+  withAccessibilityIdentifier identifier: String,
+  in view: UIView
+) -> UIView? {
+  if view.accessibilityIdentifier == identifier {
+    return view
   }
-
-  func waitForOldRequest() async {
-    guard !oldRequestStarted else { return }
-    await withCheckedContinuation { continuation in
-      oldRequestContinuation = continuation
+  for subview in view.subviews {
+    if let match = findView(withAccessibilityIdentifier: identifier, in: subview) {
+      return match
     }
   }
-}
-
-private actor PlayerControlledArtworkDecoder {
-  private var didStart = false
-  private var startContinuation: CheckedContinuation<Void, Never>?
-  private var resultContinuation: CheckedContinuation<UIImage?, Never>?
-
-  func decode(_ resource: ArtworkResource?) async -> UIImage? {
-    _ = resource
-    didStart = true
-    startContinuation?.resume()
-    startContinuation = nil
-    return await withCheckedContinuation { continuation in
-      resultContinuation = continuation
-    }
-  }
-
-  func waitForDecode() async {
-    guard !didStart else { return }
-    await withCheckedContinuation { continuation in
-      startContinuation = continuation
-    }
-  }
-
-  func complete(with image: UIImage?) {
-    resultContinuation?.resume(returning: image)
-    resultContinuation = nil
-  }
+  return nil
 }
 
 private func testArtworkData() -> Data {

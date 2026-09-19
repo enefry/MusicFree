@@ -1,0 +1,804 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#173f35">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>MusicFree · Google Drive Setup</title>
+  <style>
+    :root {
+      --canvas: #f4f0e6;
+      --paper: #fffdf8;
+      --ink: #18231f;
+      --muted: #647069;
+      --line: #d9d3c7;
+      --forest: #173f35;
+      --forest-2: #24634f;
+      --mint: #dcece3;
+      --blue: #2459c4;
+      --amber: #92590b;
+      --amber-soft: #fff0d2;
+      --red: #a53b31;
+      --radius: 20px;
+      --shadow: 0 14px 38px rgba(31, 44, 38, .09);
+    }
+
+    * { box-sizing: border-box; }
+
+    html {
+      scroll-behavior: smooth;
+      -webkit-text-size-adjust: 100%;
+    }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 90% 3%, rgba(36, 99, 79, .13), transparent 21rem),
+        linear-gradient(rgba(24, 35, 31, .025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(24, 35, 31, .025) 1px, transparent 1px),
+        var(--canvas);
+      background-size: auto, 24px 24px, 24px 24px, auto;
+      font-family: "Avenir Next", Avenir, "Helvetica Neue", sans-serif;
+      font-size: 16px;
+      line-height: 1.65;
+      overflow-x: hidden;
+    }
+
+    a {
+      color: var(--blue);
+      text-underline-offset: 3px;
+      overflow-wrap: anywhere;
+    }
+
+    button, input { font: inherit; }
+    code, pre, .mono { font-family: "SFMono-Regular", Menlo, Monaco, Consolas, monospace; }
+
+    .progress {
+      position: fixed;
+      z-index: 100;
+      inset: 0 0 auto;
+      height: 4px;
+      background: linear-gradient(90deg, #5dd4a6, #79a7ff);
+      transform: scaleX(0);
+      transform-origin: left;
+    }
+
+    .page-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      min-height: calc(60px + env(safe-area-inset-top));
+      padding:
+        calc(10px + env(safe-area-inset-top))
+        max(18px, env(safe-area-inset-right))
+        10px
+        max(18px, env(safe-area-inset-left));
+      color: #f5fbf7;
+      background: var(--forest);
+    }
+
+    .page-title h1 {
+      margin: 0;
+      font-family: "Avenir Next", Avenir, "Helvetica Neue", sans-serif;
+      font-size: 18px;
+      font-weight: 800;
+      line-height: 1.2;
+      letter-spacing: -.01em;
+    }
+
+    .page-title span {
+      color: #bcebd6;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: .11em;
+      white-space: nowrap;
+    }
+
+    h2, h3 {
+      font-family: Georgia, "Times New Roman", serif;
+      line-height: 1.12;
+      letter-spacing: -.025em;
+    }
+
+    .quick-nav {
+      position: sticky;
+      z-index: 40;
+      top: 0;
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      padding: 10px max(14px, env(safe-area-inset-right)) 10px max(14px, env(safe-area-inset-left));
+      border-bottom: 1px solid rgba(24, 35, 31, .12);
+      background: rgba(255, 253, 248, .92);
+      box-shadow: 0 8px 22px rgba(31, 44, 38, .06);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      scrollbar-width: none;
+    }
+
+    .quick-nav::-webkit-scrollbar { display: none; }
+
+    .quick-nav a {
+      flex: 0 0 auto;
+      display: grid;
+      min-height: 44px;
+      place-items: center;
+      padding: 0 15px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: #4f5a55;
+      background: var(--paper);
+      font-size: 13px;
+      font-weight: 700;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+
+    .quick-nav a.active {
+      border-color: var(--forest);
+      color: white;
+      background: var(--forest);
+    }
+
+    main {
+      width: min(100%, 760px);
+      margin: 0 auto;
+      padding:
+        30px
+        max(16px, env(safe-area-inset-right))
+        calc(72px + env(safe-area-inset-bottom))
+        max(16px, env(safe-area-inset-left));
+    }
+
+    section {
+      scroll-margin-top: 78px;
+      margin-bottom: 44px;
+    }
+
+    h2 {
+      margin: 0 0 18px;
+      font-size: clamp(31px, 9vw, 44px);
+    }
+
+    h3 {
+      margin: 28px 0 10px;
+      font-size: 23px;
+    }
+
+    p { margin: 0 0 15px; }
+
+    .callout,
+    .card,
+    .step {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(255, 253, 248, .92);
+      box-shadow: var(--shadow);
+    }
+
+    .callout {
+      padding: 18px;
+      overflow-wrap: anywhere;
+    }
+
+    .callout strong { color: var(--forest-2); }
+    .callout.warning { border-color: #e5bd75; background: var(--amber-soft); }
+    .callout.warning strong { color: var(--amber); }
+
+    .outcomes {
+      display: grid;
+      gap: 11px;
+      margin-top: 16px;
+    }
+
+    .outcomes .card { padding: 18px; box-shadow: none; }
+    .kicker { color: var(--forest-2); font-size: 11px; font-weight: 800; letter-spacing: .11em; }
+    .card-title { margin: 5px 0 3px; font-weight: 800; }
+    .note { color: var(--muted); font-size: 14px; }
+
+    .route {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1px;
+      overflow: hidden;
+      margin-top: 16px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--line);
+    }
+
+    .route div { padding: 15px; background: var(--paper); }
+    .route b { display: block; margin-top: 2px; }
+    .route small { color: var(--muted); }
+    .route .number { color: var(--blue); font-family: Georgia, serif; font-size: 22px; font-style: italic; }
+
+    .step {
+      padding: 22px 18px;
+      margin-bottom: 20px;
+    }
+
+    .step-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      margin-bottom: 15px;
+      color: var(--blue);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+
+    .step-tag span {
+      display: grid;
+      width: 32px;
+      height: 32px;
+      place-items: center;
+      border-radius: 10px;
+      color: white;
+      background: var(--blue);
+      letter-spacing: 0;
+    }
+
+    .steps {
+      margin: 14px 0 18px;
+      padding-left: 22px;
+    }
+
+    .steps li { margin: 11px 0; padding-left: 4px; }
+    .steps li::marker { color: var(--forest-2); font-weight: 800; }
+
+    .ui-sketch {
+      overflow: hidden;
+      margin-top: 20px;
+      border: 1px solid #ccd3cf;
+      border-radius: 17px;
+      background: #fff;
+      box-shadow: 0 12px 30px rgba(37, 49, 43, .10);
+    }
+
+    .sketch-bar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 36px;
+      padding: 8px 11px;
+      border-bottom: 1px solid #e3e7e5;
+      background: #f3f5f4;
+    }
+
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #c9d0cc; }
+    .sketch-url { margin-left: 5px; color: #707a75; font-size: 10px; overflow-wrap: anywhere; }
+    .sketch-body { padding: 16px; }
+    .sketch-title { margin-bottom: 12px; font-size: 18px; font-weight: 800; }
+
+    .field {
+      padding: 11px 12px;
+      border: 1px solid #cfd5d2;
+      border-radius: 9px;
+      color: #66726c;
+      background: white;
+      overflow-wrap: anywhere;
+    }
+
+    .fake-card {
+      margin-top: 11px;
+      padding: 13px;
+      border: 1px solid #dce1de;
+      border-radius: 11px;
+    }
+
+    .fake-card.focus { border: 2px solid var(--blue); background: #f7f9ff; }
+    .row { display: flex; gap: 10px; align-items: center; justify-content: space-between; }
+
+    .action {
+      flex: 0 0 auto;
+      min-height: 38px;
+      padding: 8px 11px;
+      border-radius: 8px;
+      color: white;
+      background: var(--blue);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .chip {
+      flex: 0 0 auto;
+      padding: 5px 8px;
+      border-radius: 999px;
+      color: var(--forest-2);
+      background: var(--mint);
+      font-size: 10px;
+      font-weight: 800;
+    }
+
+    .data-grid {
+      display: grid;
+      gap: 1px;
+      overflow: hidden;
+      margin: 16px 0;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--line);
+    }
+
+    .data-grid > div { padding: 12px 13px; background: var(--paper); overflow-wrap: anywhere; }
+    .data-grid .key { padding-bottom: 4px; color: #4a5650; font-size: 12px; font-weight: 800; letter-spacing: .04em; }
+
+    .scope {
+      padding: 14px;
+      border-left: 4px solid var(--forest-2);
+      border-radius: 9px;
+      color: #175641;
+      background: var(--mint);
+      font-family: "SFMono-Regular", Menlo, monospace;
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+
+    pre {
+      position: relative;
+      margin: 16px 0;
+      padding: 58px 15px 17px;
+      border-radius: 15px;
+      color: #edf7f1;
+      background: #18241f;
+      font-size: 12px;
+      line-height: 1.65;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+
+    .copy {
+      position: absolute;
+      top: 9px;
+      left: 9px;
+      min-width: 92px;
+      min-height: 40px;
+      padding: 8px 12px;
+      border: 1px solid rgba(255,255,255,.24);
+      border-radius: 10px;
+      color: #e4f4eb;
+      background: rgba(255,255,255,.09);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .compare { display: grid; gap: 11px; margin-top: 17px; }
+    .compare .card { padding: 18px; box-shadow: none; }
+    .compare .good { border-top: 5px solid var(--forest-2); }
+    .compare .bad { border-top: 5px solid var(--red); }
+    .compare h3 { margin-top: 0; }
+    .compare ul { margin-bottom: 0; padding-left: 20px; }
+
+    .checklist { display: grid; gap: 10px; }
+
+    .check {
+      display: flex;
+      gap: 12px;
+      min-height: 54px;
+      align-items: flex-start;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: var(--paper);
+      cursor: pointer;
+    }
+
+    .check input {
+      flex: 0 0 auto;
+      width: 21px;
+      height: 21px;
+      margin: 2px 0 0;
+      accent-color: var(--forest-2);
+    }
+
+    .check:has(input:checked) { color: #52615a; background: var(--mint); }
+    .check:has(input:checked) span { text-decoration: line-through; }
+
+    .troubleshooting { display: grid; gap: 10px; }
+
+    details {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--paper);
+    }
+
+    summary {
+      min-height: 54px;
+      padding: 15px 17px;
+      cursor: pointer;
+      font-weight: 800;
+    }
+
+    details > div { padding: 0 17px 17px; color: #53605a; overflow-wrap: anywhere; }
+
+    .sources {
+      padding-top: 24px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .sources li { margin: 10px 0; }
+
+    .security {
+      margin-top: 34px;
+      padding: 20px;
+      border-radius: var(--radius);
+      color: #dce9e2;
+      background: #1b2923;
+      overflow-wrap: anywhere;
+    }
+
+    @media (min-width: 600px) {
+      main { padding-top: 42px; }
+      .step { padding: 30px; }
+      .outcomes { grid-template-columns: repeat(3, 1fr); }
+      .compare { grid-template-columns: 1fr 1fr; }
+      .data-grid { grid-template-columns: 155px 1fr; }
+      .data-grid .key { padding-bottom: 12px; }
+      pre { font-size: 13px; }
+    }
+
+    @media print {
+      body { background: white; }
+      .progress, .quick-nav, .copy { display: none; }
+      .page-title { padding-top: 10px; }
+      .step, .card, .callout { box-shadow: none; break-inside: avoid; }
+      main { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="progress" aria-hidden="true"></div>
+
+  <header class="page-title">
+    <h1>Google Drive Setup</h1>
+    <span>MUSICFREE · IOS</span>
+  </header>
+
+  <nav class="quick-nav" aria-label="Setup steps">
+    <a href="#overview">Overview</a>
+    <a href="#project">1 · Project</a>
+    <a href="#api">2 · API</a>
+    <a href="#consent">3 · Access</a>
+    <a href="#client">4 · Client ID</a>
+    <a href="#local">5 · Xcode</a>
+    <a href="#connect">6 · Connect</a>
+    <a href="#checklist">Checklist</a>
+    <a href="#errors">Errors</a>
+  </nav>
+
+  <main>
+    <section id="overview">
+      <h2>What you will create</h2>
+      <div class="callout">
+        <strong>The only value you paste into MusicFree is a public Client ID:</strong><br>
+        <span class="mono">xxxxxxxx.apps.googleusercontent.com</span>
+        <p style="margin: 10px 0 0">An iOS app cannot keep a client secret confidential. MusicFree does not need one, and you should never add one to the project.</p>
+      </div>
+
+      <div class="outcomes">
+        <div class="card">
+          <div class="kicker">GOOGLE CLOUD</div>
+          <div class="card-title">One Cloud project</div>
+          <div class="note">Hosts the Drive API and OAuth configuration.</div>
+        </div>
+        <div class="card">
+          <div class="kicker">AUDIENCE</div>
+          <div class="card-title">Allowed test users</div>
+          <div class="note">Only listed accounts can sign in while the app is in Testing.</div>
+        </div>
+        <div class="card">
+          <div class="kicker">IOS CLIENT</div>
+          <div class="card-title">Client ID and callback</div>
+          <div class="note">The Client ID identifies the app; the reversed ID routes back to it.</div>
+        </div>
+      </div>
+
+      <div class="route" aria-label="Setup route">
+        <div><span class="number">01</span><b>Project</b><small>Select or create</small></div>
+        <div><span class="number">02</span><b>Drive API</b><small>Enable access</small></div>
+        <div><span class="number">03</span><b>OAuth</b><small>Add test users</small></div>
+        <div><span class="number">04</span><b>MusicFree</b><small>Build and connect</small></div>
+      </div>
+
+      <div class="callout warning" style="margin-top: 16px">
+        <strong>Do not copy rclone's Desktop app step.</strong> rclone normally creates a Desktop client and uses a Client ID plus Client Secret. MusicFree is an iOS app: create an <b>iOS client</b> for <span class="mono">win.tools4me.music</span> and use only its Client ID.
+      </div>
+    </section>
+
+    <section id="project" class="step">
+      <div class="step-tag"><span>01</span>Cloud project</div>
+      <h2>Create or select a project</h2>
+      <ol class="steps">
+        <li>Open <a href="https://console.cloud.google.com/" target="_blank" rel="noreferrer">Google Cloud Console</a> and sign in with the account that will manage OAuth.</li>
+        <li>Tap the project selector at the top, then choose an existing project or create a new one.</li>
+        <li>You can name it <b>MusicFree Drive</b>. Keep this project selected for every remaining step.</li>
+      </ol>
+
+      <div class="ui-sketch" role="img" aria-label="Google Cloud project selector illustration">
+        <div class="sketch-bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="sketch-url">console.cloud.google.com</span></div>
+        <div class="sketch-body">
+          <div class="row"><b>Google Cloud</b><span class="chip">PROJECT</span></div>
+          <div class="fake-card focus">
+            <span class="note">Current project</span>
+            <div class="row" style="margin-top: 7px"><b>MusicFree Drive</b><span class="chip">Selected</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="api" class="step">
+      <div class="step-tag"><span>02</span>API Library</div>
+      <h2>Enable Google Drive API</h2>
+      <ol class="steps">
+        <li>Open the console menu, then go to <b>APIs &amp; Services → Library</b>.</li>
+        <li>Search for <b>Google Drive API</b>.</li>
+        <li>Open it and tap <b>Enable</b>. When the button changes to Manage, this step is complete.</li>
+      </ol>
+      <p class="note">You do not need an API key or the Google Picker API.</p>
+
+      <div class="ui-sketch" role="img" aria-label="Enable Google Drive API illustration">
+        <div class="sketch-bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="sketch-url">APIs &amp; Services / Library</span></div>
+        <div class="sketch-body">
+          <div class="sketch-title">API Library</div>
+          <div class="field">Search: Google Drive API</div>
+          <div class="fake-card focus">
+            <b>Google Drive API</b>
+            <div class="row" style="margin-top: 10px"><span class="note">Drive files and folders</span><span class="action">Enable</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="consent" class="step">
+      <div class="step-tag"><span>03</span>Google Auth Platform</div>
+      <h2>Configure access and allowed users</h2>
+      <p>The current console groups OAuth settings under <b>Google Auth Platform</b>: Branding, Audience, Data Access, and Clients. Older consoles may call this the OAuth consent screen.</p>
+
+      <h3>A. Branding</h3>
+      <div class="data-grid">
+        <div class="key">APP NAME</div><div>MusicFree, or the name you want users to see</div>
+        <div class="key">SUPPORT EMAIL</div><div>An address where you can receive notices</div>
+        <div class="key">DEVELOPER CONTACT</div><div>Your developer contact email</div>
+        <div class="key">LOGO AND DOMAIN</div><div>Optional for personal testing; required details may increase when publishing</div>
+      </div>
+
+      <h3>B. Audience and test users</h3>
+      <ol class="steps">
+        <li>Choose <b>External</b> for personal Gmail accounts or users outside your Workspace organization.</li>
+        <li>Keep Publishing status set to <b>Testing</b>.</li>
+        <li>Under Test users, tap <b>Add users</b> and add every Google account that will sign in on the device.</li>
+      </ol>
+      <div class="callout warning">
+        <strong>This is the allowlist.</strong> A project administrator is not automatically a test user. If the device account is missing, Google commonly returns <span class="mono">Error 403: access_denied</span>.
+      </div>
+
+      <div class="ui-sketch" role="img" aria-label="Google Auth Platform test users illustration">
+        <div class="sketch-bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="sketch-url">Google Auth Platform / Audience</span></div>
+        <div class="sketch-body">
+          <div class="row"><b>Audience</b><span class="chip">External</span></div>
+          <div class="fake-card focus">
+            <div class="row"><b>Test users</b><span class="action">+ Add users</span></div>
+            <p class="note" style="margin: 10px 0 0">user@example.com</p>
+          </div>
+        </div>
+      </div>
+
+      <h3>C. Data Access</h3>
+      <p>MusicFree browses and downloads files. It does not upload, rename, or delete them, so add only this read-only scope:</p>
+      <div class="scope">https://www.googleapis.com/auth/drive.readonly</div>
+      <ol class="steps">
+        <li>Open Data Access and tap <b>Add or remove scopes</b>.</li>
+        <li>Search for the scope above, or add the full value manually.</li>
+        <li>Tap Update, then Save. Do not replace it with the broader <span class="mono">drive</span> scope.</li>
+      </ol>
+    </section>
+
+    <section id="client" class="step">
+      <div class="step-tag"><span>04</span>OAuth client</div>
+      <h2>Create the iOS Client ID</h2>
+      <ol class="steps">
+        <li>Open Google Auth Platform → Clients, then tap <b>Create client</b>.</li>
+        <li>Choose <b>iOS</b> as the application type. Do not choose Web application or Desktop app.</li>
+        <li>Enter the project-specific values below and create the client.</li>
+      </ol>
+
+      <div class="data-grid">
+        <div class="key">APPLICATION TYPE</div><div><b>iOS</b></div>
+        <div class="key">NAME</div><div>MusicFree iOS</div>
+        <div class="key">BUNDLE ID</div><div><span class="mono">win.tools4me.music</span></div>
+        <div class="key">APP STORE ID</div><div>Leave blank if the app is not listed yet</div>
+        <div class="key">TEAM ID</div><div>Enter only if requested or when enabling App Check; it must match the signing team</div>
+      </div>
+
+      <div class="ui-sketch" role="img" aria-label="Create iOS OAuth client illustration">
+        <div class="sketch-bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="sketch-url">Google Auth Platform / Clients</span></div>
+        <div class="sketch-body">
+          <div class="sketch-title">Create OAuth client</div>
+          <div class="field"><small>Application type</small><br><b>iOS</b></div>
+          <div class="field" style="margin-top: 9px"><small>Bundle ID</small><br><b>win.tools4me.music</b></div>
+          <div class="row" style="margin-top: 12px"><span class="note">Verify before creating</span><span class="action">Create</span></div>
+        </div>
+      </div>
+
+      <h3>Record these two values</h3>
+      <div class="data-grid">
+        <div class="key">CLIENT_ID</div><div><span class="mono">1234567890-abcdef.apps.googleusercontent.com</span></div>
+        <div class="key">REVERSED_CLIENT_ID</div><div><span class="mono">com.googleusercontent.apps.1234567890-abcdef</span></div>
+      </div>
+      <div class="callout">
+        <strong>Where does the reversed ID come from?</strong> Download the iOS configuration plist from Google and copy <span class="mono">CLIENT_ID</span> and <span class="mono">REVERSED_CLIENT_ID</span>. MusicFree uses the values from xcconfig at runtime; the plist is reference material only.
+      </div>
+    </section>
+
+    <section id="local" class="step">
+      <div class="step-tag"><span>05</span>Local Xcode project</div>
+      <h2>Add the local OAuth configuration</h2>
+      <p>From the repository root, copy the example. The new local file is ignored by Git.</p>
+      <pre><button class="copy" type="button">Copy code</button><code>cp GoogleDriveOAuth.local.xcconfig.example GoogleDriveOAuth.local.xcconfig</code></pre>
+
+      <p>Replace the placeholders with the values from the iOS client:</p>
+      <pre><button class="copy" type="button">Copy code</button><code>GOOGLE_DRIVE_OAUTH_ENABLED = YES
+GOOGLE_DRIVE_OAUTH_CLIENT_ID = 1234567890-abcdef.apps.googleusercontent.com
+GOOGLE_DRIVE_OAUTH_REVERSED_CLIENT_ID = com.googleusercontent.apps.1234567890-abcdef
+GOOGLE_DRIVE_OAUTH_URL_SCHEME = $(GOOGLE_DRIVE_OAUTH_REVERSED_CLIENT_ID)
+GOOGLE_DRIVE_OAUTH_REDIRECT_URL = $(GOOGLE_DRIVE_OAUTH_URL_SCHEME):/oauth2redirect/google</code></pre>
+
+      <div class="callout warning">
+        <strong>The callback must match exactly:</strong><br>
+        <span class="mono">REVERSED_CLIENT_ID:/oauth2redirect/google</span><br>
+        It uses a colon and one slash (<span class="mono">:/</span>), not the double slash used by web URLs.
+      </div>
+
+      <p style="margin-top: 17px">If the Xcode project was regenerated, confirm that <span class="mono">basic_config.xcconfig</span> still contains:</p>
+      <pre><button class="copy" type="button">Copy code</button><code>#include? "GoogleDriveOAuth.local.xcconfig"</code></pre>
+    </section>
+
+    <section id="connect" class="step">
+      <div class="step-tag"><span>06</span>Connect in MusicFree</div>
+      <h2>Build, install, and sign in</h2>
+      <ol class="steps">
+        <li>Rebuild and install MusicFree. An older installed build will not contain the new callback URL scheme.</li>
+        <li>Open <b>Settings → Online Sources → Add Google Drive</b>.</li>
+        <li>Enter a source name and paste the same original <b>OAuth Client ID</b>. Do not paste the reversed ID or a client secret.</li>
+        <li>Start the connection and choose an account already listed under Test users.</li>
+        <li>Approve read-only Drive access. The browser should return to MusicFree, where you can browse folders and download files.</li>
+      </ol>
+
+      <div class="compare">
+        <div class="card good">
+          <h3>Use these</h3>
+          <ul>
+            <li>An iOS Client ID</li>
+            <li><span class="mono">…apps.googleusercontent.com</span></li>
+            <li>An allowed test account</li>
+            <li><span class="mono">drive.readonly</span></li>
+          </ul>
+        </div>
+        <div class="card bad">
+          <h3>Do not use</h3>
+          <ul>
+            <li>An API key</li>
+            <li>A Desktop or Web client</li>
+            <li>A client secret</li>
+            <li>A service-account private key</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="checklist">
+      <h2>Final checklist</h2>
+      <p class="note">Your selections are stored only in this browser on this device.</p>
+      <div class="checklist">
+        <label class="check"><input type="checkbox" data-check="project"><span>The correct Google Cloud project is selected.</span></label>
+        <label class="check"><input type="checkbox" data-check="api"><span>Google Drive API shows Enabled.</span></label>
+        <label class="check"><input type="checkbox" data-check="audience"><span>Audience is External / Testing, and the device account is a test user.</span></label>
+        <label class="check"><input type="checkbox" data-check="scope"><span>Data Access includes only the required drive.readonly scope.</span></label>
+        <label class="check"><input type="checkbox" data-check="client"><span>The client type is iOS and its Bundle ID is win.tools4me.music.</span></label>
+        <label class="check"><input type="checkbox" data-check="xcconfig"><span>Client ID, reversed ID, and callback URL match in the local xcconfig.</span></label>
+        <label class="check"><input type="checkbox" data-check="app"><span>Authorization returns to MusicFree and Drive folders can be browsed.</span></label>
+      </div>
+    </section>
+
+    <section id="errors">
+      <h2>Common errors</h2>
+      <div class="troubleshooting">
+        <details>
+          <summary>403 access_denied or “app is being tested”</summary>
+          <div>Open Google Auth Platform → Audience → Test users and add the exact Google account selected on the device. Project administrators and test users are separate roles.</div>
+        </details>
+        <details>
+          <summary>redirect_uri_mismatch</summary>
+          <div>Confirm that the client type is iOS, the Bundle ID is <span class="mono">win.tools4me.music</span>, and the reversed ID belongs to the same Client ID. The callback must be <span class="mono">REVERSED_CLIENT_ID:/oauth2redirect/google</span>.</div>
+        </details>
+        <details>
+          <summary>invalid_client</summary>
+          <div>The app may have received an API key, reversed ID, or the wrong client type. Paste the original Client ID ending in <span class="mono">.apps.googleusercontent.com</span>.</div>
+        </details>
+        <details>
+          <summary>Authorization does not return to MusicFree</summary>
+          <div>Rebuild and reinstall the app, then verify that the built Info.plist contains the reversed Client ID as a URL scheme. Editing xcconfig does not update an already installed build.</div>
+        </details>
+        <details>
+          <summary>Files are missing or downloads fail</summary>
+          <div>Verify that Google Drive API is enabled and that the authorization uses <span class="mono">drive.readonly</span>. If needed, revoke the old grant in your Google Account and reconnect from MusicFree.</div>
+        </details>
+        <details>
+          <summary>Do I need to publish or verify the app?</summary>
+          <div>For small private tests, keep the app in Testing and use the test-user allowlist. To serve accounts outside that list, move to Production. Google may then require a homepage, privacy policy, authorized domain, and verification for the Drive scope.</div>
+        </details>
+      </div>
+    </section>
+
+    <section class="sources">
+      <b>Official references</b>
+      <ul>
+        <li><a href="https://developers.google.com/identity/protocols/oauth2/native-app" target="_blank" rel="noreferrer">Google OAuth 2.0 for iOS &amp; Desktop Apps</a> — the native OAuth and PKCE reference for this project.</li>
+        <li><a href="https://developers.google.com/identity/oauth2/web/guides/get-google-api-clientid" target="_blank" rel="noreferrer">Get your Google API client ID</a> — general project and Client ID guidance; its Web client type does not apply here.</li>
+        <li><a href="https://rclone.org/drive/#making-your-own-client-id" target="_blank" rel="noreferrer">rclone: Making your own client_id</a> — useful for Drive API, consent, scopes, and test users; its Desktop client step does not apply here.</li>
+        <li><a href="https://developers.google.com/drive/api/guides/api-specific-auth" target="_blank" rel="noreferrer">Google Drive API: Choose scopes</a>.</li>
+      </ul>
+    </section>
+
+    <div class="security">
+      <b>Credential safety</b><br>
+      A Client ID is public; a refresh token is sensitive. MusicFree stores OAuth tokens in the system Keychain. Never place authorization codes, access tokens, refresh tokens, client secrets, or service-account private keys in xcconfig, screenshots, issues, or Git.
+    </div>
+  </main>
+
+  <script>
+    const progress = document.querySelector('.progress');
+    const updateProgress = () => {
+      const range = document.documentElement.scrollHeight - innerHeight;
+      progress.style.transform = `scaleX(${range > 0 ? scrollY / range : 0})`;
+    };
+    addEventListener('scroll', updateProgress, { passive: true });
+    updateProgress();
+
+    const navLinks = [...document.querySelectorAll('.quick-nav a')];
+    const sections = navLinks.map(link => document.querySelector(link.getAttribute('href'))).filter(Boolean);
+    const observer = new IntersectionObserver(entries => {
+      const current = entries.filter(entry => entry.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+      if (!current) return;
+      navLinks.forEach(link => link.classList.toggle('active', link.getAttribute('href') === `#${current.target.id}`));
+    }, { rootMargin: '-18% 0px -68%', threshold: [0, .15, .5] });
+    sections.forEach(section => observer.observe(section));
+
+    document.querySelectorAll('.copy').forEach(button => {
+      button.addEventListener('click', async () => {
+        const text = button.parentElement.querySelector('code').innerText;
+        try {
+          await navigator.clipboard.writeText(text);
+          button.textContent = 'Copied';
+        } catch {
+          const range = document.createRange();
+          range.selectNodeContents(button.parentElement.querySelector('code'));
+          const selection = getSelection();
+          selection.removeAllRanges();
+          selection.addRange(range);
+          button.textContent = 'Selected';
+        }
+        setTimeout(() => button.textContent = 'Copy code', 1400);
+      });
+    });
+
+    document.querySelectorAll('[data-check]').forEach(input => {
+      const key = `musicfree-google-drive-guide:${input.dataset.check}`;
+      input.checked = localStorage.getItem(key) === '1';
+      input.addEventListener('change', () => localStorage.setItem(key, input.checked ? '1' : '0'));
+    });
+  </script>
+</body>
+</html>

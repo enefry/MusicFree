@@ -48,7 +48,8 @@ public struct TrackMetadataUpdate: Sendable {
         artwork: ArtworkEdit = .keep
     ) {
         self.itemID = itemID
-        self.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.title = MetadataTextRepair.repair(title)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         self.artistName = Self.normalized(artistName)
         self.artistNames = Self.normalizedList(artistNames)
         self.albumArtistName = Self.normalized(albumArtistName)
@@ -66,7 +67,8 @@ public struct TrackMetadataUpdate: Sendable {
 
     private static func normalized(_ value: String?) -> String? {
         guard let value else { return nil }
-        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = MetadataTextRepair.repair(value)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         return normalized.isEmpty ? nil : normalized
     }
 

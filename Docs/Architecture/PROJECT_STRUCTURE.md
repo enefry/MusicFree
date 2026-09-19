@@ -59,9 +59,9 @@ App ──> UI + Infrastructure + VLCKit Adapter + Core API
 
 ## 4. App 运行链路
 
-1. `MusicFreeApp` 创建 `AppContainer`，组装持久化、媒体、系统和播放实现。
+1. `MusicFreeAppDelegate` 创建 `AppContainer`，组装持久化、媒体、系统和播放实现。
 2. `AppLifecycleCoordinator`、`AppDocumentsScanner` 和启动状态处理启动恢复、Documents 补扫及启动错误。
-3. `RootScene` 通过 `AppRouter` 展示 Library、Player、Playlist 和 Settings 功能。
+3. `MusicFreeSceneDelegate` 创建 `RootViewController`；它通过 `AppRouter` 展示 UIKit 的 Library、Player、Playlist、Online Sources，以及唯一保留 SwiftUI 宿主的 Settings。
 4. UI 通过 `AppServices` 发起导入、查询、编辑、播放、队列、存储维护和设置变更。
 5. `AppServices` 调用 Infrastructure / VLCKit Adapter，并把状态快照回传给 UI。
 

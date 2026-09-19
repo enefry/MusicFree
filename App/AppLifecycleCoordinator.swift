@@ -1,4 +1,3 @@
-import SwiftUI
 import UIKit
 
 enum AppLifecyclePhase: String, Equatable, Sendable {
@@ -65,19 +64,6 @@ final class AppLifecycleCoordinator {
             notificationCenter.removeObserver(token)
         }
         observerTokens.removeAll(keepingCapacity: true)
-    }
-
-    func handle(scenePhase: ScenePhase) {
-        switch scenePhase {
-        case .active:
-            handle(.active)
-        case .inactive:
-            handle(.inactive)
-        case .background:
-            handle(.background)
-        @unknown default:
-            handle(.inactive)
-        }
     }
 
     func handle(_ phase: AppLifecyclePhase) {

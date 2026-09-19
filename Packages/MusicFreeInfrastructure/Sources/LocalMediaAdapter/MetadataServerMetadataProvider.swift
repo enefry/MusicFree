@@ -3,7 +3,6 @@ import Foundation
 import LibraryAPI
 import MediaSourceAPI
 import MusicDomain
-import OSLog
 
 /// Runtime configuration for the Discogs metadata service documented in
 /// `Docs/Integrations/music-metadata-server-api/API.md`.
@@ -78,7 +77,7 @@ public actor MetadataServerMetadataProvider: MetadataEnrichmentProviding {
     public let provider: MetadataEnrichmentProvider = .metadataServer
     public typealias DurationProvider = @Sendable (MediaItemID) async -> TimeInterval?
 
-    private static let logger = Logger(
+    private static let logger = MusicLogger(
         subsystem: "com.musicfree.app",
         category: "metadata-server"
     )
@@ -139,7 +138,7 @@ public actor MetadataServerMetadataProvider: MetadataEnrichmentProviding {
         var candidates: [MetadataEnrichmentCandidate] = []
         for (index, requestTrackName) in trackNames.enumerated() {
             Self.logger.info(
-                "search request title=\(requestTrackName, privacy: .public) artist=\(artistName, privacy: .public) album=\(query.albumName ?? "-", privacy: .public) duration=\(durationDescription, privacy: .public) durationSource=\(durationSource, privacy: .public) variant=\(index + 1, privacy: .public)/\(trackNames.count, privacy: .public)"
+                "search request title=\(requestTrackName) artist=\(artistName) album=\(query.albumName ?? "-") duration=\(durationDescription) durationSource=\(durationSource) variant=\(index + 1)/\(trackNames.count)"
             )
 
             // Album and duration are intentionally used by the shared matcher,
@@ -166,7 +165,7 @@ public actor MetadataServerMetadataProvider: MetadataEnrichmentProviding {
                 envelope = try JSONDecoder().decode(TrackSearchResponse.self, from: response)
             } catch {
                 Self.logger.error(
-                    "track response decode failed bytes=\(response.count, privacy: .public)"
+                    "track response decode failed bytes=\(response.count)"
                 )
                 throw MetadataEnrichmentError.requestFailed(
                     code: "metadata_invalid_response",
@@ -328,7 +327,7 @@ public actor MetadataServerMetadataProvider: MetadataEnrichmentProviding {
                 )
             }
             Self.logger.info(
-                "request completed operation=\(operation, privacy: .public) path=\(httpResponse.url?.path ?? "-", privacy: .public) status=\(httpResponse.statusCode, privacy: .public) bytes=\(data.count, privacy: .public)"
+                "request completed operation=\(operation) path=\(httpResponse.url?.path ?? "-") status=\(httpResponse.statusCode) bytes=\(data.count)"
             )
             if allowNotFound, httpResponse.statusCode == 404 { return nil }
             guard (200 ... 299).contains(httpResponse.statusCode) else {
@@ -585,7 +584,8 @@ public actor MetadataServerMetadataProvider: MetadataEnrichmentProviding {
 
     private static func normalized(_ value: String?) -> String? {
         guard let value else { return nil }
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = MetadataTextRepair.repair(value)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
     }
 

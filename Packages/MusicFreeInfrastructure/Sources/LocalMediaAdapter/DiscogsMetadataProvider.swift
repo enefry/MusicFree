@@ -2,7 +2,6 @@ import Foundation
 import LibraryAPI
 import MediaSourceAPI
 import MusicDomain
-import OSLog
 
 /// Configuration for the official Discogs API.
 ///
@@ -145,7 +144,7 @@ public struct DiscogsAPIConfiguration: Sendable, Equatable {
 public actor DiscogsMetadataProvider: MetadataEnrichmentProviding {
     public let provider: MetadataEnrichmentProvider = .discogs
 
-    private static let logger = Logger(
+    private static let logger = MusicLogger(
         subsystem: "com.musicfree.app",
         category: "discogs-api"
     )
@@ -189,7 +188,7 @@ public actor DiscogsMetadataProvider: MetadataEnrichmentProviding {
             ].filter { $0.value != nil }
 
             Self.logger.info(
-                "search request track=\(requestTrackName, privacy: .public) artist=\(query.artistName ?? "-", privacy: .public)"
+                "search request track=\(requestTrackName) artist=\(query.artistName ?? "-")"
             )
             let request = try makeRequest(
                 pathComponents: ["database", "search"],
@@ -445,7 +444,7 @@ public actor DiscogsMetadataProvider: MetadataEnrichmentProviding {
                 )
             }
             Self.logger.info(
-                "request completed operation=\(operation, privacy: .public) path=\(httpResponse.url?.path ?? "-", privacy: .public) status=\(httpResponse.statusCode, privacy: .public) bytes=\(data.count, privacy: .public)"
+                "request completed operation=\(operation) path=\(httpResponse.url?.path ?? "-") status=\(httpResponse.statusCode) bytes=\(data.count)"
             )
             if allowNotFound, httpResponse.statusCode == 404 { return nil }
             guard (200 ... 299).contains(httpResponse.statusCode) else {
@@ -597,7 +596,8 @@ public actor DiscogsMetadataProvider: MetadataEnrichmentProviding {
 
     private static func normalized(_ value: String?) -> String? {
         guard let value else { return nil }
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = MetadataTextRepair.repair(value)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
     }
 

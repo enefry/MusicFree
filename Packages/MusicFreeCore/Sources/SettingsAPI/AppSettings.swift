@@ -13,16 +13,19 @@ public struct AppSettings: Codable, Equatable, Hashable, Sendable {
     public let importPreferences: ImportPreferences
     public let playbackPreferences: PlaybackPreferences
     public let storagePreferences: StoragePreferences
+    public let loggingPreferences: LoggingPreferences
 
     public init(
         importPreferences: ImportPreferences = .defaults,
         playbackPreferences: PlaybackPreferences = .defaults,
-        storagePreferences: StoragePreferences = .defaults
+        storagePreferences: StoragePreferences = .defaults,
+        loggingPreferences: LoggingPreferences = .defaults
     ) {
         self.schemaVersion = Self.currentSchemaVersion
         self.importPreferences = importPreferences
         self.playbackPreferences = playbackPreferences
         self.storagePreferences = storagePreferences
+        self.loggingPreferences = loggingPreferences
     }
 
     public static let defaults = Self()
@@ -58,6 +61,7 @@ public struct AppSettings: Codable, Equatable, Hashable, Sendable {
         case importPreferences
         case playbackPreferences
         case storagePreferences
+        case loggingPreferences
     }
 
     public init(from decoder: Decoder) throws {
@@ -83,7 +87,20 @@ public struct AppSettings: Codable, Equatable, Hashable, Sendable {
             storagePreferences: try container.decodeIfPresent(
                 StoragePreferences.self,
                 forKey: .storagePreferences
+            ) ?? .defaults,
+            loggingPreferences: try container.decodeIfPresent(
+                LoggingPreferences.self,
+                forKey: .loggingPreferences
             ) ?? .defaults
+        )
+    }
+
+    public func settingLoggingPreferences(_ preferences: LoggingPreferences) -> Self {
+        Self(
+            importPreferences: importPreferences,
+            playbackPreferences: playbackPreferences,
+            storagePreferences: storagePreferences,
+            loggingPreferences: preferences
         )
     }
 }

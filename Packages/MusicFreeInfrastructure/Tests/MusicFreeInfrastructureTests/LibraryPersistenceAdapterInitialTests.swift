@@ -22,6 +22,231 @@ func persistenceCodecDateCompatibility() throws {
     #expect(legacyRoundTrip.date == legacyDate)
 }
 
+@Test("persisted metadata repair rewrites every metadata record and survives reopen")
+func persistedMetadataRepairRewritesAllSupportedRecords() async throws {
+    let directory = try makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let storeURL = directory.appendingPathComponent("metadata-repair.store")
+    let fixture = try makePersistedMojibakeFixture(at: storeURL)
+
+    let store = try LibraryPersistenceStore(
+        configuration: try LibraryPersistenceConfiguration(storeURL: storeURL)
+    )
+    let library = SwiftDataLibraryRepository(store: store)
+    let changes = library.changes()
+    var changeIterator = changes.makeAsyncIterator()
+
+    #expect(try await store.currentRevision() == LibraryRevision(7))
+    let result = try await library.repairMetadata()
+    let change = try #require(await changeIterator.next())
+
+    #expect(result.scannedRecordCount == 12)
+    #expect(result.repairedRecordCount == 12)
+    #expect(result.revision == LibraryRevision(8))
+    #expect(change.revision == result.revision)
+    #expect(change.categories == [.tracks, .albums, .artists, .genres, .playlists])
+    #expect(change.affectedIDs.trackIDs == [fixture.track.id])
+    #expect(change.affectedIDs.albumIDs == [fixture.album.id])
+    #expect(change.affectedIDs.artistIDs == [fixture.artist.id])
+    #expect(change.affectedIDs.genreIDs == [fixture.genre.id])
+    #expect(change.affectedIDs.playlistIDs == [fixture.playlist.id])
+    await store.close()
+
+    let reopenedStore = try LibraryPersistenceStore(
+        configuration: try LibraryPersistenceConfiguration(storeURL: storeURL)
+    )
+    let reopenedLibrary = SwiftDataLibraryRepository(store: reopenedStore)
+    let reopenedPlaylists = SwiftDataPlaylistRepository(store: reopenedStore)
+    let secondResult = try await reopenedLibrary.repairMetadata()
+
+    #expect(secondResult.scannedRecordCount == 12)
+    #expect(secondResult.repairedRecordCount == 0)
+    #expect(secondResult.revision == LibraryRevision(8))
+    #expect(try await reopenedLibrary.track(id: fixture.track.id) == fixture.track)
+    #expect(try await reopenedLibrary.album(id: fixture.album.id) == fixture.album)
+    #expect(try await reopenedLibrary.artist(id: fixture.artist.id) == fixture.artist)
+    #expect(try await reopenedLibrary.genre(id: fixture.genre.id) == fixture.genre)
+    #expect(
+        try await reopenedLibrary.logicalTrack(id: fixture.logicalTrack.id)
+            == fixture.logicalTrack
+    )
+    #expect(try await reopenedLibrary.mediaAsset(id: fixture.asset.id) == fixture.asset)
+    #expect(try await reopenedLibrary.trackVariant(id: fixture.variant.id) == fixture.variant)
+    #expect(try await reopenedLibrary.release(id: fixture.release.id) == fixture.release)
+    #expect(try await reopenedLibrary.discs(for: fixture.release.id) == [fixture.disc])
+    #expect(try await reopenedLibrary.collections().contains(fixture.collection))
+    let playlistPage = try await reopenedPlaylists.playlists(
+        page: try LibraryPageRequest(limit: 10)
+    )
+    #expect(playlistPage.elements == [fixture.playlist])
+    await reopenedStore.close()
+}
+
+@Test("metadata repair merges three split local albums and local graph references")
+func persistedMetadataRepairMergesThreeSplitLocalAlbums() async throws {
+    let directory = try makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let storeURL = directory.appendingPathComponent("split-album-repair.store")
+
+    let title = "Split Album"
+    let albumIDs = (1...3).map { AlbumID("local-album-split-\($0)") }
+    let artistIDs = (1...3).map { ArtistID("split-album-artist-\($0)") }
+    let artworks = (1...3).map {
+        ArtworkReference(
+            id: ArtworkID("split-album-cover-\($0)"),
+            variants: [.original],
+            preferredVariant: .original
+        )
+    }
+    let canonicalAlbumID = albumIDs[0]
+    let canonicalReleaseID = AlbumReleaseID(legacyAlbumID: canonicalAlbumID)
+    let collectionID = LibraryCollectionID("split-album-collection")
+
+    let tracks = (0..<3).flatMap { albumIndex in
+        (1...2).map { (trackNumber: Int) in
+            Track(
+                id: MediaItemID(
+                    sourceID: .local,
+                    externalID: "split-\(albumIndex + 1)-track-\(trackNumber)"
+                ),
+                logicalTrackID: LogicalTrackID(
+                    "split-\(albumIndex + 1)-logical-\(trackNumber)"
+                ),
+                title: "Track \(albumIndex + 1)-\(trackNumber)",
+                albumID: albumIDs[albumIndex],
+                artistIDs: [artistIDs[albumIndex]],
+                trackNumber: trackNumber,
+                trackTotal: 2,
+                discNumber: 1,
+                discTotal: 1
+            )
+        }
+    }
+    let albums = albumIDs.enumerated().map { index, albumID in
+        Album(
+            id: albumID,
+            title: title,
+            artistIDs: [artistIDs[index]],
+            artwork: artworks[index],
+            trackCount: 2
+        )
+    }
+    let releases = albums.map(\.releaseProjection)
+    let discs = releases.map { release in
+        Disc(
+            id: DiscID(releaseID: release.id, number: 1),
+            releaseID: release.id,
+            number: 1,
+            trackCount: 2
+        )
+    }
+    let logicalTracks = tracks.map(\.logicalTrackProjection)
+    let collection = LibraryCollection(
+        id: collectionID,
+        kind: .boxSet,
+        title: "Split Album Collection"
+    )
+
+    let schema = Schema(versionedSchema: MusicFreeSchema.self)
+    let configuration = ModelConfiguration(
+        "MusicFreeLibrary",
+        schema: schema,
+        url: storeURL
+    )
+    let container = try ModelContainer(for: schema, configurations: [configuration])
+    let context = ModelContext(container)
+    for track in tracks {
+        context.insert(try LibraryRecordMapper.makeTrack(track))
+    }
+    for (index, album) in albums.enumerated() {
+        context.insert(try LibraryRecordMapper.makeAlbum(
+            album,
+            dateAddedAt: Date(timeIntervalSince1970: TimeInterval(index + 1))
+        ))
+        context.insert(try LibraryRecordMapper.makeArtist(
+            Artist(id: artistIDs[index], name: "Split Artist \(index + 1)")
+        ))
+        context.insert(try LibraryRecordMapper.makeArtwork(artworks[index]))
+    }
+    for logicalTrack in logicalTracks {
+        context.insert(try LocalMediaGraphRecordMapper.makeLogicalTrack(logicalTrack))
+    }
+    for release in releases {
+        context.insert(try LocalMediaGraphRecordMapper.makeRelease(release))
+    }
+    for disc in discs {
+        context.insert(try LocalMediaGraphRecordMapper.makeDisc(disc))
+    }
+    context.insert(try LocalMediaGraphRecordMapper.makeCollection(collection))
+    for release in releases {
+        context.insert(try LocalMediaGraphRecordMapper.makeMember(LibraryCollectionMember(
+            collectionID: collectionID,
+            releaseID: release.id,
+            position: 0
+        )))
+    }
+    try context.save()
+
+    let store = try LibraryPersistenceStore(
+        configuration: try LibraryPersistenceConfiguration(storeURL: storeURL)
+    )
+    let library = SwiftDataLibraryRepository(store: store)
+    let result = try await library.repairMetadata()
+
+    let albumPage = try await library.albums(
+        matching: AlbumQuery(),
+        page: try LibraryPageRequest(limit: 10)
+    )
+    let mergedAlbum = try #require(await library.album(id: canonicalAlbumID))
+    let canonicalRelease = try #require(await library.release(id: canonicalReleaseID))
+    let mergedDiscs = try await library.discs(for: canonicalReleaseID)
+    let members = try await library.members(in: collectionID)
+
+    #expect(result.repairedRecordCount > 0)
+    #expect(albumPage.elements == [mergedAlbum])
+    #expect(mergedAlbum.artistIDs == artistIDs)
+    #expect(mergedAlbum.artwork == artworks[0])
+    #expect(mergedAlbum.trackCount == 6)
+    #expect(mergedAlbum.albumType == .compilation)
+    #expect(canonicalRelease.artwork == artworks[0])
+    #expect(canonicalRelease.albumType == .compilation)
+    #expect(try await library.album(id: albumIDs[1]) == nil)
+    #expect(try await library.album(id: albumIDs[2]) == nil)
+    for (index, track) in tracks.enumerated() {
+        let stored = try #require(await library.track(id: track.id))
+        #expect(stored.albumID == canonicalAlbumID)
+        #expect(stored.trackTotal == 2)
+        #expect(stored.discNumber == index / 2 + 1)
+        #expect(stored.discTotal == 3)
+    }
+    #expect(try await library.release(id: releases[1].id) == nil)
+    #expect(try await library.release(id: releases[2].id) == nil)
+    #expect(mergedDiscs.map(\.number) == [1, 2, 3])
+    #expect(mergedDiscs.map(\.trackCount) == [2, 2, 2])
+    for (index, logicalTrack) in logicalTracks.enumerated() {
+        let stored = try #require(await library.logicalTrack(id: logicalTrack.id))
+        let discNumber = index / 2 + 1
+        #expect(stored.releaseID == canonicalReleaseID)
+        #expect(stored.discID == DiscID(releaseID: canonicalReleaseID, number: discNumber))
+        #expect(stored.trackTotal == 2)
+        #expect(stored.discNumber == discNumber)
+        #expect(stored.discTotal == 3)
+    }
+    #expect(members == [LibraryCollectionMember(
+        collectionID: collectionID,
+        releaseID: canonicalReleaseID,
+        position: 0
+    )])
+    #expect(try await library.artwork(id: artworks[0].id) == artworks[0])
+    #expect(try await library.artwork(id: artworks[1].id) == nil)
+    #expect(try await library.artwork(id: artworks[2].id) == nil)
+
+    let secondResult = try await library.repairMetadata()
+    #expect(secondResult.repairedRecordCount == 0)
+
+    await store.close()
+}
+
 @Test("records keep numbering and album type scalar fields in sync with payloads")
 func recordMappersPersistNumberingAndAlbumType() throws {
     let album = Album(
@@ -490,6 +715,61 @@ func localGraphValidationRejectsMissingArtistAndGenreReferences() async throws {
     await genreStore.close()
 }
 
+@Test("clearing a legacy album artist updates its release projection before pruning")
+func clearingLegacyAlbumArtistUpdatesReleaseProjection() async throws {
+    let store = try LibraryPersistenceStore(configuration: .inMemory)
+    let library = SwiftDataLibraryRepository(store: store)
+    let albumID = AlbumID("clear-album-artist")
+    let releaseID = AlbumReleaseID(legacyAlbumID: albumID)
+    let albumArtistID = ArtistID("clear-album-artist-album-artist")
+    let trackArtistID = ArtistID("clear-album-artist-track-artist")
+    let trackID = MediaItemID(sourceID: .local, externalID: "clear-album-artist-track")
+
+    try await library.apply(try LibraryTransaction(
+        idempotencyKey: "clear-album-artist-initial",
+        mutations: [
+            .upsert(.artist(Artist(id: albumArtistID, name: "Album Artist"))),
+            .upsert(.artist(Artist(id: trackArtistID, name: "Track Artist"))),
+            .upsert(.album(Album(
+                id: albumID,
+                title: "Album",
+                artistIDs: [albumArtistID],
+                trackCount: 1
+            ))),
+            .upsert(.albumRelease(AlbumRelease(
+                id: releaseID,
+                legacyAlbumID: albumID,
+                title: "Album",
+                artistIDs: [albumArtistID]
+            ))),
+            .upsert(.track(Track(
+                id: trackID,
+                title: "Track",
+                albumID: albumID,
+                artistIDs: [trackArtistID]
+            )))
+        ]
+    ))
+
+    try await library.apply(try LibraryTransaction(
+        idempotencyKey: "clear-album-artist-update",
+        mutations: [
+            .upsert(.album(Album(
+                id: albumID,
+                title: "Album",
+                artistIDs: [],
+                trackCount: 1
+            )))
+        ]
+    ))
+
+    #expect(try await library.album(id: albumID)?.artistIDs.isEmpty == true)
+    #expect(try await library.release(id: releaseID)?.artistIDs.isEmpty == true)
+    #expect(try await library.artist(id: albumArtistID) == nil)
+    #expect(try await library.artist(id: trackArtistID)?.name == "Track Artist")
+    await store.close()
+}
+
 @Test("removing the last graph-only variant prunes its release, disc, and box set")
 func removingLastGraphOnlyVariantPrunesLocalStructure() async throws {
     let store = try LibraryPersistenceStore(configuration: .inMemory)
@@ -768,6 +1048,31 @@ func versionOneStoreMigratesAndBackfillsLocalGraph() async throws {
     #expect(try await library.logicalTrack(id: track.logicalTrackID) == track.logicalTrackProjection)
     #expect(try await library.trackVariant(id: itemID) == track.trackVariantProjection)
     #expect(try await library.mediaAsset(id: track.assetID) == track.mediaAssetProjection)
+
+    // Once the v1 -> v2 graph backfill succeeds, later graph-only user state
+    // must survive a full store reopen. Re-running the legacy backfill here
+    // would overwrite this value from the unchanged v1 TrackRecord.
+    let migratedLogical = track.logicalTrackProjection
+    let editedLogical = LogicalTrack(
+        id: migratedLogical.id,
+        releaseID: migratedLogical.releaseID,
+        discID: migratedLogical.discID,
+        title: "Edited After Migration",
+        artistIDs: migratedLogical.artistIDs,
+        genreIDs: migratedLogical.genreIDs,
+        trackNumber: migratedLogical.trackNumber,
+        trackTotal: migratedLogical.trackTotal,
+        discNumber: migratedLogical.discNumber,
+        discTotal: migratedLogical.discTotal,
+        duration: migratedLogical.duration,
+        artwork: migratedLogical.artwork,
+        isFavorite: true,
+        statistics: migratedLogical.statistics
+    )
+    try await library.apply(try LibraryTransaction(
+        idempotencyKey: "edit-logical-track-after-v1-backfill",
+        mutations: [.upsert(.logicalTrack(editedLogical))]
+    ))
     await store.close()
 
     let reopened = try LibraryPersistenceStore(
@@ -775,7 +1080,55 @@ func versionOneStoreMigratesAndBackfillsLocalGraph() async throws {
     )
     let reopenedLibrary = SwiftDataLibraryRepository(store: reopened)
     #expect(try await reopenedLibrary.trackVariant(id: itemID) == track.trackVariantProjection)
+    #expect(try await reopenedLibrary.logicalTrack(id: track.logicalTrackID) == editedLogical)
     await reopened.close()
+}
+
+@Test("markerless v2 backfill preserves existing graph user state")
+func markerlessV2BackfillPreservesExistingGraphState() async throws {
+    let directory = try makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let storeURL = directory.appendingPathComponent("markerless-v2.store")
+
+    let schema = Schema(versionedSchema: MusicFreeSchema.self)
+    let configuration = ModelConfiguration(
+        "MusicFreeLibrary",
+        schema: schema,
+        url: storeURL
+    )
+    let container = try ModelContainer(for: schema, configurations: [configuration])
+    let context = ModelContext(container)
+    let track = Track(
+        id: MediaItemID(sourceID: .local, externalID: "markerless-v2-track"),
+        title: "Legacy Projection",
+        fileName: "markerless.flac"
+    )
+    let editedLogical = LogicalTrack(
+        id: track.logicalTrackID,
+        title: "User Graph Edit"
+    )
+
+    context.insert(try LibraryRecordMapper.makeTrack(track))
+    context.insert(try LocalMediaGraphRecordMapper.makeLogicalTrack(editedLogical))
+    context.insert(try LocalMediaGraphRecordMapper.makeAsset(track.mediaAssetProjection))
+    context.insert(try LocalMediaGraphRecordMapper.makeVariant(track.trackVariantProjection))
+    context.insert(StoreMetadataRecord(
+        storageKey: "state",
+        revision: 1,
+        appliedTransactionKeys: try PersistenceCodec.encode(Set<String>())
+    ))
+    try context.save()
+
+    let store = try LibraryPersistenceStore(
+        configuration: try LibraryPersistenceConfiguration(storeURL: storeURL)
+    )
+    let library = SwiftDataLibraryRepository(store: store)
+
+    // Opening a pre-marker v2 store still runs the compatibility backfill,
+    // but it must not copy the stale legacy title over the graph edit.
+    #expect(try await library.logicalTrack(id: track.logicalTrackID) == editedLogical)
+    #expect(try await library.trackVariant(id: track.id) == track.trackVariantProjection)
+    await store.close()
 }
 
 @Test("artwork reference checks include tracks, collections, and playlists")
@@ -885,6 +1238,74 @@ func libraryPersistenceRoundTripAndPagination() async throws {
     await reopenedStore.close()
 }
 
+@Test("library-wide search uses one bounded relationship-aware snapshot")
+func libraryWideSearchUsesOneBoundedSnapshot() async throws {
+    let store = try LibraryPersistenceStore(configuration: .inMemory)
+    let library = SwiftDataLibraryRepository(store: store)
+    let album = Album(
+        id: AlbumID("search-album"),
+        title: "Needle Album"
+    )
+    let artist = Artist(
+        id: ArtistID("search-artist"),
+        name: "Needle Artist"
+    )
+    let genre = Genre(
+        id: GenreID("search-genre"),
+        name: "Needle Genre"
+    )
+    let tracks = [
+        Track(
+            id: MediaItemID(sourceID: .local, externalID: "search-album-relation"),
+            title: "Album relation",
+            albumID: album.id
+        ),
+        Track(
+            id: MediaItemID(sourceID: .local, externalID: "search-artist-relation"),
+            title: "Artist relation",
+            artistIDs: [artist.id]
+        ),
+        Track(
+            id: MediaItemID(sourceID: .local, externalID: "search-genre-relation"),
+            title: "Genre relation",
+            genreIDs: [genre.id]
+        ),
+        Track(
+            id: MediaItemID(sourceID: .local, externalID: "search-title"),
+            title: "Needle title"
+        ),
+        Track(
+            id: MediaItemID(sourceID: .local, externalID: "search-over-limit"),
+            title: "Needle zzz"
+        ),
+    ]
+    try await library.apply(try LibraryTransaction(
+        idempotencyKey: "library-wide-search",
+        mutations: [
+            .upsert(.album(album)),
+            .upsert(.artist(artist)),
+            .upsert(.genre(genre)),
+        ] + tracks.map { .upsert(.track($0)) }
+    ))
+
+    let results = try await library.searchLibrary(try LibrarySearchRequest(
+        searchText: "needle",
+        sourceID: .local,
+        limit: 4
+    ))
+
+    #expect(results.tracks.map(\.title) == [
+        "Album relation",
+        "Artist relation",
+        "Genre relation",
+        "Needle title",
+    ])
+    #expect(results.albums.map(\.title) == ["Needle Album"])
+    #expect(results.artists.map(\.name) == ["Needle Artist"])
+    #expect(await store.searchSnapshotBuildCount() == 1)
+    await store.close()
+}
+
 @Test("relation mutations preserve track numbering and metadata overrides")
 func relationMutationsPreserveTrackMetadata() async throws {
     let store = try LibraryPersistenceStore(configuration: .inMemory)
@@ -978,6 +1399,51 @@ func sourceAwareArtistBrowsingIncludesAlbumArtists() async throws {
 
     #expect(Set(localArtists.elements.map(\.id)) == Set([trackArtistID, albumArtistID]))
     #expect(remoteArtists.elements.isEmpty)
+    await store.close()
+}
+
+@Test("album reassignment hides the orphaned legacy album")
+func albumReassignmentHidesOrphanedLegacyAlbum() async throws {
+    let store = try LibraryPersistenceStore(configuration: .inMemory)
+    let library = SwiftDataLibraryRepository(store: store)
+    let itemID = MediaItemID(sourceID: .local, externalID: "compilation-track")
+    let legacyAlbumID = AlbumID("legacy-artist-scoped-album")
+    let compilationAlbumID = AlbumID("merged-compilation-album")
+
+    try await library.apply(try LibraryTransaction(
+        idempotencyKey: "install-legacy-compilation-album",
+        mutations: [
+            .upsert(.album(Album(id: legacyAlbumID, title: "Shared Compilation"))),
+            .upsert(.track(Track(
+                id: itemID,
+                title: "Track",
+                albumID: legacyAlbumID
+            ))),
+        ]
+    ))
+    try await library.apply(try LibraryTransaction(
+        idempotencyKey: "merge-compilation-album",
+        mutations: [
+            .upsert(.album(Album(
+                id: compilationAlbumID,
+                title: "Shared Compilation",
+                trackCount: 1,
+                albumType: .compilation
+            ))),
+            .upsert(.track(Track(
+                id: itemID,
+                title: "Track",
+                albumID: compilationAlbumID
+            ))),
+        ]
+    ))
+
+    let albums = try await library.albums(
+        matching: AlbumQuery(sourceID: .local),
+        page: try LibraryPageRequest(limit: 10)
+    )
+    #expect(albums.elements.map(\.id) == [compilationAlbumID])
+    #expect(try await library.album(id: legacyAlbumID) == nil)
     await store.close()
 }
 
@@ -1284,7 +1750,9 @@ func scalarSortBrowseUsesBoundedFetch() async throws {
     let tracks = (0..<12).map { index in
         Track(
             id: MediaItemID(sourceID: .local, externalID: "bounded-\(index)"),
-            title: "Bounded \(index)"
+            title: "Bounded \(index)",
+            sortTitle: "Bounded \(index)",
+            isFavorite: index.isMultiple(of: 2)
         )
     }
     try await library.apply(try LibraryTransaction(
@@ -1292,7 +1760,10 @@ func scalarSortBrowseUsesBoundedFetch() async throws {
         mutations: tracks.map { .upsert(.track($0)) }
     ))
 
-    let query = TrackQuery(sort: TrackSortDescriptor(key: .dateAdded))
+    let query = TrackQuery(
+        sourceID: .local,
+        sort: TrackSortDescriptor(key: .dateAdded)
+    )
     let firstPage = try await library.tracks(
         matching: query,
         page: try LibraryPageRequest(limit: 2)
@@ -1305,6 +1776,27 @@ func scalarSortBrowseUsesBoundedFetch() async throws {
     let nextRequest = try #require(pendingNextRequest)
     let secondPage = try await library.tracks(matching: query, page: nextRequest)
     #expect(secondPage.elements.count == 2)
+    #expect(await store.lastBrowseRecordFetchCount() == 3)
+
+    let favoriteQuery = TrackQuery(
+        sourceID: .local,
+        favorite: .favorite,
+        sort: TrackSortDescriptor(key: .dateAdded)
+    )
+    let favoritePage = try await library.tracks(
+        matching: favoriteQuery,
+        page: try LibraryPageRequest(limit: 2)
+    )
+    #expect(favoritePage.elements.count == 2)
+    #expect(favoritePage.hasNextPage)
+    #expect(await store.lastBrowseRecordFetchCount() == 3)
+    let favoriteNextPageRequest = try favoritePage.nextPage(limit: 2)
+    let favoriteNextRequest = try #require(favoriteNextPageRequest)
+    let favoriteSecondPage = try await library.tracks(
+        matching: favoriteQuery,
+        page: favoriteNextRequest
+    )
+    #expect(favoriteSecondPage.elements.count == 2)
     #expect(await store.lastBrowseRecordFetchCount() == 3)
 
     _ = try await library.tracks(
@@ -1446,6 +1938,278 @@ private struct LibraryValues {
 
 private struct DatePayload: Codable, Equatable {
     let date: Date
+}
+
+private struct PersistedMojibakeFixture {
+    let track: Track
+    let album: Album
+    let artist: Artist
+    let genre: Genre
+    let playlist: Playlist
+    let logicalTrack: LogicalTrack
+    let asset: MediaAsset
+    let variant: TrackVariant
+    let release: AlbumRelease
+    let disc: Disc
+    let collection: LibraryCollection
+}
+
+private func makePersistedMojibakeFixture(
+    at storeURL: URL
+) throws -> PersistedMojibakeFixture {
+    let itemID = MediaItemID(sourceID: .local, externalID: "metadata-repair-track")
+    let logicalTrackID = LogicalTrackID("metadata-repair-logical")
+    let assetID = MediaAssetID(sourceID: .local, externalID: "metadata-repair-asset")
+    let albumID = AlbumID("metadata-repair-album")
+    let artistID = ArtistID("metadata-repair-artist")
+    let genreID = GenreID("metadata-repair-genre")
+    let playlistID = PlaylistID("metadata-repair-playlist")
+    let groupID = AlbumGroupID("metadata-repair-group")
+    let releaseID = AlbumReleaseID("metadata-repair-release")
+    let discID = DiscID(releaseID: releaseID, number: 1)
+    let collectionID = LibraryCollectionID("metadata-repair-collection")
+    let lastPlayedAt = Date(timeIntervalSince1970: 1_700_000_100)
+    let createdAt = Date(timeIntervalSince1970: 1_700_000_200)
+    let updatedAt = Date(timeIntervalSince1970: 1_700_000_300)
+    let statistics = PlaybackStatistics(
+        playCount: 9,
+        completionCount: 4,
+        skipCount: 1,
+        lastPlayedAt: lastPlayedAt,
+        lastCompletionReason: .ended,
+        totalListeningDuration: .seconds(321)
+    )
+    let technicalInfo = MediaTechnicalInfo(
+        container: "flac",
+        codec: "flac",
+        audioStreams: [AudioStreamInfo(
+            indexHint: 0,
+            title: "中文",
+            isDefault: true,
+            sampleRate: 44_100,
+            bitDepth: 16,
+            channels: 2,
+            channelLayout: .stereo
+        )],
+        bitRate: 900_000,
+        fileSizeBytes: 4_096
+    )
+    let album = Album(
+        id: albumID,
+        title: "离不开-陈百强 纪念歌集 80-93 D",
+        sortTitle: "离不开",
+        artistIDs: [artistID],
+        releaseYear: 1993,
+        trackCount: 1,
+        albumType: .compilation
+    )
+    let track = Track(
+        id: itemID,
+        logicalTrackID: logicalTrackID,
+        assetID: assetID,
+        title: "几分钟的约会",
+        sortTitle: "中文",
+        albumID: albumID,
+        artistIDs: [artistID],
+        genreIDs: [genreID],
+        trackNumber: 1,
+        trackTotal: 1,
+        discNumber: 1,
+        discTotal: 1,
+        fileName: "几分钟的约会.flac",
+        folderPath: "离不开/陈百强",
+        duration: .seconds(180),
+        technicalInfo: technicalInfo,
+        year: 1993,
+        comment: "纪念歌集",
+        lyrics: TrackLyrics(rawText: """
+        [ar:陈百强]
+        [offset:-250]
+        [00:01.00]中文
+        """),
+        isFavorite: true,
+        statistics: statistics
+    )
+    let artist = Artist(id: artistID, name: "陈百强", sortName: "陈百强")
+    let genre = Genre(id: genreID, name: "中文", sortName: "中文")
+    let playlist = Playlist(
+        id: playlistID,
+        name: "纪念歌集",
+        sortName: "中文",
+        createdAt: createdAt,
+        updatedAt: updatedAt
+    )
+    let logicalTrack = LogicalTrack(
+        id: logicalTrackID,
+        releaseID: releaseID,
+        discID: discID,
+        title: "几分钟的约会",
+        artistIDs: [artistID],
+        genreIDs: [genreID],
+        trackNumber: 1,
+        trackTotal: 1,
+        discNumber: 1,
+        discTotal: 1,
+        duration: .seconds(180),
+        isFavorite: true,
+        statistics: statistics
+    )
+    let asset = MediaAsset(
+        id: assetID,
+        contentRevision: "sha256-metadata-repair",
+        fileName: "几分钟的约会.flac",
+        folderPath: "离不开/陈百强",
+        byteCount: 4_096,
+        technicalInfo: technicalInfo
+    )
+    let variant = TrackVariant(
+        id: itemID,
+        logicalTrackID: logicalTrackID,
+        assetID: assetID,
+        sourceIdentityHint: "stable-source-identity",
+        sourceMetadataRevision: "source-revision-1",
+        sourceMetadata: TrackSourceMetadataSnapshot(track: track, album: album)
+    )
+    let group = AlbumGroup(id: groupID, title: "离不开", artistIDs: [artistID])
+    let release = AlbumRelease(
+        id: releaseID,
+        legacyAlbumID: albumID,
+        groupID: groupID,
+        title: album.title,
+        artistIDs: [artistID],
+        releaseYear: 1993,
+        editionTitle: "纪念歌集",
+        albumType: .compilation
+    )
+    let disc = Disc(
+        id: discID,
+        releaseID: releaseID,
+        number: 1,
+        title: "中文",
+        trackCount: 1
+    )
+    let collection = LibraryCollection(
+        id: collectionID,
+        kind: .boxSet,
+        title: "离不开"
+    )
+
+    let replacements = [
+        ("离不开-陈百强 纪念歌集 80-93 D", "Àë²»¿ª-³Â°ÙÇ¿ ¼ÍÄî¸è¼¯ 80-93 D"),
+        ("几分钟的约会", "¼¸·ÖÖÓµÄÔ¼»á"),
+        ("纪念歌集", "¼ÍÄî¸è¼¯"),
+        ("离不开", "Àë²»¿ª"),
+        ("陈百强", "³Â°ÙÇ¿"),
+        ("中文", "ä¸­æ–‡"),
+    ]
+    let schema = Schema(versionedSchema: MusicFreeSchema.self)
+    let configuration = ModelConfiguration("MusicFreeLibrary", schema: schema, url: storeURL)
+    let container = try ModelContainer(for: schema, configurations: [configuration])
+    let context = ModelContext(container)
+
+    let trackRecord = try LibraryRecordMapper.makeTrack(
+        track,
+        dateAddedAt: Date(timeIntervalSince1970: 1_700_000_000)
+    )
+    trackRecord.title = replacements[1].1
+    trackRecord.sortTitle = replacements[5].1
+    trackRecord.payload = replacingMetadataText(in: trackRecord.payload, replacements: replacements)
+
+    let albumRecord = try LibraryRecordMapper.makeAlbum(album)
+    albumRecord.title = replacements[0].1
+    albumRecord.sortTitle = replacements[3].1
+    albumRecord.payload = replacingMetadataText(in: albumRecord.payload, replacements: replacements)
+
+    let artistRecord = try LibraryRecordMapper.makeArtist(artist)
+    artistRecord.name = replacements[4].1
+    artistRecord.sortName = replacements[4].1
+    artistRecord.payload = replacingMetadataText(in: artistRecord.payload, replacements: replacements)
+
+    let genreRecord = try LibraryRecordMapper.makeGenre(genre)
+    genreRecord.name = replacements[5].1
+    genreRecord.sortName = replacements[5].1
+    genreRecord.payload = replacingMetadataText(in: genreRecord.payload, replacements: replacements)
+
+    let playlistRecord = try LibraryRecordMapper.makePlaylist(playlist)
+    playlistRecord.name = replacements[2].1
+    playlistRecord.sortName = replacements[5].1
+    playlistRecord.payload = replacingMetadataText(
+        in: playlistRecord.payload,
+        replacements: replacements
+    )
+
+    let logicalTrackRecord = try LocalMediaGraphRecordMapper.makeLogicalTrack(logicalTrack)
+    logicalTrackRecord.payload = replacingMetadataText(
+        in: logicalTrackRecord.payload,
+        replacements: replacements
+    )
+    let assetRecord = try LocalMediaGraphRecordMapper.makeAsset(asset)
+    assetRecord.payload = replacingMetadataText(in: assetRecord.payload, replacements: replacements)
+    let variantRecord = try LocalMediaGraphRecordMapper.makeVariant(variant)
+    variantRecord.payload = replacingMetadataText(
+        in: variantRecord.payload,
+        replacements: replacements
+    )
+    let groupRecord = try LocalMediaGraphRecordMapper.makeAlbumGroup(group)
+    groupRecord.payload = replacingMetadataText(in: groupRecord.payload, replacements: replacements)
+    let releaseRecord = try LocalMediaGraphRecordMapper.makeRelease(release)
+    releaseRecord.payload = replacingMetadataText(
+        in: releaseRecord.payload,
+        replacements: replacements
+    )
+    let discRecord = try LocalMediaGraphRecordMapper.makeDisc(disc)
+    discRecord.payload = replacingMetadataText(in: discRecord.payload, replacements: replacements)
+    let collectionRecord = try LocalMediaGraphRecordMapper.makeCollection(collection)
+    collectionRecord.payload = replacingMetadataText(
+        in: collectionRecord.payload,
+        replacements: replacements
+    )
+
+    context.insert(trackRecord)
+    context.insert(albumRecord)
+    context.insert(artistRecord)
+    context.insert(genreRecord)
+    context.insert(playlistRecord)
+    context.insert(logicalTrackRecord)
+    context.insert(assetRecord)
+    context.insert(variantRecord)
+    context.insert(groupRecord)
+    context.insert(releaseRecord)
+    context.insert(discRecord)
+    context.insert(collectionRecord)
+    context.insert(StoreMetadataRecord(
+        storageKey: "state",
+        revision: 7,
+        appliedTransactionKeys: try PersistenceCodec.encode(
+            Set(["__musicfree_internal_migration_local_media_graph_v2__"])
+        )
+    ))
+    try context.save()
+
+    return PersistedMojibakeFixture(
+        track: track,
+        album: album,
+        artist: artist,
+        genre: genre,
+        playlist: playlist,
+        logicalTrack: logicalTrack,
+        asset: asset,
+        variant: variant,
+        release: release,
+        disc: disc,
+        collection: collection
+    )
+}
+
+private func replacingMetadataText(
+    in payload: Data,
+    replacements: [(String, String)]
+) -> Data {
+    var text = String(decoding: payload, as: UTF8.self)
+    for (decoded, mojibake) in replacements where text.contains(decoded) {
+        text = text.replacingOccurrences(of: decoded, with: mojibake)
+    }
+    return Data(text.utf8)
 }
 
 private func makeLibraryValues() -> LibraryValues {
