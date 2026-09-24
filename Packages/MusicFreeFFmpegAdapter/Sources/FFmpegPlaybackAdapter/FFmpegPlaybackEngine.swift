@@ -9,7 +9,8 @@ import PlaybackAPI
 ///
 /// 范围：本地文件（`.localFile`）与 HTTP(S) 远程资源（`.remote`，经
 /// `URLSessionByteSource` 读取）的 prepare/play/pause/stop/seek，变速
-/// （timePitch），音量/静音。远程资源仅在服务端支持 Range 时可 seek。
+/// （timePitch），音量/静音。远程资源仅在服务端支持 Range 时可 seek
+/// （`capabilities` 随之变化）。
 /// gapless/EQ 等能力位留待后续版本，届时按 `PlaybackCapabilities` 逐步点亮。
 ///
 /// 后续独立 feature（当前未实现，与 VLC 引擎相比属于已知差距）：
@@ -19,7 +20,11 @@ import PlaybackAPI
 ///   并提供 `equalizerDescriptor`。
 @MainActor
 public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControlling {
-    public let capabilities: PlaybackCapabilities = [.seeking, .variableRate]
+    /// 随当前资源变化：远程顺序流（服务端不支持 Range，或尚未拿到响应头）
+    /// 不含 `.seeking`，供上层据此隐藏进度拖动。
+    public var capabilities: PlaybackCapabilities {
+        remoteSource?.isSeekable == false ? [.variableRate] : [.seeking, .variableRate]
+    }
     public private(set) var state: PlaybackState = .idle
     public private(set) var volume: Float = 1
     public private(set) var isMuted: Bool = false
@@ -299,9 +304,6 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
         }
         guard let item = currentItem, let decoder else {
             throw PlaybackError.noCurrentItem
-        }
-        if remoteSource?.isSeekable == false {
-            throw PlaybackError.unsupportedCapability(.seeking)
         }
         try validatePosition(position, duration: currentDuration)
 

@@ -479,43 +479,12 @@ final class AppContainer: ObservableObject {
             stagingRoot: cacheRoot.appendingPathComponent("ImportStaging", isDirectory: true),
             quarantineRoot: appSupportRoot.appendingPathComponent("Quarantine", isDirectory: true)
         )
-        let vlcConfiguration = try VLCKitAdapterConfiguration(
-            applicationIdentifier: Bundle.main.bundleIdentifier ?? "win.tools4me.musicplayer",
-            applicationVersion: Bundle.main.object(
-                forInfoDictionaryKey: "CFBundleShortVersionString"
-            ) as? String ?? "0",
-            applicationName: Bundle.main.object(
-                forInfoDictionaryKey: "CFBundleDisplayName"
-            ) as? String ?? "MyMusic",
-            capabilityPolicy: VLCKitCapabilityPolicy(
-                enabledCapabilities: [.seeking, .variableRate, .equalizer]
-            ),
-            // Parsing selected files on iOS-on-Mac can take longer than the
-            // normal playback path, especially for Music.app ALAC files with
-            // attached artwork. Fifteen seconds is too short for this import
-            // path and is reported externally as corrupted media.
-            parserTimeout: .seconds(30)
-        )
         var startupIssues: [AppStartupIssue] = []
-        var diagnostics: [CompositionDiagnostic] = []
-        // 本地播放改用独立、从源码编译的 FFmpegAudioKit（LGPL 动态库）。构造不
-        // 失败，故不再有「引擎不可用」的启动降级分支。在线试听仍走 VLC——ffmpeg
-        // 适配层当前只支持本地文件，远程流留待后续版本。
+        let diagnostics: [CompositionDiagnostic] = []
+        // 本地播放与在线试听都使用独立、从源码编译的 FFmpegAudioKit（LGPL 动态库）；
+        // 远程资源经 URLSession 读取。构造不失败，故不再有「引擎不可用」的启动降级分支。
         let playbackEngine = FFmpegPlaybackEngine()
-
-        let onlineAuditionEngine: VLCPlaybackEngine?
-        do {
-            onlineAuditionEngine = try VLCPlaybackEngine(
-                configuration: vlcConfiguration,
-                loadsEqualizerDescriptor: false
-            )
-        } catch {
-            onlineAuditionEngine = nil
-            diagnostics.append(.init(
-                code: "startup.online-audition.playback-unavailable",
-                message: String(describing: error)
-            ))
-        }
+        let onlineAuditionEngine = FFmpegPlaybackEngine()
 
         // 本地文件的探测与元数据读取同样交给 ffmpeg 适配层；构造不失败。
         let probe: FFmpegMediaProbe? = FFmpegMediaProbe()
