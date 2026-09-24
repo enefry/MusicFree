@@ -1,6 +1,7 @@
 import AppServices
 import AppleSystemAdapter
 import Combine
+import FFmpegPlaybackAdapter
 import Foundation
 import LibraryPersistenceAdapter
 import LibraryAPI
@@ -497,17 +498,10 @@ final class AppContainer: ObservableObject {
         )
         var startupIssues: [AppStartupIssue] = []
         var diagnostics: [CompositionDiagnostic] = []
-        let playbackEngine: VLCPlaybackEngine?
-        do {
-            playbackEngine = try VLCPlaybackEngine(configuration: vlcConfiguration)
-        } catch {
-            playbackEngine = nil
-            startupIssues.append(.playbackUnavailable)
-            diagnostics.append(.init(
-                code: "startup.vlckit.playback-unavailable",
-                message: String(describing: error)
-            ))
-        }
+        // 本地播放改用独立、从源码编译的 FFmpegAudioKit（LGPL 动态库）。构造不
+        // 失败，故不再有「引擎不可用」的启动降级分支。在线试听仍走 VLC——ffmpeg
+        // 适配层当前只支持本地文件，远程流留待后续版本。
+        let playbackEngine = FFmpegPlaybackEngine()
 
         let onlineAuditionEngine: VLCPlaybackEngine?
         do {
@@ -523,27 +517,9 @@ final class AppContainer: ObservableObject {
             ))
         }
 
-        let probe: VLCMediaProbe?
-        do {
-            probe = try VLCMediaProbe(configuration: vlcConfiguration)
-        } catch {
-            probe = nil
-            diagnostics.append(.init(
-                code: "startup.vlckit.probe-unavailable",
-                message: String(describing: error)
-            ))
-        }
-
-        let metadataReader: VLCMetadataReader?
-        do {
-            metadataReader = try VLCMetadataReader(configuration: vlcConfiguration)
-        } catch {
-            metadataReader = nil
-            diagnostics.append(.init(
-                code: "startup.vlckit.metadata-unavailable",
-                message: String(describing: error)
-            ))
-        }
+        // 本地文件的探测与元数据读取同样交给 ffmpeg 适配层；构造不失败。
+        let probe: FFmpegMediaProbe? = FFmpegMediaProbe()
+        let metadataReader: FFmpegMetadataReader? = FFmpegMetadataReader()
 
         let localSource: LocalMediaSource?
         let importer: LocalMediaImporter?

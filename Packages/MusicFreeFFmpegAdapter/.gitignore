@@ -1,0 +1,8 @@
+# 本地构建缓存（xcodebuild -derivedDataPath .build-xcode）
+.build-xcode/
+.build-xcframework/
+
+# SwiftPM
+.build/
+.swiftpm/
+Package.resolved

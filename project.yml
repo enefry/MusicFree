@@ -21,6 +21,8 @@ packages:
     path: Packages/MusicFreeInfrastructure
   MusicFreeVLCKitAdapter:
     path: Packages/MusicFreeVLCKitAdapter
+  MusicFreeFFmpegAdapter:
+    path: Packages/MusicFreeFFmpegAdapter
   MusicFreeUI:
     path: Packages/MusicFreeUI
   # MusicFreeDebugSupport:
@@ -76,6 +78,11 @@ targets:
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) $(METADATA_SERVER_FEATURE_FLAG) $(LYRICS_FEATURE_FLAG)"
         # MUSICFREE_DEBUG_SUPPORT_ENABLED: YES
         # SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) $(METADATA_SERVER_FEATURE_FLAG) $(LYRICS_FEATURE_FLAG) MUSICFREE_DEBUG_SUPPORT"
+      configs:
+        # Debug 版追加 .debug 后缀，与正式版（win.tools4me.music）区分为不同 App，
+        # 可与已安装的 Release 版并存、互不覆盖。
+        Debug:
+          PRODUCT_BUNDLE_IDENTIFIER: win.tools4me.music.debug
 
     dependencies:
       - package: MusicFreeCore
@@ -100,6 +107,8 @@ targets:
         product: OnlineSourceAdapter
       - package: MusicFreeVLCKitAdapter
         product: VLCKitPlaybackAdapter
+      - package: MusicFreeFFmpegAdapter
+        product: FFmpegPlaybackAdapter
       - package: MusicFreeUI
         product: LibraryFeature
       - package: MusicFreeUI
