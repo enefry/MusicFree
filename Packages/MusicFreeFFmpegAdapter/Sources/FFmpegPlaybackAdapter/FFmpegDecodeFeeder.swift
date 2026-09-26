@@ -23,6 +23,9 @@ final class DecodeFeeder: @unchecked Sendable {
     private let playerNode: AVAudioPlayerNode
     private let queue: DispatchQueue
     private let initialSeek: Duration?
+    /// Maximum PCM frames to output after the seek. A CUE range ends on this
+    /// frame, independently of the physical file's EOF or UI timer cadence.
+    private let frameLimit: Int64?
     private let maxInFlight: Int
     private let onEnd: @Sendable () -> Void
     private let onError: @Sendable (Error) -> Void
@@ -38,12 +41,14 @@ final class DecodeFeeder: @unchecked Sendable {
     private var decodeFinished = false
     private var endReported = false
     private var starved = true
+    private var framesRemaining: Int64?
 
     init(
         decoder: FFmpegAudioDecoder,
         playerNode: AVAudioPlayerNode,
         queue: DispatchQueue,
         initialSeek: Duration?,
+        playbackDuration: Duration? = nil,
         maxInFlight: Int = 3,
         onEnd: @escaping @Sendable () -> Void,
         onError: @escaping @Sendable (Error) -> Void,
@@ -53,6 +58,16 @@ final class DecodeFeeder: @unchecked Sendable {
         self.playerNode = playerNode
         self.queue = queue
         self.initialSeek = initialSeek
+        if let playbackDuration {
+            let components = playbackDuration.components
+            let seconds = Double(components.seconds)
+                + Double(components.attoseconds) / 1_000_000_000_000_000_000
+            let count = (seconds * decoder.format.sampleRate).rounded(.up)
+            frameLimit = Int64(min(max(0, count), 9_000_000_000_000_000))
+        } else {
+            frameLimit = nil
+        }
+        framesRemaining = frameLimit
         self.maxInFlight = maxInFlight
         self.onEnd = onEnd
         self.onError = onError
@@ -91,10 +106,15 @@ final class DecodeFeeder: @unchecked Sendable {
     private func fill() {
         while !decodeFinished, inFlight < maxInFlight {
             if isCancelled { return }
+            if framesRemaining == 0 {
+                decodeFinished = true
+                break
+            }
 
             let buffer: AVAudioPCMBuffer?
             do {
-                buffer = try decoder.nextBuffer()
+                let capacity = AVAudioFrameCount(min(framesRemaining ?? 8192, 8192))
+                buffer = try decoder.nextBuffer(frameCapacity: capacity)
             } catch {
                 reportError(error)
                 return
@@ -102,6 +122,9 @@ final class DecodeFeeder: @unchecked Sendable {
             guard let buffer else {
                 decodeFinished = true
                 break
+            }
+            if let framesRemaining {
+                self.framesRemaining = framesRemaining - Int64(buffer.frameLength)
             }
             guard schedule(buffer) else { return }
             inFlight += 1

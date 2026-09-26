@@ -5,6 +5,36 @@ import MusicDomain
 import PlaybackAPI
 import Testing
 
+@Test("Persisted album favorite queries filter before paging")
+func persistedAlbumFavoritesFilterBeforePaging() async throws {
+    let store = try LibraryPersistenceStore(configuration: .inMemory)
+    let library = SwiftDataLibraryRepository(store: store)
+    let favorite = Album(id: AlbumID("saved-favorite"), title: "Favorite", isFavorite: true)
+    let plain = Album(id: AlbumID("saved-plain"), title: "Plain")
+    let favoriteTrack = Track(
+        id: MediaItemID(sourceID: .local, externalID: "saved-favorite-track"),
+        title: "Favorite Track", albumID: favorite.id
+    )
+    let plainTrack = Track(
+        id: MediaItemID(sourceID: .local, externalID: "saved-plain-track"),
+        title: "Plain Track", albumID: plain.id
+    )
+    try await library.apply(LibraryTransaction(
+        idempotencyKey: "persisted-album-favorites",
+        mutations: [
+            .upsert(.album(favorite)), .upsert(.album(plain)),
+            .upsert(.track(favoriteTrack)), .upsert(.track(plainTrack)),
+        ]
+    ))
+    let request = try LibraryPageRequest(limit: 1)
+    let favorites = try await library.albums(matching: AlbumQuery(favorite: .favorite), page: request)
+    let others = try await library.albums(matching: AlbumQuery(favorite: .notFavorite), page: request)
+    #expect(favorites.elements.map(\.id) == [favorite.id])
+    #expect(favorites.nextCursor == nil)
+    #expect(others.elements.map(\.id) == [plain.id])
+    await store.close()
+}
+
 @Test("Album rename merge migrates graph and collection references without changing playback identities")
 func albumMetadataMergePreservesPersistenceGraph() async throws {
     let store = try LibraryPersistenceStore(configuration: .inMemory)

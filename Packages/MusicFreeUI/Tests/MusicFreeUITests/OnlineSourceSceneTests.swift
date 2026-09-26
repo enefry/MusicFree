@@ -1,5 +1,6 @@
 @testable import SettingsFeature
 import AppServices
+import DesignSystem
 import Foundation
 import MediaSourceAPI
 import MusicDomain
@@ -737,7 +738,7 @@ func onlineDownloadReportsDuplicateAndMetadataHint() async throws {
     #expect(hint.title == item.title)
     #expect(hint.artist == item.artist)
     #expect(hint.album == item.album)
-    #expect(model.feedbackMessage == "媒体已存在，无需重复导入")
+    #expect(model.feedbackMessage == L("媒体已存在，无需重复导入"))
 }
 
 @MainActor

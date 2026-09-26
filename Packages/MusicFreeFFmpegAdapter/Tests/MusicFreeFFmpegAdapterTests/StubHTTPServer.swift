@@ -9,6 +9,10 @@ final class StubURLProtocol: URLProtocol, @unchecked Sendable {
         var status = 200
         /// 只发送响应头，不发送 body 也不结束，用于测试取消能否打断阻塞读。
         var stallAfterHeaders = false
+        /// 从头请求时只发送前 N 字节后停滞；带非零 Range 的请求正常返回。
+        var stallAfterBytes: Int?
+        /// 测试背压：让每个 body 分块之间留出委托暂停下载的时间。
+        var chunkDelay: TimeInterval = 0
     }
 
     private static let lock = NSLock()
@@ -21,6 +25,12 @@ final class StubURLProtocol: URLProtocol, @unchecked Sendable {
         resources[url] = resource
         lock.unlock()
         return url
+    }
+
+    static func update(_ url: URL, _ resource: Resource) {
+        lock.lock()
+        resources[url] = resource
+        lock.unlock()
     }
 
     static func ranges(for url: URL) -> [String?] {
@@ -81,6 +91,14 @@ final class StubURLProtocol: URLProtocol, @unchecked Sendable {
 
         let chunk = 16 * 1024
         var offset = start
+        let limit = start == 0 ? min(resource.stallAfterBytes ?? total, total) : total
+        while offset < limit {
+            let end = min(offset + chunk, limit)
+            client?.urlProtocol(self, didLoad: resource.data.subdata(in: offset ..< end))
+            offset = end
+            if resource.chunkDelay > 0 { Thread.sleep(forTimeInterval: resource.chunkDelay) }
+        }
+        if limit < total { return }
         while offset < total {
             let end = min(offset + chunk, total)
             client?.urlProtocol(self, didLoad: resource.data.subdata(in: offset ..< end))
@@ -104,7 +122,12 @@ final class StubURLProtocol: URLProtocol, @unchecked Sendable {
 
 /// 生成 16-bit PCM WAV（正弦波），供解码端到端测试使用。
 enum WAVFixture {
-    static func make(frames: Int, sampleRate: Int = 44_100, channels: Int = 2) -> Data {
+    static func make(
+        frames: Int,
+        sampleRate: Int = 44_100,
+        channels: Int = 2,
+        secondToneAtFrame: Int? = nil
+    ) -> Data {
         var data = Data()
         func append<T: FixedWidthInteger>(_ value: T) {
             withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) }
@@ -124,7 +147,8 @@ enum WAVFixture {
         data.append(contentsOf: Array("data".utf8))
         append(UInt32(dataSize))
         for frame in 0 ..< frames {
-            let sample = Int16(sin(Double(frame) * 2 * .pi * 440 / Double(sampleRate)) * 8000)
+            let frequency = frame >= (secondToneAtFrame ?? frames) ? 880.0 : 440.0
+            let sample = Int16(sin(Double(frame) * 2 * .pi * frequency / Double(sampleRate)) * 8000)
             for _ in 0 ..< channels {
                 append(sample)
             }

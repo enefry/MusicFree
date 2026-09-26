@@ -251,6 +251,12 @@ public actor InMemoryLibraryRepository: LibraryRepository, PlaybackHistoryReposi
     ) async throws -> LibraryPage<Album> {
         try checkReadFailure()
         let values = albumStore.values.filter { album in
+            switch query.favorite {
+            case .favorite where !album.isFavorite, .notFavorite where album.isFavorite:
+                return false
+            default:
+                break
+            }
             if let sourceID = query.sourceID,
                !trackStore.values.contains(where: { $0.albumID == album.id && $0.id.sourceID == sourceID }) {
                 return false

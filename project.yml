@@ -19,8 +19,6 @@ packages:
     path: Packages/MusicFreeCore
   MusicFreeInfrastructure:
     path: Packages/MusicFreeInfrastructure
-  MusicFreeVLCKitAdapter:
-    path: Packages/MusicFreeVLCKitAdapter
   MusicFreeFFmpegAdapter:
     path: Packages/MusicFreeFFmpegAdapter
   MusicFreeUI:
@@ -61,7 +59,7 @@ targets:
           source_dir="${SRCROOT}/ThirdPartyNotices"
           destination_dir="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/ThirdPartyNotices"
           /bin/mkdir -p "${destination_dir}"
-          /usr/bin/ditto "${source_dir}" "${destination_dir}"
+          /usr/bin/rsync -a --delete "${source_dir}/" "${destination_dir}/"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: win.tools4me.music
@@ -105,8 +103,6 @@ targets:
         product: PreferencesPersistenceAdapter
       - package: MusicFreeInfrastructure
         product: OnlineSourceAdapter
-      - package: MusicFreeVLCKitAdapter
-        product: VLCKitPlaybackAdapter
       - package: MusicFreeFFmpegAdapter
         product: FFmpegPlaybackAdapter
       - package: MusicFreeUI
@@ -128,10 +124,14 @@ targets:
     deploymentTarget: "17.1"
     sources:
       - path: AppTests
+      - path: Packages/MusicFreeFFmpegAdapter/Tests/MusicFreeFFmpegAdapterTests/Fixtures
+        type: folder
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: win.tools4me.musicplayer.tests
         GENERATE_INFOPLIST_FILE: true
+        DEVELOPMENT_TEAM: 34PEP7YC95
     dependencies:
       - target: MusicFree
 
@@ -145,6 +145,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: win.tools4me.musicplayer.uitests
         GENERATE_INFOPLIST_FILE: true
+        DEVELOPMENT_TEAM: 34PEP7YC95
     dependencies:
       - target: MusicFree
 
@@ -165,7 +166,7 @@ schemes:
         - package: MusicFreeCore/MusicFreeCoreTests
         - package: MusicFreeInfrastructure/MusicFreeInfrastructureTests
         - package: MusicFreeUI/MusicFreeUIFeatureTests
-        - package: MusicFreeVLCKitAdapter/MusicFreeVLCKitAdapterTests
+        - package: MusicFreeFFmpegAdapter/MusicFreeFFmpegAdapterTests
       testPlans:
         - path: MusicFree.xctestplan
           defaultPlan: true

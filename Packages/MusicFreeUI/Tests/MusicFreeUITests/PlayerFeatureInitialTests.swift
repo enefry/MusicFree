@@ -1,4 +1,5 @@
 import AppServices
+import DesignSystem
 import Foundation
 import LibraryAPI
 import MediaSourceAPI
@@ -416,6 +417,67 @@ func playerFeatureQueueBoundaryAvailability() {
 }
 
 @MainActor
+@Test("MiniPlayer preserves control sizes through zero-size layout and accessory transitions")
+func miniPlayerAccessoryLayoutRecoversFromZeroSize() throws {
+  guard #available(iOS 26.0, *) else { return }
+
+  for startsInline in [false, true] {
+    let controller = PlayerMiniPlayerViewController(
+      serving: RecordingPlaybackServing(snapshot: makePlayerSnapshot()),
+      onPresentPlayer: {}
+    )
+    controller.traitOverrides.tabAccessoryEnvironment = startsInline ? .inline : .regular
+    let host = UIViewController()
+    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+    window.rootViewController = host
+    window.isHidden = false
+    defer { window.isHidden = true }
+    host.addChild(controller)
+    host.view.addSubview(controller.view)
+    controller.didMove(toParent: host)
+    controller.view.translatesAutoresizingMaskIntoConstraints = false
+    let width = controller.view.widthAnchor.constraint(equalToConstant: 390)
+    let height = controller.view.heightAnchor.constraint(equalToConstant: 52)
+    NSLayoutConstraint.activate([
+      controller.view.leadingAnchor.constraint(equalTo: host.view.leadingAnchor),
+      controller.view.topAnchor.constraint(equalTo: host.view.topAnchor),
+      width, height,
+    ])
+    let play = try #require(findView(withAccessibilityIdentifier: "player.mini.playPause", in: controller.view))
+    let next = try #require(findView(withAccessibilityIdentifier: "player.mini.next", in: controller.view))
+    let title = try #require(findView(withAccessibilityIdentifier: "player.mini.title", in: controller.view))
+
+    for inline in [startsInline, !startsInline, startsInline] {
+      controller.traitOverrides.tabAccessoryEnvironment = inline ? .inline : .regular
+      for size in [CGSize.zero, CGSize(width: 390, height: 52)] {
+        width.constant = size.width
+        height.constant = size.height
+        host.view.setNeedsLayout()
+        host.view.layoutIfNeeded()
+        controller.view.layoutIfNeeded()
+
+        #expect(abs(play.bounds.width - 44) < 0.5)
+        #expect(abs(play.bounds.height - 44) < 0.5)
+        #expect(next.isHidden == inline)
+        #expect(title.bounds.width >= 0)
+        if size.width > 0 {
+          let titleFrame = title.convert(title.bounds, to: controller.view)
+          let playFrame = play.convert(play.bounds, to: controller.view)
+          #expect(abs(titleFrame.minX - (inline ? 8 : 58)) < 0.5)
+          #expect(titleFrame.maxX <= playFrame.minX - 7.5)
+          #expect(playFrame.minY >= 0)
+          #expect(playFrame.maxY <= size.height)
+          if !inline {
+            #expect(abs(next.bounds.width - 44) < 0.5)
+            #expect(abs(next.bounds.height - 44) < 0.5)
+          }
+        }
+      }
+    }
+  }
+}
+
+@MainActor
 @Test("MiniPlayer hides without an active single-track session")
 func miniPlayerVisibilityFollowsPlaybackPhase() {
   for phase in [PlaybackPhase.preparing, .buffering, .playing, .paused] {
@@ -715,6 +777,214 @@ func nowPlayingHistoryFiltersCurrentUnfinishedSession() {
     $0.track.id == currentID && $0.lastCompletionReason == .ended
   }))
   #expect(visible.contains(where: { $0.track.id == otherID }))
+}
+
+@MainActor
+@Test("Now Playing history row text receives taps and requests playback")
+func nowPlayingHistoryRowTapPlaysSelectedTrack() async throws {
+  let track = Track(
+    id: MediaItemID(sourceID: .local, externalID: "history-tap"),
+    title: "History Tap"
+  )
+  let item = makePlayerHistoryItem(sessionID: UUID(), track: track, completionReason: .ended)
+  let library = PlayerHistoryLibrary(historyItems: [item])
+  let serving = RecordingPlaybackServing(snapshot: makePlayerSnapshot(phase: .playing))
+  let controller = PlayerNowPlayingViewController(serving: serving, library: library)
+  let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+  window.rootViewController = controller
+  window.makeKeyAndVisible()
+  defer {
+    window.isHidden = true
+    window.rootViewController = nil
+  }
+  controller.loadViewIfNeeded()
+  let queueButton = try #require(findView(
+    withAccessibilityIdentifier: "player.queue.footer", in: controller.view
+  ) as? UIButton)
+  queueButton.sendActions(for: .touchUpInside)
+  let table = try #require(findView(
+    withAccessibilityIdentifier: "player.nowPlaying.upperScroll", in: controller.view
+  ) as? UITableView)
+  let historyID = "player.nowPlaying.history.\(item.sessionID.uuidString)"
+  var historyRow: UIControl?
+  for _ in 0..<100 {
+    controller.view.layoutIfNeeded()
+    if library.historyLoadCount > 0, table.numberOfRows(inSection: 0) > 1 {
+      table.scrollToRow(at: IndexPath(row: 1, section: 0), at: .top, animated: false)
+      table.layoutIfNeeded()
+      historyRow = findView(withAccessibilityIdentifier: historyID, in: table) as? UIControl
+    }
+    if historyRow != nil { break }
+    try? await Task.sleep(nanoseconds: 10_000_000)
+  }
+  let row = try #require(historyRow)
+  #expect(row.hitTest(CGPoint(x: row.bounds.midX, y: row.bounds.midY), with: nil) === row)
+  #expect(row.allControlEvents.contains(.touchUpInside))
+  #expect(row.isEnabled)
+  #expect(row.isUserInteractionEnabled)
+  #expect(row.window === window)
+  #expect(!table.isHidden)
+  row.sendActions(for: .touchUpInside)
+  for _ in 0..<100 where serving.commands.isEmpty {
+    try await Task.sleep(for: .milliseconds(10))
+  }
+  #expect(serving.commands == [.play(itemID: track.id)])
+  #expect(row.accessibilityActivate())
+  for _ in 0..<100 where serving.commands.count < 2 {
+    try await Task.sleep(for: .milliseconds(10))
+  }
+  #expect(serving.commands == [.play(itemID: track.id), .play(itemID: track.id)])
+}
+
+@MainActor
+@Test("Lyrics use dark text without artwork on a light background")
+func lyricsWithoutArtworkRemainReadable() throws {
+  let model = PlayerViewModel(
+    serving: RecordingPlaybackServing(snapshot: makePlayerSnapshot()), autoStart: false
+  )
+  let lyrics = PlayerEmbeddedLyricsView(lyricsServing: nil, player: model)
+  lyrics.update(query: nil, initialLyrics: TrackLyrics(rawText: "[00:01.00]Visible lyric"))
+  let label = try #require(findView(
+    withAccessibilityIdentifier: "player.nowPlaying.lyrics.line.0", in: lyrics
+  ) as? UILabel)
+  let light = UITraitCollection(userInterfaceStyle: .light)
+  var red: CGFloat = 0
+  var green: CGFloat = 0
+  var blue: CGFloat = 0
+  var alpha: CGFloat = 0
+  #expect(label.textColor.resolvedColor(with: light).getRed(
+    &red, green: &green, blue: &blue, alpha: &alpha
+  ))
+  #expect(red < 0.2)
+  lyrics.setBackdropArtworkAvailable(true)
+  #expect(label.textColor.resolvedColor(with: light).getRed(
+    &red, green: &green, blue: &blue, alpha: &alpha
+  ))
+  #expect(red > 0.8)
+}
+
+@MainActor
+@Test("Now Playing identifies an unavailable local history track")
+func nowPlayingShowsUnavailableResourceFailure() throws {
+  let initial = makePlayerSnapshot()
+  let failed = PlaybackSessionSnapshot(
+    state: PlaybackState(
+      phase: .failed,
+      generation: initial.generation,
+      itemID: initial.currentItemID,
+      position: initial.position,
+      duration: initial.duration,
+      error: .unknown(code: "media.invalid_resource")
+    ),
+    currentItem: initial.currentItem,
+    queue: initial.queue,
+    capabilities: initial.capabilities
+  )
+  let controller = PlayerNowPlayingViewController(
+    serving: RecordingPlaybackServing(snapshot: failed)
+  )
+  controller.loadViewIfNeeded()
+  let status = try #require(findView(
+    withAccessibilityIdentifier: "player.nowPlaying.status", in: controller.view
+  ) as? UILabel)
+  #expect(status.text?.contains("Track") == true)
+  #expect(status.text?.contains(L("音频文件不可用，请检查文件或重新导入。")) == true)
+}
+
+@MainActor
+@Test("Selected lyric seeking keeps the declared timestamp offset")
+func selectedLyricSeekKeepsOffset() async {
+  let serving = RecordingPlaybackServing(snapshot: makePlayerSnapshot())
+  let model = PlayerViewModel(serving: serving, autoStart: false)
+  let lyrics = PlayerEmbeddedLyricsView(lyricsServing: nil, player: model)
+  lyrics.update(query: nil, initialLyrics: TrackLyrics(
+    rawText: "[offset:500]\n[00:01.000]First\n[00:20.000]Second"
+  ))
+
+  lyrics.seekToLine(at: 1)
+  await model.waitForPendingWork()
+  #expect(serving.commands == [.seek(to: .milliseconds(20_500))])
+}
+
+@MainActor
+@Test("Lyric scrubbing only seeks after the centered play button is tapped")
+func centeredLyricPlayButtonSeeks() async throws {
+  let serving = RecordingPlaybackServing(snapshot: makePlayerSnapshot())
+  let model = PlayerViewModel(serving: serving, autoStart: false)
+  let lyrics = PlayerEmbeddedLyricsView(lyricsServing: nil, player: model)
+  lyrics.frame = CGRect(x: 0, y: 0, width: 320, height: 260)
+  lyrics.update(query: nil, initialLyrics: TrackLyrics(rawText:
+    "[00:01.000]First\n[00:20.000]Second\n[00:40.000]Third\n[01:00.000]Fourth"
+  ))
+  lyrics.layoutIfNeeded()
+  let scroll = try #require(findView(
+    withAccessibilityIdentifier: "player.nowPlaying.lyricsScroll", in: lyrics
+  ) as? UIScrollView)
+  let target = try #require(findView(
+    withAccessibilityIdentifier: "player.nowPlaying.lyrics.line.2", in: lyrics
+  ) as? UILabel)
+  let centerY = target.convert(CGPoint(x: 0, y: target.bounds.midY), to: scroll).y
+  scroll.contentOffset.y = centerY - scroll.bounds.height / 2
+  lyrics.scrollViewWillBeginDragging(scroll)
+  lyrics.scrollViewDidEndDragging(scroll, willDecelerate: false)
+  await model.waitForPendingWork()
+  #expect(serving.commands.isEmpty)
+  #expect(target.alpha == 1)
+  let playButton = try #require(findView(
+    withAccessibilityIdentifier: "player.nowPlaying.lyrics.seekSelected", in: lyrics
+  ) as? UIButton)
+  #expect(!playButton.isHidden)
+  #expect(playButton.isEnabled)
+  #expect(playButton.actions(forTarget: lyrics, forControlEvent: .touchUpInside)?.contains("seekSelectedLine") == true)
+  let fourth = try #require(findView(
+    withAccessibilityIdentifier: "player.nowPlaying.lyrics.line.3", in: lyrics
+  ) as? UILabel)
+  let fourthCenterY = fourth.convert(CGPoint(x: 0, y: fourth.bounds.midY), to: scroll).y
+  scroll.contentOffset.y = fourthCenterY - scroll.bounds.height / 2
+  lyrics.scrollViewDidScroll(scroll)
+  #expect(playButton.accessibilityValue == "Fourth")
+  scroll.contentOffset.y = centerY - scroll.bounds.height / 2
+  lyrics.scrollViewDidScroll(scroll)
+  #expect(playButton.accessibilityValue == "Third")
+  lyrics.seekSelectedLine()
+  await model.waitForPendingWork()
+
+  #expect(serving.commands == [.seek(to: .seconds(40))])
+  #expect(playButton.isHidden)
+}
+
+@MainActor
+@Test("Lyric preview returns to playback follow after its timeout")
+func centeredLyricPreviewTimesOut() async throws {
+  let serving = RecordingPlaybackServing(snapshot: makePlayerSnapshot())
+  let model = PlayerViewModel(serving: serving, autoStart: false)
+  let lyrics = PlayerEmbeddedLyricsView(
+    lyricsServing: nil, player: model, previewResetDelay: .milliseconds(100)
+  )
+  lyrics.frame = CGRect(x: 0, y: 0, width: 320, height: 260)
+  lyrics.update(query: nil, initialLyrics: TrackLyrics(rawText:
+    "[00:01.000]First\n[00:20.000]Second\n[00:40.000]Third\n[01:00.000]Fourth"
+  ))
+  lyrics.layoutIfNeeded()
+  let scroll = try #require(findView(
+    withAccessibilityIdentifier: "player.nowPlaying.lyricsScroll", in: lyrics
+  ) as? UIScrollView)
+  let target = try #require(findView(
+    withAccessibilityIdentifier: "player.nowPlaying.lyrics.line.2", in: lyrics
+  ) as? UILabel)
+  let playButton = try #require(findView(
+    withAccessibilityIdentifier: "player.nowPlaying.lyrics.seekSelected", in: lyrics
+  ) as? UIButton)
+  let centerY = target.convert(CGPoint(x: 0, y: target.bounds.midY), to: scroll).y
+  scroll.contentOffset.y = centerY - scroll.bounds.height / 2
+  lyrics.scrollViewWillBeginDragging(scroll)
+  lyrics.scrollViewDidEndDragging(scroll, willDecelerate: true)
+  #expect(!playButton.isHidden)
+
+  try await Task.sleep(for: .milliseconds(300))
+  #expect(playButton.isHidden)
+  #expect(target.alpha < 0.5)
+  #expect(serving.commands.isEmpty)
 }
 
 @MainActor

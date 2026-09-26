@@ -104,7 +104,8 @@ enum LibraryArtistDetailContent {
             artwork: lhs.artwork ?? rhs.artwork,
             releaseYear: lhs.releaseYear ?? rhs.releaseYear,
             trackCount: [lhs.trackCount, rhs.trackCount].compactMap { $0 }.max(),
-            albumType: lhs.albumType ?? rhs.albumType
+            albumType: lhs.albumType ?? rhs.albumType,
+            isFavorite: lhs.isFavorite || rhs.isFavorite
         )
     }
 }

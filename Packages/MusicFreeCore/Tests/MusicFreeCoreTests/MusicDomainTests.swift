@@ -181,6 +181,11 @@ func trackNumberingAndAlbumTypesRoundTrip() throws {
     let decodedAlbum = try JSONDecoder().decode(Album.self, from: JSONEncoder().encode(album))
     #expect(decodedAlbum == album)
     #expect(decodedAlbum.albumType?.code == "soundtrack")
+    #expect(!decodedAlbum.isFavorite)
+    let oldPayload = #"{"id":"soundtrack","title":"Original Score"}"#.data(using: .utf8)!
+    #expect(try JSONDecoder().decode(Album.self, from: oldPayload).isFavorite == false)
+    let favoriteAlbum = Album(id: AlbumID("favorite"), title: "Favorite", isFavorite: true)
+    #expect(try JSONDecoder().decode(Album.self, from: JSONEncoder().encode(favoriteAlbum)).isFavorite)
 
     let futureType = try JSONDecoder().decode(
         AlbumType.self,

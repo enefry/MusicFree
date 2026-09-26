@@ -872,7 +872,7 @@ func settingsFeatureKeepsUnsupportedPreferences() async throws {
 }
 
 @MainActor
-@Test("Settings saves gains for every runtime VLC equalizer band")
+@Test("Settings saves gains for every runtime equalizer band")
 func settingsFeatureSavesRuntimeEqualizerBands() async throws {
     let descriptor = EqualizerDescriptor(
         bands: [
@@ -976,7 +976,7 @@ func settingsFeatureCoalescesEqualizerDragging() async throws {
 }
 
 @MainActor
-@Test("Settings applies runtime VLC presets and recognizes later custom edits")
+@Test("Settings applies runtime equalizer presets and recognizes later custom edits")
 func settingsFeatureAppliesRuntimeEqualizerPreset() async throws {
     let bands = [
         EqualizerBandDescriptor(

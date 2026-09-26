@@ -487,10 +487,14 @@ public actor DSAudioHTTPTransport: DSAudioTransport {
     public func playbackAccess(
         configuration: DSAudioSourceConfiguration,
         itemID: SourceObjectID,
-        purpose _: PlaybackPurpose
+        purpose: PlaybackPurpose
     ) async throws -> PlaybackAccess {
         guard itemID.sourceID == configuration.sourceID else {
             throw OnlineSourceAdapterError.resourceNotFound
+        }
+        if purpose == .auditionRefresh {
+            sessions.removeValue(forKey: configuration.sourceID)
+            rejectedPersistedSessions.insert(configuration.sourceID)
         }
         let session = try await validSession(for: configuration)
         let (request, isTranscoded) = try await makeStreamRequest(
@@ -1403,8 +1407,11 @@ public actor DSAudioHTTPTransport: DSAudioTransport {
             || type == "file"
             || type == "audiofile"
             || type == "audio_file"
-        let isExplicitlyNonAudio = rawMimeType.map {
-            !$0.lowercased().hasPrefix("audio/")
+        let isExplicitlyNonAudio = rawMimeType.map { value in
+            let mimeType = value.lowercased()
+            return !mimeType.hasPrefix("audio/")
+                && !(mimeType == "application/octet-stream"
+                    && SourceCatalogItem.isAudioFileExtension(suffix))
         } ?? false
         // Album and artist APIs commonly return only `id`/`name` (and
         // optional artist metadata), without a `type` field. At the root of a
@@ -1472,13 +1479,12 @@ public actor DSAudioHTTPTransport: DSAudioTransport {
                 ?? externalID
         } else {
             displayName = firstNonEmpty([
-                string(raw["song_title"]),
-                string(raw["title"]),
-                string(raw["name"]),
                 string(raw["filename"]),
                 string(raw["file_name"]),
                 pathName,
-                
+                string(raw["name"]),
+                string(raw["song_title"]),
+                string(raw["title"]),
             ]) ?? externalID
         }
         // On some DSM versions `title` is the source filename while the

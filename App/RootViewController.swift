@@ -1609,6 +1609,20 @@ final class RootViewController: UIViewController {
                 animated: true
             )
         }
+        controller.onSelectAlbum = { [weak self, weak controller] albumID in
+            guard let self, let navigationController = controller?.navigationController else {
+                return
+            }
+            let title = libraryViewModel.albums.first(where: { $0.id == albumID })?.title
+            navigationController.pushViewController(
+                self.makeLibraryCollectionDetailViewController(
+                    kind: .album(albumID),
+                    title: title,
+                    services: services
+                ),
+                animated: true
+            )
+        }
         controller.onPlayTrack = play
         controller.onPlayTracks = { itemIDs, shuffle in
             guard !itemIDs.isEmpty else { return }

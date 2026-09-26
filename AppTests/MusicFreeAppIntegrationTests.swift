@@ -1,4 +1,5 @@
 import Foundation
+import FFmpegPlaybackAdapter
 import AppServices
 import LibraryAPI
 import LocalMediaAdapter
@@ -9,7 +10,6 @@ import SettingsAPI
 import SystemIntegrationAPI
 import Testing
 import UIKit
-import VLCKitPlaybackAdapter
 
 @testable import MusicFree
 
@@ -41,16 +41,10 @@ struct MacLocalImportDiagnosticTests {
             stagingRoot: root.appendingPathComponent("staging", isDirectory: true),
             quarantineRoot: root.appendingPathComponent("quarantine", isDirectory: true)
         )
-        let vlcConfiguration = try VLCKitAdapterConfiguration(
-            applicationIdentifier: "win.tools4me.music.mac-diagnostic",
-            applicationVersion: "1.0",
-            applicationName: "MusicFree Mac Diagnostic",
-            parserTimeout: .seconds(30)
-        )
         let importer = try LocalMediaImporter(
             configuration: localConfiguration,
-            probe: VLCMediaProbe(configuration: vlcConfiguration),
-            metadataReader: VLCMetadataReader(configuration: vlcConfiguration),
+            probe: FFmpegMediaProbe(),
+            metadataReader: FFmpegMetadataReader(),
             libraryRepository: EmptyLibraryRepository()
         )
 
@@ -1141,8 +1135,8 @@ func releaseInfoProviderLoadsBundledLicenseMaterial() async throws {
     #expect(dependency.checksum == "checksum-456")
 }
 
-@Test("Release manifest exposes every license packaged by MusicFreeVLCKit")
-func releaseManifestIncludesEveryMusicFreeVLCKitLicense() async throws {
+@Test("Release manifest exposes the linked FFmpeg license and no VLC components")
+func releaseManifestIncludesFFmpegAudioLicense() async throws {
     let sourceRoot = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent()
         .deletingLastPathComponent()
@@ -1169,24 +1163,19 @@ func releaseManifestIncludesEveryMusicFreeVLCKitLicense() async throws {
         await AppReleaseInfoProvider(bundle: bundle).releaseInfo()
     )
     let expectedLicenseFiles: Set<String> = [
-        "MusicFreeVLCKit/third-party-licenses/MusicFreeVLCKit-LGPL-2.1.txt",
-        "MusicFreeVLCKit/third-party-licenses/libVLC-COPYING.LIB",
-        "MusicFreeVLCKit/third-party-licenses/FFmpeg-COPYING.LGPLv2.1",
-        "MusicFreeVLCKit/third-party-licenses/FLAC-COPYING.Xiph",
-        "MusicFreeVLCKit/third-party-licenses/Ogg-COPYING",
-        "MusicFreeVLCKit/third-party-licenses/Opus-COPYING",
-        "MusicFreeVLCKit/third-party-licenses/Vorbis-COPYING",
-        "MusicFreeVLCKit/third-party-licenses/SoXr-COPYING.LGPL",
-        "MusicFreeVLCKit/third-party-licenses/TagLib-COPYING.LGPL",
-        "MusicFreeVLCKit/third-party-licenses/EBML-LICENSE.LGPL",
-        "MusicFreeVLCKit/third-party-licenses/Matroska-LICENSE.LGPL",
-        "MusicFreeVLCKit/third-party-licenses/SMB2-COPYING",
-        "MusicFreeVLCKit/third-party-licenses/NFS-COPYING",
-        "MusicFreeVLCKit/third-party-licenses/zlib-LICENSE"
+        "Kingfisher-MIT.txt",
+        "CocoaLumberjack-BSD-3-Clause.txt",
+        "FFmpegAudio/COPYING.LGPLv2.1"
     ]
 
     #expect(releaseInfo.dependencies.count == expectedLicenseFiles.count)
     #expect(Set(releaseInfo.dependencies.compactMap(\.licenseFile)) == expectedLicenseFiles)
+    #expect(!releaseInfo.dependencies.contains { $0.name.localizedCaseInsensitiveContains("vlc") })
+    let ffmpeg = try #require(releaseInfo.dependencies.first { $0.id == "ffmpeg-audio" })
+    #expect(ffmpeg.buildMaterialsURL?.absoluteString ==
+        "https://github.com/enefry/FFmpegAudioKit/releases/download/0.0.4/FFmpegAudio.xcframework.zip")
+    #expect(ffmpeg.checksum ==
+        "1c65e5ec6be5329fc632847f914e602aa33cc1fd53908f0a498150a26fb2c9f8")
     #expect(releaseInfo.dependencies.allSatisfy { dependency in
         guard let licenseText = dependency.licenseText else { return false }
         return !licenseText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

@@ -450,10 +450,28 @@ public final class OnlineAuditionCoordinator: OnlineAuditionServing {
             let request: RemotePlaybackRequest
             switch access {
             case .http(let value, let transcode):
-                guard !value.isExpired(at: Date()) else {
+                let usable = value.isExpired(at: Date()) && value.canRefresh
+                    ? try await value.refreshed()
+                    : value
+                try requireCurrent(operationID, sessionID: sessionID)
+                guard !usable.isExpired(at: Date()) else {
                     throw OnlineAuditionError.accessExpired
                 }
-                request = value
+                // 签名地址会过期；播放中途 seek/续传需要新地址时，由引擎回调这里
+                // 重新走同一套授权与隐私门禁获取 playbackAccess。
+                let onlineSources = self.onlineSources
+                let objectID = item.id
+                request = usable.canRefresh ? usable : usable.withRefresher {
+                    let access = try await onlineSources.playbackAccess(
+                        sourceID: objectID.sourceID,
+                        itemID: objectID,
+                        purpose: .auditionRefresh
+                    )
+                    guard case .http(let refreshed, _) = access else {
+                        throw OnlineAuditionError.downloadRequired
+                    }
+                    return refreshed
+                }
                 Self.logger.info(
                     "playback access resolved source=\(item.id.sourceID.rawValue) item=\(item.id.externalID) transcoded=\(transcode != nil)"
                 )

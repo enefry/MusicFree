@@ -54,9 +54,9 @@
     },
     {
       "target" : {
-        "containerPath" : "container:Packages/MusicFreeVLCKitAdapter",
-        "identifier" : "MusicFreeVLCKitAdapterTests",
-        "name" : "MusicFreeVLCKitAdapterTests"
+        "containerPath" : "container:Packages/MusicFreeFFmpegAdapter",
+        "identifier" : "MusicFreeFFmpegAdapterTests",
+        "name" : "MusicFreeFFmpegAdapterTests"
       }
     }
   ],

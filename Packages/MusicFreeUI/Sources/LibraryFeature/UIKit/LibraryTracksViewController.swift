@@ -1,6 +1,7 @@
 import AppServices
 import Combine
 import DesignSystem
+import LibraryAPI
 import MediaSourceAPI
 import MusicDomain
 import UIKit
@@ -44,6 +45,8 @@ public final class LibraryTracksViewController: UIViewController {
 
     private struct TrackRenderInput: Equatable {
         let tracks: [Track]
+        let favoriteAlbums: [Album]
+        let favoriteAlbumsState: FavoriteAlbumsState
         let state: LibraryLoadState
         let artistNames: [ArtistID: String]
         let albumNames: [AlbumID: String]
@@ -57,12 +60,14 @@ public final class LibraryTracksViewController: UIViewController {
     }
 
     private enum TrackSection: Hashable {
+        case favoriteAlbums
         case actions
         case group(String)
         case status
     }
 
     private enum TrackItem: Hashable {
+        case album(AlbumID)
         case playbackActions
         case track(LibraryTrackRowIdentity)
         case status(String)
@@ -91,6 +96,7 @@ public final class LibraryTracksViewController: UIViewController {
     public let artworkServing: (any ArtworkServing)?
     private let mediaShareResolver: LibraryMediaShareResolver?
     public var onSelectTrack: ((MediaItemID) -> Void)?
+    public var onSelectAlbum: ((AlbumID) -> Void)?
     public var onPlayTrack: ((MediaItemID) -> Void)?
     public var onPlayTracks: (([MediaItemID], Bool) -> Void)?
     public var onEnqueueNextTracks: (([MediaItemID]) -> Void)?
@@ -112,11 +118,20 @@ public final class LibraryTracksViewController: UIViewController {
     private var trackByRowID: [LibraryTrackRowIdentity: Track] = [:]
     private var orderedRows: [(id: LibraryTrackRowIdentity, track: Track)] = []
     private var orderedTracks: [Track] = []
+    private var favoriteAlbums: [Album] = []
+    private var favoriteAlbumByID: [AlbumID: Album] = [:]
+    private var favoriteAlbumsState: FavoriteAlbumsState = .idle
+    private var favoriteAlbumLoadTask: Task<Void, Never>?
+    private var favoriteAlbumObservationTask: Task<Void, Never>?
     private var sortMode: TrackListSortMode = .title
     private var artworkPrefetchTasks: [LibraryTrackRowIdentity: Task<Void, Never>] = [:]
     private var shareTask: Task<Void, Never>?
     private let maximumConcurrentArtworkPrefetches = 4
     private let nextPagePreloadDistance = 50
+
+    private enum FavoriteAlbumsState: Equatable {
+        case idle, loading, loaded, failed
+    }
 
     public init(
         viewModel: LibraryViewModel,
@@ -157,11 +172,16 @@ public final class LibraryTracksViewController: UIViewController {
         configureDataSource()
         collectionView.setCollectionViewLayout(makeLayout(), animated: false)
         observeViewModel()
+        if section == .favorites {
+            loadFavoriteAlbums()
+            observeFavoriteAlbumChanges()
+        }
         Task { @MainActor [weak self] in
             await self?.viewModel.startObservingChanges()
         }
         renderSnapshot()
         viewModel.loadIfNeeded(for: section)
+        if section == .favorites { loadFavoriteAlbums() }
         reloadMetadataIfNeeded()
     }
 
@@ -213,6 +233,8 @@ public final class LibraryTracksViewController: UIViewController {
         metadataTask?.cancel()
         artworkPrefetchTasks.values.forEach { $0.cancel() }
         shareTask?.cancel()
+        favoriteAlbumLoadTask?.cancel()
+        favoriteAlbumObservationTask?.cancel()
     }
 
     private func configureCollectionView() {
@@ -230,6 +252,10 @@ public final class LibraryTracksViewController: UIViewController {
         collectionView.register(
             LibraryTracksCell.self,
             forCellWithReuseIdentifier: LibraryTracksCell.reuseIdentifier
+        )
+        collectionView.register(
+            LibraryCollectionAlbumListCell.self,
+            forCellWithReuseIdentifier: LibraryCollectionAlbumListCell.reuseIdentifier
         )
         collectionView.register(
             LibraryTracksActionCell.self,
@@ -319,6 +345,24 @@ public final class LibraryTracksViewController: UIViewController {
             guard let self else { return nil }
 
             switch item {
+            case let .album(albumID):
+                guard let album = self.favoriteAlbumByID[albumID] else { return nil }
+                let cell = collectionView.dequeueReusableCell(
+                    withReuseIdentifier: LibraryCollectionAlbumListCell.reuseIdentifier,
+                    for: indexPath
+                )
+                guard let albumCell = cell as? LibraryCollectionAlbumListCell else { return cell }
+                let subtitle = [album.releaseYear.map(String.init),
+                                album.trackCount.map { L("%d tracks", $0) }]
+                    .compactMap { $0 }.joined(separator: " · ")
+                albumCell.configure(
+                    album: album,
+                    subtitle: subtitle.isEmpty ? nil : subtitle,
+                    artworkServing: self.artworkServing
+                )
+                albumCell.accessibilityIdentifier = "library.favorite.album.\(albumID.rawValue)"
+                return albumCell
+
             case .playbackActions:
                 let cell = collectionView.dequeueReusableCell(
                     withReuseIdentifier: LibraryTracksActionCell.reuseIdentifier,
@@ -359,7 +403,11 @@ public final class LibraryTracksViewController: UIViewController {
                 statusCell.configure(
                     status: status,
                     section: self.section,
-                    retry: { [weak self] in self?.viewModel.retry(section: self?.section) }
+                    retry: { [weak self] in
+                        guard let self else { return }
+                        self.viewModel.retry(section: self.section)
+                        if self.section == .favorites { self.loadFavoriteAlbums(force: true) }
+                    }
                 )
                 statusCell.accessibilityIdentifier = "library.\(self.section.rawValue).status"
                 return statusCell
@@ -369,9 +417,15 @@ public final class LibraryTracksViewController: UIViewController {
         dataSource.supplementaryViewProvider = { [weak self] collectionView, kind, indexPath in
             guard kind == UICollectionView.elementKindSectionHeader,
                   let self,
-                  let section = self.dataSource.sectionIdentifier(for: indexPath.section),
-                  case let .group(title) = section
+                  let section = self.dataSource.sectionIdentifier(for: indexPath.section)
             else { return nil }
+
+            let title: String
+            switch section {
+            case .favoriteAlbums: title = L("专辑")
+            case let .group(value): title = value
+            case .actions, .status: return nil
+            }
 
             let header = collectionView.dequeueReusableSupplementaryView(
                 ofKind: kind,
@@ -442,6 +496,8 @@ public final class LibraryTracksViewController: UIViewController {
         let visibleTracks = viewModel.tracks(for: section)
         let renderInput = TrackRenderInput(
             tracks: visibleTracks,
+            favoriteAlbums: favoriteAlbums,
+            favoriteAlbumsState: favoriteAlbumsState,
             state: viewModel.state(for: section),
             artistNames: artistNames,
             albumNames: albumNames,
@@ -451,6 +507,7 @@ public final class LibraryTracksViewController: UIViewController {
         lastRenderInput = renderInput
 
         let previousTrackByRowID = trackByRowID
+        let previousAlbumByID = favoriteAlbumByID
         let previousSubtitleByRowID = renderedSubtitleByRowID
         let sortedTracks = visibleTracks.sorted {
             let lhs = TrackSectionIndex.normalizedSortValue(sortValue(for: $0))
@@ -464,13 +521,14 @@ public final class LibraryTracksViewController: UIViewController {
             (id: row.id, track: row.track)
         }
         orderedTracks = orderedRows.map(\.track)
+        favoriteAlbumByID = Dictionary(uniqueKeysWithValues: favoriteAlbums.map { ($0.id, $0) })
         trackByRowID = Dictionary(uniqueKeysWithValues: orderedRows.map { ($0.id, $0.track) })
         renderedSubtitleByRowID = Dictionary(
             uniqueKeysWithValues: orderedRows.map { ($0.id, subtitle(for: $0.track)) }
         )
 
         var snapshot = NSDiffableDataSourceSnapshot<TrackSection, TrackItem>()
-        if orderedTracks.isEmpty {
+        if orderedTracks.isEmpty && favoriteAlbums.isEmpty {
             snapshot.appendSections([.status])
             let status: String
             switch viewModel.state(for: section) {
@@ -479,12 +537,26 @@ public final class LibraryTracksViewController: UIViewController {
             case .failed:
                 status = "failed"
             case .empty, .loaded:
-                status = "empty"
+                if section == .favorites {
+                    switch favoriteAlbumsState {
+                    case .idle, .loading: status = "loading"
+                    case .failed: status = "failed"
+                    case .loaded: status = "empty"
+                    }
+                } else {
+                    status = "empty"
+                }
             }
             snapshot.appendItems([.status(status)], toSection: .status)
         } else {
-            snapshot.appendSections([.actions])
-            snapshot.appendItems([.playbackActions], toSection: .actions)
+            if !favoriteAlbums.isEmpty {
+                snapshot.appendSections([.favoriteAlbums])
+                snapshot.appendItems(favoriteAlbums.map { .album($0.id) }, toSection: .favoriteAlbums)
+            }
+            if !orderedTracks.isEmpty {
+                snapshot.appendSections([.actions])
+                snapshot.appendItems([.playbackActions], toSection: .actions)
+            }
 
             let grouped = Dictionary(grouping: orderedRows) {
                 TrackSectionIndex.title(for: sortValue(for: $0.track))
@@ -509,6 +581,8 @@ public final class LibraryTracksViewController: UIViewController {
                 return nil
             }
             return .track(row.id)
+        } + favoriteAlbums.compactMap { album -> TrackItem? in
+            previousAlbumByID[album.id] == album ? nil : .album(album.id)
         }
 
         guard structureChanged || !itemsToReconfigure.isEmpty else { return }
@@ -635,6 +709,8 @@ public final class LibraryTracksViewController: UIViewController {
             var configuration = UICollectionLayoutListConfiguration(appearance: .plain)
             configuration.showsSeparators = section != .status && section != .actions
             switch section {
+            case .favoriteAlbums:
+                configuration.headerMode = .supplementary
             case .group:
                 configuration.headerMode = self.traitCollection.horizontalSizeClass == .regular
                     ? .supplementary
@@ -664,7 +740,60 @@ public final class LibraryTracksViewController: UIViewController {
         Task { @MainActor [weak self] in
             guard let self else { return }
             await self.viewModel.refreshCheckingForImports(section: self.section)
+            if self.section == .favorites { self.loadFavoriteAlbums(force: true) }
             self.collectionView.refreshControl?.endRefreshing()
+        }
+    }
+
+    private func loadFavoriteAlbums(force: Bool = false) {
+        guard section == .favorites,
+              force || favoriteAlbumsState == .idle else { return }
+        favoriteAlbumLoadTask?.cancel()
+        favoriteAlbumsState = .loading
+        renderSnapshot()
+        favoriteAlbumLoadTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                var request = try LibraryPageRequest(limit: LibraryPageRequest.maximumLimit)
+                var seenCursors = Set<LibraryCursor>()
+                var albums: [Album] = []
+                let query = AlbumQuery(sourceID: .local, favorite: .favorite)
+                while true {
+                    try Task.checkCancellation()
+                    let page = try await self.viewModel.library.browseAlbums(
+                        matching: query, page: request
+                    )
+                    albums.append(contentsOf: page.elements)
+                    guard let next = try page.nextPage(limit: request.limit) else { break }
+                    guard let cursor = next.cursor, seenCursors.insert(cursor).inserted else {
+                        throw CancellationError()
+                    }
+                    request = next
+                }
+                try Task.checkCancellation()
+                self.favoriteAlbums = albums
+                self.favoriteAlbumsState = .loaded
+            } catch is CancellationError {
+                return
+            } catch {
+                self.favoriteAlbumsState = .failed
+            }
+            self.favoriteAlbumLoadTask = nil
+            self.renderSnapshot()
+        }
+    }
+
+    private func observeFavoriteAlbumChanges() {
+        guard favoriteAlbumObservationTask == nil else { return }
+        favoriteAlbumObservationTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let changes = await self.viewModel.library.makeChangeStream()
+            for await change in changes {
+                guard !Task.isCancelled else { return }
+                if change.categories.contains(.albums) {
+                    self.loadFavoriteAlbums(force: true)
+                }
+            }
         }
     }
 }
@@ -675,6 +804,10 @@ extension LibraryTracksViewController: UICollectionViewDelegate {
         didSelectItemAt indexPath: IndexPath
     ) {
         guard let item = dataSource.itemIdentifier(for: indexPath) else { return }
+        if case let .album(albumID) = item {
+            onSelectAlbum?(albumID)
+            return
+        }
         guard case let .track(rowID) = item,
               let track = trackByRowID[rowID]
         else { return }
@@ -1159,7 +1292,7 @@ private final class LibraryTracksStatusCell: UICollectionViewCell {
 
     private func emptyMessage(for section: LibrarySection) -> String {
         switch section {
-        case .favorites: return L("收藏的歌曲会显示在这里。")
+        case .favorites: return L("收藏的歌曲和专辑会显示在这里。")
         case .recent: return L("播放过的歌曲会显示在这里。")
         default: return L("导入本地音频后会显示在这里。")
         }

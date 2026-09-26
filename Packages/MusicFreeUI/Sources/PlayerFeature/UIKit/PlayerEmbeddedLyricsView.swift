@@ -12,11 +12,13 @@ import UIKit
 /// footer controls in the same presentation while only the middle document
 /// changes from artwork to timed lyrics.
 @MainActor
-final class PlayerEmbeddedLyricsView: UIView {
+final class PlayerEmbeddedLyricsView: UIView, UIScrollViewDelegate {
     private let lyricsServing: (any LyricsServing)?
     private let player: PlayerViewModel
+    private let previewResetDelay: Duration
     private let scrollView = UIScrollView()
     private let contentStack = UIStackView()
+    private let seekSelectedButton = UIButton(type: .system)
     private let stateView = MusicFreeUIKitEmptyStateView(
         title: L("无歌词"),
         message: L("当前音频源没有可显示的歌词。"),
@@ -30,6 +32,49 @@ final class PlayerEmbeddedLyricsView: UIView {
     private var runtimeOffsetMilliseconds = 0
     private var lineLabels: [UILabel] = []
     private var renderedActiveIndex: Int?
+    private var lastLyricsViewportSize: CGSize = .zero
+    private var hasBackdropArtwork = false
+    private var isPreviewingLyrics = false
+    private var previewIndex: Int?
+    private var previewResetTask: Task<Void, Never>?
+    private var pendingSeekPosition: Duration?
+
+    private var lyricTextColor: UIColor {
+        hasBackdropArtwork ? .white.withAlphaComponent(0.96) : .label.withAlphaComponent(0.96)
+    }
+
+    func setBackdropArtworkAvailable(_ available: Bool) {
+        guard hasBackdropArtwork != available else { return }
+        hasBackdropArtwork = available
+        for case let label as UILabel in contentStack.arrangedSubviews {
+            label.textColor = lyricTextColor
+        }
+        seekSelectedButton.tintColor = lyricTextColor
+        seekSelectedButton.backgroundColor = available
+            ? .black.withAlphaComponent(0.3)
+            : .secondarySystemBackground
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard !lineLabels.isEmpty, scrollView.bounds.height > 0 else { return }
+        let viewportChanged = lastLyricsViewportSize != scrollView.bounds.size
+        lastLyricsViewportSize = scrollView.bounds.size
+        let padding = scrollView.bounds.height / 2
+        let insetChanged = scrollView.contentInset.top != padding
+            || scrollView.contentInset.bottom != padding
+        if insetChanged {
+            scrollView.contentInset.top = padding
+            scrollView.contentInset.bottom = padding
+        }
+        if viewportChanged || insetChanged {
+            if isPreviewingLyrics {
+                updatePreviewSelection()
+            } else {
+                updateActiveLine(animated: false)
+            }
+        }
+    }
 
     private enum LoadState {
         case idle
@@ -41,10 +86,12 @@ final class PlayerEmbeddedLyricsView: UIView {
 
     init(
         lyricsServing: (any LyricsServing)?,
-        player: PlayerViewModel
+        player: PlayerViewModel,
+        previewResetDelay: Duration = .seconds(3)
     ) {
         self.lyricsServing = lyricsServing
         self.player = player
+        self.previewResetDelay = previewResetDelay
         super.init(frame: .zero)
         accessibilityIdentifier = "player.nowPlaying.lyrics"
         configureViews()
@@ -65,6 +112,8 @@ final class PlayerEmbeddedLyricsView: UIView {
         loadTask = nil
         lyrics = initialLyrics
         renderedActiveIndex = nil
+        pendingSeekPosition = nil
+        cancelPreview()
         if let initialLyrics, !initialLyrics.isEmpty {
             loadState = .loaded
             render()
@@ -89,6 +138,8 @@ final class PlayerEmbeddedLyricsView: UIView {
 
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.alwaysBounceVertical = true
+        scrollView.delegate = self
+        scrollView.contentInsetAdjustmentBehavior = .never
         scrollView.showsVerticalScrollIndicator = false
         scrollView.backgroundColor = .clear
         scrollView.accessibilityIdentifier = "player.nowPlaying.lyricsScroll"
@@ -99,6 +150,17 @@ final class PlayerEmbeddedLyricsView: UIView {
         contentStack.spacing = 14
         contentStack.translatesAutoresizingMaskIntoConstraints = false
         scrollView.addSubview(contentStack)
+
+        seekSelectedButton.translatesAutoresizingMaskIntoConstraints = false
+        seekSelectedButton.setImage(UIImage(systemName: "play.fill"), for: .normal)
+        seekSelectedButton.tintColor = lyricTextColor
+        seekSelectedButton.backgroundColor = .secondarySystemBackground
+        seekSelectedButton.layer.cornerRadius = 22
+        seekSelectedButton.accessibilityIdentifier = "player.nowPlaying.lyrics.seekSelected"
+        seekSelectedButton.accessibilityLabel = L("跳转到这句歌词")
+        seekSelectedButton.isHidden = true
+        seekSelectedButton.addTarget(self, action: #selector(seekSelectedLine), for: .touchUpInside)
+        addSubview(seekSelectedButton)
 
         stateView.translatesAutoresizingMaskIntoConstraints = false
         stateView.isHidden = true
@@ -114,7 +176,8 @@ final class PlayerEmbeddedLyricsView: UIView {
                 equalTo: scrollView.contentLayoutGuide.leadingAnchor
             ),
             contentStack.trailingAnchor.constraint(
-                equalTo: scrollView.contentLayoutGuide.trailingAnchor
+                equalTo: scrollView.contentLayoutGuide.trailingAnchor,
+                constant: -56
             ),
             contentStack.topAnchor.constraint(
                 equalTo: scrollView.contentLayoutGuide.topAnchor,
@@ -122,9 +185,13 @@ final class PlayerEmbeddedLyricsView: UIView {
             ),
             contentStack.bottomAnchor.constraint(
                 equalTo: scrollView.contentLayoutGuide.bottomAnchor,
-                constant: -200
+                constant: -18
             ),
-            contentStack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
+            contentStack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -56),
+            seekSelectedButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            seekSelectedButton.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor),
+            seekSelectedButton.widthAnchor.constraint(equalToConstant: 44),
+            seekSelectedButton.heightAnchor.constraint(equalToConstant: 44),
             stateView.leadingAnchor.constraint(equalTo: leadingAnchor),
             stateView.trailingAnchor.constraint(equalTo: trailingAnchor),
             stateView.topAnchor.constraint(equalTo: topAnchor),
@@ -165,6 +232,7 @@ final class PlayerEmbeddedLyricsView: UIView {
         guard !isHidden else { return }
         guard let lyrics, !lyrics.isEmpty else {
             scrollView.isHidden = true
+            cancelPreview()
             stateView.isHidden = false
             switch loadState {
             case .idle, .loading:
@@ -205,7 +273,7 @@ final class PlayerEmbeddedLyricsView: UIView {
             for (index, line) in lyrics.timedLines.enumerated() {
                 let label = UILabel()
                 label.font = MusicFreeUIFontTokens.preferred(.title2, weight: .semibold)
-                label.textColor = .white.withAlphaComponent(0.96)
+                label.textColor = lyricTextColor
                 label.numberOfLines = 0
                 label.lineBreakMode = .byWordWrapping
                 label.text = line.text
@@ -220,7 +288,7 @@ final class PlayerEmbeddedLyricsView: UIView {
         } else {
             let label = UILabel()
             label.font = MusicFreeUIFontTokens.body
-            label.textColor = .white.withAlphaComponent(0.96)
+            label.textColor = lyricTextColor
             label.numberOfLines = 0
             label.text = lyrics.rawText
             label.accessibilityIdentifier = "player.nowPlaying.lyrics.rawText"
@@ -234,21 +302,45 @@ final class PlayerEmbeddedLyricsView: UIView {
             at: player.snapshot.position,
             runtimeOffsetMilliseconds: runtimeOffsetMilliseconds
         )
+        if let pendingSeekPosition {
+            let difference = max(player.snapshot.position, pendingSeekPosition)
+                - min(player.snapshot.position, pendingSeekPosition)
+            guard difference < .seconds(1) || player.snapshot.phase == .failed else { return }
+            self.pendingSeekPosition = nil
+        }
+        guard !isPreviewingLyrics else { return }
         guard activeIndex != renderedActiveIndex || !animated else { return }
         renderedActiveIndex = activeIndex
 
+        updateLineAppearance(focusedIndex: activeIndex, previewing: false, animated: animated)
+
+        guard let activeIndex, lineLabels.indices.contains(activeIndex) else { return }
+        guard scrollView.bounds.height > 0 else { return }
+        scrollView.layoutIfNeeded()
+        let label = lineLabels[activeIndex]
+        let labelRect = contentStack.convert(label.frame, to: scrollView)
+        let centeredOffset = labelRect.midY - scrollView.bounds.height / 2
+        let minOffset = -scrollView.adjustedContentInset.top
+        let maxOffset = max(minOffset, scrollView.contentSize.height + scrollView.adjustedContentInset.bottom - scrollView.bounds.height)
+        scrollView.setContentOffset(
+            CGPoint(x: 0, y: min(max(centeredOffset, minOffset), maxOffset)),
+            animated: animated
+        )
+    }
+
+    private func updateLineAppearance(focusedIndex: Int?, previewing: Bool, animated: Bool) {
         for (index, label) in lineLabels.enumerated() {
-            let distance = activeIndex.map { abs(index - $0) }
-            let isActive = activeIndex == index
-            let font = isActive
-                ? MusicFreeUIFontTokens.preferred(.title1, weight: .bold)
+            let distance = focusedIndex.map { abs(index - $0) }
+            let isFocused = focusedIndex == index
+            let font = isFocused
+                ? MusicFreeUIFontTokens.preferred(previewing ? .title2 : .title1, weight: .bold)
                 : MusicFreeUIFontTokens.preferred(.title2, weight: .semibold)
             let alpha: CGFloat
             switch distance {
             case 0: alpha = 1
-            case 1: alpha = 0.34
-            case 2: alpha = 0.22
-            default: alpha = 0.12
+            case 1: alpha = previewing ? 0.4 : 0.34
+            case 2: alpha = previewing ? 0.26 : 0.22
+            default: alpha = previewing ? 0.16 : 0.12
             }
             let changes = {
                 label.font = font
@@ -260,13 +352,77 @@ final class PlayerEmbeddedLyricsView: UIView {
                 changes()
             }
         }
+    }
 
-        guard let activeIndex, lineLabels.indices.contains(activeIndex) else { return }
-        let label = lineLabels[activeIndex]
-        let labelRect = contentStack.convert(label.frame, to: scrollView)
-        scrollView.scrollRectToVisible(
-            labelRect.insetBy(dx: 0, dy: -80),
-            animated: animated
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        previewResetTask?.cancel()
+        isPreviewingLyrics = true
+        pendingSeekPosition = nil
+        scrollView.setContentOffset(scrollView.contentOffset, animated: false)
+        updatePreviewSelection()
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        guard isPreviewingLyrics else { return }
+        updatePreviewSelection()
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate _: Bool) {
+        schedulePreviewReset()
+    }
+
+    private func updatePreviewSelection() {
+        guard lyrics?.isTimed == true, !lineLabels.isEmpty else { return }
+        let midpoint = scrollView.contentOffset.y + scrollView.bounds.height / 2
+        let index = lineLabels.indices.min { lhs, rhs in
+            let left = contentStack.convert(lineLabels[lhs].frame, to: scrollView).midY
+            let right = contentStack.convert(lineLabels[rhs].frame, to: scrollView).midY
+            return abs(left - midpoint) < abs(right - midpoint)
+        }
+        guard previewIndex != index else { return }
+        previewIndex = index
+        seekSelectedButton.isHidden = index == nil || !player.canSeek
+        seekSelectedButton.accessibilityValue = index.flatMap { lyrics?.timedLines[$0].text }
+        updateLineAppearance(focusedIndex: index, previewing: true, animated: false)
+    }
+
+    private func schedulePreviewReset() {
+        previewResetTask?.cancel()
+        let delay = previewResetDelay
+        previewResetTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled else { return }
+            self?.cancelPreview()
+            self?.updateActiveLine(animated: true)
+        }
+    }
+
+    private func cancelPreview() {
+        previewResetTask?.cancel()
+        previewResetTask = nil
+        isPreviewingLyrics = false
+        previewIndex = nil
+        seekSelectedButton.isHidden = true
+        seekSelectedButton.accessibilityValue = nil
+        renderedActiveIndex = nil
+    }
+
+    @objc func seekSelectedLine() {
+        guard let previewIndex else { return }
+        cancelPreview()
+        seekToLine(at: previewIndex)
+    }
+
+    func seekToLine(at index: Int) {
+        guard player.canSeek, let lyrics, lyrics.timedLines.indices.contains(index) else { return }
+        let milliseconds = max(
+            0,
+            Double(lyrics.timedLines[index].timestampMilliseconds)
+                + Double(lyrics.declaredOffsetMilliseconds)
+                + Double(runtimeOffsetMilliseconds)
         )
+        let position = Duration.milliseconds(Int64(min(milliseconds, Double(Int64.max))))
+        pendingSeekPosition = min(position, player.duration ?? position)
+        player.seek(to: position)
     }
 }

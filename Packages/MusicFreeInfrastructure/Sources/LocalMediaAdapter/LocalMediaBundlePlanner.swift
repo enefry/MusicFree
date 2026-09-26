@@ -422,7 +422,13 @@ struct LocalMediaBundlePlanner: Sendable {
           ? .compilation : nil
       } else {
         commonAlbumArtist = nil
-        albumType = explicitAlbumArtists.count > 1 ? .compilation : nil
+        let cuePerformers = Set(indices.compactMap { index -> String? in
+          guard result[index].itemID.externalID.hasPrefix("cue-") else { return nil }
+          return normalized(result[index].metadata.artist)
+        })
+        albumType = explicitAlbumArtists.count > 1 ||
+          (explicitAlbumArtists.isEmpty && cuePerformers.count > 1)
+          ? .compilation : nil
       }
       let discNumbers = indices.compactMap { index in
         result[index].metadata.discNumber

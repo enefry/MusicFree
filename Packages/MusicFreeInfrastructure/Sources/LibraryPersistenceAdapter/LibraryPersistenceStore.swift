@@ -737,7 +737,8 @@ public actor LibraryPersistenceStore {
     ) throws -> LibraryPage<Album> {
         try ensureOpen()
         browseRecordFetchCount = nil
-        if query.searchText == nil, query.sourceID == nil, query.artistID == nil {
+        if query.searchText == nil, query.sourceID == nil,
+           query.artistID == nil, query.favorite == .any {
             let sortOrder = sortOrder(for: query.sort.direction)
             switch query.sort.key {
             case .dateAdded:
@@ -785,6 +786,12 @@ public actor LibraryPersistenceStore {
         let artistNames = snapshot.artists
         let values = snapshot.albums.values.filter { stored in
             let album = stored.value
+            switch query.favorite {
+            case .favorite where !album.isFavorite, .notFavorite where album.isFavorite:
+                return false
+            default:
+                break
+            }
             guard query.sourceID == nil || sourceIDsByAlbum[album.id]?.contains(query.sourceID!) == true else {
                 return false
             }
@@ -1435,7 +1442,8 @@ public actor LibraryPersistenceStore {
                 releaseYear: canonicalAlbum.releaseYear
                     ?? group.dropFirst().compactMap { $0.value.releaseYear }.first,
                 trackCount: mergedTrackCount,
-                albumType: .compilation
+                albumType: .compilation,
+                isFavorite: group.contains { $0.value.isFavorite }
             )
             mergedAlbums[canonicalAlbum.id] = mergedAlbum
 

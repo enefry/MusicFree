@@ -1,3 +1,4 @@
+import AVFoundation
 import FFmpegAudioKit
 import Foundation
 import MediaSourceAPI
@@ -8,15 +9,33 @@ import Testing
 
 private func makeSource(
     _ resource: StubURLProtocol.Resource,
-    maxBufferedBytes: Int = 64 * 1024
+    maxBufferedBytes: Int = 64 * 1024,
+    maxSequentialBufferedBytes: Int = 32 * 1024 * 1024
 ) -> (URLSessionByteSource, URL) {
     let url = StubURLProtocol.register(resource)
     let source = URLSessionByteSource(
         request: RemotePlaybackRequest(url: url, headers: ["Accept": "audio/*"]),
         configuration: StubURLProtocol.sessionConfiguration(),
-        maxBufferedBytes: maxBufferedBytes
+        maxBufferedBytes: maxBufferedBytes,
+        maxSequentialBufferedBytes: maxSequentialBufferedBytes
     )
     return (source, url)
+}
+
+private func readInBackground(
+    _ source: URLSessionByteSource,
+    thenAfter delay: TimeInterval,
+    _ action: @escaping @Sendable () -> Void
+) async -> Result<Int, Error> {
+    await withCheckedContinuation { continuation in
+        DispatchQueue.global().async {
+            var buffer = [UInt8](repeating: 0, count: 16)
+            continuation.resume(returning: Result {
+                try buffer.withUnsafeMutableBytes { try source.read(into: $0) }
+            })
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + delay, execute: action)
+    }
 }
 
 private func readAll(_ source: URLSessionByteSource) throws -> Data {
@@ -64,6 +83,31 @@ private func milliseconds(_ duration: Duration?) -> Int64? {
         #expect(ranges.last == "bytes=123456-")
     }
 
+    @Test func seekAcrossBufferedBytesResumesPausedDownload() async throws {
+        let payload = Data((0 ..< 300_000).map { UInt8($0 % 251) })
+        let (source, _) = makeSource(
+            .init(data: payload, chunkDelay: 0.025), maxBufferedBytes: 16 * 1024
+        )
+        defer { source.cancel() }
+        try source.open()
+
+        for _ in 0 ..< 100 where source.bufferedByteCount < 16 * 1024 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let buffered = source.bufferedByteCount
+        #expect(buffered >= 16 * 1024)
+        let offset = buffered - 512
+        try source.seek(toOffset: Int64(offset))
+
+        let result: Result<Data, Error> = await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                continuation.resume(returning: Result { try readAll(source) })
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 3) { source.cancel() }
+        }
+        #expect(try result.get() == payload.subdata(in: offset ..< payload.count))
+    }
+
     @Test func plainResponseIsSequentialOnly() throws {
         let payload = Data((0 ..< 50_000).map { UInt8($0 % 199) })
         let (source, _) = makeSource(.init(data: payload, supportsRange: false))
@@ -105,6 +149,129 @@ private func milliseconds(_ duration: Duration?) -> Int64? {
             try result.get()
         }
     }
+
+    @Test func cancelBeforeOpenDoesNotUseInvalidatedSession() {
+        let (source, url) = makeSource(.init(data: Data(count: 1024)))
+        source.cancel()
+        #expect(throws: URLSessionByteSource.SourceError.cancelled) {
+            try source.open()
+        }
+        #expect(StubURLProtocol.ranges(for: url).isEmpty)
+    }
+
+    @Test func interruptUnblocksStalledReadAndSourceStaysUsable() async throws {
+        let (source, _) = makeSource(.init(data: Data(count: 1024), stallAfterHeaders: true))
+        defer { source.cancel() }
+        try source.open()
+
+        let result = await readInBackground(source, thenAfter: 0.1) { source.interruptReads() }
+        #expect(throws: URLSessionByteSource.SourceError.interrupted) {
+            try result.get()
+        }
+
+        source.resumeReads()
+        try source.seek(toOffset: 512)
+        let again = await readInBackground(source, thenAfter: 0.1) { source.cancel() }
+        #expect(throws: URLSessionByteSource.SourceError.cancelled) {
+            try again.get()
+        }
+    }
+
+    @Test func authFailureRefreshesRequestAndContinues() throws {
+        let payload = Data((0 ..< 100_000).map { UInt8($0 % 251) })
+        let expiredURL = StubURLProtocol.register(.init(data: Data(), status: 403))
+        let freshURL = StubURLProtocol.register(.init(data: payload))
+        let request = RemotePlaybackRequest(url: expiredURL).withRefresher {
+            RemotePlaybackRequest(url: freshURL)
+        }
+        let source = URLSessionByteSource(
+            request: request,
+            configuration: StubURLProtocol.sessionConfiguration()
+        )
+        defer { source.cancel() }
+
+        try source.open()
+        #expect(source.isSeekable)
+        #expect(try readAll(source) == payload)
+        #expect(StubURLProtocol.ranges(for: expiredURL) == ["bytes=0-"])
+        #expect(StubURLProtocol.ranges(for: freshURL).first == "bytes=0-")
+    }
+
+    @Test func expiredRequestRefreshesBeforeRequesting() throws {
+        let payload = Data((0 ..< 10_000).map { UInt8($0 % 13) })
+        let staleURL = StubURLProtocol.register(.init(data: payload))
+        let freshURL = StubURLProtocol.register(.init(data: payload))
+        let request = RemotePlaybackRequest(url: staleURL, expiresAt: Date(timeIntervalSinceNow: -60))
+            .withRefresher { RemotePlaybackRequest(url: freshURL) }
+        let source = URLSessionByteSource(
+            request: request,
+            configuration: StubURLProtocol.sessionConfiguration()
+        )
+        defer { source.cancel() }
+
+        try source.open()
+        #expect(try readAll(source) == payload)
+        #expect(StubURLProtocol.ranges(for: staleURL).isEmpty)
+        #expect(StubURLProtocol.ranges(for: freshURL) == ["bytes=0-"])
+    }
+
+    @Test func stalledRefreshTimesOutAndUnblocksOpen() async throws {
+        let staleURL = StubURLProtocol.register(.init(data: Data(), status: 403))
+        let freshURL = StubURLProtocol.register(.init(data: Data(count: 1024)))
+        let request = RemotePlaybackRequest(
+            url: staleURL, expiresAt: Date(timeIntervalSinceNow: -60)
+        ).withRefresher {
+            try await Task.sleep(for: .seconds(10))
+            return RemotePlaybackRequest(url: freshURL)
+        }
+        let source = URLSessionByteSource(
+            request: request,
+            configuration: StubURLProtocol.sessionConfiguration(),
+            timeout: 0.2
+        )
+        defer { source.cancel() }
+
+        let result: Result<Void, Error> = await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                continuation.resume(returning: Result { try source.open() })
+            }
+        }
+        #expect(throws: URLSessionByteSource.SourceError.network(.timedOut)) {
+            try result.get()
+        }
+        #expect(StubURLProtocol.ranges(for: staleURL).isEmpty)
+        #expect(StubURLProtocol.ranges(for: freshURL).isEmpty)
+    }
+
+    @Test func persistentAuthFailureSurfacesStatusAfterOneRefresh() {
+        let deniedURL = StubURLProtocol.register(.init(data: Data(), status: 401))
+        let request = RemotePlaybackRequest(url: deniedURL).withRefresher {
+            RemotePlaybackRequest(url: deniedURL)
+        }
+        let source = URLSessionByteSource(
+            request: request,
+            configuration: StubURLProtocol.sessionConfiguration()
+        )
+        defer { source.cancel() }
+
+        #expect(throws: URLSessionByteSource.SourceError.httpStatus(401)) {
+            try source.open()
+        }
+        #expect(StubURLProtocol.ranges(for: deniedURL).count == 2)
+    }
+
+    @Test func sequentialStreamIsBoundedAndComplete() throws {
+        let payload = Data((0 ..< 300_000).map { UInt8($0 % 199) })
+        let (source, _) = makeSource(
+            .init(data: payload, supportsRange: false),
+            maxSequentialBufferedBytes: 32 * 1024
+        )
+        defer { source.cancel() }
+
+        try source.open()
+        #expect(!source.isSeekable)
+        #expect(try readAll(source) == payload)
+    }
 }
 
 @Suite struct RemoteDecodeTests {
@@ -127,6 +294,21 @@ private func milliseconds(_ duration: Duration?) -> Int64? {
         #expect(abs(remaining - frames / 2) < 2048)
     }
 
+    @Test func mp3HTTPReplayFromZeroRestoresDecoderAndByteSource() throws {
+        let file = try #require(Bundle.module.url(
+            forResource: "cue-seek-chirp", withExtension: "mp3"
+        ))
+        let (source, _) = makeSource(.init(data: try Data(contentsOf: file)))
+        defer { source.cancel() }
+        try source.open()
+        let decoder = try FFmpegAudioDecoder(byteSource: source)
+        let originalFrames = try decodedFrameCount(decoder)
+        #expect(originalFrames > 100_000)
+
+        try decoder.seek(to: .zero)
+        #expect(try decodedFrameCount(decoder) == originalFrames)
+    }
+
     @Test func decodesSequentialStreamWithoutRange() throws {
         let (source, _) = makeSource(.init(data: WAVFixture.make(frames: frames), supportsRange: false))
         defer { source.cancel() }
@@ -138,10 +320,11 @@ private func milliseconds(_ duration: Duration?) -> Int64? {
 
 @MainActor
 @Suite struct FFmpegPlaybackEngineRemoteTests {
-    private func makeItem(url: URL) -> PlaybackItem {
+    private func makeItem(url: URL, range: PlaybackRange? = nil) -> PlaybackItem {
         PlaybackItem(
             itemID: MediaItemID(sourceID: MediaSourceID("stub"), externalID: url.lastPathComponent),
             resource: .remote(RemotePlaybackRequest(url: url)),
+            selection: PlaybackSelection(range: range),
             displaySnapshot: PlaybackDisplaySnapshot(title: "Remote")
         )
     }
@@ -164,6 +347,27 @@ private func milliseconds(_ duration: Duration?) -> Int64? {
         #expect(engine.state.itemID == nil)
     }
 
+    @Test func expiredRemoteRequestRefreshesDuringEnginePrepare() async throws {
+        let data = WAVFixture.make(frames: 44_100)
+        let staleURL = StubURLProtocol.register(.init(data: data, status: 403))
+        let freshURL = StubURLProtocol.register(.init(data: data))
+        let request = RemotePlaybackRequest(
+            url: staleURL, expiresAt: Date(timeIntervalSinceNow: -60)
+        ).withRefresher { RemotePlaybackRequest(url: freshURL) }
+        let item = PlaybackItem(
+            itemID: MediaItemID(sourceID: MediaSourceID("stub"), externalID: "expired"),
+            resource: .remote(request),
+            displaySnapshot: PlaybackDisplaySnapshot(title: "Expired remote")
+        )
+        let engine = FFmpegPlaybackEngine(remoteSessionConfiguration: StubURLProtocol.sessionConfiguration())
+        defer { engine.dispose() }
+
+        try await engine.prepare(item, startAt: nil)
+        #expect(engine.state.phase == .preparing)
+        #expect(StubURLProtocol.ranges(for: staleURL).isEmpty)
+        #expect(!StubURLProtocol.ranges(for: freshURL).isEmpty)
+    }
+
     @Test func sequentialRemoteRejectsSeek() async throws {
         let url = StubURLProtocol.register(.init(data: WAVFixture.make(frames: 44_100), supportsRange: false))
         let engine = FFmpegPlaybackEngine(remoteSessionConfiguration: StubURLProtocol.sessionConfiguration())
@@ -173,6 +377,221 @@ private func milliseconds(_ duration: Duration?) -> Int64? {
         await #expect(throws: PlaybackError.unsupportedCapability(.seeking)) {
             try await engine.seek(to: .milliseconds(500))
         }
+    }
+
+    @Test func sequentialRemoteZeroStartCUEPlaysToSelectedEnd() async throws {
+        let url = StubURLProtocol.register(.init(
+            data: WAVFixture.make(frames: 44_100), supportsRange: false
+        ))
+        let engine = FFmpegPlaybackEngine(remoteSessionConfiguration: StubURLProtocol.sessionConfiguration())
+        defer { engine.dispose() }
+        let range = PlaybackRange(start: .zero, end: .milliseconds(300))
+
+        try await engine.prepare(makeItem(url: url, range: range), startAt: nil)
+        #expect(!engine.capabilities.contains(.seeking))
+        #expect(engine.state.duration == range.duration)
+        try engine.play()
+        for _ in 0 ..< 100 {
+            if engine.state.phase == .stopped || engine.state.phase == .failed { break }
+            try await Task.sleep(for: .milliseconds(30))
+        }
+        #expect(engine.state.phase == .stopped)
+        #expect(engine.state.position == range.duration)
+    }
+
+    @Test func sequentialRemoteReopensStalledReadAfterConfigurationChange() async throws {
+        let data = WAVFixture.make(frames: 576_000, sampleRate: 192_000)
+        let url = StubURLProtocol.register(.init(
+            data: data, supportsRange: false, stallAfterBytes: 1_200_000
+        ))
+        let engine = FFmpegPlaybackEngine(remoteSessionConfiguration: StubURLProtocol.sessionConfiguration())
+        defer { engine.dispose() }
+        let range = PlaybackRange(start: .zero, end: .milliseconds(2_200))
+
+        try await engine.prepare(makeItem(url: url, range: range), startAt: nil)
+        try engine.play()
+        for _ in 0 ..< 100 where engine.state.position < .milliseconds(1_200) {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let positionBeforeChange = engine.state.position
+        #expect(positionBeforeChange >= .milliseconds(1_200))
+
+        StubURLProtocol.update(url, .init(data: data, supportsRange: false))
+        engine.audioEngine.stop()
+        NotificationCenter.default.post(
+            name: .AVAudioEngineConfigurationChange, object: engine.audioEngine
+        )
+        for _ in 0 ..< 200 {
+            if engine.state.phase == .stopped || engine.state.phase == .failed { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(engine.state.phase == .stopped)
+        #expect(engine.state.position == range.duration)
+        #expect(StubURLProtocol.ranges(for: url).count >= 2)
+    }
+
+    @Test func pauseDuringSequentialRouteRecoveryKeepsDecoderReady() async throws {
+        let data = WAVFixture.make(frames: 132_300)
+        let url = StubURLProtocol.register(.init(data: data, supportsRange: false))
+        let engine = FFmpegPlaybackEngine(remoteSessionConfiguration: StubURLProtocol.sessionConfiguration())
+        defer { engine.dispose() }
+
+        try await engine.prepare(makeItem(url: url), startAt: nil)
+        try engine.play()
+        for _ in 0 ..< 100 where engine.state.position < .milliseconds(250) {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        StubURLProtocol.update(url, .init(
+            data: data, supportsRange: false, chunkDelay: 0.01
+        ))
+        engine.audioEngine.stop()
+        NotificationCenter.default.post(
+            name: .AVAudioEngineConfigurationChange, object: engine.audioEngine
+        )
+        #expect(engine.state.phase == .preparing)
+        engine.pause()
+        for _ in 0 ..< 100 where engine.state.phase != .paused {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try await Task.sleep(for: .milliseconds(500))
+        #expect(engine.state.phase == .paused)
+        try engine.play()
+        for _ in 0 ..< 200 {
+            if engine.state.phase == .stopped || engine.state.phase == .failed { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(engine.state.phase == .stopped)
+    }
+
+    @Test func playAndStopDuringSequentialRouteRecoveryRespectLatestIntent() async throws {
+        let data = WAVFixture.make(frames: 88_200)
+        let url = StubURLProtocol.register(.init(data: data, supportsRange: false))
+        let engine = FFmpegPlaybackEngine(remoteSessionConfiguration: StubURLProtocol.sessionConfiguration())
+        defer { engine.dispose() }
+
+        try await engine.prepare(makeItem(url: url), startAt: nil)
+        try engine.play()
+        for _ in 0 ..< 100 where engine.state.position < .milliseconds(250) {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        StubURLProtocol.update(url, .init(
+            data: data, supportsRange: false, stallAfterHeaders: true
+        ))
+        engine.audioEngine.stop()
+        NotificationCenter.default.post(
+            name: .AVAudioEngineConfigurationChange, object: engine.audioEngine
+        )
+        #expect(engine.state.phase == .preparing)
+        engine.pause()
+        try engine.play()
+        engine.stop()
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(engine.state.phase == .stopped)
+        #expect(engine.state.itemID == nil)
+    }
+
+    @Test func sequentialRemoteReopensAfterLogicalEnd() async throws {
+        let url = StubURLProtocol.register(.init(
+            data: WAVFixture.make(frames: 44_100), supportsRange: false
+        ))
+        let engine = FFmpegPlaybackEngine(remoteSessionConfiguration: StubURLProtocol.sessionConfiguration())
+        defer { engine.dispose() }
+        let range = PlaybackRange(start: .zero, end: .milliseconds(250))
+
+        try await engine.prepare(makeItem(url: url, range: range), startAt: nil)
+        try engine.play()
+        for _ in 0 ..< 100 {
+            if engine.state.phase == .stopped { break }
+            try await Task.sleep(for: .milliseconds(30))
+        }
+        #expect(engine.state.phase == .stopped)
+        let firstGeneration = engine.state.generation
+        let firstRequestCount = StubURLProtocol.ranges(for: url).count
+
+        try engine.play()
+        for _ in 0 ..< 100 {
+            if engine.state.generation != firstGeneration,
+               engine.state.phase == .stopped { break }
+            try await Task.sleep(for: .milliseconds(30))
+        }
+        #expect(engine.state.generation != firstGeneration)
+        #expect(engine.state.phase == .stopped)
+        #expect(engine.state.position == range.duration)
+        #expect(StubURLProtocol.ranges(for: url).count > firstRequestCount)
+    }
+
+    @Test func stopCancelsSequentialReplayWhileReopening() async throws {
+        let data = WAVFixture.make(frames: 44_100)
+        let url = StubURLProtocol.register(.init(data: data, supportsRange: false))
+        let engine = FFmpegPlaybackEngine(remoteSessionConfiguration: StubURLProtocol.sessionConfiguration())
+        defer { engine.dispose() }
+        let range = PlaybackRange(start: .zero, end: .milliseconds(250))
+
+        try await engine.prepare(makeItem(url: url, range: range), startAt: nil)
+        try engine.play()
+        for _ in 0 ..< 100 {
+            if engine.state.phase == .stopped { break }
+            try await Task.sleep(for: .milliseconds(30))
+        }
+        #expect(engine.state.phase == .stopped)
+
+        StubURLProtocol.update(url, .init(
+            data: data, supportsRange: false, stallAfterHeaders: true
+        ))
+        try engine.play()
+        for _ in 0 ..< 100 {
+            if engine.state.phase == .preparing { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(engine.state.phase == .preparing)
+        engine.stop()
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(engine.state.phase == .stopped)
+        #expect(engine.state.itemID == nil)
+    }
+
+    @Test func sequentialRemoteNonzeroStartCUERequiresRangeSupport() async throws {
+        let url = StubURLProtocol.register(.init(
+            data: WAVFixture.make(frames: 44_100), supportsRange: false
+        ))
+        let engine = FFmpegPlaybackEngine(remoteSessionConfiguration: StubURLProtocol.sessionConfiguration())
+        defer { engine.dispose() }
+        let range = PlaybackRange(start: .milliseconds(200), end: .milliseconds(500))
+
+        await #expect(throws: PlaybackError.unsupportedCapability(.seeking)) {
+            try await engine.prepare(makeItem(url: url, range: range), startAt: nil)
+        }
+    }
+
+    @Test func seekableRemoteCUEStartsAtAbsolutePositionAndEndsAtRangeEnd() async throws {
+        let url = StubURLProtocol.register(.init(data: WAVFixture.make(frames: 44_100)))
+        let engine = FFmpegPlaybackEngine(remoteSessionConfiguration: StubURLProtocol.sessionConfiguration())
+        defer { engine.dispose() }
+        let range = PlaybackRange(start: .milliseconds(200), end: .milliseconds(600))
+
+        try await engine.prepare(makeItem(url: url, range: range), startAt: .milliseconds(100))
+        #expect(engine.state.duration == range.duration)
+        #expect(engine.state.position == .milliseconds(100))
+        #expect(engine.capabilities.contains(.seeking))
+        try await engine.seek(to: .milliseconds(200))
+        #expect(engine.state.position == .milliseconds(200))
+        try engine.play()
+        for _ in 0 ..< 100 {
+            if engine.state.phase == .stopped || engine.state.phase == .failed { break }
+            try await Task.sleep(for: .milliseconds(30))
+        }
+        #expect(engine.state.phase == .stopped)
+        #expect(engine.state.position == range.duration)
+        #expect(StubURLProtocol.ranges(for: url).count >= 2)
+    }
+
+    @Test func sequentialResumeReportsPlaybackFromStart() async throws {
+        let url = StubURLProtocol.register(.init(data: WAVFixture.make(frames: 88_200), supportsRange: false))
+        let engine = FFmpegPlaybackEngine(remoteSessionConfiguration: StubURLProtocol.sessionConfiguration())
+        defer { engine.dispose() }
+
+        try await engine.prepare(makeItem(url: url), startAt: .seconds(1))
+        #expect(engine.state.position == .zero)
     }
 
     @Test func stopDuringStalledPrepareCancelsPromptly() async throws {
@@ -189,5 +608,27 @@ private func milliseconds(_ duration: Duration?) -> Int64? {
             try await prepare.value
         }
         #expect(engine.state.phase == .stopped)
+    }
+
+    @Test func taskCancellationDuringStalledPrepareStopsEngine() async throws {
+        let url = StubURLProtocol.register(.init(data: Data(count: 1024), stallAfterHeaders: true))
+        let engine = FFmpegPlaybackEngine(remoteSessionConfiguration: StubURLProtocol.sessionConfiguration())
+        defer { engine.dispose() }
+
+        let prepare = Task { try await engine.prepare(makeItem(url: url), startAt: nil) }
+        for _ in 0 ..< 100 where StubURLProtocol.ranges(for: url).isEmpty {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(!StubURLProtocol.ranges(for: url).isEmpty)
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(engine.state.phase == .preparing)
+        let start = ContinuousClock.now
+        prepare.cancel()
+        await #expect(throws: CancellationError.self) {
+            try await prepare.value
+        }
+        #expect(ContinuousClock.now - start < .seconds(2))
+        #expect(engine.state.phase == .stopped)
+        #expect(engine.state.itemID == nil)
     }
 }

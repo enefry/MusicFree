@@ -669,7 +669,8 @@ func dsAudioBrowseDiscoversSongAPIAfterError102() async throws {
         request: SourceBrowseRequest()
     )
 
-    #expect(page.items.map(\.title) == ["Recovered Song"])
+    #expect(page.items.map(\.displayName) == ["Recovered Song"])
+    #expect(page.items.map(\.title) == [nil])
     #expect(client.requests.map { $0.url?.path } == [
         "/webapi/entry.cgi",
         "/webapi/entry.cgi",
@@ -1128,6 +1129,8 @@ func dsAudioMapsListAndRejectsNonAudioMIMEFiles() async throws {
                 #"""
                 {"success":true,"data":{"list":[
                     {"id":"song-2","type":"audio_file","name":"List Song","mime":"audio/mpeg"},
+                    {"id":"song-dsf","type":"file","name":"DSD Album.dsf","mime":"application/octet-stream"},
+                    {"id":"song-cook","type":"file","name":"Legacy Audio.rm","mime":"application/octet-stream"},
                     {"id":"document-1","type":"file","name":"Notes.pdf","mime":"application/pdf"}
                 ]}}
                 """#.utf8
@@ -1157,12 +1160,18 @@ func dsAudioMapsListAndRejectsNonAudioMIMEFiles() async throws {
         request: SourceBrowseRequest()
     )
 
-    #expect(page.items.count == 2)
+    #expect(page.items.count == 4)
     #expect(page.items[0].kind == .audioFile)
     #expect(page.items[0].isDownloadable)
-    #expect(page.items[1].kind == .unknown)
-    #expect(!page.items[1].isPlayable)
-    #expect(!page.items[1].isDownloadable)
+    #expect(page.items[1].kind == .audioFile)
+    #expect(page.items[1].isPlayable)
+    #expect(page.items[1].isDownloadable)
+    #expect(page.items[2].kind == .audioFile)
+    #expect(page.items[2].isPlayable)
+    #expect(page.items[2].isDownloadable)
+    #expect(page.items[3].kind == .unknown)
+    #expect(!page.items[3].isPlayable)
+    #expect(!page.items[3].isDownloadable)
 }
 
 @Test("DS Audio device authorization persists trusted-device credentials after OTP")

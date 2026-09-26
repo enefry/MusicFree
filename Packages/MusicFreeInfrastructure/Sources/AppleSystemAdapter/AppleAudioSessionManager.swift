@@ -9,7 +9,7 @@ import AVFAudio
 @MainActor
 protocol AppleAudioSessionClient: AnyObject {
     func configure(using configuration: AppleSystemConfiguration) throws
-    func setActive(_ active: Bool) throws
+    func setActive(_ active: Bool) async throws
     var routeAvailability: (output: Bool?, input: Bool?) { get }
 }
 
@@ -26,8 +26,28 @@ private final class PlatformAudioSessionClient: AppleAudioSessionClient {
         )
     }
 
-    func setActive(_ active: Bool) throws {
-        try session.setActive(active)
+    func setActive(_ active: Bool) async throws {
+        if #available(iOS 27.0, *) {
+            let succeeded = if active {
+                try await session.activate(options: [])
+            } else {
+                try await session.deactivate(options: [])
+            }
+            guard succeeded else {
+                throw active
+                    ? AppleSystemAdapterError.audioSessionActivationFailed
+                    : AppleSystemAdapterError.audioSessionDeactivationFailed
+            }
+        } else {
+            try await Self.setActiveOnBackgroundExecutor(active)
+        }
+    }
+
+    // Older systems only expose the blocking API. An async MainActor method
+    // alone would still execute it on the UI thread.
+    @concurrent
+    private static func setActiveOnBackgroundExecutor(_ active: Bool) async throws {
+        try AVAudioSession.sharedInstance().setActive(active)
     }
 
     var routeAvailability: (output: Bool?, input: Bool?) {
@@ -40,7 +60,7 @@ private final class PlatformAudioSessionClient: AppleAudioSessionClient {
 #else
     func configure(using configuration: AppleSystemConfiguration) throws {}
 
-    func setActive(_ active: Bool) throws {}
+    func setActive(_ active: Bool) async throws {}
 
     var routeAvailability: (output: Bool?, input: Bool?) {
         (output: nil, input: nil)
@@ -58,6 +78,8 @@ public final class AppleAudioSessionManager: AudioSessionManaging {
     private var eventContinuation: AsyncStream<AudioSessionEvent>.Continuation?
     private var isConfigured = false
     private var isActive = false
+    private var isChangingActivation = false
+    private var activationWaiters: [CheckedContinuation<Void, Never>] = []
 
     public private(set) var lastError: AppleSystemAdapterError?
 
@@ -92,6 +114,8 @@ public final class AppleAudioSessionManager: AudioSessionManaging {
     }
 
     public func activate() async throws {
+        await beginActivationChange()
+        defer { endActivationChange() }
         guard !isActive else { return }
 
         if !isConfigured {
@@ -99,7 +123,7 @@ public final class AppleAudioSessionManager: AudioSessionManaging {
         }
 
         do {
-            try client.setActive(true)
+            try await client.setActive(true)
         } catch let error as AppleSystemAdapterError {
             lastError = error
             throw error
@@ -109,16 +133,19 @@ public final class AppleAudioSessionManager: AudioSessionManaging {
         }
 
         isActive = true
+        lastError = nil
         registerObserversIfNeeded()
     }
 
     public func deactivate() async {
+        await beginActivationChange()
+        defer { endActivationChange() }
         let hadLifecycle = isActive || !observerTokens.isEmpty
         removeObservers()
 
         if hadLifecycle {
             do {
-                try client.setActive(false)
+                try await client.setActive(false)
             } catch let error as AppleSystemAdapterError {
                 lastError = error
             } catch {
@@ -128,6 +155,24 @@ public final class AppleAudioSessionManager: AudioSessionManaging {
 
         isActive = false
         finishEventStream()
+    }
+
+    // Serialize the entire transition, including state publication. MainActor
+    // isolation alone does not preserve ordering across the client's await.
+    private func beginActivationChange() async {
+        if isChangingActivation {
+            await withCheckedContinuation { activationWaiters.append($0) }
+        } else {
+            isChangingActivation = true
+        }
+    }
+
+    private func endActivationChange() {
+        if activationWaiters.isEmpty {
+            isChangingActivation = false
+        } else {
+            activationWaiters.removeFirst().resume()
+        }
     }
 
     public func makeEventStream() -> AsyncStream<AudioSessionEvent> {

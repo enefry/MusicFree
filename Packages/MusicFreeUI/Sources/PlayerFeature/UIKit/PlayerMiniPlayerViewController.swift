@@ -212,6 +212,19 @@ public final class PlayerMiniPlayerViewController: UIViewController {
             constant: MusicFreeSpacingTokens.small
         )
 
+        // UITabAccessory can measure its content with zero width or height.
+        // Let these boundaries yield during that pass, preserving the artwork
+        // and transport controls' fixed sizes instead of breaking them.
+        let metadataTrailingConstraint = metadataStack.trailingAnchor.constraint(
+            equalTo: controlsStack.leadingAnchor,
+            constant: -MusicFreeSpacingTokens.small
+        )
+        let controlsTopConstraint = controlsStack.topAnchor.constraint(greaterThanOrEqualTo: view.topAnchor)
+        let controlsBottomConstraint = controlsStack.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor)
+        for constraint in [metadataTrailingConstraint, controlsTopConstraint, controlsBottomConstraint] {
+            constraint.priority = UILayoutPriority(999)
+        }
+
         NSLayoutConstraint.activate([
 //            separatorView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
 //            separatorView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -233,15 +246,13 @@ public final class PlayerMiniPlayerViewController: UIViewController {
             artworkView.widthAnchor.constraint(equalToConstant: 30),
             artworkView.heightAnchor.constraint(equalTo: artworkView.widthAnchor),
 
-            metadataLeadingToArtworkConstraint,
-            metadataLeadingToSurfaceConstraint,
-            metadataStack.trailingAnchor.constraint(equalTo: controlsStack.leadingAnchor, constant: -MusicFreeSpacingTokens.small),
+            metadataTrailingConstraint,
             metadataStack.centerYAnchor.constraint(equalTo: surfaceButton.centerYAnchor),
 
             controlsStack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -MusicFreeSpacingTokens.contentInset),
             controlsStack.centerYAnchor.constraint(equalTo: openControl.centerYAnchor),
-            controlsStack.topAnchor.constraint(greaterThanOrEqualTo: view.topAnchor),
-            controlsStack.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor),
+            controlsTopConstraint,
+            controlsBottomConstraint,
         ])
     }
 
@@ -265,8 +276,14 @@ public final class PlayerMiniPlayerViewController: UIViewController {
         artworkView.isHidden = isInline
         subtitleLabel.isHidden = isInline || subtitleLabel.text?.isEmpty != false
         nextButton.isHidden = isInline
-        metadataLeadingToArtworkConstraint?.isActive = !isInline
-        metadataLeadingToSurfaceConstraint?.isActive = isInline
+        // These leading anchors are mutually exclusive. Always remove the old
+        // one first, including when switching from inline back to regular.
+        let inactiveLeadingConstraint = isInline
+            ? metadataLeadingToArtworkConstraint : metadataLeadingToSurfaceConstraint
+        let activeLeadingConstraint = isInline
+            ? metadataLeadingToSurfaceConstraint : metadataLeadingToArtworkConstraint
+        inactiveLeadingConstraint?.isActive = false
+        activeLeadingConstraint?.isActive = true
         view.invalidateIntrinsicContentSize()
         view.setNeedsLayout()
     }

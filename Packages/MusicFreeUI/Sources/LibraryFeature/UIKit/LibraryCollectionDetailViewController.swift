@@ -102,6 +102,7 @@ public final class LibraryCollectionDetailViewController: UIViewController {
     private var collectionAlbum: Album?
     private var knownAlbumIDs = Set<AlbumID>()
     private var favoriteMutationIDs: Set<MediaItemID> = []
+    private var isUpdatingAlbumFavorite = false
     private var deletingTrackIDs: Set<MediaItemID> = []
     private var selectedTrackIDs: Set<MediaItemID> = []
     private var isEditingSelection = false
@@ -236,6 +237,20 @@ public final class LibraryCollectionDetailViewController: UIViewController {
             navigationItem.rightBarButtonItems = [doneItem, deleteItem]
         } else {
             let busy = collectionActionTask != nil
+            var favoriteItem: UIBarButtonItem?
+            if case .album = kind {
+                let item = UIBarButtonItem(
+                    image: UIImage(systemName: collectionAlbum?.isFavorite == true ? "star.fill" : "star"),
+                    style: .plain,
+                    target: self,
+                    action: #selector(toggleAlbumFavorite)
+                )
+                item.accessibilityLabel = collectionAlbum?.isFavorite == true
+                    ? L("取消收藏专辑") : L("收藏专辑")
+                item.accessibilityIdentifier = "library.collection.albumFavorite"
+                item.isEnabled = collectionAlbum != nil && !isUpdatingAlbumFavorite
+                favoriteItem = item
+            }
             let share = UIAction(
                 title: L("分享"),
                 image: UIImage(systemName: "square.and.arrow.up"),
@@ -253,6 +268,13 @@ public final class LibraryCollectionDetailViewController: UIViewController {
 
             var managementActions: [UIMenuElement] = []
             if case .album = kind {
+                managementActions.append(UIAction(
+                    title: collectionAlbum?.isFavorite == true ? L("取消收藏专辑") : L("收藏专辑"),
+                    image: UIImage(systemName: collectionAlbum?.isFavorite == true ? "star.slash" : "star"),
+                    attributes: collectionAlbum == nil || isUpdatingAlbumFavorite ? [.disabled] : []
+                ) { [weak self] _ in
+                    self?.toggleAlbumFavorite()
+                })
                 managementActions.append(UIAction(
                     title: L("编辑专辑"),
                     image: UIImage(systemName: "pencil"),
@@ -317,7 +339,7 @@ public final class LibraryCollectionDetailViewController: UIViewController {
             )
             menuItem.accessibilityLabel = L("集合选项")
             menuItem.accessibilityIdentifier = "library.collection.menu"
-            navigationItem.rightBarButtonItems = [menuItem]
+            navigationItem.rightBarButtonItems = [menuItem] + [favoriteItem].compactMap { $0 }
         }
     }
 
@@ -1099,11 +1121,49 @@ public final class LibraryCollectionDetailViewController: UIViewController {
     }
 
     private func playAll(shuffle: Bool) {
-        guard !tracks.isEmpty else { return }
-        if let onPlayTracks {
-            onPlayTracks(tracks.map(\.id), shuffle)
-        } else {
-            onPlayTrack?(tracks[0].id)
+        guard !tracks.isEmpty, let onPlayTracks, collectionActionTask == nil else { return }
+        collectionActionTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.collectionActionTask = nil
+                self.configureNavigationItems()
+            }
+            do {
+                let itemIDs = try await LibraryCollectionTrackLoader.itemIDs(
+                    for: self.collectionQueueTarget,
+                    from: self.library
+                )
+                try Task.checkCancellation()
+                guard !itemIDs.isEmpty else { return }
+                onPlayTracks(itemIDs, shuffle)
+            } catch is CancellationError {
+                return
+            } catch {
+                self.presentMessage(title: L("无法播放"), message: error.localizedDescription)
+            }
+        }
+        configureNavigationItems()
+    }
+
+    @objc private func toggleAlbumFavorite() {
+        guard case let .album(albumID) = kind,
+              let album = collectionAlbum,
+              !isUpdatingAlbumFavorite else { return }
+        isUpdatingAlbumFavorite = true
+        configureNavigationItems()
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.isUpdatingAlbumFavorite = false
+                self.configureNavigationItems()
+            }
+            do {
+                self.collectionAlbum = try await self.library.setAlbumFavorite(
+                    !album.isFavorite, for: albumID
+                )
+            } catch {
+                self.presentMessage(title: L("无法更新收藏"), message: error.localizedDescription)
+            }
         }
     }
 

@@ -11,7 +11,6 @@ import MusicDomain
 import OnlineSourceAdapter
 import PreferencesPersistenceAdapter
 import SettingsAPI
-import VLCKitPlaybackAdapter
 
 @MainActor
 final class AppContainer: ObservableObject {
@@ -97,7 +96,6 @@ final class AppContainer: ObservableObject {
         _ = AppleSystemAdapterModule.self
         _ = OnlineSourceAdapterModule.self
         _ = PreferencesPersistenceAdapterModule.self
-        _ = VLCKitPlaybackAdapterModule.self
 
         configureFileLogging(fileLoggingEnabled: false)
         self.diagnosticsExporter.record(startupState: startupState)

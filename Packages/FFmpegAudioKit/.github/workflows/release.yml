@@ -1,0 +1,177 @@
+name: Release
+
+# 从源码构建 FFmpegAudio.xcframework，打包为 SwiftPM 可直接依赖的 zip 并发布到
+# GitHub Release。Package.swift 中的下载地址与 checksum 由本流程改写后连同 tag
+# 一起提交，保证 tag 指向的清单与 Release 产物一一对应。
+
+on:
+  # Register the workflow on the default branch without starting a release.
+  push:
+    paths:
+      - .github/workflows/release.yml
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "发布版本号（语义化版本，如 1.0.0；同时作为 git tag）"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: macos-26
+    timeout-minutes: 120
+    env:
+      VERSION: ${{ inputs.version }}
+      ZIP_NAME: FFmpegAudio.xcframework.zip
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate version
+        run: |
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::版本号需为语义化版本（如 1.0.0），当前：$VERSION"
+            exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
+            echo "::error::tag $VERSION 已存在"
+            exit 1
+          fi
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Read FFmpeg version
+        id: ffmpeg
+        run: |
+          version=$(grep -Eo 'FFMPEG_VERSION:-[^}]+' Scripts/build-ffmpeg.sh | head -1 | cut -d- -f2)
+          [ -n "$version" ] || { echo "::error::无法从构建脚本读取 FFMPEG_VERSION"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cache FFmpeg source
+        uses: actions/cache@v4
+        with:
+          path: .build-ffmpeg/src/ffmpeg-${{ steps.ffmpeg.outputs.version }}.tar.xz
+          key: ffmpeg-src-${{ steps.ffmpeg.outputs.version }}
+
+      - name: Build xcframework
+        run: ./Scripts/build-ffmpeg.sh
+
+      - name: Check committed headers match the build
+        run: |
+          if [ -n "$(git status --porcelain -- Sources/CFFmpegAudio/ffmpeg)" ]; then
+            git status --short -- Sources/CFFmpegAudio/ffmpeg | head -20
+            echo "::error::Sources/CFFmpegAudio/ffmpeg 与本次构建的 ffmpeg 头文件不一致，请本地重跑构建脚本并提交头文件"
+            exit 1
+          fi
+
+      - name: Test
+        env:
+          FFMPEG_AUDIO_USE_LOCAL_BINARY: "1"
+        run: |
+          udid=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          devices = json.load(sys.stdin)["devices"]
+          print(next(d["udid"] for runtime, items in devices.items() if "iOS" in runtime
+                     for d in items if d["name"].startswith("iPhone")))')
+          xcodebuild test -scheme FFmpegAudioKit -destination "id=$udid" -derivedDataPath .noindex/DerivedData
+          FFMPEG_AUDIO_USE_LOCAL_BINARY=1 xcodebuild build -scheme FFmpegAudioKit -destination 'generic/platform=iOS' -derivedDataPath .noindex/DerivedData
+
+      - name: Package
+        id: package
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent Artifacts/FFmpegAudio.xcframework "$ZIP_NAME"
+          checksum=$(swift package compute-checksum "$ZIP_NAME")
+          echo "checksum=$checksum" >> "$GITHUB_OUTPUT"
+          echo "url=https://github.com/${GITHUB_REPOSITORY}/releases/download/${VERSION}/${ZIP_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Pin release binary in Package.swift
+        env:
+          URL: ${{ steps.package.outputs.url }}
+          CHECKSUM: ${{ steps.package.outputs.checksum }}
+        run: |
+          perl -pi -e '
+            s{^let releaseBinaryURL = ".*" // release:url$}{let releaseBinaryURL = "$ENV{URL}" // release:url};
+            s{^let releaseBinaryChecksum = ".*" // release:checksum$}{let releaseBinaryChecksum = "$ENV{CHECKSUM}" // release:checksum};
+          ' Package.swift
+          grep -qF "\"$URL\" // release:url" Package.swift
+          grep -qF "\"$CHECKSUM\" // release:checksum" Package.swift
+
+      - name: Commit and tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Package.swift
+          git commit -m "release: $VERSION"
+          git tag -a "$VERSION" -m "FFmpegAudioKit $VERSION"
+          git push origin "HEAD:${GITHUB_REF_NAME}" "refs/tags/$VERSION"
+
+      - name: Publish release
+        env:
+          FFMPEG_VERSION: ${{ steps.ffmpeg.outputs.version }}
+          URL: ${{ steps.package.outputs.url }}
+          CHECKSUM: ${{ steps.package.outputs.checksum }}
+        run: |
+          cat > release-notes.md <<EOF
+          Audio-only FFmpeg ${FFMPEG_VERSION}（LGPL 子集，动态 framework），支持 iOS 17+ 真机与模拟器（arm64 / x86_64）。
+
+          ### SwiftPM
+
+          \`\`\`swift
+          .package(url: "https://github.com/${GITHUB_REPOSITORY}.git", exact: "${VERSION}")
+          \`\`\`
+
+          或单独依赖二进制：
+
+          \`\`\`swift
+          .binaryTarget(
+              name: "FFmpegAudio",
+              url: "${URL}",
+              checksum: "${CHECKSUM}"
+          )
+          \`\`\`
+
+          ### 许可证
+
+          FFmpeg 以 LGPL 2.1+ 授权。对应源码：https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz ，
+          构建配置见本 tag 下的 \`Scripts/build-ffmpeg.sh\`。
+          EOF
+          gh release create "$VERSION" "$ZIP_NAME" \
+            --verify-tag \
+            --title "FFmpegAudioKit $VERSION" \
+            --notes-file release-notes.md
+
+      - name: Check out release tag for verification
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.version }}
+          path: release-verification
+
+      - name: Verify package resolves from the release
+        working-directory: release-verification
+        env:
+          CHECKSUM: ${{ steps.package.outputs.checksum }}
+        run: |
+          test ! -e Artifacts/FFmpegAudio.xcframework
+          mkdir -p "$GITHUB_WORKSPACE/.noindex/artifacts/release-verification"
+          gh release download "$VERSION" --pattern "$ZIP_NAME" \
+            --dir "$GITHUB_WORKSPACE/.noindex/artifacts/release-verification"
+          actual_checksum=$(swift package compute-checksum "$GITHUB_WORKSPACE/.noindex/artifacts/release-verification/$ZIP_NAME")
+          if [ "$actual_checksum" != "$CHECKSUM" ]; then
+            echo "::error::Release asset checksum mismatch: expected $CHECKSUM, got $actual_checksum"
+            exit 1
+          fi
+          xcodebuild build -scheme FFmpegAudioKit -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$GITHUB_WORKSPACE/.noindex/DerivedData/release-verification"

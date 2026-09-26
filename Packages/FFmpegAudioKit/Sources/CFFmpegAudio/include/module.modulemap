@@ -1,0 +1,4 @@
+module CFFmpegAudio {
+    header "CFFmpegAudio.h"
+    export *
+}

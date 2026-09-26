@@ -128,6 +128,75 @@ func injectedAudioSessionLifecycle() async throws {
     #expect(await iterator.next() == nil)
 }
 
+@Test("Audio session transitions wait for pending changes", arguments: [true, false], [true, false])
+@MainActor
+func audioSessionTransitionsWaitForPendingChange(firstActive: Bool, nextActive: Bool) async throws {
+    let client = RecordingAudioSessionClient()
+    let manager = try AppleAudioSessionManager(client: client)
+    if !firstActive {
+        try await manager.activate()
+    }
+    let pendingStates = firstActive ? [true] : [true, false]
+    let started = AsyncStream<Void>.makeStream()
+    let nextRequest = AsyncStream<Void>.makeStream()
+    var resumeActivation: CheckedContinuation<Void, Never>?
+    client.activationHandler = { _ in
+        guard client.activationStates.count == pendingStates.count else { return }
+        await withCheckedContinuation { continuation in
+            resumeActivation = continuation
+            started.continuation.yield(())
+        }
+    }
+    let first = Task {
+        if firstActive {
+            try await manager.activate()
+        } else {
+            await manager.deactivate()
+        }
+    }
+    var startedIterator = started.stream.makeAsyncIterator()
+    await startedIterator.next()
+
+    let second = Task {
+        nextRequest.continuation.yield(())
+        if nextActive {
+            try await manager.activate()
+        } else {
+            await manager.deactivate()
+        }
+    }
+    var requestIterator = nextRequest.stream.makeAsyncIterator()
+    await requestIterator.next()
+    // The UI actor remains available, but a second system call must not start.
+    #expect(client.activationStates == pendingStates)
+    resumeActivation?.resume()
+    try await first.value
+    try await second.value
+    let expectedStates = firstActive == nextActive ? pendingStates : pendingStates + [nextActive]
+    #expect(client.activationStates == expectedStates)
+    client.activationHandler = nil
+    await manager.deactivate()
+}
+
+@Test("Failed audio session activation releases the transition and allows retry")
+@MainActor
+func audioSessionActivationFailureAllowsRetry() async throws {
+    let client = RecordingAudioSessionClient()
+    let manager = try AppleAudioSessionManager(client: client)
+    client.activationHandler = { _ in
+        throw CocoaError(.featureUnsupported)
+    }
+    await #expect(throws: AppleSystemAdapterError.audioSessionActivationFailed) {
+        try await manager.activate()
+    }
+    #expect(manager.lastError == .audioSessionActivationFailed)
+    client.activationHandler = nil
+    try await manager.activate()
+    #expect(manager.lastError == nil)
+    #expect(client.activationStates == [true, true])
+    await manager.deactivate()
+}
+
 @Test("Media services reset invalidates audio session state before reactivation")
 @MainActor
 func mediaServicesResetForcesAudioSessionReconfiguration() async throws {
@@ -331,9 +400,12 @@ private final class RecordingAudioSessionClient: AppleAudioSessionClient {
         configureCount += 1
     }
 
-    func setActive(_ active: Bool) throws {
+    func setActive(_ active: Bool) async throws {
         activationStates.append(active)
+        try await activationHandler?(active)
     }
+
+    var activationHandler: (@MainActor (Bool) async throws -> Void)?
 }
 
 @MainActor

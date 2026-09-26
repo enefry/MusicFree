@@ -306,6 +306,46 @@ internal actor LibraryCoordinator: LibraryServing {
         }
     }
 
+    func setAlbumFavorite(_ isFavorite: Bool, for albumID: AlbumID) async throws -> Album {
+        guard let repository else {
+            throw AppServiceError.missingDependency("libraryRepository")
+        }
+        let acquired = await libraryMutationGate.enter()
+        guard acquired else { throw CancellationError() }
+        do {
+            try Task.checkCancellation()
+            guard let current = try await repository.album(id: albumID) else {
+                throw AppServiceError.library(.constraint(.danglingReference))
+            }
+            guard current.isFavorite != isFavorite else {
+                await libraryMutationGate.leave()
+                return current
+            }
+            let updated = Album(
+                id: current.id,
+                title: current.title,
+                sortTitle: current.sortTitle,
+                artistIDs: current.artistIDs,
+                artwork: current.artwork,
+                releaseYear: current.releaseYear,
+                trackCount: current.trackCount,
+                albumType: current.albumType,
+                isFavorite: isFavorite
+            )
+            let transaction = try LibraryTransaction(
+                idempotencyKey: Self.stableKey(prefix: "album-favorite", albumID: albumID)
+                    + "." + UUID().uuidString,
+                mutations: [.upsert(.album(updated))]
+            )
+            try await repository.apply(transaction)
+            await libraryMutationGate.leave()
+            return updated
+        } catch {
+            await libraryMutationGate.leave()
+            throw AppServiceError.mapped(error, operation: "library.albumFavorite")
+        }
+    }
+
     func repairMetadata() async throws -> LibraryMetadataRepairResult {
         guard let repository else {
             throw AppServiceError.missingDependency("libraryRepository")
@@ -436,7 +476,8 @@ internal actor LibraryCoordinator: LibraryServing {
                 artwork: artwork,
                 releaseYear: update.releaseYear,
                 trackCount: current.trackCount,
-                albumType: current.albumType
+                albumType: current.albumType,
+                isFavorite: current.isFavorite
             )
             mutations.append(.upsert(.album(updated)))
 
@@ -674,7 +715,8 @@ internal actor LibraryCoordinator: LibraryServing {
                     artwork: albumArtwork,
                     releaseYear: albumReleaseYear,
                     trackCount: albumTrackCount,
-                    albumType: sourceAlbum?.albumType
+                    albumType: sourceAlbum?.albumType,
+                    isFavorite: targetAlbum?.isFavorite ?? false
                 ))))
             }
 

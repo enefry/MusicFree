@@ -1,6 +1,39 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "跳转到这句歌词" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Jump to this lyric line" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "跳转到这句歌词" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Zu dieser Liedzeile springen" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Ir a esta línea de la letra" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Aller à cette ligne de paroles" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "この歌詞の行に移動" } }
+      }
+    },
+    "音频文件不可用，请检查文件或重新导入。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Audio file unavailable. Check the file or import it again." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "音频文件不可用，请检查文件或重新导入。" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Audiodatei nicht verfügbar. Datei prüfen oder erneut importieren." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Archivo de audio no disponible. Comprueba el archivo o impórtalo de nuevo." } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Fichier audio indisponible. Vérifiez-le ou importez-le de nouveau." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "音声ファイルを利用できません。ファイルを確認するか、再度読み込んでください。" } }
+      }
+    },
+    "音频解码失败，请重试或检查文件格式。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not decode audio. Try again or check the file format." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "音频解码失败，请重试或检查文件格式。" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Audio konnte nicht dekodiert werden. Erneut versuchen oder Dateiformat prüfen." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "No se pudo decodificar el audio. Vuelve a intentarlo o comprueba el formato." } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Impossible de décoder l’audio. Réessayez ou vérifiez le format du fichier." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "音声をデコードできません。再試行するか、ファイル形式を確認してください。" } }
+      }
+    },
     "Create a Client ID, add test users, and configure access" : {
       "extractionState" : "manual",
       "localizations" : {

@@ -596,7 +596,13 @@ public final class LibraryHomeViewController: UIViewController {
         if ProcessInfo.processInfo.isiOSAppOnMac {
             allowedContentTypes = [.folder]
         } else {
-            allowedContentTypes = [.audio, .folder]
+            let additionalAudioExtensions = [
+                "ac3", "ape", "asf", "au", "dsf", "dts", "eac3", "ec3",
+                "mka", "mov", "mp4", "mpc", "rm", "tak", "tta", "w64", "wv",
+            ]
+            allowedContentTypes = [.audio, .folder] + additionalAudioExtensions.compactMap {
+                UTType(filenameExtension: $0, conformingTo: .audio)
+            }
         }
 
         let picker = UIDocumentPickerViewController(

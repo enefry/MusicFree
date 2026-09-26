@@ -77,6 +77,7 @@ func onlineSourceAvailabilityReportsOrderedGates() {
 func onlineSourceCoordinatorEnforcesPrivacyGates() async throws {
     let source = CoordinatorFixtureSource()
     let coordinator = try OnlineSourceCoordinator(sources: [source])
+    let itemID = SourceObjectID(sourceID: source.descriptor.sourceID, externalID: "track-1")
     let configuration = try OnlineSourceConfiguration(
         sourceID: source.descriptor.sourceID,
         providerKind: .dsAudio,
@@ -102,6 +103,13 @@ func onlineSourceCoordinatorEnforcesPrivacyGates() async throws {
             request: SourceBrowseRequest()
         )
     }
+    await #expect(throws: OnlineSourceServingError.applicationPrivacyRequired) {
+        try await coordinator.playbackAccess(
+            sourceID: source.descriptor.sourceID,
+            itemID: itemID,
+            purpose: .auditionRefresh
+        )
+    }
 
     let appAccepted = ImportPreferences(
         privacyPreferences: PrivacyPreferences.defaults.acceptingPrivacyPolicy(),
@@ -112,6 +120,13 @@ func onlineSourceCoordinatorEnforcesPrivacyGates() async throws {
         try await coordinator.browse(
             sourceID: source.descriptor.sourceID,
             request: SourceBrowseRequest()
+        )
+    }
+    await #expect(throws: OnlineSourceServingError.sourcePrivacyRequired(source.descriptor.sourceID)) {
+        try await coordinator.playbackAccess(
+            sourceID: source.descriptor.sourceID,
+            itemID: itemID,
+            purpose: .auditionRefresh
         )
     }
 
@@ -130,6 +145,14 @@ func onlineSourceCoordinatorEnforcesPrivacyGates() async throws {
         sourceID: source.descriptor.sourceID,
         request: SourceBrowseRequest()
     ).items.count == 1)
+    guard case .downloadRequired = try await coordinator.playbackAccess(
+        sourceID: source.descriptor.sourceID,
+        itemID: itemID,
+        purpose: .auditionRefresh
+    ) else {
+        Issue.record("Authorized audition refresh should reach its source")
+        return
+    }
     try await coordinator.authenticate(
         sourceID: source.descriptor.sourceID,
         oneTimeCode: "123456"
@@ -154,6 +177,13 @@ func onlineSourceCoordinatorEnforcesPrivacyGates() async throws {
         try await coordinator.browse(
             sourceID: source.descriptor.sourceID,
             request: SourceBrowseRequest()
+        )
+    }
+    await #expect(throws: OnlineSourceServingError.sourceDisabled(source.descriptor.sourceID)) {
+        try await coordinator.playbackAccess(
+            sourceID: source.descriptor.sourceID,
+            itemID: itemID,
+            purpose: .auditionRefresh
         )
     }
 }
@@ -292,6 +322,26 @@ func onlineAuditionPreparesTransientRemoteResource() async throws {
     #expect(coordinator.snapshot.itemID == item.id)
     #expect(!(engine.prepareCalls[0].item.resource is any Encodable))
     #expect(String(describing: engine.prepareCalls[0].item.resource).contains("redacted"))
+    guard case let .remote(preparedRequest) = engine.prepareCalls[0].item.resource else {
+        Issue.record("Audition must prepare a remote playback request")
+        return
+    }
+    #expect(preparedRequest.canRefresh)
+    let refreshed = try await preparedRequest.refreshed()
+    #expect(refreshed.url == request.url)
+    #expect(refreshed.canRefresh)
+
+    onlineSources.apply(
+        ImportPreferences(
+            privacyPreferences: PrivacyPreferences.defaults.acceptingPrivacyPolicy(),
+            onlineSourcePreferences: try OnlineSourcePreferences().adding(
+                configuration.settingEnabled(false)
+            )
+        )
+    )
+    await #expect(throws: OnlineSourceServingError.sourceDisabled(sourceID)) {
+        try await preparedRequest.refreshed()
+    }
 
     await coordinator.stop()
     #expect(coordinator.snapshot.phase == .stopped)
@@ -481,6 +531,123 @@ func onlineAuditionRejectsExpiredAccess() async throws {
         try await coordinator.audition(sourceID: sourceID, item: item)
     }
     #expect(engine.prepareCalls.isEmpty)
+}
+
+@MainActor
+@Test("online audition refreshes expired access before preparing the engine")
+func onlineAuditionRefreshesExpiredAccess() async throws {
+    let sourceID = MediaSourceID("coordinator.audition.expired.refresh")
+    let freshURL = URL(string: "https://audio.example.test/renewed")!
+    let expired = RemotePlaybackRequest(
+        url: URL(string: "https://audio.example.test/expired")!,
+        expiresAt: Date().addingTimeInterval(-1)
+    ).withRefresher {
+        RemotePlaybackRequest(url: freshURL, expiresAt: Date().addingTimeInterval(300))
+    }
+    let source = CoordinatorFixtureSource(
+        sourceID: sourceID,
+        playbackAccess: .http(request: expired, transcode: nil)
+    )
+    let onlineSources = try OnlineSourceCoordinator(sources: [source])
+    let configuration = try OnlineSourceConfiguration(
+        sourceID: sourceID,
+        providerKind: .dsAudio,
+        displayName: source.descriptor.displayName,
+        isEnabled: true
+    ).acceptingPrivacyPolicy(version: source.privacyPolicyVersion)
+    onlineSources.apply(
+        ImportPreferences(
+            privacyPreferences: PrivacyPreferences.defaults.acceptingPrivacyPolicy(),
+            onlineSourcePreferences: try OnlineSourcePreferences().adding(configuration)
+        )
+    )
+    let engine = FakePlaybackEngine()
+    let coordinator = OnlineAuditionCoordinator(onlineSources: onlineSources, engine: engine)
+    let item = SourceCatalogItem(
+        id: SourceObjectID(sourceID: sourceID, externalID: "expired-track"),
+        kind: .track,
+        displayName: "Expired Track",
+        isPlayable: true
+    )
+
+    try await coordinator.audition(sourceID: sourceID, item: item)
+    #expect(engine.prepareCalls.count == 1)
+    guard case let .remote(prepared) = engine.prepareCalls[0].item.resource else {
+        Issue.record("Audition must prepare a remote playback request")
+        return
+    }
+    #expect(prepared.url == freshURL)
+    #expect(prepared.canRefresh)
+    await coordinator.close()
+}
+
+@MainActor
+@Test("A late expired-access refresh cannot replace a newer audition")
+func lateAuditionAccessRefreshCannotReplaceNewerAudition() async throws {
+    let sourceID = MediaSourceID("coordinator.audition.expired.superseded")
+    let gate = AuditionAccessGate()
+    let freshURL = URL(string: "https://audio.example.test/renewed")!
+    let expired = RemotePlaybackRequest(
+        url: URL(string: "https://audio.example.test/expired")!,
+        expiresAt: Date().addingTimeInterval(-1)
+    ).withRefresher {
+        if await gate.registerCall() {
+            await gate.waitForFirstCallRelease()
+        }
+        return RemotePlaybackRequest(
+            url: freshURL,
+            expiresAt: Date().addingTimeInterval(300)
+        )
+    }
+    let source = CoordinatorFixtureSource(
+        sourceID: sourceID,
+        playbackAccess: .http(request: expired, transcode: nil)
+    )
+    let onlineSources = try OnlineSourceCoordinator(sources: [source])
+    let configuration = try OnlineSourceConfiguration(
+        sourceID: sourceID,
+        providerKind: .dsAudio,
+        displayName: source.descriptor.displayName,
+        isEnabled: true
+    ).acceptingPrivacyPolicy(version: source.privacyPolicyVersion)
+    onlineSources.apply(
+        ImportPreferences(
+            privacyPreferences: PrivacyPreferences.defaults.acceptingPrivacyPolicy(),
+            onlineSourcePreferences: try OnlineSourcePreferences().adding(configuration)
+        )
+    )
+
+    let engine = FakePlaybackEngine()
+    let coordinator = OnlineAuditionCoordinator(onlineSources: onlineSources, engine: engine)
+    let firstItem = SourceCatalogItem(
+        id: SourceObjectID(sourceID: sourceID, externalID: "first"),
+        kind: .track,
+        displayName: "First Audition",
+        isPlayable: true
+    )
+    let secondItem = SourceCatalogItem(
+        id: SourceObjectID(sourceID: sourceID, externalID: "second"),
+        kind: .track,
+        displayName: "Second Audition",
+        isPlayable: true
+    )
+
+    let firstTask = Task { @MainActor in
+        try? await coordinator.audition(sourceID: sourceID, item: firstItem)
+    }
+    await gate.waitUntilFirstCallStarts()
+    try await coordinator.audition(sourceID: sourceID, item: secondItem)
+    #expect(coordinator.snapshot.itemID == secondItem.id)
+    #expect(coordinator.snapshot.phase == .playing)
+
+    await gate.releaseFirstCall()
+    await firstTask.value
+    #expect(engine.prepareCalls.map(\.item.itemID) == [
+        MediaItemID(sourceID: sourceID, externalID: "second")
+    ])
+    #expect(coordinator.snapshot.itemID == secondItem.id)
+    #expect(coordinator.snapshot.phase == .playing)
+    await coordinator.stop()
 }
 
 @MainActor

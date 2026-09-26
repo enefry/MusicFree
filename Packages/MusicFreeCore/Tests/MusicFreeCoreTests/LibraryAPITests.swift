@@ -108,10 +108,36 @@ func libraryAPIValuesRoundTripThroughCodable() throws {
     let decodedPage = try JSONDecoder().decode(LibraryPage<String>.self, from: encodedPage)
     #expect(decodedPage == page)
 
-    let query = AlbumQuery(searchText: "  album  ", sort: AlbumSortDescriptor(key: .year))
+    let query = AlbumQuery(
+        searchText: "  album  ", favorite: .favorite,
+        sort: AlbumSortDescriptor(key: .year)
+    )
     let encodedQuery = try JSONEncoder().encode(query)
     let decodedQuery = try JSONDecoder().decode(AlbumQuery.self, from: encodedQuery)
     #expect(decodedQuery == query)
+    var legacyPayload = try #require(JSONSerialization.jsonObject(with: encodedQuery) as? [String: Any])
+    legacyPayload.removeValue(forKey: "favorite")
+    let legacyQuery = try JSONDecoder().decode(
+        AlbumQuery.self, from: JSONSerialization.data(withJSONObject: legacyPayload)
+    )
+    #expect(legacyQuery.favorite == .any)
+}
+
+@Test("Album favorite query filters before pagination")
+func albumFavoriteQueryFiltersBeforePagination() async throws {
+    let repository = InMemoryLibraryRepository()
+    let favorite = Album(id: AlbumID("favorite-album"), title: "Favorite", isFavorite: true)
+    let plain = Album(id: AlbumID("plain-album"), title: "Plain")
+    try await repository.apply(LibraryTransaction(
+        idempotencyKey: "album-favorite-query",
+        mutations: [.upsert(.album(favorite)), .upsert(.album(plain))]
+    ))
+    let page = try LibraryPageRequest(limit: 1)
+    let favorites = try await repository.albums(matching: AlbumQuery(favorite: .favorite), page: page)
+    let others = try await repository.albums(matching: AlbumQuery(favorite: .notFavorite), page: page)
+    #expect(favorites.elements.map(\.id) == [favorite.id])
+    #expect(favorites.nextCursor == nil)
+    #expect(others.elements.map(\.id) == [plain.id])
 }
 
 @Test("Library errors expose safe retry semantics")

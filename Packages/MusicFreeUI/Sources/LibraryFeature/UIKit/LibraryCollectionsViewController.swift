@@ -84,6 +84,7 @@ public final class LibraryCollectionsViewController: UIViewController {
     private var renderedItemSignatures: [CollectionItem: String] = [:]
     private var albumDisplayMode: AlbumDisplayMode = .grid
     private var collectionActionTask: Task<Void, Never>?
+    private var updatingFavoriteAlbumIDs = Set<AlbumID>()
     private var initialLoadTask: Task<Void, Never>?
     private var libraryChangeTask: Task<Void, Never>?
     private var noAlbumCountTask: Task<Void, Never>?
@@ -1172,6 +1173,17 @@ public final class LibraryCollectionsViewController: UIViewController {
                 children: [addToPlaylist, playNext, enqueue]
             ),
         ]
+        if case let .album(id) = item, let album = albumsByID[id] {
+            let favorite = UIAction(
+                title: album.isFavorite ? L("取消收藏专辑") : L("收藏专辑"),
+                image: UIImage(systemName: album.isFavorite ? "star.slash" : "star"),
+                attributes: updatingFavoriteAlbumIDs.contains(id) ? [.disabled] : [],
+                state: album.isFavorite ? .on : .off
+            ) { [weak self] _ in
+                self?.toggleAlbumFavorite(id, currentValue: album.isFavorite)
+            }
+            groups.insert(UIMenu(title: "", options: [.displayInline], children: [favorite]), at: 2)
+        }
         if case let .album(id) = item,
            let artistID = albumsByID[id]?.artistIDs.first,
            let onSelectArtist
@@ -1193,6 +1205,20 @@ public final class LibraryCollectionsViewController: UIViewController {
             groups.append(UIMenu(title: "", options: [.displayInline], children: [delete]))
         }
         return UIMenu(children: groups)
+    }
+
+    private func toggleAlbumFavorite(_ albumID: AlbumID, currentValue: Bool) {
+        guard updatingFavoriteAlbumIDs.insert(albumID).inserted else { return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.updatingFavoriteAlbumIDs.remove(albumID) }
+            do {
+                _ = try await self.viewModel.library.setAlbumFavorite(!currentValue, for: albumID)
+                self.viewModel.refresh(section: .albums)
+            } catch {
+                self.presentMessage(title: L("无法更新收藏"), message: error.localizedDescription)
+            }
+        }
     }
 
     private func performCollectionAction(

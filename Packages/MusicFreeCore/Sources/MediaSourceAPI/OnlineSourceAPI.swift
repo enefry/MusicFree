@@ -718,8 +718,10 @@ public struct SourceCatalogItem: Codable, Equatable, Hashable, Sendable {
     }
 
     private static let audioFileExtensions: Set<String> = [
-        "aac", "aif", "aiff", "alac", "caf", "flac", "m4a", "mp3", "mp4",
-        "oga", "ogg", "opus", "wav", "wma",
+        "aac", "ac3", "aif", "aiff", "alac", "ape", "asf", "au", "caf",
+        "dsf", "dts", "eac3", "ec3", "flac", "m4a", "m4b", "mka", "mov",
+        "mp3", "mp4", "mpc", "oga", "ogg", "opus", "rm", "tak", "tta", "w64",
+        "wav", "webm", "wma", "wv",
     ]
 
     private static func normalized(_ value: String?) -> String? {
@@ -974,6 +976,7 @@ public struct DownloadReceipt: Sendable, CustomStringConvertible,
 
 public enum PlaybackPurpose: String, Codable, Sendable {
     case audition
+    case auditionRefresh
 }
 
 public struct TranscodeDescriptor: Codable, Equatable, Hashable, Sendable {

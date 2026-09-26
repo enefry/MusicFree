@@ -11,27 +11,57 @@ import PlaybackAPI
 /// `URLSessionByteSource` 读取）的 prepare/play/pause/stop/seek，变速
 /// （timePitch），音量/静音。远程资源仅在服务端支持 Range 时可 seek
 /// （`capabilities` 随之变化）。
-/// gapless/EQ 等能力位留待后续版本，届时按 `PlaybackCapabilities` 逐步点亮。
-///
-/// 后续独立 feature（当前未实现，与 VLC 引擎相比属于已知差距）：
-/// - FEATURE(cue-range)：`item.selection.range` 分段播放（CUE 分轨）。起点、
-///   seek、进度与时长需按 range 换算，并在到达 `range.end` 时主动结束。
-/// - FEATURE(equalizer)：均衡器（`AVAudioUnitEQ`），需点亮 `.equalizer` 能力位
-///   并提供 `equalizerDescriptor`。
+/// 支持 CUE 分段播放及 AVAudioUnitEQ 均衡器。其它效果能力位按实现逐步点亮。
 @MainActor
 public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControlling {
     /// 随当前资源变化：远程顺序流（服务端不支持 Range，或尚未拿到响应头）
     /// 不含 `.seeking`，供上层据此隐藏进度拖动。
     public var capabilities: PlaybackCapabilities {
-        remoteSource?.isSeekable == false ? [.variableRate] : [.seeking, .variableRate]
+        remoteSource?.isSeekable == false
+            ? [.variableRate, .equalizer] : [.seeking, .variableRate, .equalizer]
     }
+    public var equalizerDescriptor: EqualizerDescriptor? { Self.equalizerLayout }
+
+    private static let equalizerLayout: EqualizerDescriptor = {
+        let bands = [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000].map {
+            EqualizerBandDescriptor(
+                centerFrequencyHz: Double($0),
+                minimumGainDecibels: -12,
+                maximumGainDecibels: 12
+            )
+        }
+        let profiles: [(UInt32, String, [Float])] = [
+            (0, "Flat", [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+            (1, "Bass Boost", [6, 5, 4, 2, 0, 0, 0, 0, 0, 0]),
+            (2, "Treble Boost", [0, 0, 0, 0, 0, 0, 2, 4, 5, 6]),
+            (3, "Vocal", [-2, -1, 0, 1, 2, 3, 3, 2, 0, -1])
+        ]
+        let presets = profiles.map { id, name, gains in
+            EqualizerPresetDescriptor(
+                id: id,
+                name: name,
+                configuration: EqualizerConfiguration(
+                    bandGains: zip(bands, gains).map { band, gain in
+                        EqualizerBandGain(
+                            centerFrequencyHz: band.centerFrequencyHz,
+                            gainDecibels: gain
+                        )
+                    }
+                )
+            )
+        }
+        return EqualizerDescriptor(bands: bands, presets: presets)
+    }()
     public private(set) var state: PlaybackState = .idle
     public private(set) var volume: Float = 1
     public private(set) var isMuted: Bool = false
 
-    private let audioEngine = AVAudioEngine()
+    let audioEngine = AVAudioEngine()
     private let playerNode = AVAudioPlayerNode()
     private let timePitch = AVAudioUnitTimePitch()
+    // Kept in the signal chain even when disabled so applying EQ does not
+    // reconnect a running player and discard scheduled audio.
+    let equalizerUnit = AVAudioUnitEQ(numberOfBands: 10)
     private let decodeQueue = DispatchQueue(label: "com.musicfree.ffmpeg.decode")
     private let makeRemoteSource: (RemotePlaybackRequest) -> URLSessionByteSource
 
@@ -39,6 +69,7 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
     private var currentItem: PlaybackItem?
     private var currentDuration: Duration?
     private var configuredRate: Float = 1
+    private var configuredEqualizer: EqualizerConfiguration?
     private var basePosition: Duration = .zero
     private var decoder: FFmpegAudioDecoder?
     // 远程资源的字节源。解码队列可能阻塞在它的 read 上，teardown 必须先取消它。
@@ -53,6 +84,7 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
     private var bufferingTask: Task<Void, Never>?
     private var positionTask: Task<Void, Never>?
     private var didReachEnd = false
+    private var recoveringSequentialRoute = false
     // 仅 init 写入、deinit 读取；NotificationCenter 的移除是线程安全的，故可从
     // nonisolated deinit 访问（Swift 6 严格并发要求显式标注）。
     private nonisolated(unsafe) var configChangeObserver: NSObjectProtocol?
@@ -72,6 +104,15 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
         }
         audioEngine.attach(playerNode)
         audioEngine.attach(timePitch)
+        audioEngine.attach(equalizerUnit)
+        for (band, descriptor) in zip(equalizerUnit.bands, Self.equalizerLayout.bands) {
+            band.filterType = .parametric
+            band.frequency = Float(descriptor.centerFrequencyHz)
+            band.bandwidth = 1
+            band.gain = 0
+            band.bypass = false
+        }
+        equalizerUnit.bypass = true
         // AVAudioEngine 在音频会话路由/硬件格式变化时会 post 配置变更通知，并
         // 自行停止（例如会话激活后硬件采样率协商、插拔耳机）。不处理就会「播了
         // 一下就没声」——已排队 buffer 放完后引擎已停、`.dataPlayedBack` 回调不
@@ -112,11 +153,8 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
 
     public func prepare(_ item: PlaybackItem, startAt: Duration?) async throws {
         try Task.checkCancellation()
-        // TODO(audio-stream): `item.selection.audioStream` 尚未透传给解码器，
-        // C 层固定用 av_find_best_stream 选轨；多音轨文件会忽略用户选择。
-        if let startAt {
-            try validatePosition(startAt, duration: item.display.duration)
-        }
+        let logicalDuration = item.selection.range?.duration ?? item.display.duration
+        try validatePosition(startAt ?? .zero, duration: logicalDuration)
 
         let open: @Sendable () throws -> FFmpegAudioDecoder
         var source: URLSessionByteSource?
@@ -129,7 +167,7 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
             else {
                 throw PlaybackError.resourceUnavailable
             }
-            guard !request.isExpired(at: Date()) else {
+            guard !request.isExpired(at: Date()) || request.canRefresh else {
                 throw PlaybackError.resourceUnavailable
             }
             let remote = makeRemoteSource(request)
@@ -144,7 +182,7 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
         let generation = state.generation.advanced()
         teardown()
         currentItem = item
-        currentDuration = item.display.duration
+        currentDuration = logicalDuration
         basePosition = startAt ?? .zero
         didReachEnd = false
         remoteSource = source
@@ -161,31 +199,44 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
         yield(.phaseChanged(generation: generation, itemID: item.itemID, phase: .preparing))
 
         let decoder: FFmpegAudioDecoder
+        let sourceToCancel = source
         do {
-            decoder = try await withCheckedThrowingContinuation { continuation in
-                decodeQueue.async {
-                    do {
-                        continuation.resume(returning: try open())
-                    } catch {
-                        continuation.resume(throwing: error)
+            decoder = try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { continuation in
+                    decodeQueue.async {
+                        do {
+                            continuation.resume(returning: try open())
+                        } catch {
+                            continuation.resume(throwing: error)
+                        }
                     }
                 }
+            } onCancel: {
+                sourceToCancel?.cancel()
             }
         } catch {
+            if Task.isCancelled {
+                if isCurrentPreparation(generation) { stop() }
+                throw CancellationError()
+            }
             guard isCurrentPreparation(generation) else { throw CancellationError() }
             let playbackError = Self.playbackError(from: error, fallbackCode: "ffmpeg_open_failed")
             fail(playbackError, generation: generation, itemID: item.itemID)
             throw playbackError
         }
         guard isCurrentPreparation(generation) else { throw CancellationError() }
-        try Task.checkCancellation()
+        if Task.isCancelled {
+            stop()
+            throw CancellationError()
+        }
 
         self.decoder = decoder
-        currentDuration = decoder.duration ?? item.display.duration
+        currentDuration = item.selection.range?.duration ?? decoder.duration ?? item.display.duration
 
         let format = decoder.format
         audioEngine.connect(playerNode, to: timePitch, format: format)
-        audioEngine.connect(timePitch, to: audioEngine.mainMixerNode, format: format)
+        audioEngine.connect(timePitch, to: equalizerUnit, format: format)
+        audioEngine.connect(equalizerUnit, to: audioEngine.mainMixerNode, format: format)
         timePitch.rate = configuredRate
         playerNode.volume = isMuted ? 0 : volume
 
@@ -201,6 +252,18 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
             throw playbackError
         }
 
+        if let range = item.selection.range, range.start > .zero,
+           remoteSource?.isSeekable == false {
+            let error = PlaybackError.unsupportedCapability(.seeking)
+            fail(error, generation: generation, itemID: item.itemID)
+            throw error
+        }
+        if basePosition > .zero, remoteSource?.isSeekable == false {
+            // 顺序流无法定位到续播点，只能从头开始；须在发布状态前归零，
+            // 否则 displayPosition 会一直停在续播点。
+            basePosition = .zero
+        }
+
         state = PlaybackState(
             phase: .preparing,
             generation: generation,
@@ -209,11 +272,12 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
             duration: currentDuration
         )
 
-        if basePosition > .zero, remoteSource?.isSeekable == false {
-            // 顺序流无法定位到续播点，只能从头开始。
-            basePosition = .zero
-        }
-        let initialSeek = basePosition > .zero ? basePosition : nil
+        let absoluteStart = item.selection.range?.absolutePosition(
+            forLogicalPosition: basePosition
+        ) ?? basePosition
+        // A CUE selection beginning at file offset zero can play on an HTTP
+        // stream without Range support; even seek(0) requires a seekable input.
+        let initialSeek: Duration? = absoluteStart > .zero ? absoluteStart : nil
         startFeeder(
             decoder: decoder,
             initialSeek: initialSeek,
@@ -223,6 +287,11 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
     }
 
     public func play() throws {
+        if recoveringSequentialRoute {
+            guard currentItem != nil else { throw PlaybackError.noCurrentItem }
+            wantsPlayback = true
+            return
+        }
         guard let item = currentItem, let decoder else { throw PlaybackError.noCurrentItem }
         if !audioEngine.isRunning {
             do {
@@ -235,8 +304,30 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
         var position = state.position
         if didReachEnd {
             // 自然播完后再 play：feeder 已结束，从头重新投喂，否则只会静默地「播放」。
-            guard remoteSource?.isSeekable != false else {
-                throw PlaybackError.unsupportedCapability(.seeking)
+            if remoteSource?.isSeekable == false {
+                // 顺序流不能 seek 回零；重新打开请求及解码器才能重播。
+                Task { @MainActor [weak self] in
+                    guard let self, self.didReachEnd,
+                          self.currentItem?.itemID == item.itemID else { return }
+                    do {
+                        try await self.prepare(item, startAt: .zero)
+                    } catch {
+                        // prepare 已发布失败事件；stop/切歌引起的取消无需再上报。
+                        return
+                    }
+                    do {
+                        try self.play()
+                    } catch let error as PlaybackError {
+                        self.fail(error, generation: self.state.generation, itemID: item.itemID)
+                    } catch {
+                        self.fail(
+                            .engineFailure(code: "audio_engine_restart_failed"),
+                            generation: self.state.generation,
+                            itemID: item.itemID
+                        )
+                    }
+                }
+                return
             }
             restartFeeder(
                 decoder: decoder,
@@ -337,8 +428,32 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
     }
 
     public func apply(_ effects: AudioEffectConfiguration) throws {
+        if let equalizer = effects.equalizer {
+            _ = try equalizer.validated(against: Self.equalizerLayout)
+        }
+        if effects.replayGain.mode != .disabled {
+            throw PlaybackError.unsupportedCapability(.replayGain)
+        }
+        switch effects.transition.mode {
+        case .disabled: break
+        case .gapless: throw PlaybackError.unsupportedCapability(.gapless)
+        case .crossfade: throw PlaybackError.unsupportedCapability(.crossfade)
+        }
         try setRate(effects.rate)
-        // EQ / replayGain / transition 能力位未点亮，本版本忽略。
+        configuredEqualizer = effects.equalizer
+        applyConfiguredEqualizer()
+    }
+
+    private func applyConfiguredEqualizer() {
+        guard let configuration = configuredEqualizer else {
+            equalizerUnit.bypass = true
+            return
+        }
+        for (gain, band) in zip(configuration.bandGains, equalizerUnit.bands) {
+            band.gain = gain.gainDecibels
+        }
+        equalizerUnit.globalGain = configuration.preampDecibels
+        equalizerUnit.bypass = false
     }
 
     public func setVolume(_ volume: Float) throws {
@@ -383,6 +498,7 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
             playerNode: playerNode,
             queue: decodeQueue,
             initialSeek: initialSeek,
+            playbackDuration: currentItem?.selection.range.map { $0.duration - basePosition },
             onEnd: { [weak self] in
                 Task { @MainActor [weak self] in
                     self?.handlePlaybackEnded(epoch: epoch, generation: generation, itemID: itemID)
@@ -417,13 +533,20 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
         itemID: MediaItemID
     ) {
         cancelFeeder()
+        if let source = remoteSource {
+            // 旧任务可能阻塞在网络读取上；打断它，并在串行队列上排在新任务之前恢复。
+            source.interruptReads()
+            decodeQueue.async { source.resumeReads() }
+        }
         playerNode.stop() // 丢弃已排队 buffer，sampleTime 归零
         basePosition = position
         didReachEnd = false
         // 解码器此前已读过数据，即使回到 0 也必须显式 seek。
         startFeeder(
             decoder: decoder,
-            initialSeek: position,
+            initialSeek: currentItem?.selection.range.map {
+                $0.absolutePosition(forLogicalPosition: position)
+            } ?? position,
             generation: generation,
             itemID: itemID
         )
@@ -527,7 +650,8 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
     /// basePosition；seek/重放都会同步改写 `state.position`，故取二者较大值不会
     /// 挡住合法的回退。
     private func displayPosition() -> Duration {
-        max(currentPosition(), state.position)
+        let position = max(currentPosition(), state.position)
+        return currentDuration.map { min(position, $0) } ?? position
     }
 
     private func handlePlaybackEnded(
@@ -619,6 +743,7 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
     }
 
     private func teardown() {
+        recoveringSequentialRoute = false
         wantsPlayback = false
         bufferingTask?.cancel()
         bufferingTask = nil
@@ -649,12 +774,24 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
         let resumePosition = displayPosition()
         let generation = state.generation
 
+        if case let .remote(request) = item.resource,
+           remoteSource?.isSeekable == false {
+            restartSequentialStreamAfterConfigurationChange(
+                request: request,
+                item: item,
+                position: resumePosition,
+                generation: generation
+            )
+            return
+        }
+
         cancelFeeder()
         playerNode.stop()
 
         let format = decoder.format
         audioEngine.connect(playerNode, to: timePitch, format: format)
-        audioEngine.connect(timePitch, to: audioEngine.mainMixerNode, format: format)
+        audioEngine.connect(timePitch, to: equalizerUnit, format: format)
+        audioEngine.connect(equalizerUnit, to: audioEngine.mainMixerNode, format: format)
         timePitch.rate = configuredRate
         playerNode.volume = isMuted ? 0 : volume
 
@@ -670,25 +807,136 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
             return
         }
 
-        if remoteSource?.isSeekable == false {
-            // 顺序流无法重新定位：解码器从当前读取处继续，已丢弃的排队 PCM
-            // （最多约 maxInFlight 个 buffer）会被跳过。
-            basePosition = resumePosition
-            startFeeder(
-                decoder: decoder,
+        restartFeeder(
+            decoder: decoder,
+            from: resumePosition,
+            generation: generation,
+            itemID: item.itemID
+        )
+        updateOutput()
+    }
+
+    private func restartSequentialStreamAfterConfigurationChange(
+        request: RemotePlaybackRequest,
+        item: PlaybackItem,
+        position: Duration,
+        generation: PlaybackGeneration
+    ) {
+        cancelFeeder()
+        remoteSource?.cancel()
+        let source = makeRemoteSource(request)
+        remoteSource = source
+        decoder = nil
+        recoveringSequentialRoute = true
+        playerNode.stop()
+        isStarved = true
+        basePosition = position
+        state = PlaybackState(
+            phase: .preparing,
+            generation: generation,
+            itemID: item.itemID,
+            position: position,
+            duration: currentDuration
+        )
+        yield(.phaseChanged(generation: generation, itemID: item.itemID, phase: .preparing))
+
+        let probeSize = Self.remoteProbeSize
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let replacement: FFmpegAudioDecoder
+            do {
+                replacement = try await withCheckedThrowingContinuation { continuation in
+                    self.decodeQueue.async {
+                        do {
+                            try source.open()
+                            let decoder = try FFmpegAudioDecoder(
+                                byteSource: source, probeSize: probeSize
+                            )
+                            let components = position.components
+                            let seconds = Double(components.seconds)
+                                + Double(components.attoseconds) / 1_000_000_000_000_000_000
+                            let skipCount = min(
+                                max(0, (seconds * decoder.format.sampleRate).rounded(.down)),
+                                9_000_000_000_000_000
+                            )
+                            var remaining = Int64(skipCount)
+                            if source.isSeekable, remaining > 0 {
+                                try decoder.seek(to: position)
+                            } else {
+                                while remaining > 0 {
+                                    let capacity = AVAudioFrameCount(min(remaining, 8192))
+                                    guard let buffer = try decoder.nextBuffer(frameCapacity: capacity) else {
+                                        throw PlaybackError.resourceUnavailable
+                                    }
+                                    remaining -= Int64(buffer.frameLength)
+                                }
+                            }
+                            continuation.resume(returning: decoder)
+                        } catch {
+                            continuation.resume(throwing: error)
+                        }
+                    }
+                }
+            } catch {
+                guard self.isCurrentSequentialRouteRecovery(
+                    generation: generation, itemID: item.itemID, source: source
+                ) else { return }
+                self.fail(
+                    Self.playbackError(from: error, fallbackCode: "remote_route_reopen_failed"),
+                    generation: generation,
+                    itemID: item.itemID
+                )
+                return
+            }
+            guard self.isCurrentSequentialRouteRecovery(
+                generation: generation, itemID: item.itemID, source: source
+            ) else { return }
+            self.recoveringSequentialRoute = false
+            self.decoder = replacement
+            let format = replacement.format
+            self.audioEngine.connect(self.playerNode, to: self.timePitch, format: format)
+            self.audioEngine.connect(self.timePitch, to: self.equalizerUnit, format: format)
+            self.audioEngine.connect(self.equalizerUnit, to: self.audioEngine.mainMixerNode, format: format)
+            self.timePitch.rate = self.configuredRate
+            self.playerNode.volume = self.isMuted ? 0 : self.volume
+            do {
+                self.audioEngine.prepare()
+                try self.audioEngine.start()
+            } catch {
+                self.fail(
+                    .engineFailure(code: "audio_engine_restart_failed"),
+                    generation: generation,
+                    itemID: item.itemID
+                )
+                return
+            }
+            self.startFeeder(
+                decoder: replacement,
                 initialSeek: nil,
                 generation: generation,
                 itemID: item.itemID
             )
-        } else {
-            restartFeeder(
-                decoder: decoder,
-                from: resumePosition,
+            let phase: PlaybackPhase = self.wantsPlayback ? .playing : .paused
+            self.state = PlaybackState(
+                phase: phase,
                 generation: generation,
-                itemID: item.itemID
+                itemID: item.itemID,
+                position: position,
+                duration: self.currentDuration
             )
+            self.yield(.phaseChanged(generation: generation, itemID: item.itemID, phase: phase))
+            self.updateOutput()
+            if self.wantsPlayback { self.startPositionUpdates() }
         }
-        updateOutput()
+    }
+
+    private func isCurrentSequentialRouteRecovery(
+        generation: PlaybackGeneration,
+        itemID: MediaItemID,
+        source: URLSessionByteSource
+    ) -> Bool {
+        recoveringSequentialRoute && state.generation == generation &&
+            state.itemID == itemID && remoteSource === source
     }
 
     private func yield(_ event: PlaybackEvent) {

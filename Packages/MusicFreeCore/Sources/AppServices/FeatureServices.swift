@@ -132,6 +132,7 @@ public protocol LibraryServing: Sendable {
         page: LibraryPageRequest
     ) async throws -> LibraryPage<Track>
     func setFavorite(_ isFavorite: Bool, for itemID: MediaItemID) async throws -> Track
+    func setAlbumFavorite(_ isFavorite: Bool, for albumID: AlbumID) async throws -> Album
     func repairMetadata() async throws -> LibraryMetadataRepairResult
     func updateMetadata(_ update: TrackMetadataUpdate) async throws -> Track
     func updateAlbumMetadata(_ update: AlbumMetadataUpdate) async throws -> Album
@@ -252,6 +253,9 @@ public extension LyricsServing {
 }
 
 public extension LibraryServing {
+    func setAlbumFavorite(_: Bool, for _: AlbumID) async throws -> Album {
+        throw AppServiceError.missingDependency("albumFavorite")
+    }
     func repairMetadata() async throws -> LibraryMetadataRepairResult {
         LibraryMetadataRepairResult()
     }

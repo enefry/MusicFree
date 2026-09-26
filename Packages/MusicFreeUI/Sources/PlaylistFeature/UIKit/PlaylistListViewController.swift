@@ -318,10 +318,10 @@ public final class PlaylistListViewController: UIViewController {
         nextView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(nextView)
         NSLayoutConstraint.activate([
-            nextView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            nextView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            nextView.topAnchor.constraint(equalTo: view.topAnchor),
-            nextView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+            nextView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
+            nextView.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
+            nextView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            nextView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
         ])
         statusView = nextView
     }

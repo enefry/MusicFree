@@ -1,0 +1,16 @@
+# 构建缓存与源码（不入 git）
+.build-ffmpeg/
+.build-ffmpeg-log.txt
+
+# 构建产物：xcframework 由 Scripts/build-ffmpeg.sh 本地生成
+Artifacts/*.xcframework
+*.xcframework.zip
+
+# SwiftPM
+.build/
+.noindex/
+.swiftpm/
+*.xcodeproj
+
+# macOS
+.DS_Store

@@ -158,6 +158,7 @@ public struct AlbumQuery: Codable, Hashable, Sendable {
     public let searchScope: LibrarySearchScope
     public let sourceID: MediaSourceID?
     public let artistID: ArtistID?
+    public let favorite: LibraryFavoriteFilter
     public let sort: AlbumSortDescriptor
 
     public init(
@@ -165,13 +166,31 @@ public struct AlbumQuery: Codable, Hashable, Sendable {
         searchScope: LibrarySearchScope = .all,
         sourceID: MediaSourceID? = nil,
         artistID: ArtistID? = nil,
+        favorite: LibraryFavoriteFilter = .any,
         sort: AlbumSortDescriptor = .default
     ) {
         self.searchText = Self.normalizedSearchText(searchText)
         self.searchScope = searchScope
         self.sourceID = sourceID
         self.artistID = artistID
+        self.favorite = favorite
         self.sort = sort
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case searchText, searchScope, sourceID, artistID, favorite, sort
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            searchText: try values.decodeIfPresent(String.self, forKey: .searchText),
+            searchScope: try values.decode(LibrarySearchScope.self, forKey: .searchScope),
+            sourceID: try values.decodeIfPresent(MediaSourceID.self, forKey: .sourceID),
+            artistID: try values.decodeIfPresent(ArtistID.self, forKey: .artistID),
+            favorite: try values.decodeIfPresent(LibraryFavoriteFilter.self, forKey: .favorite) ?? .any,
+            sort: try values.decode(AlbumSortDescriptor.self, forKey: .sort)
+        )
     }
 
     private static func normalizedSearchText(_ value: String?) -> String? {

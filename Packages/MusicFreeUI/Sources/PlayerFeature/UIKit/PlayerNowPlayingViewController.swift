@@ -1558,8 +1558,14 @@ public final class PlayerNowPlayingViewController: UIViewController {
         pausedBadge.addArrangedSubview(pausedBadgeIcon)
         pausedBadge.addArrangedSubview(pausedBadgeLabel)
         pausedBadge.isHidden = true
-        timeStack.insertArrangedSubview(pausedBadge, at: 2)
-        timeStack.insertArrangedSubview(UIView(), at: 3)
+        pausedBadge.translatesAutoresizingMaskIntoConstraints = false
+        timeStack.addSubview(pausedBadge)
+        NSLayoutConstraint.activate([
+            pausedBadge.centerXAnchor.constraint(equalTo: timeStack.centerXAnchor),
+            pausedBadge.centerYAnchor.constraint(equalTo: timeStack.centerYAnchor),
+            pausedBadge.leadingAnchor.constraint(greaterThanOrEqualTo: elapsedLabel.trailingAnchor, constant: 8),
+            pausedBadge.trailingAnchor.constraint(lessThanOrEqualTo: remainingLabel.leadingAnchor, constant: -8),
+        ])
 
         progressStack.axis = .vertical
         progressStack.spacing = MusicFreeSpacingTokens.xSmall
@@ -1962,7 +1968,17 @@ public final class PlayerNowPlayingViewController: UIViewController {
         if !hasPlaybackContent {
             statusLabel.text = L("当前没有播放内容")
         } else if snapshot.phase == .failed {
-            statusLabel.text = L("播放操作无法完成，请稍后重试。")
+            let failureMessage: String
+            switch snapshot.error {
+            case .some(.resourceUnavailable), .some(.unknown(code: "media.invalid_resource")):
+                failureMessage = L("音频文件不可用，请检查文件或重新导入。")
+            case .some(.engineFailure):
+                failureMessage = L("音频解码失败，请重试或检查文件格式。")
+            default:
+                failureMessage = L("播放操作无法完成，请稍后重试。")
+            }
+            let failedTitle = track?.title ?? item?.title
+            statusLabel.text = [failedTitle, failureMessage].compactMap { $0 }.joined(separator: "\n")
         } else {
             statusLabel.text = nil
         }
@@ -2244,6 +2260,7 @@ public final class PlayerNowPlayingViewController: UIViewController {
         backdropImageView.alpha = 0.92
         backdropImageView.isHidden = true
         backdropGradientLayer.isHidden = true
+        embeddedLyricsView.setBackdropArtworkAvailable(false)
     }
 
     private func applyBackdropImage(_ image: UIImage?) {
@@ -2251,6 +2268,7 @@ public final class PlayerNowPlayingViewController: UIViewController {
             clearBackdrop()
             return
         }
+        embeddedLyricsView.setBackdropArtworkAvailable(true)
 
         let hasExistingImage = !backdropImageView.isHidden
             && backdropImageView.image != nil
@@ -3439,8 +3457,9 @@ private final class PlayerNowPlayingQueueRowView: UIControl {
         backgroundColor = .clear
         isAccessibilityElement = false
         isUserInteractionEnabled = true
-        addTarget(self, action: #selector(handleActivation), for: .touchUpInside)
-        addTarget(self, action: #selector(handleActivation), for: .primaryActionTriggered)
+        addAction(UIAction { [weak self] _ in
+            self?.onActivate?()
+        }, for: .touchUpInside)
         addInteraction(UIContextMenuInteraction(delegate: self))
 
         artworkView.translatesAutoresizingMaskIntoConstraints = false
@@ -3505,6 +3524,8 @@ private final class PlayerNowPlayingQueueRowView: UIControl {
     }
 
     private func updateAccessoryView() {
+        // A stack view otherwise wins hit-testing over its parent UIControl.
+        contentStack.isUserInteractionEnabled = accessoryView != nil
         accessoryContainer.subviews
             .filter { $0 !== actionImageView }
             .forEach { $0.removeFromSuperview() }
@@ -3536,8 +3557,10 @@ private final class PlayerNowPlayingQueueRowView: UIControl {
         subtitleLabel.accessibilityLabel = subtitle
     }
 
-    @objc private func handleActivation() {
-        onActivate?()
+    override func accessibilityActivate() -> Bool {
+        guard let onActivate else { return false }
+        onActivate()
+        return true
     }
 
     private func loadArtwork(
@@ -3841,13 +3864,18 @@ extension PlayerNowPlayingViewController: UITableViewDataSource, UITableViewDele
     }
 
     public func tableView(_: UITableView, didSelectRowAt indexPath: IndexPath) {
-        guard queueListItems.indices.contains(indexPath.row),
-              case .historyMessage = queueListItems[indexPath.row],
-              historyLoader.state == .failed
-        else { return }
-        historyTask?.cancel()
-        historyTask = Task { @MainActor [weak self] in
-            await self?.historyLoader.load()
+        guard queueListItems.indices.contains(indexPath.row) else { return }
+        queueTableView.deselectRow(at: indexPath, animated: true)
+        switch queueListItems[indexPath.row] {
+        case let .history(item):
+            viewModel.send(.play(itemID: item.track.id))
+        case .historyMessage where historyLoader.state == .failed:
+            historyTask?.cancel()
+            historyTask = Task { @MainActor [weak self] in
+                await self?.historyLoader.load()
+            }
+        default:
+            break
         }
     }
 

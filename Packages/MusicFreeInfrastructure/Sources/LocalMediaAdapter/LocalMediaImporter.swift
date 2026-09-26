@@ -1839,7 +1839,8 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
           artwork: value.artwork,
           releaseYear: value.releaseYear,
           trackCount: count,
-          albumType: value.albumType
+          albumType: value.albumType,
+          isFavorite: counts.existingAlbums[value.id]?.isFavorite ?? value.isFavorite
         )))
       case .upsert(.disc(let value)):
         discIDs.insert(value.id)
@@ -2696,8 +2697,10 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
 
   private static func hasRecognizedAudioExtension(_ url: URL) -> Bool {
     switch url.pathExtension.lowercased() {
-    case "aac", "ac3", "aif", "aiff", "alac", "ape", "caf", "dts", "flac",
-      "m4a", "m4b", "mka", "mp3", "mpc", "oga", "ogg", "opus", "wav", "webm", "wma", "wv":
+    case "aac", "ac3", "aif", "aiff", "alac", "ape", "asf", "au", "caf",
+      "dsf", "dts", "eac3", "ec3", "flac", "m4a", "m4b", "mka", "mov",
+      "mp3", "mp4", "mpc", "oga", "ogg", "opus", "rm", "tak", "tta", "w64",
+      "wav", "webm", "wma", "wv":
       return true
     default:
       return false

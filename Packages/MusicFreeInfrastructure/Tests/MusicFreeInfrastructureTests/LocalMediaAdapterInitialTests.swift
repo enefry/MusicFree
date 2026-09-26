@@ -713,6 +713,29 @@ struct LocalMediaAdapterInitialTests {
     #expect(try completedResult(in: events).failed == 1)
   }
 
+  @Test("Declared FFmpeg formats are not silently dropped after a failed probe", arguments: [
+    "dsf", "tta", "tak", "w64", "au", "eac3", "ec3", "asf", "rm",
+  ])
+  func declaredFormatProbeFailureIsReported(extensionName: String) async throws {
+    let fixture = try Fixture()
+    defer { fixture.remove() }
+    let albumRoot = fixture.inputRoot.appendingPathComponent("Format Failure", isDirectory: true)
+    try FileManager.default.createDirectory(at: albumRoot, withIntermediateDirectories: true)
+    try Data("playable-audio".utf8).write(to: albumRoot.appendingPathComponent("01.flac"))
+    try Data("invalid-audio".utf8).write(to: albumRoot.appendingPathComponent("02.\(extensionName)"))
+
+    let importer = try fixture.makeImporter(
+      repository: InMemoryLibraryRepository(),
+      probe: FailingCandidateProbe(pathExtension: extensionName, error: .unsupportedFormat)
+    )
+    let events = try await collect(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [albumRoot]
+    )))
+
+    #expect(try completedResult(in: events).failed == 1)
+  }
+
   @Test("CUE references to an undecodable unknown asset fail strictly")
   func cueReferenceToUnknownAssetFailsStrictly() async throws {
     let fixture = try Fixture()
@@ -1601,6 +1624,24 @@ struct LocalMediaAdapterInitialTests {
       urls: [firstRoot]
     )))
     #expect(try completedResult(in: firstEvents).imported == 1)
+    let initialAlbum = try #require((await repository.appliedTransactions).last?.mutations.compactMap { mutation -> Album? in
+      guard case .upsert(.album(let value)) = mutation else { return nil }
+      return value
+    }.first)
+    try await repository.apply(LibraryTransaction(
+      idempotencyKey: "favorite-before-second-bundle",
+      mutations: [.upsert(.album(Album(
+        id: initialAlbum.id,
+        title: initialAlbum.title,
+        sortTitle: initialAlbum.sortTitle,
+        artistIDs: initialAlbum.artistIDs,
+        artwork: initialAlbum.artwork,
+        releaseYear: initialAlbum.releaseYear,
+        trackCount: initialAlbum.trackCount,
+        albumType: initialAlbum.albumType,
+        isFavorite: true
+      )))]
+    ))
     let secondEvents = try await collect(importer.importMedia(MediaImportRequest(
       importID: UUID(),
       urls: [secondRoot]
@@ -1617,6 +1658,8 @@ struct LocalMediaAdapterInitialTests {
       return value
     }.first)
     #expect(album.trackCount == 2)
+    #expect(album.isFavorite)
+    #expect(try await repository.album(id: album.id)?.isFavorite == true)
     #expect(disc.trackCount == 2)
   }
 

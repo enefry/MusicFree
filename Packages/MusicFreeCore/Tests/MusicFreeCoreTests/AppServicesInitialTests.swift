@@ -260,6 +260,40 @@ func appServicesFavoriteCanToggleRepeatedly() async throws {
 }
 
 @MainActor
+@Test("Album favorite persists independently of track favorites and survives metadata edits")
+func appServicesAlbumFavoriteCanToggleAndRetainMetadata() async throws {
+    let albumID = AlbumID("album-favorite-repeat")
+    let repository = InMemoryLibraryRepository(albums: [Album(
+        id: albumID,
+        title: "Favorite Album",
+        releaseYear: 2020,
+        trackCount: 2
+    )])
+    let container = try AppServiceContainer(
+        dependencies: AppDependencies(libraryRepository: repository)
+    )
+
+    let favorite = try await container.library.setAlbumFavorite(true, for: albumID)
+    #expect(favorite.isFavorite)
+    #expect(favorite.releaseYear == 2020)
+    #expect(try await repository.album(id: albumID)?.isFavorite == true)
+
+    let edited = try await container.library.updateAlbumMetadata(AlbumMetadataUpdate(
+        albumID: albumID, title: "Renamed Favorite Album", releaseYear: 2021
+    ))
+    #expect(edited.isFavorite)
+    #expect(try await repository.album(id: albumID)?.isFavorite == true)
+
+    let unfavorite = try await container.library.setAlbumFavorite(false, for: albumID)
+    #expect(!unfavorite.isFavorite)
+    #expect(unfavorite.title == "Renamed Favorite Album")
+    let favoriteAgain = try await container.library.setAlbumFavorite(true, for: albumID)
+    #expect(favoriteAgain.isFavorite)
+    let transactions = await repository.appliedTransactions
+    #expect(Set(transactions.map(\.idempotencyKey)).count == transactions.count)
+}
+
+@MainActor
 @Test("Playback history keeps repeated track sessions and clears through AppServices")
 func appServicesPlaybackHistoryKeepsSessionsAndClears() async throws {
     let itemID = MediaItemID(sourceID: .local, externalID: "history-track")

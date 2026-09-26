@@ -103,7 +103,10 @@ public struct LibraryAlbumMergePlan: Sendable {
             artwork: destination.artwork,
             releaseYear: destination.releaseYear,
             trackCount: Set(albumTracks.map(\.id)).union(albumVariants.map(\.id)).count,
-            albumType: destination.albumType
+            albumType: destination.albumType,
+            isFavorite: destination.isFavorite || merge.sourceAlbumIDs.contains {
+                albums[$0]?.isFavorite == true
+            }
         )
         let previousRelease = releases[destinationReleaseID]
         self.release = AlbumRelease(

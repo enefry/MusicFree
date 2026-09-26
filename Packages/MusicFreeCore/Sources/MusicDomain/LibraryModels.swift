@@ -329,6 +329,7 @@ public struct Album: Codable, Equatable, Hashable, Identifiable, Sendable {
     public let releaseYear: Int?
     public let trackCount: Int?
     public let albumType: AlbumType?
+    public let isFavorite: Bool
 
     public init(
         id: AlbumID,
@@ -338,7 +339,8 @@ public struct Album: Codable, Equatable, Hashable, Identifiable, Sendable {
         artwork: ArtworkReference? = nil,
         releaseYear: Int? = nil,
         trackCount: Int? = nil,
-        albumType: AlbumType? = nil
+        albumType: AlbumType? = nil,
+        isFavorite: Bool = false
     ) {
         if let releaseYear {
             precondition((1...9_999).contains(releaseYear), "Album.releaseYear is out of range")
@@ -355,6 +357,7 @@ public struct Album: Codable, Equatable, Hashable, Identifiable, Sendable {
         self.releaseYear = releaseYear
         self.trackCount = trackCount
         self.albumType = albumType
+        self.isFavorite = isFavorite
     }
 
     public var artworkID: ArtworkID? {
@@ -374,6 +377,7 @@ public struct Album: Codable, Equatable, Hashable, Identifiable, Sendable {
         case releaseYear
         case trackCount
         case albumType
+        case isFavorite
     }
 
     public init(from decoder: Decoder) throws {
@@ -395,7 +399,8 @@ public struct Album: Codable, Equatable, Hashable, Identifiable, Sendable {
             artwork: try container.decodeIfPresent(ArtworkReference.self, forKey: .artwork),
             releaseYear: releaseYear,
             trackCount: trackCount,
-            albumType: try container.decodeIfPresent(AlbumType.self, forKey: .albumType)
+            albumType: try container.decodeIfPresent(AlbumType.self, forKey: .albumType),
+            isFavorite: try container.decodeIfPresent(Bool.self, forKey: .isFavorite) ?? false
         )
     }
 
@@ -409,6 +414,7 @@ public struct Album: Codable, Equatable, Hashable, Identifiable, Sendable {
         try container.encodeIfPresent(releaseYear, forKey: .releaseYear)
         try container.encodeIfPresent(trackCount, forKey: .trackCount)
         try container.encodeIfPresent(albumType, forKey: .albumType)
+        try container.encode(isFavorite, forKey: .isFavorite)
     }
 }
 

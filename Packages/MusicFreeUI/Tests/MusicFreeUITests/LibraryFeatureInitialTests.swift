@@ -343,6 +343,40 @@ func libraryAlbumLookupFollowsPagination() async throws {
 }
 
 @MainActor
+@Test("Favorites shows saved albums and opens their detail")
+func favoritesShowsAlbumsAlongsideTracks() async throws {
+    let album = Album(id: AlbumID("favorite-visible"), title: "Saved Album", isFavorite: true)
+    let service = FakeLibraryService()
+    service.defaultAlbums = [album]
+    let model = LibraryViewModel(library: service, selection: .favorites)
+    let controller = LibraryTracksViewController(viewModel: model, section: .favorites)
+    var selectedAlbumID: AlbumID?
+    controller.onSelectAlbum = { selectedAlbumID = $0 }
+    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+    window.rootViewController = controller
+    window.makeKeyAndVisible()
+    defer {
+        window.isHidden = true
+        window.rootViewController = nil
+    }
+    controller.loadViewIfNeeded()
+    let collection = try #require(controller.view.subviews.compactMap { $0 as? UICollectionView }.first)
+    await settleUntil {
+        controller.view.layoutIfNeeded()
+        return collection.visibleCells.contains {
+            $0.accessibilityIdentifier == "library.favorite.album.\(album.id.rawValue)"
+        }
+    }
+    #expect(service.albumRequests.first?.favorite == .favorite)
+    let indexPath = try #require(collection.indexPathsForVisibleItems.first {
+        collection.cellForItem(at: $0)?.accessibilityIdentifier
+            == "library.favorite.album.\(album.id.rawValue)"
+    })
+    controller.collectionView(collection, didSelectItemAt: indexPath)
+    #expect(selectedAlbumID == album.id)
+}
+
+@MainActor
 @Test("Album name lookup follows every page and returns only requested albums")
 func libraryAlbumNameLookupFollowsPagination() async throws {
     let firstID = AlbumID("first-requested-album")
@@ -1271,7 +1305,8 @@ func libraryArtistDetailContentKeepsRelationships() {
         title: " shared release ",
         artistIDs: [artistID, secondaryArtistID],
         releaseYear: 2024,
-        albumType: .album
+        albumType: .album,
+        isFavorite: true
     )
     let mergedGroups = LibraryArtistDetailContent.albumGroups(
         for: artistID,
@@ -1301,6 +1336,7 @@ func libraryArtistDetailContentKeepsRelationships() {
     #expect(mergedGroups.count == 1)
     #expect(mergedGroups[0].album.title == mergedAlbumOne.title)
     #expect(mergedGroups[0].albumIDs == [mergedAlbumOne.id, mergedAlbumTwo.id])
+    #expect(mergedGroups[0].album.isFavorite)
     #expect(noAlbumTracks.map(\.title) == ["No Album Track", "Missing Album Track"])
 }
 

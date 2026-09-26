@@ -7,29 +7,35 @@ import MediaSourceAPI
 ///
 /// - 每次请求都带 `Range: bytes=N-`。首个响应为 206 即视为可 seek（总长取自
 ///   `Content-Range`）；为 200 表示服务端忽略 Range，按不可 seek 的顺序流处理。
-/// - 下载数据先进入内存缓冲；可 seek 时超过 `maxBufferedBytes` 挂起任务，读走一半后恢复。
+/// - 下载数据先进入内存缓冲，超过上限时挂起任务，读走一半后恢复。可 seek 流上限
+///   为 `maxBufferedBytes`；顺序流无法续传，挂起期间连接若被服务端断开就无法恢复，
+///   故用更大的 `maxSequentialBufferedBytes`，通常足以容纳整首转码输出。
 /// - 网络瞬断时从已缓冲末尾续传，最多 `maxRetries` 次（仅可 seek 的资源）。
-/// - `cancel()` 可从任意线程调用，立刻唤醒阻塞中的读取。
-///
-/// TODO(remote-refresh)：`RemotePlaybackRequest.expiresAt` 之后，seek/续传发出的
-/// 新请求可能被服务端拒绝；届时需要回调上层重新获取 playbackAccess。
+/// - 地址过期（`expiresAt` 已过）或收到 401/403 时，经
+///   `RemotePlaybackRequest.refreshed()` 异步换取新地址后从同一偏移继续；
+///   每次失败最多续签 `maxRefreshAttempts` 次。
+/// - `cancel()` 永久终止；`interruptReads()` 只打断当前阻塞读（供 seek 使用），
+///   `resumeReads()` 后可继续使用。均可从任意线程调用。
 final class URLSessionByteSource: NSObject, FFmpegByteSource, @unchecked Sendable {
     enum SourceError: Error, Equatable {
         case cancelled
+        case interrupted
         case httpStatus(Int)
         case invalidResponse
         case notSeekable
         case network(URLError.Code)
     }
 
-    private let request: RemotePlaybackRequest
     private let maxBufferedBytes: Int
+    private let maxSequentialBufferedBytes: Int
     private let maxRetries: Int
+    private let maxRefreshAttempts = 1
     private let timeout: TimeInterval
     private var session: URLSession!
 
     // 以下状态均由 `condition` 保护。
     private let condition = NSCondition()
+    private var currentRequest: RemotePlaybackRequest
     private var task: URLSessionDataTask?
     private var pending = Data()
     private var pendingOffset = 0
@@ -40,8 +46,13 @@ final class URLSessionByteSource: NSObject, FFmpegByteSource, @unchecked Sendabl
     private var finished = false
     private var failure: Error?
     private var cancelled = false
+    private var readsInterrupted = false
     private var suspended = false
     private var retries = 0
+    private var refreshing = false
+    private var refreshAttempts = 0
+    private var refreshGeneration: UInt64 = 0
+    private var refreshTask: Task<Void, Never>?
     private var opened = false
     private var seekable = false
     private var totalBytes: Int64?
@@ -50,11 +61,13 @@ final class URLSessionByteSource: NSObject, FFmpegByteSource, @unchecked Sendabl
         request: RemotePlaybackRequest,
         configuration: URLSessionConfiguration = .default,
         maxBufferedBytes: Int = 4 * 1024 * 1024,
+        maxSequentialBufferedBytes: Int = 32 * 1024 * 1024,
         maxRetries: Int = 2,
         timeout: TimeInterval = 15
     ) {
-        self.request = request
+        currentRequest = request
         self.maxBufferedBytes = maxBufferedBytes
+        self.maxSequentialBufferedBytes = maxSequentialBufferedBytes
         self.maxRetries = maxRetries
         self.timeout = timeout
         super.init()
@@ -69,6 +82,7 @@ final class URLSessionByteSource: NSObject, FFmpegByteSource, @unchecked Sendabl
     func open() throws {
         condition.lock()
         defer { condition.unlock() }
+        if cancelled { throw SourceError.cancelled }
         startRequest(at: 0, preservingBuffer: false)
         while !responseReceived, failure == nil, !cancelled {
             condition.wait()
@@ -81,12 +95,36 @@ final class URLSessionByteSource: NSObject, FFmpegByteSource, @unchecked Sendabl
     func cancel() {
         condition.lock()
         cancelled = true
+        refreshTask?.cancel()
+        refreshTask = nil
         task?.cancel()
         task = nil
         condition.broadcast()
         condition.unlock()
         // URLSession 强引用 delegate，必须失效才能打破循环。
         session.invalidateAndCancel()
+    }
+
+    /// 让当前及后续 `read` 立即抛出 `.interrupted`，直到 `resumeReads()`。
+    /// 用于 seek：旧的解码任务可能正阻塞在网络读取上，不打断就要等到超时。
+    func interruptReads() {
+        condition.lock()
+        readsInterrupted = true
+        condition.broadcast()
+        condition.unlock()
+    }
+
+    func resumeReads() {
+        condition.lock()
+        readsInterrupted = false
+        condition.unlock()
+    }
+
+    /// 已下载但尚未被读走的字节数（测试用）。
+    var bufferedByteCount: Int {
+        condition.lock()
+        defer { condition.unlock() }
+        return pending.count - pendingOffset
     }
 
     // MARK: - FFmpegByteSource
@@ -108,6 +146,7 @@ final class URLSessionByteSource: NSObject, FFmpegByteSource, @unchecked Sendabl
         defer { condition.unlock() }
         while true {
             if cancelled { throw SourceError.cancelled }
+            if readsInterrupted { throw SourceError.interrupted }
             let available = pending.count - pendingOffset
             if available > 0 {
                 let count = min(available, buffer.count)
@@ -118,7 +157,7 @@ final class URLSessionByteSource: NSObject, FFmpegByteSource, @unchecked Sendabl
                 }
                 pendingOffset += count
                 readPosition += Int64(count)
-                if suspended, pending.count - pendingOffset <= maxBufferedBytes / 2 {
+                if suspended, pending.count - pendingOffset <= bufferLimit / 2 {
                     suspended = false
                     task?.resume()
                 }
@@ -140,6 +179,10 @@ final class URLSessionByteSource: NSObject, FFmpegByteSource, @unchecked Sendabl
         if offset >= readPosition, offset - readPosition <= available {
             pendingOffset += Int(offset - readPosition)
             readPosition = offset
+            if suspended, pending.count - pendingOffset <= bufferLimit / 2 {
+                suspended = false
+                task?.resume()
+            }
             return
         }
         if let totalBytes, offset >= totalBytes {
@@ -156,8 +199,17 @@ final class URLSessionByteSource: NSObject, FFmpegByteSource, @unchecked Sendabl
 
     // MARK: - Private（调用方持有 condition）
 
+    private var bufferLimit: Int {
+        seekable ? maxBufferedBytes : maxSequentialBufferedBytes
+    }
+
+    private var canRefreshAfterAuthFailure: Bool {
+        currentRequest.canRefresh && refreshAttempts < maxRefreshAttempts
+    }
+
     private func startRequest(at offset: Int64, preservingBuffer: Bool) {
         task?.cancel()
+        task = nil
         if !preservingBuffer {
             clearBuffer()
             readPosition = offset
@@ -168,18 +220,71 @@ final class URLSessionByteSource: NSObject, FFmpegByteSource, @unchecked Sendabl
         failure = nil
         suspended = false
 
+        if currentRequest.isExpired(at: Date()), currentRequest.canRefresh {
+            beginRefresh()
+        } else {
+            issueRequest()
+        }
+    }
+
+    private func issueRequest() {
         var urlRequest = URLRequest(
-            url: request.url,
+            url: currentRequest.url,
             cachePolicy: .reloadIgnoringLocalCacheData,
             timeoutInterval: timeout
         )
-        for (name, value) in request.headers {
+        for (name, value) in currentRequest.headers {
             urlRequest.setValue(value, forHTTPHeaderField: name)
         }
-        urlRequest.setValue("bytes=\(offset)-", forHTTPHeaderField: "Range")
+        urlRequest.setValue("bytes=\(requestedOffset)-", forHTTPHeaderField: "Range")
         let task = session.dataTask(with: urlRequest)
         self.task = task
         task.resume()
+    }
+
+    /// 异步换取新地址，完成后从最新的 `requestedOffset` 重新请求。续签期间发生的
+    /// seek 只改写 `requestedOffset`，不会并发发起第二次续签。
+    private func beginRefresh() {
+        guard !refreshing else { return }
+        refreshing = true
+        refreshAttempts += 1
+        refreshGeneration &+= 1
+        let generation = refreshGeneration
+        let request = currentRequest
+        refreshTask = Task { [weak self] in
+            let result: Result<RemotePlaybackRequest, Error>
+            do {
+                result = .success(try await request.refreshed())
+            } catch {
+                result = .failure(error)
+            }
+            self?.finishRefresh(result, generation: generation)
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { [weak self] in
+            self?.finishRefresh(
+                .failure(SourceError.network(.timedOut)), generation: generation
+            )
+        }
+    }
+
+    private func finishRefresh(
+        _ result: Result<RemotePlaybackRequest, Error>, generation: UInt64
+    ) {
+        condition.lock()
+        defer { condition.unlock() }
+        guard refreshing, generation == refreshGeneration else { return }
+        refreshing = false
+        refreshTask?.cancel()
+        refreshTask = nil
+        guard !cancelled else { return }
+        switch result {
+        case let .success(next):
+            currentRequest = next
+            issueRequest()
+        case let .failure(error):
+            failure = error
+            condition.broadcast()
+        }
     }
 
     private func clearBuffer() {
@@ -257,6 +362,12 @@ extension URLSessionByteSource: URLSessionDataDelegate {
             finished = true
             completionHandler(.cancel)
             return
+        case 401 where canRefreshAfterAuthFailure, 403 where canRefreshAfterAuthFailure:
+            // 签名地址失效：丢弃本次任务，续签后从同一偏移重新请求。
+            task = nil
+            completionHandler(.cancel)
+            beginRefresh()
+            return
         default:
             failure = SourceError.httpStatus(http.statusCode)
             completionHandler(.cancel)
@@ -272,9 +383,8 @@ extension URLSessionByteSource: URLSessionDataDelegate {
         guard dataTask === task, !cancelled else { return }
         append(data)
         retries = 0
-        // 挂起期间服务端可能断开空闲连接；只有可 seek（能用 Range 续传）时才做背压，
-        // 顺序流（转码输出等，体积有限）全量缓冲。
-        if seekable, !suspended, pending.count - pendingOffset >= maxBufferedBytes {
+        refreshAttempts = 0
+        if !suspended, pending.count - pendingOffset >= bufferLimit {
             suspended = true
             dataTask.suspend()
         }
