@@ -534,7 +534,7 @@ private func toneAmplitude(_ samples: [Float], sampleRate: Double, frequency: Do
     }
 
     @Test func appMetadataReaderPreservesUnicodeTagsAndArtwork() async throws {
-        // 0.4s sine FLAC with a 32x32 JPEG attached picture and UTF-8 tags.
+        // Metadata-only FLAC with a 32x32 JPEG attached picture and UTF-8 tags.
         let url = try #require(Bundle.module.url(
             forResource: "tagged-metadata", withExtension: "flac"
         ))
