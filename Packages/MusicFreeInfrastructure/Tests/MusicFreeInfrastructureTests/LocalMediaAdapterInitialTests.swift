@@ -985,8 +985,8 @@ struct LocalMediaAdapterInitialTests {
     #expect(discs.map(\.id) == [try #require(first.track.discProjection?.id)])
   }
 
-  @Test("Different explicit album artists form separate albums")
-  func differentExplicitAlbumArtistsFormSeparateAlbums() throws {
+  @Test("Different explicit album artists form one compilation")
+  func differentExplicitAlbumArtistsFormOneCompilation() throws {
     let fixture = try Fixture()
     defer { fixture.remove() }
     let root = fixture.inputRoot.appendingPathComponent("Compilation", isDirectory: true)
@@ -1024,13 +1024,14 @@ struct LocalMediaAdapterInitialTests {
       importID: UUID()
     )
     let albumIDs = Set(plan.normalizedTracks.compactMap(\.track.albumID))
-    #expect(albumIDs.count == 2)
+    #expect(albumIDs.count == 1)
     let albums = plan.structuralMutations.compactMap { mutation -> Album? in
       guard case .upsert(.album(let value)) = mutation else { return nil }
       return value
     }
-    #expect(albums.count == 2)
-    #expect(albums.allSatisfy { $0.albumType == nil && $0.trackCount == 1 })
+    #expect(albums.count == 1)
+    #expect(albums.first?.albumType == .compilation)
+    #expect(albums.first?.trackCount == 2)
     #expect(Set(albums.flatMap(\.artistIDs)) == Set(plan.normalizedTracks.flatMap(\.track.artistIDs)))
   }
 

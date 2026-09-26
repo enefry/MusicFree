@@ -1460,10 +1460,16 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
         _ updated: PlaybackQueueSnapshot,
         intent: UInt64
     ) async throws {
-        try await valueForCurrentIntent(intent) {
-            try await self.saveQueue(updated)
+        try requireCurrentIntent(intent)
+        do {
+            try await saveQueue(updated)
+        } catch {
+            try requireCurrentIntent(intent)
+            throw error
         }
+        // A newer command must observe a queue save that already committed.
         queue = updated
+        try requireCurrentIntent(intent)
     }
 
     private func loadQueue() async throws -> PlaybackQueueSnapshot {

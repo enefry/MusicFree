@@ -48,6 +48,7 @@ public final class AppServiceContainer {
     public let mediaSourceResolver: any MediaSourceResolving
 
     private let libraryCoordinator: LibraryCoordinator
+    private let hasLibraryRepository: Bool
     private let artworkCoordinator: ArtworkCoordinator
     private let importCoordinator: ImportCoordinator
     private let metadataEnrichmentCoordinator: MetadataEnrichmentCoordinator
@@ -72,6 +73,7 @@ public final class AppServiceContainer {
     private var isStopped = false
 
     public init(dependencies: AppDependencies) throws {
+        hasLibraryRepository = dependencies.libraryRepository != nil
         let sourceRegistry = try MediaSourceRegistry(sources: dependencies.mediaSources)
         let onlineSourceService = try OnlineSourceCoordinator(
             sources: dependencies.onlineSources,
@@ -401,12 +403,14 @@ public final class AppServiceContainer {
         let task = Task { @MainActor [weak self] in
             guard let self else { return Set<AppStartupFallback>() }
             var fallbacks = Set<AppStartupFallback>()
-            do {
-                _ = try await self.libraryCoordinator.repairMetadata()
-            } catch is CancellationError {
-                return fallbacks
-            } catch {
-                fallbacks.insert(.metadataRepairFailed)
+            if self.hasLibraryRepository {
+                do {
+                    _ = try await self.libraryCoordinator.repairMetadata()
+                } catch is CancellationError {
+                    return fallbacks
+                } catch {
+                    fallbacks.insert(.metadataRepairFailed)
+                }
             }
             do {
                 try await self.storageMaintenanceCoordinator.enforceAutomaticPruning(preferences)

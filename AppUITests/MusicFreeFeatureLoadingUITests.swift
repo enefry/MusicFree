@@ -1010,9 +1010,7 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
             "player.continuePlaying.list"
         ].firstMatch
         XCTAssertTrue(continuePlayingList.waitForExistence(timeout: 10))
-        let currentQueueRow = app.descendants(matching: .any)[
-            "player.nowPlaying.current"
-        ].firstMatch
+        let currentQueueRow = currentPlayingQueueCell(in: app)
         XCTAssertTrue(
             currentQueueRow.waitForExistence(timeout: 10),
             "The queue surface must expose a distinct current-playing row."
@@ -1050,9 +1048,10 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
         XCTAssertFalse(continuePlayingList.staticTexts["BVT Album"].exists)
         XCTAssertFalse(continuePlayingList.staticTexts["Local music"].exists)
 
-        let modeControls = app.descendants(matching: .any)[
-            "player.nowPlaying.modeControls"
-        ].firstMatch
+        let modeControls = app.cells.containing(
+            .button,
+            identifier: "Shuffle"
+        ).firstMatch
         XCTAssertTrue(modeControls.waitForExistence(timeout: 5))
         XCTAssertEqual(
             modeControls.buttons.count,
@@ -1197,9 +1196,7 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
         let moreButton = app.buttons["More actions"].firstMatch
         XCTAssertTrue(moreButton.waitForExistence(timeout: 5))
         moreButton.tap()
-        let manageQueueAction = app.buttons[
-            "player.nowPlaying.actions.manageQueue"
-        ].firstMatch
+        let manageQueueAction = app.buttons["Manage playback queue"].firstMatch
         XCTAssertTrue(
             manageQueueAction.waitForExistence(timeout: 10),
             "Full queue editing should remain behind the header menu."
@@ -1435,9 +1432,7 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
         let queueScroll = playerQueueScrollView(in: app)
         XCTAssertTrue(queueScroll.waitForExistence(timeout: 10))
 
-        let currentQueueRow = app.descendants(matching: .any)[
-            "player.nowPlaying.current"
-        ].firstMatch
+        let currentQueueRow = currentPlayingQueueCell(in: app)
         XCTAssertTrue(currentQueueRow.waitForExistence(timeout: 10))
         XCTAssertLessThanOrEqual(
             currentQueueRow.frame.minY,
@@ -2083,6 +2078,14 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
     }
 
     @MainActor
+    private func currentPlayingQueueCell(in app: XCUIApplication) -> XCUIElement {
+        app.cells.containing(
+            .staticText,
+            identifier: "player.nowPlaying.current.title"
+        ).firstMatch
+    }
+
+    @MainActor
     private func assertNowPlayingPresentationFrameIsStable(
         expectedTitle: String,
         artworkSurface: XCUIElement? = nil,
@@ -2100,7 +2103,9 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
         // Sheet transition the presenting Mini Player can retain an off-screen
         // accessibility copy (for example x = -161) while it is being removed.
         // Scope the title to the visible Now Playing surface instead.
-        let visibleSurface = app.descendants(matching: .any)[surfaceIdentifier].firstMatch
+        let visibleSurface = surfaceIdentifier == "player.nowPlaying.current"
+            ? currentPlayingQueueCell(in: app)
+            : app.descendants(matching: .any)[surfaceIdentifier].firstMatch
         XCTAssertTrue(
             visibleSurface.waitForExistence(timeout: 5),
             "The \(surfaceIdentifier) surface must stay mounted."
