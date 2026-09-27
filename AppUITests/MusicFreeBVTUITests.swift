@@ -234,6 +234,64 @@ final class MusicFreeBVTUITests: XCTestCase {
     }
 
     @MainActor
+    func testUIKitShellFormalPlaybackAdvancesInBackground() throws {
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        app.launchArguments = ["--uikit-shell", "--bvt-seed-audio"]
+        app.launch()
+
+        let songsSection = app.descendants(matching: .any)[
+            "library.home.section.tracks"
+        ].firstMatch
+        XCTAssertTrue(songsSection.waitForExistence(timeout: 20))
+        songsSection.tap()
+
+        let seededTrack = app.collectionViews["library.tracks.collection"].cells
+            .matching(NSPredicate(format: "label == %@", trackTitle)).firstMatch
+        XCTAssertTrue(seededTrack.waitForExistence(timeout: 30))
+        seededTrack.tap()
+
+        let miniPlayer = app.buttons["player.mini"].firstMatch
+        XCTAssertTrue(miniPlayer.waitForExistence(timeout: 20))
+        miniPlayer.coordinate(withNormalizedOffset: CGVector(dx: 0.30, dy: 0.50)).tap()
+
+        let progress = app.sliders["player.nowPlaying.progress"].firstMatch
+        XCTAssertTrue(progress.waitForExistence(timeout: 15))
+        let before = try formalPlaybackElapsedTime(from: progress)
+
+        XCUIDevice.shared.press(.home)
+        XCTAssertTrue(app.wait(for: .runningBackground, timeout: 10))
+        Thread.sleep(forTimeInterval: 8)
+        let foregroundStartedAt = Date()
+        app.activate()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
+        if !progress.exists {
+            XCTAssertTrue(miniPlayer.waitForExistence(timeout: 10))
+            miniPlayer.coordinate(withNormalizedOffset: CGVector(dx: 0.30, dy: 0.50)).tap()
+        }
+        XCTAssertTrue(progress.waitForExistence(timeout: 10))
+
+        let after = try formalPlaybackElapsedTime(from: progress)
+        let foregroundElapsed = Date().timeIntervalSince(foregroundStartedAt)
+        XCTAssertGreaterThan(
+            Double(after - before),
+            foregroundElapsed + 2,
+            "Formal playback advanced only after returning to the foreground."
+        )
+    }
+
+    @MainActor
+    private func formalPlaybackElapsedTime(from slider: XCUIElement) throws -> Int {
+        let value = try XCTUnwrap(slider.value as? String)
+        let elapsed = value.components(separatedBy: " / ")[0]
+        let parts = elapsed.split(separator: ":").compactMap { Int($0) }
+        return try XCTUnwrap(
+            parts.count == 2 ? parts[0] * 60 + parts[1] : nil,
+            "Unexpected formal playback progress: \(value)"
+        )
+    }
+
+    @MainActor
     func testUIKitShellLibraryBrowseCollectionsRenderSeededData() {
         let app = XCUIApplication()
         defer { app.terminate() }
