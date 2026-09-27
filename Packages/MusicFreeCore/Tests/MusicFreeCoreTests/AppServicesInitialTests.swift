@@ -3110,7 +3110,7 @@ func appServicesSettingsCapabilityClipping() async throws {
 }
 
 @MainActor
-@Test("Settings expand persisted EQ intent to the runtime VLC band layout")
+@Test("Settings expand persisted EQ intent to the runtime engine band layout")
 func appServicesSettingsBuildRuntimeEqualizerConfiguration() async throws {
     let descriptor = EqualizerDescriptor(
         bands: [
@@ -3157,6 +3157,58 @@ func appServicesSettingsBuildRuntimeEqualizerConfiguration() async throws {
     #expect(effective.effects.equalizer?.preampDecibels == 2)
     #expect(effective.effects.equalizer?.bandGains.map(\.centerFrequencyHz) == [60, 1_000])
     #expect(effective.effects.equalizer?.bandGains.map(\.gainDecibels) == [0, 4])
+}
+
+@MainActor
+@Test("Changing equalizer settings during playback applies them to the active engine")
+func appServicesSettingsApplyEqualizerToPlayingEngine() async throws {
+    let descriptor = EqualizerDescriptor(
+        bands: [EqualizerBandDescriptor(
+            centerFrequencyHz: 1_000,
+            minimumGainDecibels: -20,
+            maximumGainDecibels: 20
+        )],
+        minimumPreampDecibels: -20,
+        maximumPreampDecibels: 20
+    )
+    let itemID = MediaItemID(sourceID: .local, externalID: "live-equalizer")
+    let engine = TestPlaybackEngine(
+        capabilities: [.equalizer],
+        equalizerDescriptor: descriptor
+    )
+    let container = try AppServiceContainer(
+        dependencies: AppDependencies(
+            mediaSources: [TestSource()],
+            libraryRepository: TestLibraryRepository(tracks: [Track(id: itemID, title: "EQ Test")]),
+            playbackQueueRepository: TestQueueRepository(),
+            settingsRepository: TestSettingsRepository(),
+            playbackEngine: engine
+        )
+    )
+    _ = try await container.start()
+    try await container.playback.execute(.play(itemID: itemID))
+    #expect(container.playback.snapshot.phase == .playing)
+    let initialApplyCount = engine.appliedEffects.count
+
+    let requested = AppSettings(playbackPreferences: PlaybackPreferences(
+        equalizer: try EqualizerPreferences(
+            isEnabled: true,
+            preamp: EqualizerGain(decibels: 2),
+            bands: [EqualizerBand(
+                frequencyHz: 1_000,
+                gain: EqualizerGain(decibels: 4)
+            )]
+        )
+    ))
+    try await container.settings.update(requested)
+    let expected = try await container.settings.effective().effects
+    for _ in 0..<200 where engine.appliedEffects.last != expected {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(engine.appliedEffects.count > initialApplyCount)
+    #expect(engine.appliedEffects.last == expected)
+    #expect(engine.appliedEffects.last?.equalizer?.bandGains.map(\.gainDecibels) == [4])
+    await container.stop()
 }
 
 @MainActor
@@ -4049,6 +4101,7 @@ private final class TestPlaybackEngine: PlaybackEngine {
     private(set) var preparedItems: [PlaybackItem] = []
     private(set) var eventStreamCount = 0
     private(set) var disposeCount = 0
+    private(set) var appliedEffects: [AudioEffectConfiguration] = []
     private var preparedItemCountWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
 
     init(
@@ -4142,7 +4195,9 @@ private final class TestPlaybackEngine: PlaybackEngine {
 
     func setRate(_ rate: Float) throws {}
 
-    func apply(_ effects: AudioEffectConfiguration) throws {}
+    func apply(_ effects: AudioEffectConfiguration) throws {
+        appliedEffects.append(effects)
+    }
 
     func dispose() {
         disposeCount += 1

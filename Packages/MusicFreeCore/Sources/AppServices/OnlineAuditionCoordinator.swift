@@ -633,7 +633,7 @@ public final class OnlineAuditionCoordinator: OnlineAuditionServing {
                 hasStartedActiveGeneration = true
             }
             if phase == .stopped {
-                // A natural VLC EOF is delivered as `.phaseChanged(.stopped)`
+                // A natural EOF may arrive as `.phaseChanged(.stopped)`
                 // followed by `.ended` for the same generation. Keep the
                 // generation alive until the terminal event so handleEnded()
                 // can advance the frozen audition queue, and avoid publishing

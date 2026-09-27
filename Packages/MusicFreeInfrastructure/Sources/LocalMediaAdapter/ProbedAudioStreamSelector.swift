@@ -5,8 +5,8 @@ enum ProbedAudioStreamSelector {
   static func preferred(in probe: MediaProbeResult) -> AudioStreamSelection? {
     let tracks = probe.decodableAudioTracks
     // A decoder's track order is not a default-track signal. Only persist a
-    // selection when the probe explicitly reports the default; otherwise VLC
-    // must retain its own container-level choice.
+    // selection when the probe explicitly reports the default; otherwise the
+    // decoder must retain its own container-level choice.
     guard tracks.count > 1, let selected = tracks.first(where: \.isDefault) else {
       return nil
     }
