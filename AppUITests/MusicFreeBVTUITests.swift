@@ -1726,6 +1726,66 @@ final class MusicFreeBVTUITests: XCTestCase {
     }
 
     @MainActor
+    func testLiveDSAudioAuditionContinuesInBackgroundIfEnabled() throws {
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        app.launch()
+        tapTab("Online Sources", in: app)
+
+        let source = app.cells.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@", "onlineSources.source.dsaudio."
+        )).firstMatch
+        guard source.waitForExistence(timeout: 20) else {
+            throw XCTSkip("No persisted DS Audio source is available on this simulator.")
+        }
+        source.tap()
+
+        let allMusic = app.cells.matching(NSPredicate(
+            format: "identifier ENDSWITH %@", ".category.allMusic"
+        )).firstMatch
+        XCTAssertTrue(allMusic.waitForExistence(timeout: 10))
+        allMusic.tap()
+
+        let audition = app.buttons.matching(NSPredicate(
+            format: "identifier ENDSWITH %@", ".item.music_1860971.audition"
+        )).firstMatch
+        XCTAssertTrue(audition.waitForExistence(timeout: 20))
+        XCTAssertTrue(audition.isHittable)
+        audition.tap()
+
+        let title = app.staticTexts["player.onlineAudition.title"].firstMatch
+        XCTAssertTrue(title.waitForExistence(timeout: 30))
+        title.tap()
+        let slider = app.sliders["player.onlineAudition.sheet.progress"].firstMatch
+        XCTAssertTrue(slider.waitForExistence(timeout: 10))
+        let enabled = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "enabled == true"), object: slider
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 30), .completed)
+        let before = try auditionTime(from: slider)
+        XCTAssertGreaterThanOrEqual(before.duration, 60)
+
+        XCUIDevice.shared.press(.home)
+        XCTAssertTrue(app.wait(for: .runningBackground, timeout: 10))
+        Thread.sleep(forTimeInterval: 8)
+        let foregroundStartedAt = Date()
+        app.activate()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
+        if !slider.exists {
+            XCTAssertTrue(title.waitForExistence(timeout: 10))
+            title.tap()
+        }
+        XCTAssertTrue(slider.waitForExistence(timeout: 10))
+        let after = try auditionTime(from: slider)
+        let foregroundElapsed = Date().timeIntervalSince(foregroundStartedAt)
+        XCTAssertGreaterThan(
+            Double(after.position - before.position),
+            foregroundElapsed + 2,
+            "Audition advanced only after returning to the foreground."
+        )
+    }
+
+    @MainActor
     private func auditionTime(from slider: XCUIElement) throws -> (position: Int, duration: Int) {
         guard let value = slider.value as? String else {
             throw XCTSkip("The audition slider did not expose its time value.")
