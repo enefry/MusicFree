@@ -3,6 +3,7 @@ import FFmpegAudioKit
 import Foundation
 import MediaSourceAPI
 import MusicDomain
+import OSLog
 import PlaybackAPI
 
 /// 独立于 VLC 的音频播放引擎：ffmpeg 解码 → AVAudioEngine 输出。
@@ -14,6 +15,7 @@ import PlaybackAPI
 /// 支持 CUE 分段播放及 AVAudioUnitEQ 均衡器。其它效果能力位按实现逐步点亮。
 @MainActor
 public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControlling {
+    private static let logger = Logger(subsystem: "win.tools4me.music", category: "ffmpeg-playback")
     /// 随当前资源变化：远程顺序流（服务端不支持 Range，或尚未拿到响应头）
     /// 不含 `.seeking`，供上层据此隐藏进度拖动。
     public var capabilities: PlaybackCapabilities {
@@ -220,6 +222,7 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
                 throw CancellationError()
             }
             guard isCurrentPreparation(generation) else { throw CancellationError() }
+            Self.logger.error("prepare failed: \(Self.safeErrorCode(error), privacy: .public)")
             let playbackError = Self.playbackError(from: error, fallbackCode: "ffmpeg_open_failed")
             fail(playbackError, generation: generation, itemID: item.itemID)
             throw playbackError
@@ -690,6 +693,7 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
         itemID: MediaItemID
     ) {
         guard epoch == feederEpoch, generation == state.generation else { return }
+        Self.logger.error("decode failed: \(Self.safeErrorCode(error), privacy: .public)")
         fail(
             Self.playbackError(from: error, fallbackCode: "ffmpeg_decode_failed"),
             generation: generation,
@@ -712,6 +716,31 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
     }
 
     /// 把字节源/解码器错误映射为 `PlaybackError`。诊断码不含 URL 或请求头。
+    private static func safeErrorCode(_ error: Error) -> String {
+        switch error {
+        case let URLSessionByteSource.SourceError.httpStatus(status):
+            return "http_\(status)"
+        case let URLSessionByteSource.SourceError.network(code):
+            return "network_\(code.rawValue)"
+        case URLSessionByteSource.SourceError.invalidResponse:
+            return "invalid_response"
+        case URLSessionByteSource.SourceError.notSeekable:
+            return "not_seekable"
+        case URLSessionByteSource.SourceError.cancelled:
+            return "cancelled"
+        case URLSessionByteSource.SourceError.interrupted:
+            return "interrupted"
+        case let FFmpegAudioDecoder.DecoderError.open(status):
+            return "decoder_open_\(status)"
+        case FFmpegAudioDecoder.DecoderError.io:
+            return "decoder_io"
+        case FFmpegAudioDecoder.DecoderError.unsupportedFormat:
+            return "unsupported_format"
+        default:
+            return "other"
+        }
+    }
+
     private static func playbackError(from error: Error, fallbackCode: String) -> PlaybackError {
         switch error {
         case let error as PlaybackError:
