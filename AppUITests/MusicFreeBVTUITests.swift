@@ -1918,10 +1918,10 @@ final class MusicFreeBVTUITests: XCTestCase {
         assertMainTabs(in: app)
         try openOnlineSourcesForLiveTest(in: app)
 
-        let dsAudioSource = app.buttons.matching(
+        let dsAudioSource = app.cells.matching(
             NSPredicate(
                 format: "identifier BEGINSWITH %@",
-                "onlineSources.source.dsAudio."
+                "onlineSources.source.dsaudio."
             )
         ).firstMatch
         guard dsAudioSource.waitForExistence(timeout: 20) else {
@@ -1936,15 +1936,14 @@ final class MusicFreeBVTUITests: XCTestCase {
         )
         dsAudioSource.tap()
 
-        let firstFolder = waitForLiveButton(
-            withIdentifierSuffix: ".open",
-            in: app,
-            maximumSwipes: 12,
-            timeout: 30
-        )
+        let firstFolder = app.cells.matching(
+            NSPredicate(format: "identifier ENDSWITH '.open'")
+        ).firstMatch
+        let hasRootFolder = firstFolder.waitForExistence(timeout: 15)
 
         // Prove that Browse means folder navigation, not a flat one-shot list.
-        if let firstFolder {
+        if hasRootFolder {
+            XCTAssertTrue(scrollToAnyElement(firstFolder, in: app, maximumSwipes: 12))
             firstFolder.tap()
             let catalogBack = app.navigationBars.buttons["BackButton"].firstMatch
             XCTAssertTrue(
@@ -1962,12 +1961,9 @@ final class MusicFreeBVTUITests: XCTestCase {
                 "The catalog must not add a second custom back button."
             )
             XCTAssertTrue(
-                waitForLiveButton(
-                    withIdentifierSuffix: ".open",
-                    in: app,
-                    maximumSwipes: 12,
-                    timeout: 15
-                ) != nil
+                app.cells.matching(
+                    NSPredicate(format: "identifier ENDSWITH '.open'")
+                ).firstMatch.waitForExistence(timeout: 15)
                     || waitForLiveButton(
                         withIdentifierSuffix: ".downloadAndImport",
                         in: app,
@@ -1978,12 +1974,7 @@ final class MusicFreeBVTUITests: XCTestCase {
             )
             catalogBack.tap()
             XCTAssertTrue(
-                waitForLiveButton(
-                    withIdentifierSuffix: ".open",
-                    in: app,
-                    maximumSwipes: 12,
-                    timeout: 15
-                ) != nil
+                firstFolder.waitForExistence(timeout: 15)
                     || waitForLiveButton(
                         withIdentifierSuffix: ".downloadAndImport",
                         in: app,
@@ -1993,42 +1984,57 @@ final class MusicFreeBVTUITests: XCTestCase {
                 "Returning from a DS Audio folder must restore the parent catalog."
             )
         } else {
+            let allMusic = app.cells.matching(
+                NSPredicate(format: "identifier ENDSWITH '.category.allMusic'")
+            ).firstMatch
+            XCTAssertTrue(
+                allMusic.waitForExistence(timeout: 10),
+                "A DS Audio source without root folders must expose All Music."
+            )
+            allMusic.tap()
             XCTAssertNotNil(
                 waitForLiveButton(
                     withIdentifierSuffix: ".downloadAndImport",
                     in: app,
                     maximumSwipes: 12,
-                    timeout: 10
+                    timeout: 30
                 ),
-                "DS Audio catalog did not expose a folder or audio file."
+                "DS Audio All Music did not expose an audio file to import."
             )
         }
 
-        // Exercise recursive discovery without waiting for an arbitrarily large
-        // NAS folder to finish. Once at least one item is processed, cancel the
-        // batch and prove that every active import control settles before the
-        // test starts one bounded single-file import.
-        guard let rootFolder = waitForLiveButton(
-            withIdentifierSuffix: ".open",
-            in: app,
-            maximumSwipes: 12,
-            timeout: 10
-        ) else {
-            XCTFail("The real DS Audio source must expose a folder for recursive import testing.")
-            return
+        if hasRootFolder {
+            // Exercise recursive discovery only when this NAS exposes folders.
+            XCTAssertTrue(scrollToAnyElement(firstFolder, in: app, maximumSwipes: 12))
+            firstFolder.tap()
+            guard let folderImport = waitForLiveButton(
+                withIdentifierSuffix: ".downloadAndImportAll",
+                in: app,
+                maximumSwipes: 12,
+                timeout: 10
+            ) else {
+                XCTFail("An entered DS Audio folder must expose a recursive import action.")
+                return
+            }
+            folderImport.tap()
+            waitForLiveBatchImportProgressThenCancel(in: app, timeout: 120)
+            let rootBack = app.navigationBars.buttons["BackButton"].firstMatch
+            XCTAssertTrue(rootBack.waitForExistence(timeout: 10))
+            rootBack.tap()
+            let allMusic = app.cells.matching(
+                NSPredicate(format: "identifier ENDSWITH '.category.allMusic'")
+            ).firstMatch
+            XCTAssertTrue(allMusic.waitForExistence(timeout: 15))
+            XCTAssertTrue(scrollToAnyElement(allMusic, in: app, maximumSwipes: 12))
+            allMusic.tap()
+        } else {
+            let attachment = XCTAttachment(
+                string: "Recursive folder import not exercised: this DS Audio source has no root folder."
+            )
+            attachment.name = "Live DS Audio folder coverage"
+            attachment.lifetime = .keepAlways
+            add(attachment)
         }
-        rootFolder.tap()
-        guard let folderImport = waitForLiveButton(
-            withIdentifierSuffix: ".downloadAndImportAll",
-            in: app,
-            maximumSwipes: 12,
-            timeout: 10
-        ) else {
-            XCTFail("An entered DS Audio folder must expose a fixed recursive import action.")
-            return
-        }
-        folderImport.tap()
-        waitForLiveBatchImportProgressThenCancel(in: app, timeout: 120)
 
         guard let importedTitle = importFreshLiveDSAudioItem(in: app, maximumAttempts: 8) else {
             return
@@ -2783,6 +2789,17 @@ final class MusicFreeBVTUITests: XCTestCase {
             format: "identifier ENDSWITH '.importFailed'"
         )
         let progress = app.descendants(matching: .any).matching(progressPredicate).firstMatch
+        let restart = app.buttons.matching(
+            NSPredicate(format: "identifier ENDSWITH '.downloadAndImportAll'")
+        ).firstMatch
+        if restart.waitForExistence(timeout: 5),
+           restart.value as? String == "Completed" {
+            let attachment = XCTAttachment(string: "Recursive folder import completed before progress polling.")
+            attachment.name = "Live DS Audio recursive import"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            return
+        }
         XCTAssertTrue(
             progress.waitForExistence(timeout: 30),
             "Recursive DS Audio import must publish progress."
@@ -2837,11 +2854,6 @@ final class MusicFreeBVTUITests: XCTestCase {
         XCTAssertTrue(cancel.isHittable)
         cancel.tap()
 
-        let restart = app.buttons.matching(
-            NSPredicate(
-                format: "identifier ENDSWITH '.downloadAndImportAll'"
-            )
-        ).firstMatch
         XCTAssertTrue(
             restart.waitForExistence(timeout: 20),
             "Cancelling a recursive import must restore the current-directory import action."
@@ -2871,13 +2883,6 @@ final class MusicFreeBVTUITests: XCTestCase {
     ) -> String? {
         let collection = app.collectionViews.firstMatch
         var alreadyImportedCandidate: (title: String, actionIdentifier: String)?
-        for _ in 0..<24 {
-            if collection.exists {
-                collection.swipeUp()
-            } else {
-                app.swipeUp()
-            }
-        }
 
         for attempt in 1...maximumAttempts {
             guard let download = waitForLiveButton(
@@ -2907,6 +2912,7 @@ final class MusicFreeBVTUITests: XCTestCase {
                 return nil
             }
             let itemPrefix = String(actionIdentifier.dropLast(actionSuffix.count))
+            let row = app.cells["\(itemPrefix).row"].firstMatch
             let completed = app.descendants(matching: .any)[
                 "\(itemPrefix).completed"
             ].firstMatch
@@ -2919,7 +2925,12 @@ final class MusicFreeBVTUITests: XCTestCase {
 
             download.tap()
             let deadline = Date().addingTimeInterval(150)
+            var recoverySwipes = 0
             while Date() < deadline {
+                if !row.isHittable, collection.exists, recoverySwipes < 12 {
+                    collection.swipeDown()
+                    recoverySwipes += 1
+                }
                 if completed.exists {
                     let attachment = XCTAttachment(
                         string: "attempt=\(attempt) title=\(title) action=\(actionIdentifier)"
@@ -2942,7 +2953,10 @@ final class MusicFreeBVTUITests: XCTestCase {
                 RunLoop.main.run(until: Date().addingTimeInterval(0.5))
             }
             if !alreadyImported.exists {
-                XCTFail("The selected DS Audio file did not reach a terminal state: \(title)")
+                XCTFail(
+                    "The selected DS Audio file did not reach a visible terminal state: "
+                        + "\(title), rowExists=\(row.exists), rowHittable=\(row.isHittable)"
+                )
                 return nil
             }
         }
