@@ -8,8 +8,13 @@ import PlaybackAPI
 import Testing
 
 private final class FFmpegFixtureBundleMarker {}
-private let externalFFmpegFixtures = Bundle(for: FFmpegFixtureBundleMarker.self)
-    .bundleURL.appendingPathComponent("ExternalFixtures", isDirectory: true)
+private let externalFFmpegFixtures: URL = {
+    let bundled = Bundle(for: FFmpegFixtureBundleMarker.self)
+        .bundleURL.appendingPathComponent("ExternalFixtures", isDirectory: true)
+    if FileManager.default.fileExists(atPath: bundled.path) { return bundled }
+    return FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
+        .first?.appendingPathComponent("ExternalFixtures", isDirectory: true) ?? bundled
+}()
 
 /// Runs inside the App test host, so Xcode can exercise the real audio graph
 /// on a physical device rather than a hostless Swift Package test bundle.
