@@ -1234,15 +1234,15 @@ func settingsFeatureConsumesExternalChanges() async throws {
 @Test("Dependency license metadata preserves bundled release evidence")
 func dependencyLicenseMetadataRoundTrips() throws {
     let dependency = SettingsDependencyLicense(
-        id: "vlckit-binary",
-        name: "VLCKit / libVLC binary",
-        version: "4.0.0-alpha.20260805.1123",
+        id: "ffmpeg-audio",
+        name: "FFmpeg audio libraries",
+        version: "8.1.2",
         license: "LGPL-2.1-or-later",
         kind: .binary,
-        licenseFile: "VLCKit-LGPL-2.1.txt",
+        licenseFile: "FFmpegAudio/COPYING.LGPLv2.1",
         licenseText: "GNU LESSER GENERAL PUBLIC LICENSE",
-        revision: "818aca0e9cd605c69a3a5670c2ae662b1ca0783e",
-        checksum: "a8bd5703c324ed8e7c39241c6d091c56e99f13cf585b42fbeb0d4c6523f9386f"
+        revision: nil,
+        checksum: "1c65e5ec6be5329fc632847f914e602aa33cc1fd53908f0a498150a26fb2c9f8"
     )
 
     let data = try JSONEncoder().encode(dependency)
