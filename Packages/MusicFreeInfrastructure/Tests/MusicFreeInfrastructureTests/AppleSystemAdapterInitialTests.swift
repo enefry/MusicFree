@@ -3,6 +3,10 @@ import MusicDomain
 import SystemIntegrationAPI
 import Testing
 
+#if os(iOS)
+import AVFoundation
+#endif
+
 #if os(iOS) && canImport(MediaPlayer)
 import Dispatch
 @preconcurrency import MediaPlayer
@@ -69,6 +73,77 @@ func appleAudioSessionEventMapping() {
         )
     )
 }
+
+#if os(iOS)
+@Test("Audio session notifications reach the active event stream")
+@MainActor
+func audioSessionNotificationsReachEventStream() async throws {
+    let center = NotificationCenter()
+    let client = RecordingAudioSessionClient()
+    let manager = try AppleAudioSessionManager(client: client, notificationCenter: center)
+    let stream = manager.makeEventStream()
+    let received = Task { @MainActor in
+        var events: [AudioSessionEvent] = []
+        for await event in stream {
+            events.append(event)
+        }
+        return events
+    }
+
+    try await manager.activate()
+    let session = AVAudioSession.sharedInstance()
+    center.post(
+        name: AVAudioSession.interruptionNotification,
+        object: session,
+        userInfo: [AVAudioSessionInterruptionTypeKey:
+            AppleAudioSessionEventMapper.interruptionBeganRawValue]
+    )
+    center.post(
+        name: AVAudioSession.interruptionNotification,
+        object: session,
+        userInfo: [
+            AVAudioSessionInterruptionTypeKey:
+                AppleAudioSessionEventMapper.interruptionEndedRawValue,
+            AVAudioSessionInterruptionOptionKey:
+                AppleAudioSessionEventMapper.interruptionShouldResumeMask,
+        ]
+    )
+    center.post(
+        name: AVAudioSession.routeChangeNotification,
+        object: session,
+        userInfo: [AVAudioSessionRouteChangeReasonKey:
+            AppleAudioSessionEventMapper.routeNewDeviceAvailableRawValue]
+    )
+
+    for _ in 0 ..< 50 { await Task.yield() }
+    await manager.deactivate()
+    #expect(await received.value == [
+        .interruption(.began),
+        .interruption(.ended(shouldResume: true)),
+        .routeChanged(AudioRouteChange(
+            reason: .newDeviceAvailable,
+            isOutputAvailable: true,
+            isInputAvailable: false
+        )),
+    ])
+
+    let inactiveStream = manager.makeEventStream()
+    let inactiveEvents = Task { @MainActor in
+        var events: [AudioSessionEvent] = []
+        for await event in inactiveStream { events.append(event) }
+        return events
+    }
+    center.post(
+        name: AVAudioSession.interruptionNotification,
+        object: session,
+        userInfo: [AVAudioSessionInterruptionTypeKey:
+            AppleAudioSessionEventMapper.interruptionBeganRawValue]
+    )
+    for _ in 0 ..< 50 { await Task.yield() }
+    await manager.deactivate()
+    #expect(await inactiveEvents.value.isEmpty)
+}
+#endif
 
 @Test("Apple capability detection stays platform explicit")
 @MainActor
