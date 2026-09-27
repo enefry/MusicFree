@@ -1710,13 +1710,13 @@ final class MusicFreeBVTUITests: XCTestCase {
         let app = XCUIApplication()
         defer { app.terminate() }
         app.launch()
-        tapTab("Online Sources", in: app)
+        try openOnlineSourcesForLiveTest(in: app)
 
         let source = app.cells.matching(NSPredicate(
             format: "identifier BEGINSWITH %@", "onlineSources.source.dsaudio."
         )).firstMatch
         guard source.waitForExistence(timeout: 20) else {
-            throw XCTSkip("No persisted DS Audio source is available on this simulator.")
+            throw XCTSkip("No persisted DS Audio source is available on this device.")
         }
         source.tap()
 
@@ -1778,13 +1778,13 @@ final class MusicFreeBVTUITests: XCTestCase {
         let app = XCUIApplication()
         defer { app.terminate() }
         app.launch()
-        tapTab("Online Sources", in: app)
+        try openOnlineSourcesForLiveTest(in: app)
 
         let source = app.cells.matching(NSPredicate(
             format: "identifier BEGINSWITH %@", "onlineSources.source.dsaudio."
         )).firstMatch
         guard source.waitForExistence(timeout: 20) else {
-            throw XCTSkip("No persisted DS Audio source is available on this simulator.")
+            throw XCTSkip("No persisted DS Audio source is available on this device.")
         }
         source.tap()
 
@@ -1827,13 +1827,13 @@ final class MusicFreeBVTUITests: XCTestCase {
         let app = XCUIApplication()
         defer { app.terminate() }
         app.launch()
-        tapTab("Online Sources", in: app)
+        try openOnlineSourcesForLiveTest(in: app)
 
         let source = app.cells.matching(NSPredicate(
             format: "identifier BEGINSWITH %@", "onlineSources.source.dsaudio."
         )).firstMatch
         guard source.waitForExistence(timeout: 20) else {
-            throw XCTSkip("No persisted DS Audio source is available on this simulator.")
+            throw XCTSkip("No persisted DS Audio source is available on this device.")
         }
         source.tap()
 
@@ -1916,7 +1916,7 @@ final class MusicFreeBVTUITests: XCTestCase {
         app.launch()
 
         assertMainTabs(in: app)
-        tapTab("Online Sources", in: app)
+        try openOnlineSourcesForLiveTest(in: app)
 
         let dsAudioSource = app.buttons.matching(
             NSPredicate(
@@ -1926,7 +1926,7 @@ final class MusicFreeBVTUITests: XCTestCase {
         ).firstMatch
         guard dsAudioSource.waitForExistence(timeout: 20) else {
             throw XCTSkip(
-                "No persisted real DS Audio source was found on this simulator; "
+                "No persisted real DS Audio source was found on this device; "
                     + "complete DSM login and source setup before running the live test."
             )
         }
@@ -2317,6 +2317,15 @@ final class MusicFreeBVTUITests: XCTestCase {
         XCTAssertTrue(tracks.waitForExistence(timeout: 15))
         let trackRows = tracks.cells.containing(.staticText, identifier: trackTitle)
         XCTAssertEqual(trackRows.count, 1)
+    }
+
+    @MainActor
+    private func openOnlineSourcesForLiveTest(in app: XCUIApplication) throws {
+        guard app.tabBars.buttons["Online Sources"].firstMatch
+            .waitForExistence(timeout: 10) else {
+            throw XCTSkip("Online Sources is not enabled on this device.")
+        }
+        tapTab("Online Sources", in: app)
     }
 
     @MainActor
