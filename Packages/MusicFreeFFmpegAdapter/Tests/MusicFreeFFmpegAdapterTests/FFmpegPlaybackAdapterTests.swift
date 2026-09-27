@@ -397,6 +397,61 @@ private func toneAmplitude(_ samples: [Float], sampleRate: Double, frequency: Do
         #expect(peak.isFinite && peak > 0.01, "\(filename) decoded silent or non-finite PCM")
     }
 
+    @MainActor
+    @Test func packagedFormatsPlayToCompletionAcrossEngineReuse() async throws {
+        let filenames = [
+            "ac3.ac3", "alac.m4a", "eac3.eac3", "opus.opus", "tta.tta",
+            "vorbis.ogg", "wavpack.wv", "wmav2.wma", "pcm24.wav", "aiff.aiff",
+            "caf.caf", "w64.w64", "au.au", "matroska.mka", "dts.dts",
+            "wmav1.wma", "pcm32.wav", "pcmfloat.wav", "pcmu8.wav", "aiff24.aiff",
+            "dsd-quarter-second.dsf",
+        ]
+        let engine = FFmpegPlaybackEngine()
+        defer { engine.dispose() }
+        let descriptor = try #require(engine.equalizerDescriptor)
+        let bassBoost = try #require(descriptor.presets.first { $0.name == "Bass Boost" })
+        let range = PlaybackRange(start: .milliseconds(50), end: .milliseconds(175))
+
+        for filename in filenames {
+            let url = try #require(Bundle.module.url(forResource: filename, withExtension: nil))
+            let probe = try FFmpegProbe.probe(localFileURL: url)
+            let item = PlaybackItem(
+                itemID: MediaItemID(sourceID: .local, externalID: filename),
+                resource: .local(url),
+                displaySnapshot: PlaybackDisplaySnapshot(
+                    title: filename,
+                    duration: probe.duration
+                )
+            )
+            try await engine.prepare(item, startAt: nil)
+            try engine.play()
+            for _ in 0 ..< 120 {
+                if engine.state.phase == .stopped || engine.state.phase == .failed { break }
+                try await Task.sleep(for: .milliseconds(25))
+            }
+            #expect(engine.state.phase == .stopped, "\(filename) did not finish playback")
+            #expect(engine.state.position > .zero, "\(filename) ended without progress")
+
+            try engine.apply(AudioEffectConfiguration(equalizer: bassBoost.configuration))
+            let cueItem = PlaybackItem(
+                itemID: MediaItemID(sourceID: .local, externalID: "cue-\(filename)"),
+                resource: .local(url),
+                selection: PlaybackSelection(range: range),
+                displaySnapshot: PlaybackDisplaySnapshot(title: filename, duration: probe.duration)
+            )
+            try await engine.prepare(cueItem, startAt: nil)
+            #expect(engine.state.duration == range.duration)
+            #expect(!engine.equalizerUnit.bypass)
+            try engine.play()
+            for _ in 0 ..< 120 {
+                if engine.state.phase == .stopped || engine.state.phase == .failed { break }
+                try await Task.sleep(for: .milliseconds(25))
+            }
+            #expect(engine.state.phase == .stopped, "\(filename) CUE range did not finish")
+            #expect(engine.state.position == range.duration)
+        }
+    }
+
     @Test(arguments: [
         "ac3.ac3", "alac.m4a", "eac3.eac3", "opus.opus", "tta.tta",
         "vorbis.ogg", "wavpack.wv", "wmav2.wma", "pcm24.wav", "aiff.aiff",
@@ -479,7 +534,7 @@ private func toneAmplitude(_ samples: [Float], sampleRate: Double, frequency: Do
     }
 
     @Test func appMetadataReaderPreservesUnicodeTagsAndArtwork() async throws {
-        // 0.4s sine FLAC with a 32x32 JPEG attached picture and UTF-8 tags.
+        // Metadata-only FLAC with a 32x32 JPEG attached picture and UTF-8 tags.
         let url = try #require(Bundle.module.url(
             forResource: "tagged-metadata", withExtension: "flac"
         ))

@@ -64,7 +64,8 @@ func googleDriveHTTPTransportMapsCatalog() async throws {
         configuration: configuration,
         session: GoogleDriveOAuthSession(accessToken: "fixture-token"),
         request: SourceBrowseRequest(
-            parentID: SourceObjectID(sourceID: sourceID, externalID: "nested-folder")
+            parentID: SourceObjectID(sourceID: sourceID, externalID: "nested-folder"),
+            pageSize: 2
         )
     )
     let childRequestURL = try #require(client.requests.last?.url)

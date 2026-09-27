@@ -248,10 +248,13 @@ private actor QueueFixtureOnlineSources: OnlineSourceServing {
         if suspendsDownloads {
             try await Task.sleep(for: .seconds(60))
         }
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("queue-fixture-\(UUID().uuidString).m4a")
+        try Data("fixture-audio".utf8).write(to: fileURL, options: .atomic)
         return DownloadReceipt(
             sourceID: sourceID,
             itemID: itemID,
-            fileURL: URL(fileURLWithPath: "/private/temporary/queue-\(itemID.externalID).m4a")
+            fileURL: fileURL
         )
     }
 

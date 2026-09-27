@@ -908,7 +908,9 @@ func appServicesPreserveAlbumArtworkDuringTrackUpdate() async throws {
 func appServicesMetadataEnrichmentKeepsArtistlessAlbumIdentity() async throws {
     let itemID = MediaItemID(sourceID: .local, externalID: "artistless-album-track")
     let albumID = AlbumID("local-album-artistless-album")
-    let albumArtistID = ArtistID("artistless-album-artist")
+    let albumArtistID = ArtistID(
+        "local-artist-\(MusicContentIdentity.token("Album Artist"))"
+    )
     let repository = TestLibraryRepository(
         tracks: [Track(id: itemID, title: "Track", albumID: albumID)],
         albums: [Album(id: albumID, title: "Album")]

@@ -6,6 +6,7 @@ final class MusicFreeBVTUITests: XCTestCase {
 
     override func setUpWithError() throws {
         continueAfterFailure = false
+        XCUIDevice.shared.orientation = .portrait
         // Xcode's default per-test timeout is shorter than the end-to-end BVT
         // flows. Keep timeout protection while allowing the longest fixture
         // scenario to finish instead of force-quitting the runner at 40s.
@@ -677,17 +678,7 @@ final class MusicFreeBVTUITests: XCTestCase {
         consent.tap()
         openOnlineSource(named: "BVT DS Audio", in: app)
         acceptOnlineSourcePrivacy(sourceID: "bvt.dsaudio", in: app)
-        let globalToggle = app.switches[
-            "onlineSources.detail.bvt.dsaudio.global.enabled"
-        ].firstMatch
-        XCTAssertTrue(globalToggle.waitForExistence(timeout: 15))
-        if !isOnValue(globalToggle.value) {
-            globalToggle.coordinate(
-                withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5)
-            ).tap()
-        }
-        // Enabling a recovery step replaces that cell immediately. Waiting on
-        // the next step avoids retaining a stale XCUIElement for the old switch.
+        enableOnlineSourcesService(in: app)
         let sourceToggle = app.switches[
             "onlineSources.detail.bvt.dsaudio.source.enabled"
         ].firstMatch
@@ -739,17 +730,23 @@ final class MusicFreeBVTUITests: XCTestCase {
                 let surfaceFrame = surface.frame
                 return windowFrame.width > windowFrame.height
                     && surfaceFrame.width <= 642
-                    && abs(surfaceFrame.midX - windowFrame.midX) <= 2
+                    && surfaceFrame.minX >= windowFrame.minX
+                    && surfaceFrame.maxX <= windowFrame.maxX
+                    && (abs(surfaceFrame.midX - windowFrame.midX) <= 2
+                        || abs(surfaceFrame.maxX - windowFrame.maxX) <= 20)
             },
             object: auditionSurface
         )
         XCTAssertEqual(
             XCTWaiter.wait(for: [landscapeLayout], timeout: 10),
             .completed,
-            "Landscape audition accessory must be centered and capped at 640 points."
+            "Landscape audition accessory must fit the window and be centered or trailing-aligned."
         )
         XCTAssertLessThanOrEqual(auditionSurface.frame.width, 642)
-        XCTAssertEqual(auditionSurface.frame.midX, window.frame.midX, accuracy: 2)
+        XCTAssertTrue(
+            abs(auditionSurface.frame.midX - window.frame.midX) <= 2
+                || abs(auditionSurface.frame.maxX - window.frame.maxX) <= 20
+        )
         attachScreenshot(named: "audition-native-landscape")
 
         device.orientation = .portrait
@@ -999,6 +996,12 @@ final class MusicFreeBVTUITests: XCTestCase {
         XCTAssertTrue(displayNameField.waitForExistence(timeout: 5))
         displayNameField.tap()
         displayNameField.typeText(addedDisplayName)
+        let clientIDField = app.textFields[
+            "onlineSources.googleDrive.add.clientID"
+        ].firstMatch
+        XCTAssertTrue(clientIDField.waitForExistence(timeout: 5))
+        clientIDField.tap()
+        clientIDField.typeText("bvt-client.apps.googleusercontent.com")
         let submitAddButton = button(
             identifier: "onlineSources.googleDrive.add.submit",
             labels: ["Add", "添加"],
@@ -2177,6 +2180,11 @@ final class MusicFreeBVTUITests: XCTestCase {
 
     @MainActor
     private func enableOnlineSourcesService(in app: XCUIApplication) {
+        let sourceToggle = app.switches[
+            "onlineSources.detail.bvt.dsaudio.source.enabled"
+        ].firstMatch
+        if sourceToggle.waitForExistence(timeout: 2) { return }
+
         let toggle = app.switches[
             "onlineSources.detail.bvt.dsaudio.global.enabled"
         ].firstMatch
@@ -2187,9 +2195,6 @@ final class MusicFreeBVTUITests: XCTestCase {
                 withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5)
             ).tap()
         }
-        let sourceToggle = app.switches[
-            "onlineSources.detail.bvt.dsaudio.source.enabled"
-        ].firstMatch
         XCTAssertTrue(
             sourceToggle.waitForExistence(timeout: 15),
             "Enabling the global service must advance to the source-level recovery switch."

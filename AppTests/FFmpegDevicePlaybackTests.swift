@@ -19,12 +19,15 @@ private let externalFFmpegFixtures = Bundle(for: FFmpegFixtureBundleMarker.self)
     func packagedFormatsPlayToEnd() async throws {
         let bundle = Bundle(for: FFmpegFixtureBundleMarker.self)
         let fixtures = try #require(bundle.url(forResource: "Fixtures", withExtension: nil))
-        let longALACNames: Set<String> = ["current.m4a", "reencoded.m4a"]
+        // The tagged FLAC fixture has metadata and artwork but no PCM frames.
+        let nonPlaybackNames: Set<String> = [
+            "current.m4a", "reencoded.m4a", "tagged-metadata.flac"
+        ]
         let urls = try FileManager.default.contentsOfDirectory(
             at: fixtures, includingPropertiesForKeys: nil
-        ).filter { !longALACNames.contains($0.lastPathComponent) }
+        ).filter { !nonPlaybackNames.contains($0.lastPathComponent) }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
-        #expect(urls.count == 28)
+        #expect(urls.count == 27)
 
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playback)
@@ -56,6 +59,23 @@ private let externalFFmpegFixtures = Bundle(for: FFmpegFixtureBundleMarker.self)
                     try await Task.sleep(for: .milliseconds(50))
                 }
                 #expect(engine.state.phase == .stopped, "\(filename) did not play to its end")
+
+                let range = PlaybackRange(start: .milliseconds(50), end: .milliseconds(175))
+                let cueItem = PlaybackItem(
+                    itemID: MediaItemID(sourceID: .local, externalID: "cue-\(filename)"),
+                    resource: .local(url),
+                    selection: PlaybackSelection(range: range),
+                    displaySnapshot: PlaybackDisplaySnapshot(title: filename)
+                )
+                try await engine.prepare(cueItem, startAt: nil)
+                #expect(engine.state.duration == range.duration)
+                try engine.play()
+                for _ in 0 ..< 120 {
+                    if engine.state.phase == .stopped || engine.state.phase == .failed { break }
+                    try await Task.sleep(for: .milliseconds(50))
+                }
+                #expect(engine.state.phase == .stopped, "\(filename) CUE range did not finish")
+                #expect(engine.state.position == range.duration)
             } catch {
                 Issue.record("\(filename): \(error)")
             }

@@ -1877,8 +1877,11 @@ private final class OnlineSourceCatalogViewController: UIViewController,
         auditionObservationTask = Task { @MainActor [weak self] in
             guard let self else { return }
             let stream = self.model.auditionServing.makeSnapshotStream()
+            var hasObservedInitialSnapshot = false
             for await snapshot in stream {
                 guard !Task.isCancelled else { return }
+                let isInitialSnapshot = !hasObservedInitialSnapshot
+                hasObservedInitialSnapshot = true
                 self.latestAuditionSnapshot = snapshot
                 // The stream yields its initial idle snapshot asynchronously.
                 // It must not clear a request that was tapped before that
@@ -1886,7 +1889,8 @@ private final class OnlineSourceCatalogViewController: UIViewController,
                 // the pending item (or an unowned idle state) may clear it.
                 if snapshot.isActive {
                     self.pendingAuditionItemID = snapshot.itemID
-                } else if self.pendingAuditionItemID == nil
+                } else if (!isInitialSnapshot && snapshot.phase == .idle)
+                            || self.pendingAuditionItemID == nil
                             || snapshot.itemID == self.pendingAuditionItemID {
                     self.pendingAuditionItemID = nil
                 }
