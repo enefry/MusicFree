@@ -19,6 +19,7 @@ CUE range that begins after zero cannot play on such a stream.
   file plays the default track. Before adding a selector, account for the
   persisted `vlc-media-id:N` versus `ffmpeg-stream:N` identifier change.
 - App-host automation has played the packaged format samples on a physical
-  device. Real DS Audio, audible headphone output, physical route changes,
-  and the remaining advertised formats still need
-  acceptance checks before declaring the VLC adapter fully replaced.
+  device, and live DS Audio audition and seek have passed on a simulator.
+  Audible headphone output, physical route changes, interruptions, background
+  playback, and the remaining advertised formats still need acceptance checks
+  before declaring behavioral replacement complete.

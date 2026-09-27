@@ -17,10 +17,19 @@ check_exclusive_import() {
     fi
 }
 
-check_exclusive_import "VLCKit" "/Packages/MusicFreeVLCKitAdapter/Sources/VLCKitPlaybackAdapter/"
 check_exclusive_import "SwiftData" "/Packages/MusicFreeInfrastructure/(Sources/LibraryPersistenceAdapter|Tests/MusicFreeInfrastructureTests)/"
 check_exclusive_import "AVFAudio" "/Packages/MusicFreeInfrastructure/Sources/AppleSystemAdapter/"
 check_exclusive_import "MediaPlayer" "/Packages/MusicFreeInfrastructure/Sources/AppleSystemAdapter/"
+
+vlc_references=$(rg -n --glob '*.swift' --glob 'Package.swift' \
+    '^[[:space:]]*import[[:space:]]+VLCKit([[:space:]]|$)|MusicFreeVLCKit|VLCKitPlaybackAdapter' \
+    "$project_root/App" "$project_root/Packages" || true)
+vlc_project_references=$(rg -n 'VLCKit|MusicFreeVLCKit' "$project_root/project.yml" || true)
+if [ -n "$vlc_references$vlc_project_references" ]; then
+    printf 'App sources and project configuration must not depend on VLCKit:\n%s\n%s\n' \
+        "$vlc_references" "$vlc_project_references" >&2
+    violations=1
+fi
 
 # The app target has a single intentional SwiftUI boundary: SettingsHosting-
 # Controller.swift. Any other SwiftUI import or hosting API in App is a
@@ -39,7 +48,7 @@ if [ -n "$test_support_imports" ]; then
     violations=1
 fi
 
-feature_adapter_imports=$(rg -n --glob '*.swift' '^[[:space:]]*import[[:space:]]+(LocalMediaAdapter|LibraryPersistenceAdapter|VLCKitPlaybackAdapter|AppleSystemAdapter|PreferencesPersistenceAdapter)([[:space:]]|$)' "$project_root/Packages/MusicFreeUI/Sources" || true)
+feature_adapter_imports=$(rg -n --glob '*.swift' '^[[:space:]]*import[[:space:]]+(LocalMediaAdapter|LibraryPersistenceAdapter|FFmpegPlaybackAdapter|AppleSystemAdapter|PreferencesPersistenceAdapter)([[:space:]]|$)' "$project_root/Packages/MusicFreeUI/Sources" || true)
 if [ -n "$feature_adapter_imports" ]; then
     printf 'Feature targets must not import adapters:\n%s\n' "$feature_adapter_imports" >&2
     violations=1
