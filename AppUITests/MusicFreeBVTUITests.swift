@@ -1609,6 +1609,94 @@ final class MusicFreeBVTUITests: XCTestCase {
     }
 
     @MainActor
+    func testLiveDSAudioAuditionSeekIfEnabled() throws {
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        app.launch()
+        tapTab("Online Sources", in: app)
+
+        let source = app.cells.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@", "onlineSources.source.dsaudio."
+        )).firstMatch
+        guard source.waitForExistence(timeout: 20) else {
+            throw XCTSkip("No persisted DS Audio source is available on this simulator.")
+        }
+        source.tap()
+
+        let allMusic = app.cells.matching(NSPredicate(
+            format: "identifier ENDSWITH %@", ".category.allMusic"
+        )).firstMatch
+        if allMusic.waitForExistence(timeout: 10), allMusic.isHittable {
+            allMusic.tap()
+        }
+        var audition = waitForLiveButton(
+            withIdentifierSuffix: ".audition", in: app, maximumSwipes: 12, timeout: 20
+        )
+        if audition == nil,
+           let folder = waitForLiveButton(
+               withIdentifierSuffix: ".open", in: app, maximumSwipes: 12, timeout: 15
+           ) {
+            folder.tap()
+            audition = waitForLiveButton(
+                withIdentifierSuffix: ".audition", in: app, maximumSwipes: 12, timeout: 20
+            )
+        }
+        guard let audition else {
+            XCTFail("The logged-in DS Audio catalog has no playable item in the browsed page.")
+            return
+        }
+        audition.tap()
+
+        let title = app.staticTexts["player.onlineAudition.title"].firstMatch
+        XCTAssertTrue(title.waitForExistence(timeout: 30))
+        title.tap()
+        let slider = app.sliders["player.onlineAudition.sheet.progress"].firstMatch
+        XCTAssertTrue(slider.waitForExistence(timeout: 10))
+        let enabled = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "enabled == true"), object: slider
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 30), .completed)
+
+        let pause = app.buttons["player.onlineAudition.sheet.play"].firstMatch
+        XCTAssertTrue(pause.exists)
+        pause.tap()
+        let before = try auditionTime(from: slider)
+        XCTAssertGreaterThanOrEqual(before.duration, 60, "Choose a track long enough to test a clear jump.")
+        let targetFraction: CGFloat = before.position < before.duration / 2 ? 0.75 : 0.2
+        let beforeValue = try XCTUnwrap(slider.value as? String)
+        slider.adjust(toNormalizedSliderPosition: targetFraction)
+
+        let expected = Int(Double(before.duration) * Double(targetFraction))
+        let moved = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value != %@", beforeValue), object: slider
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [moved], timeout: 20), .completed)
+        let after = try auditionTime(from: slider)
+        XCTAssertLessThanOrEqual(abs(after.position - expected), 15)
+        XCTAssertGreaterThan(abs(after.position - before.position), 20)
+    }
+
+    @MainActor
+    private func auditionTime(from slider: XCUIElement) throws -> (position: Int, duration: Int) {
+        guard let value = slider.value as? String else {
+            throw XCTSkip("The audition slider did not expose its time value.")
+        }
+        let times = value.components(separatedBy: " / ")
+        func seconds(_ time: String) -> Int? {
+            let parts = time.split(separator: ":").compactMap { Int($0) }
+            guard parts.count == 2 else { return nil }
+            return parts[0] * 60 + parts[1]
+        }
+        guard times.count == 2,
+              let position = seconds(times[0]),
+              let duration = seconds(times[1]) else {
+            XCTFail("Unexpected audition time value: \(value)")
+            return (0, 0)
+        }
+        return (position, duration)
+    }
+
+    @MainActor
     func testLiveDSAudioBrowseAndImportIfEnabled() throws {
 #if !LIVE_DSAUDIO
         guard ProcessInfo.processInfo.environment["MUSICFREE_LIVE_DSAUDIO"] == "1" else {
