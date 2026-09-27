@@ -257,7 +257,7 @@ final class MusicFreeBVTUITests: XCTestCase {
 
         let progress = app.sliders["player.nowPlaying.progress"].firstMatch
         XCTAssertTrue(progress.waitForExistence(timeout: 15))
-        let before = try formalPlaybackElapsedTime(from: progress)
+        let before = try formalPlaybackTime(from: progress).elapsed
 
         XCUIDevice.shared.press(.home)
         XCTAssertTrue(app.wait(for: .runningBackground, timeout: 10))
@@ -271,7 +271,7 @@ final class MusicFreeBVTUITests: XCTestCase {
         }
         XCTAssertTrue(progress.waitForExistence(timeout: 10))
 
-        let after = try formalPlaybackElapsedTime(from: progress)
+        let after = try formalPlaybackTime(from: progress).elapsed
         let foregroundElapsed = Date().timeIntervalSince(foregroundStartedAt)
         XCTAssertGreaterThan(
             Double(after - before),
@@ -281,14 +281,68 @@ final class MusicFreeBVTUITests: XCTestCase {
     }
 
     @MainActor
-    private func formalPlaybackElapsedTime(from slider: XCUIElement) throws -> Int {
-        let value = try XCTUnwrap(slider.value as? String)
-        let elapsed = value.components(separatedBy: " / ")[0]
-        let parts = elapsed.split(separator: ":").compactMap { Int($0) }
-        return try XCTUnwrap(
-            parts.count == 2 ? parts[0] * 60 + parts[1] : nil,
-            "Unexpected formal playback progress: \(value)"
+    func testImportedCUETrackUsesLogicalPlaybackDuration() throws {
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        app.launchArguments = ["--uikit-shell", "--bvt-seed-cue"]
+        app.launch()
+
+        let songsSection = app.descendants(matching: .any)[
+            "library.home.section.tracks"
+        ].firstMatch
+        XCTAssertTrue(songsSection.waitForExistence(timeout: 20))
+        songsSection.tap()
+
+        let cueTrack = app.collectionViews["library.tracks.collection"].cells
+            .matching(NSPredicate(format: "label == %@", "BVT CUE Main")).firstMatch
+        XCTAssertTrue(cueTrack.waitForExistence(timeout: 30))
+        cueTrack.tap()
+
+        let miniTitle = app.staticTexts.matching(NSPredicate(
+            format: "identifier == %@ AND label == %@",
+            "player.mini.title", "BVT CUE Main"
+        )).firstMatch
+        XCTAssertTrue(miniTitle.waitForExistence(timeout: 15))
+
+        let miniPlayer = app.buttons["player.mini"].firstMatch
+        miniPlayer.coordinate(withNormalizedOffset: CGVector(dx: 0.30, dy: 0.50)).tap()
+        let progress = app.sliders["player.nowPlaying.progress"].firstMatch
+        XCTAssertTrue(progress.waitForExistence(timeout: 15))
+        XCTAssertTrue(progress.isEnabled)
+        let time = try formalPlaybackTime(from: progress)
+        XCTAssertTrue(
+            (24...25).contains(time.duration),
+            "The imported CUE track must play its 25-second range, not the 30-second file."
         )
+        progress.adjust(toNormalizedSliderPosition: 0.5)
+        let seeked = try formalPlaybackTime(from: progress)
+        XCTAssertTrue((10...16).contains(seeked.elapsed))
+        XCTAssertTrue((24...25).contains(seeked.duration))
+        let initialValue = try XCTUnwrap(progress.value as? String)
+        let progressed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value != %@", initialValue), object: progress
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [progressed], timeout: 5), .completed)
+        XCTAssertGreaterThan(try formalPlaybackTime(from: progress).elapsed, seeked.elapsed)
+    }
+
+    @MainActor
+    private func formalPlaybackTime(from slider: XCUIElement) throws -> (elapsed: Int, duration: Int) {
+        let value = try XCTUnwrap(slider.value as? String)
+        let fields = value.components(separatedBy: " / ")
+        func seconds(_ field: String) -> Int? {
+            let parts = field.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+                .split(separator: ":").compactMap { Int($0) }
+            guard parts.count == 2 else { return nil }
+            return parts[0] * 60 + parts[1]
+        }
+        guard fields.count == 2,
+              let elapsed = seconds(fields[0]),
+              let remaining = seconds(fields[1]) else {
+            XCTFail("Unexpected formal playback progress: \(value)")
+            return (0, 0)
+        }
+        return (elapsed, elapsed + remaining)
     }
 
     @MainActor
@@ -1804,11 +1858,12 @@ final class MusicFreeBVTUITests: XCTestCase {
         XCTAssertTrue(allMusic.waitForExistence(timeout: 10))
         allMusic.tap()
 
-        let audition = app.buttons.matching(NSPredicate(
-            format: "identifier ENDSWITH %@", ".item.music_1860971.audition"
-        )).firstMatch
-        XCTAssertTrue(audition.waitForExistence(timeout: 20))
-        XCTAssertTrue(audition.isHittable)
+        guard let audition = waitForLiveButton(
+            withIdentifierSuffix: ".audition", in: app, maximumSwipes: 12, timeout: 20
+        ) else {
+            XCTFail("The logged-in DS Audio catalog has no playable item in All Music.")
+            return
+        }
         audition.tap()
 
         let title = app.staticTexts["player.onlineAudition.title"].firstMatch

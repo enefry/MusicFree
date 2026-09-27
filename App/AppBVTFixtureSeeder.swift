@@ -10,6 +10,7 @@ import SettingsAPI
 /// The normal Debug and Release startup paths never write this fixture.
 enum AppBVTFixtureSeeder {
     static let launchArgument = "--bvt-seed-audio"
+    static let cueLaunchArgument = "--bvt-seed-cue"
     /// Adds the two imported remote-source-shaped tracks used by the UIKit
     /// Songs visual baseline without changing the default BVT fixture set.
     static let uikitSongsLaunchArgument = "--bvt-seed-uikit-songs"
@@ -77,12 +78,13 @@ enum AppBVTFixtureSeeder {
         }
 
         let shouldSeedAudio = arguments.contains(launchArgument)
+        let shouldSeedCue = arguments.contains(cueLaunchArgument)
         let shouldSeedUIKitSongs = arguments.contains(uikitSongsLaunchArgument)
         let shouldSeedLayout = arguments.contains(layoutLaunchArgument)
         let shouldSeedArtistAlbums = arguments.contains(artistAlbumsLaunchArgument)
         let shouldSeedNoAlbum = arguments.contains(noAlbumLaunchArgument)
         let shouldSeedOnlineSources = arguments.contains(onlineSourcesLaunchArgument)
-        guard shouldSeedAudio || shouldSeedUIKitSongs || shouldSeedLayout || shouldSeedArtistAlbums
+        guard shouldSeedAudio || shouldSeedCue || shouldSeedUIKitSongs || shouldSeedLayout || shouldSeedArtistAlbums
             || shouldSeedNoAlbum || shouldSeedOnlineSources
         else {
             return
@@ -94,7 +96,7 @@ enum AppBVTFixtureSeeder {
             )
         }
 
-        guard (shouldSeedAudio || shouldSeedUIKitSongs || shouldSeedLayout || shouldSeedArtistAlbums
+        guard (shouldSeedAudio || shouldSeedCue || shouldSeedUIKitSongs || shouldSeedLayout || shouldSeedArtistAlbums
             || shouldSeedNoAlbum),
               let documentsURL = try? fileManager.url(
                 for: .documentDirectory,
@@ -123,6 +125,25 @@ enum AppBVTFixtureSeeder {
                 let lyricsURL = audioFixtureDirectory.appendingPathComponent("\(title).lrc")
                 try? makeLyricsData(title: title).write(to: lyricsURL, options: .atomic)
             }
+        }
+
+        let cueDirectory = fixtureDirectory.appendingPathComponent("CUEFixture", isDirectory: true)
+        if shouldSeedCue {
+            try? fileManager.createDirectory(at: cueDirectory, withIntermediateDirectories: true)
+            let audioURL = cueDirectory.appendingPathComponent("BVT CUE Album.wav")
+            let cueURL = cueDirectory.appendingPathComponent("BVT CUE Album.cue")
+            try? makeWaveData(title: "BVT CUE Album").write(to: audioURL, options: .atomic)
+            try? Data("""
+            TITLE "BVT CUE Album"
+            PERFORMER "BVT Artist"
+            FILE "BVT CUE Album.wav" WAVE
+              TRACK 01 AUDIO
+                TITLE "BVT CUE Intro"
+                INDEX 01 00:00:00
+              TRACK 02 AUDIO
+                TITLE "BVT CUE Main"
+                INDEX 01 00:05:00
+            """.utf8).write(to: cueURL, options: .atomic)
         }
 
         if shouldSeedUIKitSongs {
