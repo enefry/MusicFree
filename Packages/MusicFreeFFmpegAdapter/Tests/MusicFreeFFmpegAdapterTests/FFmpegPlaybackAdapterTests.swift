@@ -154,17 +154,30 @@ private func toneAmplitude(_ samples: [Float], sampleRate: Double, frequency: Do
         )
 
         try await engine.prepare(item, startAt: nil)
+        let levels = AudioLevelCapture()
+        engine.audioEngine.mainMixerNode.installTap(
+            onBus: 0, bufferSize: 1024, format: nil, block: makeAudioLevelTap(levels)
+        )
+        defer { engine.audioEngine.mainMixerNode.removeTap(onBus: 0) }
         try engine.play()
         for _ in 0 ..< 100 where engine.state.position < .milliseconds(250) {
             try await Task.sleep(for: .milliseconds(20))
         }
         let positionBeforeChange = engine.state.position
         #expect(positionBeforeChange >= .milliseconds(250))
+        #expect(levels.level(0).rms > 0.001)
 
         engine.audioEngine.stop()
+        levels.setPhase(1)
         NotificationCenter.default.post(
             name: .AVAudioEngineConfigurationChange, object: engine.audioEngine
         )
+        for _ in 0 ..< 100 where levels.level(1).rms <= 0.001 {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let resumedOutput = levels.level(1)
+        #expect(resumedOutput.frames >= 4_000)
+        #expect(resumedOutput.rms > 0.001)
         for _ in 0 ..< 200 {
             if engine.state.phase == .stopped || engine.state.phase == .failed { break }
             try await Task.sleep(for: .milliseconds(20))
