@@ -475,6 +475,7 @@ private final class OnlineAuditionQueueViewController: UITableViewController {
         footerLabel.numberOfLines = 0
         headerSlider.addTarget(self, action: #selector(beginSeeking), for: .touchDown)
         headerSlider.addTarget(self, action: #selector(endSeeking), for: [.touchUpInside, .touchUpOutside, .touchCancel])
+        headerSlider.addTarget(self, action: #selector(seekAccessibilityValue), for: .valueChanged)
         headerSlider.accessibilityLabel = L("试听进度")
         headerSlider.accessibilityIdentifier = "player.onlineAudition.sheet.progress"
         configure(previousButton, image: "backward.fill", label: L("上一首试听"), identifier: "player.onlineAudition.sheet.previous")
@@ -596,6 +597,11 @@ private final class OnlineAuditionQueueViewController: UITableViewController {
     }
 
     @objc private func beginSeeking() { isScrubbing = true }
+    @objc private func seekAccessibilityValue() {
+        guard !isScrubbing else { return }
+        let value = headerSlider.value
+        Task { try? await serving.seek(to: .seconds(Int64(value))) }
+    }
     @objc private func endSeeking() {
         guard isScrubbing else { return }
         isScrubbing = false
