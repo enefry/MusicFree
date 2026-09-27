@@ -313,15 +313,32 @@ private actor DSAudioAuthorizationRequestRecorder {
 private actor OnlineSourceCatalogPagingService: OnlineSourceServing {
     let sourceID: MediaSourceID
     private let pages: [String: SourceCatalogPage]
+    private let staleRuntimeSnapshotsAfterFirstBrowse: Int
+    private var remainingStaleRuntimeSnapshots: Int?
+    private var rejectedFirstBrowse = false
     private(set) var requestedPageTokens: [String?] = []
 
-    init(sourceID: MediaSourceID, pages: [String: SourceCatalogPage]) {
+    init(
+        sourceID: MediaSourceID,
+        pages: [String: SourceCatalogPage],
+        staleRuntimeSnapshotsAfterFirstBrowse: Int = 0
+    ) {
         self.sourceID = sourceID
         self.pages = pages
+        self.staleRuntimeSnapshotsAfterFirstBrowse = staleRuntimeSnapshotsAfterFirstBrowse
     }
 
     func snapshot() async -> OnlineSourceSnapshot {
-        OnlineSourceSnapshot(
+        let runtimeEnabled: Bool
+        if let remainingStaleRuntimeSnapshots {
+            runtimeEnabled = remainingStaleRuntimeSnapshots == 0
+            if remainingStaleRuntimeSnapshots > 0 {
+                self.remainingStaleRuntimeSnapshots = remainingStaleRuntimeSnapshots - 1
+            }
+        } else {
+            runtimeEnabled = true
+        }
+        return OnlineSourceSnapshot(
             isGloballyEnabled: true,
             isApplicationPrivacyAccepted: true,
             sources: [
@@ -334,7 +351,7 @@ private actor OnlineSourceCatalogPagingService: OnlineSourceServing {
                     isRegistered: true,
                     isPrivacyAccepted: true,
                     isEnabled: true,
-                    isRuntimeEnabled: true
+                    isRuntimeEnabled: runtimeEnabled
                 )
             ]
         )
@@ -359,6 +376,11 @@ private actor OnlineSourceCatalogPagingService: OnlineSourceServing {
         }
         let token = request.pageToken?.rawValue
         requestedPageTokens.append(token)
+        if staleRuntimeSnapshotsAfterFirstBrowse > 0, !rejectedFirstBrowse {
+            rejectedFirstBrowse = true
+            remainingStaleRuntimeSnapshots = staleRuntimeSnapshotsAfterFirstBrowse
+            throw OnlineSourceServingError.sourceDisabled(sourceID)
+        }
         return pages[token ?? "first"] ?? SourceCatalogPage(items: [])
     }
 
@@ -1235,6 +1257,70 @@ func onlineCatalogBrowsingSupportsPagination() async throws {
     #expect(firstPage?.nextPageToken?.rawValue == "next-page")
     #expect(secondPage?.items == [secondItem])
     #expect(await service.requestedPageTokens == [nil, "next-page"])
+}
+
+@MainActor
+@Test("Catalog waits for the runtime gate after enabling a persisted source")
+func onlineCatalogWaitsForRuntimeGateAfterEnable() async throws {
+    let sourceID = MediaSourceID("google-drive.runtime-gate.fixture")
+    let item = SourceCatalogItem(
+        id: SourceObjectID(sourceID: sourceID, externalID: "folder"),
+        kind: .folder,
+        displayName: "Folder"
+    )
+    let service = OnlineSourceCatalogPagingService(
+        sourceID: sourceID,
+        pages: ["first": SourceCatalogPage(items: [item])],
+        staleRuntimeSnapshotsAfterFirstBrowse: 2
+    )
+    let configuration = try OnlineSourceConfiguration(
+        sourceID: sourceID,
+        providerKind: .googleDrive,
+        displayName: "Paging Drive",
+        privacyPolicyVersion: "1.2.0",
+        isEnabled: true
+    )
+    let settings = AppSettings(importPreferences: ImportPreferences(
+        privacyPreferences: PrivacyPreferences(
+            privacyPolicyVersion: PrivacyPreferences.currentPrivacyPolicyVersion
+        ),
+        onlineSourcePreferences: OnlineSourcePreferences(
+            isEnabled: true,
+            sources: [configuration]
+        )
+    ))
+    let model = OnlineSourcesSceneModel(
+        serving: service,
+        auditionServing: OnlineSourceSceneAuditionService(),
+        settingsServing: OnlineSourceSceneSettingsStore(settings: settings)
+    )
+
+    await model.start()
+    let page = await model.loadCatalogPage(for: sourceID)
+
+    #expect(page?.items == [item])
+    #expect(await service.requestedPageTokens == [nil, nil])
+    #expect(model.catalogFailureMessages[sourceID] == nil)
+}
+
+@MainActor
+@Test("Catalog does not retry a source disabled in persisted settings")
+func onlineCatalogDoesNotRetryPersistedDisabledSource() async throws {
+    let sourceID = MediaSourceID("google-drive.persisted-disabled.fixture")
+    let service = OnlineSourceCatalogPagingService(
+        sourceID: sourceID,
+        pages: ["first": SourceCatalogPage(items: [])],
+        staleRuntimeSnapshotsAfterFirstBrowse: 2
+    )
+    let model = OnlineSourcesSceneModel(
+        serving: service,
+        auditionServing: OnlineSourceSceneAuditionService(),
+        settingsServing: OnlineSourceSceneSettingsStore(settings: .defaults)
+    )
+
+    await model.start()
+    #expect(await model.loadCatalogPage(for: sourceID) == nil)
+    #expect(await service.requestedPageTokens == [nil])
 }
 
 @MainActor

@@ -880,7 +880,7 @@ public final class OnlineSourcesSceneModel {
             "catalog load begin source=\(sourceID.rawValue) mode=\(mode.rawValue) sort=\(sort.key.rawValue):\(sort.direction.rawValue) parent=\(parentID?.externalID ?? "root") page=\(pageToken?.rawValue ?? "first")"
         )
         do {
-            let page = try await serving.browse(
+            let page = try await browseAfterRuntimeGateCatchesUp(
                 sourceID: sourceID,
                 request: SourceBrowseRequest(
                     parentID: parentID,
@@ -920,6 +920,40 @@ public final class OnlineSourcesSceneModel {
                 lastError = pageToken == nil ? message : nil
             }
             return nil
+        }
+    }
+
+    private func browseAfterRuntimeGateCatchesUp(
+        sourceID: MediaSourceID,
+        request: SourceBrowseRequest
+    ) async throws -> SourceCatalogPage {
+        do {
+            return try await serving.browse(sourceID: sourceID, request: request)
+        } catch {
+            guard error as? OnlineSourceServingError == .sourceDisabled(sourceID),
+                  let settings = try? await settingsServing.load(),
+                  settings.importPreferences.runtimeOnlineSources.contains(where: {
+                      $0.sourceID == sourceID
+                  })
+            else { throw error }
+
+            // Settings persistence and the runtime coordinator publish separately.
+            // A just-enabled source may reach the catalog before its gate update.
+            for _ in 0..<30 {
+                try Task.checkCancellation()
+                let runtime = await serving.snapshot()
+                if runtime.sources.first(where: { $0.sourceID == sourceID })?
+                    .isRuntimeEnabled == true {
+                    guard let latestSettings = try? await settingsServing.load(),
+                          latestSettings.importPreferences.runtimeOnlineSources.contains(where: {
+                              $0.sourceID == sourceID
+                          })
+                    else { throw error }
+                    return try await serving.browse(sourceID: sourceID, request: request)
+                }
+                try await Task.sleep(for: .milliseconds(100))
+            }
+            throw error
         }
     }
 
