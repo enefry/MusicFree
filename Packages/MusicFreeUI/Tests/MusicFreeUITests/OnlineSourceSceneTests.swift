@@ -810,10 +810,11 @@ func folderImportUsesBoundedConcurrencyAndReportsOutcomes() async throws {
     )
 
     model.startImport(sourceID: sourceID, item: rootItem)
+    let taskID = try #require(model.importSnapshots.keys.first)
     let finished = await waitUntil {
-        model.importSnapshots[rootID]?.phase == .completed
+        model.importSnapshots[taskID]?.phase == .completed
     }
-    let progress = try #require(model.importSnapshots[rootID])
+    let progress = try #require(model.importSnapshots[taskID])
     let requests = await importer.capturedRequests()
 
     #expect(finished)
@@ -876,8 +877,9 @@ func folderImportIncludesRemoteArtworkAndSRTSidecars() async throws {
     )
 
     model.startImport(sourceID: sourceID, item: rootItem)
+    let taskID = try #require(model.importSnapshots.keys.first)
     let finished = await waitUntil {
-        model.importSnapshots[rootID]?.phase == .completed
+        model.importSnapshots[taskID]?.phase == .completed
     }
     let request = try #require(await importer.capturedRequests().first)
 
@@ -885,8 +887,8 @@ func folderImportIncludesRemoteArtworkAndSRTSidecars() async throws {
     #expect(request.urls.map(\.lastPathComponent).sorted() == ["Song.mp3", "Song.srt", "cover.jpg"])
     #expect(request.metadataHints.keys.map(\.lastPathComponent) == ["Song.mp3"])
     #expect(Set(await serving.downloadedIDs()) == Set([track.id, cover.id, lyrics.id]))
-    #expect(model.importSnapshots[rootID]?.totalItems == 1)
-    #expect(model.importSnapshots[rootID]?.importedItems == 1)
+    #expect(model.importSnapshots[taskID]?.totalItems == 1)
+    #expect(model.importSnapshots[taskID]?.importedItems == 1)
 }
 
 @MainActor
@@ -975,11 +977,12 @@ func cancellingFolderImportCancelsEveryActiveImport() async throws {
     )
 
     model.startImport(sourceID: sourceID, item: rootItem)
+    let taskID = try #require(model.importSnapshots.keys.first)
     let threeImportsStarted = await waitUntil {
         await importer.capturedRequests().count == 3
     }
     let startedIDs = Set(await importer.capturedRequests().map(\.importID))
-    await model.cancelImport(rootID)
+    await model.cancelImport(taskID)
     let allCancelled = await waitUntil {
         Set(await importer.cancelledIDs()) == startedIDs
     }
@@ -987,7 +990,7 @@ func cancellingFolderImportCancelsEveryActiveImport() async throws {
     #expect(threeImportsStarted)
     #expect(startedIDs.count == 3)
     #expect(allCancelled)
-    #expect(model.importSnapshots[rootID]?.phase == .cancelled)
+    #expect(model.importSnapshots[taskID]?.phase == .cancelled)
 }
 
 @MainActor

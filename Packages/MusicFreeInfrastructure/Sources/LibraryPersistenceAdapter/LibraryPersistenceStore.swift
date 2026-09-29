@@ -46,6 +46,8 @@ private struct LocalMediaGraphSnapshot {
     var groups: [AlbumGroupID: AlbumGroup]
     var releases: [AlbumReleaseID: AlbumRelease]
     var discs: [DiscID: Disc]
+    var collections: [LibraryCollectionID: LibraryCollection]
+    var members: [String: LibraryCollectionMember]
 }
 
 private struct LibraryCollectionMemberIdentity: Hashable {
@@ -183,6 +185,10 @@ public actor LibraryPersistenceStore {
     private var didBackfillLocalMediaGraph = false
     private var browseRecordFetchCount: Int?
     private var librarySearchSnapshotBuildCount = 0
+    private var librarySnapshotBuildCount = 0
+    private var localMediaGraphSnapshotBuildCount = 0
+    private var cachedLibrarySnapshot: LibrarySnapshot?
+    private var cachedLocalMediaGraphSnapshot: LocalMediaGraphSnapshot?
     private nonisolated let changeHub = LibraryChangeHub()
 
     public init(
@@ -285,6 +291,10 @@ public actor LibraryPersistenceStore {
 
     internal func searchSnapshotBuildCount() -> Int {
         librarySearchSnapshotBuildCount
+    }
+
+    internal func applySnapshotBuildCounts() -> (library: Int, localMediaGraph: Int) {
+        (librarySnapshotBuildCount, localMediaGraphSnapshotBuildCount)
     }
 
     internal func track(id: MediaItemID) throws -> Track? {
@@ -2107,6 +2117,32 @@ public actor LibraryPersistenceStore {
             removingMemberReleaseIDs: mergedMemberReleaseIDs
         )
 
+        let canCacheCommittedGraph = transaction.albumMerge == nil
+            && mergedMemberReleaseIDs.isEmpty
+            && staleLogicalTrackIDs.isEmpty
+            && staleAssetIDs.isEmpty
+            && staleReleaseIDs.isEmpty
+            && staleDiscIDs.isEmpty
+            && staleGroupIDs.isEmpty
+        let committedGraph = canCacheCommittedGraph
+            ? committedLocalMediaGraphSnapshot(
+                from: existingGraph,
+                library: after,
+                changedTrackIDs: trackIDs,
+                legacyTrackIDs: legacyTrackIDs,
+                tracksWithoutLegacyGraphWrites: mergeOnlyTrackIDs.union(artworkOnlyTrackIDs),
+                changedAlbumIDs: albumIDs,
+                logicalTrackUpserts: logicalTrackUpserts,
+                variantUpserts: variantUpserts,
+                assetUpserts: assetUpserts,
+                albumGroupUpserts: albumGroupUpserts,
+                releaseUpserts: releaseUpserts,
+                discUpserts: discUpserts,
+                collectionUpserts: collectionUpserts,
+                collectionMemberUpserts: collectionMemberUpserts
+            )
+            : nil
+
         let oldRevision = metadata.revision
         let oldAppliedData = metadata.appliedTransactionKeys
         let oldAppliedKeys = appliedTransactionKeys
@@ -2165,6 +2201,9 @@ public actor LibraryPersistenceStore {
                     AlbumReleaseID(legacyAlbumID: $0)
                 })
             )
+            // The final metadata prune must see graph writes and removals made
+            // by this transaction, rather than the pre-transaction snapshot.
+            cachedLocalMediaGraphSnapshot = committedGraph
             let postGraphPrunedMetadata = try pruneUnreferencedMetadata(in: &after)
             prunedMetadata.formUnion(postGraphPrunedMetadata)
             if !postGraphPrunedMetadata.isEmpty {
@@ -2178,6 +2217,10 @@ public actor LibraryPersistenceStore {
 
             let revision = try advanceRevision(idempotencyKey: transaction.idempotencyKey)
             try saveContext()
+            var committedLibrary = after
+            committedLibrary.tracks = after.tracks.filter { legacyTrackIDs.contains($0.key) }
+            cachedLibrarySnapshot = committedLibrary
+            cachedLocalMediaGraphSnapshot = committedGraph
             publish(LibraryChange(
                 revision: revision,
                 categories: categories,
@@ -2194,6 +2237,8 @@ public actor LibraryPersistenceStore {
             metadata.revision = oldRevision
             metadata.appliedTransactionKeys = oldAppliedData
             appliedTransactionKeys = oldAppliedKeys
+            cachedLibrarySnapshot = nil
+            cachedLocalMediaGraphSnapshot = nil
             throw error
         }
     }
@@ -2225,6 +2270,7 @@ public actor LibraryPersistenceStore {
             // graph records are still part of the transaction and are rolled
             // back if validation or pruning fails below.
             try removeLocalMediaGraph(for: existingItemIDs)
+            cachedLocalMediaGraphSnapshot = nil
             prunedMetadata = try pruneUnreferencedMetadata(in: &after)
             try validateReferences(in: after)
         } catch {
@@ -2793,6 +2839,10 @@ public actor LibraryPersistenceStore {
     }
 
     private func loadLibrarySnapshot() throws -> LibrarySnapshot {
+        if let cachedLibrarySnapshot {
+            return cachedLibrarySnapshot
+        }
+        librarySnapshotBuildCount += 1
         var snapshot = LibrarySnapshot(tracks: [:], albums: [:], artists: [:], genres: [:], artwork: [:])
         for record in try fetch(TrackRecord.self) {
             let value = try LibraryRecordMapper.track(from: record)
@@ -2819,6 +2869,7 @@ public actor LibraryPersistenceStore {
             guard snapshot.artwork[value.id] == nil else { throw LibraryPersistenceError.corruptedStore }
             snapshot.artwork[value.id] = value
         }
+        cachedLibrarySnapshot = snapshot
         return snapshot
     }
 
@@ -2883,7 +2934,11 @@ public actor LibraryPersistenceStore {
     }
 
     private func loadLocalMediaGraphSnapshot() throws -> LocalMediaGraphSnapshot {
-        LocalMediaGraphSnapshot(
+        if let cachedLocalMediaGraphSnapshot {
+            return cachedLocalMediaGraphSnapshot
+        }
+        localMediaGraphSnapshotBuildCount += 1
+        let snapshot = LocalMediaGraphSnapshot(
             logicalTracks: Dictionary(
                 uniqueKeysWithValues: try fetch(LogicalTrackRecord.self).map {
                     let value = try LocalMediaGraphRecordMapper.logicalTrack(from: $0)
@@ -2919,8 +2974,88 @@ public actor LibraryPersistenceStore {
                     let value = try LocalMediaGraphRecordMapper.disc(from: $0)
                     return (value.id, value)
                 }
+            ),
+            collections: Dictionary(
+                uniqueKeysWithValues: try fetch(LibraryCollectionRecord.self).map {
+                    let value = try LocalMediaGraphRecordMapper.collection(from: $0)
+                    return (value.id, value)
+                }
+            ),
+            members: Dictionary(
+                uniqueKeysWithValues: try fetch(LibraryCollectionMemberRecord.self).map {
+                    let value = try LocalMediaGraphRecordMapper.member(from: $0)
+                    return ($0.storageKey, value)
+                }
             )
         )
+        cachedLocalMediaGraphSnapshot = snapshot
+        return snapshot
+    }
+
+    private func committedLocalMediaGraphSnapshot(
+        from existing: LocalMediaGraphSnapshot,
+        library: LibrarySnapshot,
+        changedTrackIDs: Set<MediaItemID>,
+        legacyTrackIDs: Set<MediaItemID>,
+        tracksWithoutLegacyGraphWrites: Set<MediaItemID>,
+        changedAlbumIDs: Set<AlbumID>,
+        logicalTrackUpserts: [LogicalTrackID: LogicalTrack],
+        variantUpserts: [MediaItemID: TrackVariant],
+        assetUpserts: [MediaAssetID: MediaAsset],
+        albumGroupUpserts: [AlbumGroupID: AlbumGroup],
+        releaseUpserts: [AlbumReleaseID: AlbumRelease],
+        discUpserts: [DiscID: Disc],
+        collectionUpserts: [LibraryCollectionID: LibraryCollection],
+        collectionMemberUpserts: [String: LibraryCollectionMember]
+    ) -> LocalMediaGraphSnapshot {
+        var snapshot = existing
+        let projectedTrackIDs = changedTrackIDs
+            .intersection(legacyTrackIDs)
+            .subtracting(tracksWithoutLegacyGraphWrites)
+
+        for itemID in projectedTrackIDs {
+            guard let track = library.tracks[itemID]?.value else { continue }
+            let logicalTrack = track.logicalTrackProjection
+            let asset = track.mediaAssetProjection
+            let projectedVariant = track.trackVariantProjection
+            snapshot.logicalTracks[logicalTrack.id] = logicalTrack
+            snapshot.assets[asset.id] = asset
+            if let previousVariant = snapshot.variants[itemID] {
+                snapshot.variants[itemID] = TrackVariant(
+                    id: track.id,
+                    logicalTrackID: track.logicalTrackID,
+                    assetID: track.assetID,
+                    selection: track.playbackSelection,
+                    availability: previousVariant.availability,
+                    sourceIdentityHint: previousVariant.sourceIdentityHint,
+                    sourceMetadataRevision: previousVariant.sourceMetadataRevision,
+                    sourceMetadata: previousVariant.sourceMetadata
+                )
+            } else {
+                snapshot.variants[itemID] = projectedVariant
+            }
+            if let disc = track.discProjection {
+                snapshot.discs[disc.id] = disc
+            }
+        }
+
+        for albumID in changedAlbumIDs {
+            guard let album = library.albums[albumID]?.value else { continue }
+            let release = album.releaseProjection
+            snapshot.releases[release.id] = release
+        }
+        snapshot.logicalTracks.merge(logicalTrackUpserts) { _, new in new }
+        snapshot.variants.merge(variantUpserts) { _, new in new }
+        snapshot.assets.merge(assetUpserts) { _, new in new }
+        snapshot.groups.merge(albumGroupUpserts) { _, new in new }
+        snapshot.releases.merge(releaseUpserts) { _, new in new }
+        snapshot.discs.merge(discUpserts) { _, new in new }
+        snapshot.collections.merge(collectionUpserts) { _, new in new }
+        for (storageKey, member) in collectionMemberUpserts {
+            snapshot.members.removeValue(forKey: PersistenceKey.legacyCollectionMember(member))
+            snapshot.members[storageKey] = member
+        }
+        return snapshot
     }
 
     private func paginate<Element: Sendable>(
@@ -3131,6 +3266,8 @@ public actor LibraryPersistenceStore {
     private func saveContext() throws {
         do {
             try context.save()
+            cachedLibrarySnapshot = nil
+            cachedLocalMediaGraphSnapshot = nil
         } catch {
             throw LibraryError.capacity(.storageUnavailable)
         }
@@ -3196,11 +3333,11 @@ public actor LibraryPersistenceStore {
         excluding collectionIDs: Set<LibraryCollectionID> = []
     ) throws -> Set<ArtworkID> {
         var result = Set<ArtworkID>()
-        for record in try fetch(LibraryCollectionRecord.self) {
-            guard !collectionIDs.contains(LibraryCollectionID(record.storageKey)) else {
+        for collection in try loadLocalMediaGraphSnapshot().collections.values {
+            guard !collectionIDs.contains(collection.id) else {
                 continue
             }
-            if let artworkID = try LocalMediaGraphRecordMapper.collection(from: record).artwork?.id {
+            if let artworkID = collection.artwork?.id {
                 result.insert(artworkID)
             }
         }
@@ -3213,19 +3350,20 @@ public actor LibraryPersistenceStore {
         excludingCollectionIDs: Set<LibraryCollectionID> = []
     ) throws -> Set<ArtworkID> {
         var result = Set<ArtworkID>()
-        for record in try fetch(LogicalTrackRecord.self) {
-            guard !excludingLogicalTrackIDs.contains(LogicalTrackID(record.storageKey)) else {
+        let graph = try loadLocalMediaGraphSnapshot()
+        for logicalTrack in graph.logicalTracks.values {
+            guard !excludingLogicalTrackIDs.contains(logicalTrack.id) else {
                 continue
             }
-            if let artworkID = try LocalMediaGraphRecordMapper.logicalTrack(from: record).artwork?.id {
+            if let artworkID = logicalTrack.artwork?.id {
                 result.insert(artworkID)
             }
         }
-        for record in try fetch(AlbumReleaseRecord.self) {
-            guard !excludingReleaseIDs.contains(AlbumReleaseID(record.storageKey)) else {
+        for release in graph.releases.values {
+            guard !excludingReleaseIDs.contains(release.id) else {
                 continue
             }
-            if let artworkID = try LocalMediaGraphRecordMapper.release(from: record).artwork?.id {
+            if let artworkID = release.artwork?.id {
                 result.insert(artworkID)
             }
         }
@@ -3240,32 +3378,18 @@ public actor LibraryPersistenceStore {
         pendingVariants: [TrackVariant] = [],
         pendingReleases: [AlbumRelease] = []
     ) throws {
-        var variantsByID = try Dictionary(
-            uniqueKeysWithValues: fetch(TrackVariantRecord.self).compactMap { record -> (MediaItemID, TrackVariant)? in
-            let itemID = MediaItemID(
-                sourceID: MediaSourceID(record.sourceID),
-                externalID: record.externalID
-            )
-            guard itemID.sourceID == .local, !itemIDs.contains(itemID) else { return nil }
-            return (itemID, try LocalMediaGraphRecordMapper.variant(from: record))
-            }
-        )
+        let graph = try loadLocalMediaGraphSnapshot()
+        var variantsByID = graph.variants.filter {
+            $0.key.sourceID == .local && !itemIDs.contains($0.key)
+        }
         for variant in pendingVariants where variant.id.sourceID == .local {
             variantsByID[variant.id] = variant
         }
-        var logicalByID = try Dictionary(
-            uniqueKeysWithValues: fetch(LogicalTrackRecord.self).map { record in
-                (LogicalTrackID(record.storageKey), try LocalMediaGraphRecordMapper.logicalTrack(from: record))
-            }
-        )
+        var logicalByID = graph.logicalTracks
         for logical in pendingLogicalTracks {
             logicalByID[logical.id] = logical
         }
-        var releaseByID = try Dictionary(
-            uniqueKeysWithValues: fetch(AlbumReleaseRecord.self).map { record in
-                (AlbumReleaseID(record.storageKey), try LocalMediaGraphRecordMapper.release(from: record))
-            }
-        )
+        var releaseByID = graph.releases
         for release in pendingReleases {
             releaseByID[release.id] = release
         }
@@ -3574,7 +3698,10 @@ public actor LibraryPersistenceStore {
 
     private func persistTrack(_ value: StoredTrack, existing: StoredTrack?) throws {
         let key = PersistenceKey.item(value.value.id)
-        if let record = try fetch(TrackRecord.self).first(where: { $0.storageKey == key }) {
+        let descriptor = FetchDescriptor<TrackRecord>(
+            predicate: #Predicate { $0.storageKey == key }
+        )
+        if let record = try fetchFirst(descriptor) {
             try LibraryRecordMapper.update(record, from: value.value)
         } else {
             context.insert(try LibraryRecordMapper.makeTrack(value.value, dateAddedAt: existing?.dateAddedAt ?? value.dateAddedAt))
@@ -3583,7 +3710,10 @@ public actor LibraryPersistenceStore {
 
     private func persistAlbum(_ value: StoredAlbum, existing: StoredAlbum?) throws {
         let key = value.value.id.rawValue
-        if let record = try fetch(AlbumRecord.self).first(where: { $0.storageKey == key }) {
+        let descriptor = FetchDescriptor<AlbumRecord>(
+            predicate: #Predicate { $0.storageKey == key }
+        )
+        if let record = try fetchFirst(descriptor) {
             try LibraryRecordMapper.update(record, from: value.value)
         } else {
             context.insert(try LibraryRecordMapper.makeAlbum(value.value, dateAddedAt: existing?.dateAddedAt ?? value.dateAddedAt))
@@ -3592,7 +3722,10 @@ public actor LibraryPersistenceStore {
 
     private func persistArtist(_ value: StoredArtist, existing: StoredArtist?) throws {
         let key = value.value.id.rawValue
-        if let record = try fetch(ArtistRecord.self).first(where: { $0.storageKey == key }) {
+        let descriptor = FetchDescriptor<ArtistRecord>(
+            predicate: #Predicate { $0.storageKey == key }
+        )
+        if let record = try fetchFirst(descriptor) {
             try LibraryRecordMapper.update(record, from: value.value)
         } else {
             context.insert(try LibraryRecordMapper.makeArtist(value.value, dateAddedAt: existing?.dateAddedAt ?? value.dateAddedAt))
@@ -3601,7 +3734,10 @@ public actor LibraryPersistenceStore {
 
     private func persistGenre(_ value: StoredGenre, existing: StoredGenre?) throws {
         let key = value.value.id.rawValue
-        if let record = try fetch(GenreRecord.self).first(where: { $0.storageKey == key }) {
+        let descriptor = FetchDescriptor<GenreRecord>(
+            predicate: #Predicate { $0.storageKey == key }
+        )
+        if let record = try fetchFirst(descriptor) {
             try LibraryRecordMapper.update(record, from: value.value)
         } else {
             context.insert(try LibraryRecordMapper.makeGenre(value.value, dateAddedAt: existing?.dateAddedAt ?? value.dateAddedAt))
@@ -3610,7 +3746,10 @@ public actor LibraryPersistenceStore {
 
     private func persistArtwork(_ value: ArtworkReference, existing: ArtworkReference?) throws {
         let key = PersistenceKey.artwork(value.id)
-        if let record = try fetch(ArtworkRecord.self).first(where: { $0.storageKey == key }) {
+        let descriptor = FetchDescriptor<ArtworkRecord>(
+            predicate: #Predicate { $0.storageKey == key }
+        )
+        if let record = try fetchFirst(descriptor) {
             try LibraryRecordMapper.update(record, from: value)
         } else {
             context.insert(try LibraryRecordMapper.makeArtwork(value))
@@ -3638,32 +3777,19 @@ public actor LibraryPersistenceStore {
         removingGroupIDs: Set<AlbumGroupID> = [],
         removingMemberReleaseIDs: Set<AlbumReleaseID> = []
     ) throws {
-        let logicalTrackRecords = try fetch(LogicalTrackRecord.self).filter {
-            !removingLogicalTrackIDs.contains(LogicalTrackID($0.storageKey))
-        }
-        let logicalTrackIDs = Set(logicalTrackRecords.map { LogicalTrackID($0.storageKey) })
+        let graph = try loadLocalMediaGraphSnapshot()
+        let logicalTrackIDs = Set(graph.logicalTracks.keys)
+            .subtracting(removingLogicalTrackIDs)
             .union(logicalTracks.keys)
             .union(legacyTracks.map(\.logicalTrackID))
-        let assetIDs = Set(try fetch(MediaAssetRecord.self).compactMap { record -> MediaAssetID? in
-            let assetID = MediaAssetID(
-                sourceID: MediaSourceID(record.sourceID),
-                externalID: record.externalID
-            )
-            return removingAssetIDs.contains(assetID) ? nil : assetID
-        }).union(assets.keys).union(legacyTracks.map(\.assetID))
-        let groupRecords = try fetch(AlbumGroupRecord.self).filter {
-            !removingGroupIDs.contains(AlbumGroupID($0.storageKey))
-        }
-        let groupIDs = Set(groupRecords.map { AlbumGroupID($0.storageKey) })
+        let assetIDs = Set(graph.assets.keys)
+            .subtracting(removingAssetIDs)
+            .union(assets.keys)
+            .union(legacyTracks.map(\.assetID))
+        let groupIDs = Set(graph.groups.keys)
+            .subtracting(removingGroupIDs)
             .union(albumGroups.keys)
-        var discValues = Dictionary(
-            uniqueKeysWithValues: try fetch(DiscRecord.self).compactMap { record -> (DiscID, Disc)? in
-                let discID = DiscID(record.storageKey)
-                guard !removingDiscIDs.contains(discID) else { return nil }
-                let value = try LocalMediaGraphRecordMapper.disc(from: record)
-                return (value.id, value)
-            }
-        )
+        var discValues = graph.discs.filter { !removingDiscIDs.contains($0.key) }
         discValues.merge(discs) { _, new in new }
         // Legacy Track mutations materialize their graph, including the
         // default Disc 1, during the commit below. Validate that implicit
@@ -3671,29 +3797,15 @@ public actor LibraryPersistenceStore {
         for disc in legacyTracks.compactMap({ $0.discProjection }) {
             discValues[disc.id] = disc
         }
-        let collectionIDs = Set(try fetch(LibraryCollectionRecord.self).map {
-            LibraryCollectionID($0.storageKey)
-        }).union(collections.keys)
-        var groupValues = Dictionary(
-            uniqueKeysWithValues: try groupRecords.map {
-                let value = try LocalMediaGraphRecordMapper.albumGroup(from: $0)
-                return (value.id, value)
-            }
-        )
+        let collectionIDs = Set(graph.collections.keys).union(collections.keys)
+        var groupValues = graph.groups.filter { !removingGroupIDs.contains($0.key) }
         groupValues.merge(albumGroups) { _, new in new }
-        var releaseValues = Dictionary(
-            uniqueKeysWithValues: try fetch(AlbumReleaseRecord.self).compactMap { record -> (AlbumReleaseID, AlbumRelease)? in
-                let releaseID = AlbumReleaseID(record.storageKey)
+        var releaseValues = graph.releases.filter { releaseID, _ in
                 let isRetainedLegacyRelease = legacyAlbums.contains {
                     AlbumReleaseID(legacyAlbumID: $0.id) == releaseID
                 }
-                guard !removingReleaseIDs.contains(releaseID) || isRetainedLegacyRelease else {
-                    return nil
-                }
-                let value = try LocalMediaGraphRecordMapper.release(from: record)
-                return (value.id, value)
-            }
-        )
+                return !removingReleaseIDs.contains(releaseID) || isRetainedLegacyRelease
+        }
         releaseValues.merge(releases) { _, new in new }
         // A legacy album mutation is also the source of truth for its
         // compatibility release projection. Refresh that projection before
@@ -3708,11 +3820,9 @@ public actor LibraryPersistenceStore {
         let releaseIDs = Set(releaseValues.keys)
             .union(releases.keys)
             .union(legacyAlbums.map { AlbumReleaseID(legacyAlbumID: $0.id) })
-        var logicalValues = Dictionary(
-            uniqueKeysWithValues: try logicalTrackRecords.map { record in
-                (LogicalTrackID(record.storageKey), try LocalMediaGraphRecordMapper.logicalTrack(from: record))
-            }
-        )
+        var logicalValues = graph.logicalTracks.filter {
+            !removingLogicalTrackIDs.contains($0.key)
+        }
         logicalValues.merge(logicalTracks) { _, new in new }
         for track in legacyTracks where logicalTracks[track.logicalTrackID] == nil {
             logicalValues[track.logicalTrackID] = track.logicalTrackProjection
@@ -3754,8 +3864,7 @@ public actor LibraryPersistenceStore {
 
         var positionsByCollection: [LibraryCollectionID: Set<Int>] = [:]
         let replacedMembers = Set(members.values.map(LibraryCollectionMemberIdentity.init))
-        let existingMembers = try fetch(LibraryCollectionMemberRecord.self)
-            .map(LocalMediaGraphRecordMapper.member(from:))
+        let existingMembers = graph.members.values
             .filter {
                 !removingMemberReleaseIDs.contains($0.releaseID)
                     && !replacedMembers.contains(LibraryCollectionMemberIdentity($0))
@@ -3768,7 +3877,11 @@ public actor LibraryPersistenceStore {
     }
 
     private func persistAlbumGroup(_ value: AlbumGroup) throws {
-        if let record = try fetch(AlbumGroupRecord.self).first(where: { $0.storageKey == value.id.rawValue }) {
+        let key = value.id.rawValue
+        let descriptor = FetchDescriptor<AlbumGroupRecord>(
+            predicate: #Predicate { $0.storageKey == key }
+        )
+        if let record = try fetchFirst(descriptor) {
             try LocalMediaGraphRecordMapper.update(record, from: value)
         } else {
             context.insert(try LocalMediaGraphRecordMapper.makeAlbumGroup(value))
@@ -3776,7 +3889,11 @@ public actor LibraryPersistenceStore {
     }
 
     private func persistLogicalTrack(_ value: LogicalTrack) throws {
-        if let record = try fetch(LogicalTrackRecord.self).first(where: { $0.storageKey == value.id.rawValue }) {
+        let key = value.id.rawValue
+        let descriptor = FetchDescriptor<LogicalTrackRecord>(
+            predicate: #Predicate { $0.storageKey == key }
+        )
+        if let record = try fetchFirst(descriptor) {
             try LocalMediaGraphRecordMapper.update(record, from: value)
         } else {
             context.insert(try LocalMediaGraphRecordMapper.makeLogicalTrack(value))
@@ -3785,7 +3902,10 @@ public actor LibraryPersistenceStore {
 
     private func persistMediaAsset(_ value: MediaAsset) throws {
         let key = PersistenceKey.asset(value.id)
-        if let record = try fetch(MediaAssetRecord.self).first(where: { $0.storageKey == key }) {
+        let descriptor = FetchDescriptor<MediaAssetRecord>(
+            predicate: #Predicate { $0.storageKey == key }
+        )
+        if let record = try fetchFirst(descriptor) {
             try LocalMediaGraphRecordMapper.update(record, from: value)
         } else {
             context.insert(try LocalMediaGraphRecordMapper.makeAsset(value))
@@ -3794,7 +3914,10 @@ public actor LibraryPersistenceStore {
 
     private func persistTrackVariant(_ value: TrackVariant) throws {
         let key = PersistenceKey.item(value.id)
-        if let record = try fetch(TrackVariantRecord.self).first(where: { $0.storageKey == key }) {
+        let descriptor = FetchDescriptor<TrackVariantRecord>(
+            predicate: #Predicate { $0.storageKey == key }
+        )
+        if let record = try fetchFirst(descriptor) {
             try LocalMediaGraphRecordMapper.update(record, from: value)
         } else {
             context.insert(try LocalMediaGraphRecordMapper.makeVariant(value))
@@ -3802,7 +3925,11 @@ public actor LibraryPersistenceStore {
     }
 
     private func persistDisc(_ value: Disc) throws {
-        if let record = try fetch(DiscRecord.self).first(where: { $0.storageKey == value.id.rawValue }) {
+        let key = value.id.rawValue
+        let descriptor = FetchDescriptor<DiscRecord>(
+            predicate: #Predicate { $0.storageKey == key }
+        )
+        if let record = try fetchFirst(descriptor) {
             try LocalMediaGraphRecordMapper.update(record, from: value)
         } else {
             context.insert(try LocalMediaGraphRecordMapper.makeDisc(value))
@@ -3810,7 +3937,11 @@ public actor LibraryPersistenceStore {
     }
 
     private func persistCollection(_ value: LibraryCollection) throws {
-        if let record = try fetch(LibraryCollectionRecord.self).first(where: { $0.storageKey == value.id.rawValue }) {
+        let key = value.id.rawValue
+        let descriptor = FetchDescriptor<LibraryCollectionRecord>(
+            predicate: #Predicate { $0.storageKey == key }
+        )
+        if let record = try fetchFirst(descriptor) {
             try LocalMediaGraphRecordMapper.update(record, from: value)
         } else {
             context.insert(try LocalMediaGraphRecordMapper.makeCollection(value))
@@ -3822,7 +3953,17 @@ public actor LibraryPersistenceStore {
         let legacyKey = PersistenceKey.legacyCollectionMember(value)
         let collectionID = value.collectionID.rawValue
         let releaseID = value.releaseID.rawValue
-        let records = try fetch(LibraryCollectionMemberRecord.self)
+        let descriptor = FetchDescriptor<LibraryCollectionMemberRecord>(
+            predicate: #Predicate {
+                $0.storageKey == key || $0.storageKey == legacyKey
+            }
+        )
+        let records: [LibraryCollectionMemberRecord]
+        do {
+            records = try context.fetch(descriptor)
+        } catch {
+            throw LibraryPersistenceError.corruptedStore
+        }
         if let record = records.first(where: { $0.storageKey == key }) {
             for duplicate in records where duplicate.storageKey == legacyKey
                     && duplicate !== record
@@ -3897,7 +4038,11 @@ public actor LibraryPersistenceStore {
 
     private func persistLocalMediaGraph(for track: Track) throws {
         let logical = track.logicalTrackProjection
-        if let record = try fetch(LogicalTrackRecord.self).first(where: { $0.storageKey == logical.id.rawValue }) {
+        let logicalKey = logical.id.rawValue
+        let logicalDescriptor = FetchDescriptor<LogicalTrackRecord>(
+            predicate: #Predicate { $0.storageKey == logicalKey }
+        )
+        if let record = try fetchFirst(logicalDescriptor) {
             try LocalMediaGraphRecordMapper.update(record, from: logical)
         } else {
             context.insert(try LocalMediaGraphRecordMapper.makeLogicalTrack(logical))
@@ -3905,7 +4050,10 @@ public actor LibraryPersistenceStore {
 
         let asset = track.mediaAssetProjection
         let assetKey = PersistenceKey.asset(asset.id)
-        if let record = try fetch(MediaAssetRecord.self).first(where: { $0.storageKey == assetKey }) {
+        let assetDescriptor = FetchDescriptor<MediaAssetRecord>(
+            predicate: #Predicate { $0.storageKey == assetKey }
+        )
+        if let record = try fetchFirst(assetDescriptor) {
             try LocalMediaGraphRecordMapper.update(record, from: asset)
         } else {
             context.insert(try LocalMediaGraphRecordMapper.makeAsset(asset))
@@ -3913,7 +4061,10 @@ public actor LibraryPersistenceStore {
 
         let projectedVariant = track.trackVariantProjection
         let variantKey = PersistenceKey.item(projectedVariant.id)
-        if let record = try fetch(TrackVariantRecord.self).first(where: { $0.storageKey == variantKey }) {
+        let variantDescriptor = FetchDescriptor<TrackVariantRecord>(
+            predicate: #Predicate { $0.storageKey == variantKey }
+        )
+        if let record = try fetchFirst(variantDescriptor) {
             let previousVariant = try LocalMediaGraphRecordMapper.variant(from: record)
             let variant = TrackVariant(
                 id: track.id,
@@ -3931,7 +4082,11 @@ public actor LibraryPersistenceStore {
         }
 
         if let disc = track.discProjection {
-            if let record = try fetch(DiscRecord.self).first(where: { $0.storageKey == disc.id.rawValue }) {
+            let discKey = disc.id.rawValue
+            let discDescriptor = FetchDescriptor<DiscRecord>(
+                predicate: #Predicate { $0.storageKey == discKey }
+            )
+            if let record = try fetchFirst(discDescriptor) {
                 try LocalMediaGraphRecordMapper.update(record, from: disc)
             } else {
                 context.insert(try LocalMediaGraphRecordMapper.makeDisc(disc))
@@ -3940,7 +4095,11 @@ public actor LibraryPersistenceStore {
     }
 
     private func persistRelease(_ release: AlbumRelease) throws {
-        if let record = try fetch(AlbumReleaseRecord.self).first(where: { $0.storageKey == release.id.rawValue }) {
+        let key = release.id.rawValue
+        let descriptor = FetchDescriptor<AlbumReleaseRecord>(
+            predicate: #Predicate { $0.storageKey == key }
+        )
+        if let record = try fetchFirst(descriptor) {
             try LocalMediaGraphRecordMapper.update(record, from: release)
         } else {
             context.insert(try LocalMediaGraphRecordMapper.makeRelease(release))

@@ -78,6 +78,9 @@ enum AppBVTFixtureSeeder {
         }
 
         let shouldSeedAudio = arguments.contains(launchArgument)
+        if arguments.contains("--bvt-download-page-light") {
+            UserDefaults.standard.set(MusicFreeAppearance.light.rawValue, forKey: AppUserInterfacePreferences.appearanceStorageKey)
+        }
         let shouldSeedCue = arguments.contains(cueLaunchArgument)
         let shouldSeedUIKitSongs = arguments.contains(uikitSongsLaunchArgument)
         let shouldSeedLayout = arguments.contains(layoutLaunchArgument)
@@ -585,6 +588,13 @@ enum AppBVTFixtureSeeder {
                 artist: item.artist ?? "BVT Online Artist",
                 album: item.album ?? "BVT Online Album"
             )
+            if ProcessInfo.processInfo.arguments.contains("--bvt-download-progress") {
+                let interval = ProcessInfo.processInfo.arguments.contains("--bvt-download-progress-slow") ? 750 : 250
+                for step in 1...40 {
+                    try await Task.sleep(for: .milliseconds(interval))
+                    options.progress?(DownloadProgress(receivedBytes: Int64(data.count * step / 40), totalBytes: Int64(data.count), bytesPerSecond: Double(data.count) / 10))
+                }
+            }
             try data.write(to: stagingURL, options: .atomic)
             return DownloadReceipt(
                 sourceID: descriptor.sourceID,

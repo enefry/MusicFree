@@ -1216,6 +1216,12 @@ public final class OnlineSourcesSceneModel {
         )
     }
 
+    public func startBatchImport(sourceID: MediaSourceID, items: [SourceCatalogItem], displayName: String) {
+        observeDownloadQueueIfNeeded()
+        feedbackMessage = nil
+        downloadQueue.startBatchImport(sourceID: sourceID, items: items, displayName: displayName)
+    }
+
     /// Imports every audio object below a remote folder or album. Discovery
     /// walks the Provider catalog with pagination, while downloads use a
     /// three-item upper bound so a large NAS folder cannot retain an
@@ -1257,6 +1263,19 @@ public final class OnlineSourcesSceneModel {
         setFeedback(L("下载与导入已取消"), sourceID: itemID.sourceID)
     }
 
+    public func resumeDownloadTask(_ taskID: SourceObjectID) {
+        observeDownloadQueueIfNeeded()
+        feedbackMessage = nil
+        downloadQueue.resumeTask(taskID)
+        applyDownloadQueueSnapshot(downloadQueue.snapshot, emitFeedback: false)
+    }
+
+    public func cancelDownloadTask(_ taskID: SourceObjectID) async {
+        await downloadQueue.cancelTask(taskID)
+        applyDownloadQueueSnapshot(downloadQueue.snapshot, emitFeedback: false)
+        setFeedback(L("下载与导入已取消"), sourceID: taskID.sourceID)
+    }
+
     public func cancelImport(_ rootItemID: SourceObjectID) async {
         await downloadQueue.cancelImport(rootItemID)
         applyDownloadQueueSnapshot(downloadQueue.snapshot, emitFeedback: false)
@@ -1276,11 +1295,15 @@ public final class OnlineSourcesSceneModel {
         downloadQueueObservationTask = Task { @MainActor [weak self] in
             for await _ in stream {
                 guard !Task.isCancelled, let self else { return }
-                // AsyncStream preserves every queued value, but the UI may
-                // also synchronously project the queue's current snapshot
-                // after an awaited cancel/start operation. Reading the
-                // queue-owned latest value here prevents an older buffered
-                // progress event from rolling a terminal state backwards.
+                do {
+                    try await Task.sleep(for: .milliseconds(100))
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled else { return }
+                // The stream keeps only its latest buffered value. Read the
+                // queue-owned snapshot after the coalescing interval so a
+                // buffered phase cannot roll a terminal state backwards.
                 self.applyDownloadQueueSnapshot(self.downloadQueue.snapshot)
             }
         }
@@ -1298,6 +1321,7 @@ public final class OnlineSourcesSceneModel {
         guard emitFeedback else { return }
 
         for (itemID, next) in nextSnapshot.downloads {
+            guard next.isSupportingFile != true else { continue }
             guard previousDownloads[itemID]?.phase != next.phase else { continue }
             switch next.phase {
             case .completed:
@@ -1310,12 +1334,13 @@ public final class OnlineSourcesSceneModel {
                 setFeedback(L("下载与导入已取消"), sourceID: itemID.sourceID)
             case .failed:
                 setFeedback(L("下载或导入失败，请重试。"), sourceID: itemID.sourceID)
-            case .downloading, .importing:
+            case .waiting, .downloading, .importing:
                 break
             }
         }
 
         for (rootItemID, next) in nextSnapshot.imports {
+            guard next.isSingleFile != true else { continue }
             guard previousImports[rootItemID]?.phase != next.phase else { continue }
             switch next.phase {
             case .completed:
@@ -1324,7 +1349,7 @@ public final class OnlineSourcesSceneModel {
                 setFeedback(L("下载与导入已取消"), sourceID: rootItemID.sourceID)
             case .failed:
                 setFeedback(L("目录导入失败，请重试"), sourceID: rootItemID.sourceID)
-            case .discovering, .downloading, .importing:
+            case .waiting, .discovering, .downloading, .importing:
                 break
             }
         }

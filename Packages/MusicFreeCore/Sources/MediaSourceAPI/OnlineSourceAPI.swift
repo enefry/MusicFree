@@ -926,16 +926,37 @@ public struct SourceCatalogPage: Codable, Equatable, Sendable {
 
 /// A transient download request. The downloaded file is handed to the
 /// application import flow and is not itself a persisted library record.
+public struct DownloadProgress: Equatable, Sendable {
+    public let receivedBytes: Int64
+    public let totalBytes: Int64?
+    public let bytesPerSecond: Double?
+
+    public init(receivedBytes: Int64, totalBytes: Int64?, bytesPerSecond: Double? = nil) {
+        self.receivedBytes = max(0, receivedBytes)
+        self.totalBytes = totalBytes.flatMap { $0 > 0 ? $0 : nil }
+        self.bytesPerSecond = bytesPerSecond
+    }
+}
+
 public struct DownloadOptions: Codable, Equatable, Sendable {
     public let allowsResume: Bool
     public let preferredFileName: String?
+    public var progress: (@Sendable (DownloadProgress) -> Void)?
 
     public init(
         allowsResume: Bool = true,
-        preferredFileName: String? = nil
+        preferredFileName: String? = nil,
+        progress: (@Sendable (DownloadProgress) -> Void)? = nil
     ) {
         self.allowsResume = allowsResume
         self.preferredFileName = normalizedOptionalString(preferredFileName)
+        self.progress = progress
+    }
+
+    private enum CodingKeys: String, CodingKey { case allowsResume, preferredFileName }
+
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.allowsResume == rhs.allowsResume && lhs.preferredFileName == rhs.preferredFileName
     }
 }
 

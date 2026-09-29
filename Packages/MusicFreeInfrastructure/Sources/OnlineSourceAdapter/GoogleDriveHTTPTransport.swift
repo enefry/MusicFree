@@ -80,7 +80,7 @@ public final class GoogleDriveHTTPTransport: GoogleDriveTransport, @unchecked Se
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
-        let (temporaryURL, response) = try await httpClient.download(for: request)
+        let (temporaryURL, response) = try await httpClient.download(for: request, progress: options.progress)
         do {
             try validateOnlineHTTPStatus(response)
             if let mimeType = response.mimeType?.lowercased(),

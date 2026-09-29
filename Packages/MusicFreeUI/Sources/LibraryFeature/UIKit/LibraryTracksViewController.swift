@@ -37,13 +37,13 @@ struct LibraryTrackRowIdentity: Hashable, Sendable {
 /// search lives on `LibraryHomeViewController`, not inside this song list.
 @MainActor
 public final class LibraryTracksViewController: UIViewController {
-    private enum TrackListSortMode: Equatable {
+    private enum TrackListSortMode: Equatable, Sendable {
         case title
         case artist
         case album
     }
 
-    private struct TrackRenderInput: Equatable {
+    private struct TrackRenderInput: Equatable, Sendable {
         let tracks: [Track]
         let favoriteAlbums: [Album]
         let favoriteAlbumsState: FavoriteAlbumsState
@@ -51,6 +51,30 @@ public final class LibraryTracksViewController: UIViewController {
         let artistNames: [ArtistID: String]
         let albumNames: [AlbumID: String]
         let sortMode: TrackListSortMode
+        let showsFavoriteAlbums: Bool
+        let noAlbumTitle: String
+    }
+
+    private struct TrackRenderRow: Sendable {
+        let id: LibraryTrackRowIdentity
+        let track: Track
+        let subtitle: String?
+    }
+
+    private struct TrackRenderBaseline: Sendable {
+        let sectionIDs: [TrackSection]
+        let itemIDs: [TrackItem]
+        let trackByRowID: [LibraryTrackRowIdentity: Track]
+        let favoriteAlbumByID: [AlbumID: Album]
+        let subtitleByRowID: [LibraryTrackRowIdentity: String?]
+    }
+
+    private struct PreparedTrackRender: Sendable {
+        let snapshot: NSDiffableDataSourceSnapshot<TrackSection, TrackItem>
+        let orderedRows: [TrackRenderRow]
+        let favoriteAlbumByID: [AlbumID: Album]
+        let itemsToReconfigure: [TrackItem]
+        let structureChanged: Bool
     }
 
     private struct TrackMetadataSignature: Hashable {
@@ -59,14 +83,14 @@ public final class LibraryTracksViewController: UIViewController {
         let albumID: AlbumID?
     }
 
-    private enum TrackSection: Hashable {
+    private enum TrackSection: Hashable, Sendable {
         case favoriteAlbums
         case actions
         case group(String)
         case status
     }
 
-    private enum TrackItem: Hashable {
+    private enum TrackItem: Hashable, Sendable {
         case album(AlbumID)
         case playbackActions
         case track(LibraryTrackRowIdentity)
@@ -109,6 +133,9 @@ public final class LibraryTracksViewController: UIViewController {
     private var dataSource: TrackDataSource!
     private var viewModelObservations = Set<AnyCancellable>()
     private var renderObservationTask: Task<Void, Never>?
+    private var renderPreparationTask: Task<Void, Never>?
+    private var renderRevision: UInt64 = 0
+    private var isRenderingActive = false
     private var metadataTask: Task<Void, Never>?
     private var artistNames: [ArtistID: String] = [:]
     private var albumNames: [AlbumID: String] = [:]
@@ -129,7 +156,7 @@ public final class LibraryTracksViewController: UIViewController {
     private let maximumConcurrentArtworkPrefetches = 4
     private let nextPagePreloadDistance = 50
 
-    private enum FavoriteAlbumsState: Equatable {
+    private enum FavoriteAlbumsState: Equatable, Sendable {
         case idle, loading, loaded, failed
     }
 
@@ -161,6 +188,7 @@ public final class LibraryTracksViewController: UIViewController {
 
     override public func viewDidLoad() {
         super.viewDidLoad()
+        isRenderingActive = true
         view.backgroundColor = MusicFreeUIColorTokens.backgroundPrimary
         view.accessibilityIdentifier = "library.\(section.rawValue)"
         if viewModel.selection != section {
@@ -187,6 +215,7 @@ public final class LibraryTracksViewController: UIViewController {
 
     override public func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        isRenderingActive = true
         // LibraryHomeViewController owns a single-row custom header and hides
         // the navigation bar.  Track sections are pushed onto that same
         // navigation stack, so explicitly restore the bar here; otherwise
@@ -195,8 +224,15 @@ public final class LibraryTracksViewController: UIViewController {
         if viewModel.selection != section {
             viewModel.select(section)
         }
+        observeViewModel()
+        if section == .favorites {
+            loadFavoriteAlbums()
+            observeFavoriteAlbumChanges()
+        }
         updateNavigationAppearance()
         viewModel.loadIfNeeded(for: section)
+        lastRenderInput = nil
+        renderSnapshot()
         Task { @MainActor [weak self] in
             await self?.viewModel.startObservingChanges()
         }
@@ -219,9 +255,24 @@ public final class LibraryTracksViewController: UIViewController {
 
     override public func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
+        isRenderingActive = false
+        viewModelObservations.removeAll()
+        renderObservationTask?.cancel()
+        renderObservationTask = nil
+        renderPreparationTask?.cancel()
+        renderPreparationTask = nil
+        renderRevision &+= 1
+        lastRenderInput = nil
         metadataTask?.cancel()
         metadataTask = nil
         metadataSignature = []
+        favoriteAlbumLoadTask?.cancel()
+        favoriteAlbumLoadTask = nil
+        if section == .favorites {
+            favoriteAlbumsState = .idle
+        }
+        favoriteAlbumObservationTask?.cancel()
+        favoriteAlbumObservationTask = nil
         artworkPrefetchTasks.values.forEach { $0.cancel() }
         artworkPrefetchTasks.removeAll(keepingCapacity: true)
         shareTask?.cancel()
@@ -230,6 +281,7 @@ public final class LibraryTracksViewController: UIViewController {
 
     deinit {
         renderObservationTask?.cancel()
+        renderPreparationTask?.cancel()
         metadataTask?.cancel()
         artworkPrefetchTasks.values.forEach { $0.cancel() }
         shareTask?.cancel()
@@ -455,9 +507,8 @@ public final class LibraryTracksViewController: UIViewController {
             self.renderObservationTask?.cancel()
             self.renderObservationTask = Task { @MainActor [weak self] in
                 await Task.yield()
-                guard let self else { return }
+                guard let self, self.isRenderingActive else { return }
                 self.renderSnapshot()
-                self.reloadMetadataIfNeeded()
                 self.collectionView.refreshControl?.endRefreshing()
                 self.renderObservationTask = nil
             }
@@ -489,7 +540,7 @@ public final class LibraryTracksViewController: UIViewController {
     }
 
     private func renderSnapshot() {
-        guard isViewLoaded else { return }
+        guard isViewLoaded, isRenderingActive else { return }
 
         updateNavigationMenus()
 
@@ -501,44 +552,84 @@ public final class LibraryTracksViewController: UIViewController {
             state: viewModel.state(for: section),
             artistNames: artistNames,
             albumNames: albumNames,
-            sortMode: sortMode
+            sortMode: sortMode,
+            showsFavoriteAlbums: section == .favorites,
+            noAlbumTitle: L("无专辑")
         )
         guard renderInput != lastRenderInput else { return }
         lastRenderInput = renderInput
 
-        let previousTrackByRowID = trackByRowID
-        let previousAlbumByID = favoriteAlbumByID
-        let previousSubtitleByRowID = renderedSubtitleByRowID
-        let sortedTracks = visibleTracks.sorted {
-            let lhs = TrackSectionIndex.normalizedSortValue(sortValue(for: $0))
-            let rhs = TrackSectionIndex.normalizedSortValue(sortValue(for: $1))
+        let currentSnapshot = dataSource.snapshot()
+        let baseline = TrackRenderBaseline(
+            sectionIDs: currentSnapshot.sectionIdentifiers,
+            itemIDs: currentSnapshot.itemIdentifiers,
+            trackByRowID: trackByRowID,
+            favoriteAlbumByID: favoriteAlbumByID,
+            subtitleByRowID: renderedSubtitleByRowID
+        )
+        renderRevision &+= 1
+        let revision = renderRevision
+        renderPreparationTask?.cancel()
+        renderPreparationTask = Task { @MainActor [weak self] in
+            let worker = Task.detached(priority: .userInitiated) {
+                try Task.checkCancellation()
+                return Self.prepareRender(input: renderInput, baseline: baseline)
+            }
+            let prepared: PreparedTrackRender
+            do {
+                prepared = try await withTaskCancellationHandler {
+                    try await worker.value
+                } onCancel: {
+                    worker.cancel()
+                }
+            } catch {
+                return
+            }
+            guard let self,
+                  !Task.isCancelled,
+                  self.isRenderingActive,
+                  self.renderRevision == revision
+            else { return }
+            self.renderPreparationTask = nil
+            self.applyPreparedRender(prepared)
+        }
+    }
+
+    nonisolated private static func prepareRender(
+        input: TrackRenderInput,
+        baseline: TrackRenderBaseline
+    ) -> PreparedTrackRender {
+        let sortedTracks = input.tracks.sorted {
+            let lhs = TrackSectionIndex.normalizedSortValue(sortValue(for: $0, input: input))
+            let rhs = TrackSectionIndex.normalizedSortValue(sortValue(for: $1, input: input))
             let result = lhs.localizedStandardCompare(rhs)
             if result != .orderedSame { return result == .orderedAscending }
             return $0.id.externalID.localizedStandardCompare($1.id.externalID)
                 == .orderedAscending
         }
-        orderedRows = LibraryTrackRowIdentity.rows(for: sortedTracks).map { row in
-            (id: row.id, track: row.track)
+        let orderedRows = LibraryTrackRowIdentity.rows(for: sortedTracks).map { row in
+            TrackRenderRow(
+                id: row.id,
+                track: row.track,
+                subtitle: subtitle(for: row.track, artistNames: input.artistNames)
+            )
         }
-        orderedTracks = orderedRows.map(\.track)
-        favoriteAlbumByID = Dictionary(uniqueKeysWithValues: favoriteAlbums.map { ($0.id, $0) })
-        trackByRowID = Dictionary(uniqueKeysWithValues: orderedRows.map { ($0.id, $0.track) })
-        renderedSubtitleByRowID = Dictionary(
-            uniqueKeysWithValues: orderedRows.map { ($0.id, subtitle(for: $0.track)) }
+        let favoriteAlbumByID = Dictionary(
+            uniqueKeysWithValues: input.favoriteAlbums.map { ($0.id, $0) }
         )
 
         var snapshot = NSDiffableDataSourceSnapshot<TrackSection, TrackItem>()
-        if orderedTracks.isEmpty && favoriteAlbums.isEmpty {
+        if orderedRows.isEmpty && input.favoriteAlbums.isEmpty {
             snapshot.appendSections([.status])
             let status: String
-            switch viewModel.state(for: section) {
+            switch input.state {
             case .idle, .loading:
                 status = "loading"
             case .failed:
                 status = "failed"
             case .empty, .loaded:
-                if section == .favorites {
-                    switch favoriteAlbumsState {
+                if input.showsFavoriteAlbums {
+                    switch input.favoriteAlbumsState {
                     case .idle, .loading: status = "loading"
                     case .failed: status = "failed"
                     case .loaded: status = "empty"
@@ -549,17 +640,20 @@ public final class LibraryTracksViewController: UIViewController {
             }
             snapshot.appendItems([.status(status)], toSection: .status)
         } else {
-            if !favoriteAlbums.isEmpty {
+            if !input.favoriteAlbums.isEmpty {
                 snapshot.appendSections([.favoriteAlbums])
-                snapshot.appendItems(favoriteAlbums.map { .album($0.id) }, toSection: .favoriteAlbums)
+                snapshot.appendItems(
+                    input.favoriteAlbums.map { .album($0.id) },
+                    toSection: .favoriteAlbums
+                )
             }
-            if !orderedTracks.isEmpty {
+            if !orderedRows.isEmpty {
                 snapshot.appendSections([.actions])
                 snapshot.appendItems([.playbackActions], toSection: .actions)
             }
 
             let grouped = Dictionary(grouping: orderedRows) {
-                TrackSectionIndex.title(for: sortValue(for: $0.track))
+                TrackSectionIndex.title(for: sortValue(for: $0.track, input: input))
             }
             let keys = grouped.keys.sorted(by: TrackSectionIndex.areInAscendingOrder)
             for key in keys {
@@ -571,23 +665,44 @@ public final class LibraryTracksViewController: UIViewController {
             }
         }
 
-        let currentSnapshot = dataSource.snapshot()
-        let structureChanged = currentSnapshot.sectionIdentifiers != snapshot.sectionIdentifiers
-            || currentSnapshot.itemIdentifiers != snapshot.itemIdentifiers
+        let structureChanged = baseline.sectionIDs != snapshot.sectionIdentifiers
+            || baseline.itemIDs != snapshot.itemIdentifiers
         let itemsToReconfigure = orderedRows.compactMap { row -> TrackItem? in
-            guard previousTrackByRowID[row.id] != row.track
-                || previousSubtitleByRowID[row.id] != renderedSubtitleByRowID[row.id]
+            guard baseline.trackByRowID[row.id] != row.track
+                || baseline.subtitleByRowID[row.id] != row.subtitle
             else {
                 return nil
             }
             return .track(row.id)
-        } + favoriteAlbums.compactMap { album -> TrackItem? in
-            previousAlbumByID[album.id] == album ? nil : .album(album.id)
+        } + input.favoriteAlbums.compactMap { album -> TrackItem? in
+            baseline.favoriteAlbumByID[album.id] == album ? nil : .album(album.id)
         }
 
-        guard structureChanged || !itemsToReconfigure.isEmpty else { return }
-        if !structureChanged, !itemsToReconfigure.isEmpty {
-            snapshot.reconfigureItems(itemsToReconfigure)
+        return PreparedTrackRender(
+            snapshot: snapshot,
+            orderedRows: orderedRows,
+            favoriteAlbumByID: favoriteAlbumByID,
+            itemsToReconfigure: itemsToReconfigure,
+            structureChanged: structureChanged
+        )
+    }
+
+    private func applyPreparedRender(_ prepared: PreparedTrackRender) {
+        orderedRows = prepared.orderedRows.map { (id: $0.id, track: $0.track) }
+        orderedTracks = prepared.orderedRows.map(\.track)
+        favoriteAlbumByID = prepared.favoriteAlbumByID
+        trackByRowID = Dictionary(
+            uniqueKeysWithValues: prepared.orderedRows.map { ($0.id, $0.track) }
+        )
+        renderedSubtitleByRowID = Dictionary(
+            uniqueKeysWithValues: prepared.orderedRows.map { ($0.id, $0.subtitle) }
+        )
+        reloadMetadataIfNeeded()
+
+        guard prepared.structureChanged || !prepared.itemsToReconfigure.isEmpty else { return }
+        var snapshot = prepared.snapshot
+        if !prepared.structureChanged, !prepared.itemsToReconfigure.isEmpty {
+            snapshot.reconfigureItems(prepared.itemsToReconfigure)
         }
         dataSource.apply(snapshot, animatingDifferences: false)
     }
@@ -663,19 +778,29 @@ public final class LibraryTracksViewController: UIViewController {
     }
 
     private func subtitle(for track: Track) -> String? {
+        Self.subtitle(for: track, artistNames: artistNames)
+    }
+
+    nonisolated private static func subtitle(
+        for track: Track,
+        artistNames: [ArtistID: String]
+    ) -> String? {
         let names = track.artistIDs.compactMap { artistNames[$0] }
         return names.isEmpty ? nil : names.joined(separator: "、")
     }
 
-    private func sortValue(for track: Track) -> String {
-        switch sortMode {
+    nonisolated private static func sortValue(
+        for track: Track,
+        input: TrackRenderInput
+    ) -> String {
+        switch input.sortMode {
         case .title:
             return track.sortTitle ?? track.title
         case .artist:
-            return subtitle(for: track) ?? track.title
+            return subtitle(for: track, artistNames: input.artistNames) ?? track.title
         case .album:
-            guard let albumID = track.albumID else { return L("无专辑") }
-            return albumNames[albumID] ?? track.title
+            guard let albumID = track.albumID else { return input.noAlbumTitle }
+            return input.albumNames[albumID] ?? track.title
         }
     }
 

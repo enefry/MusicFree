@@ -359,7 +359,7 @@ public actor DSAudioHTTPTransport: DSAudioTransport {
         Self.logger.info(
             "download request source=\(configuration.sourceID.rawValue) item=\(itemID.externalID) api=\(resolved.name) path=\(resolved.path)"
         )
-        let (temporaryURL, response) = try await httpClient.download(for: request)
+        let (temporaryURL, response) = try await httpClient.download(for: request, progress: options.progress)
         do {
             let byteCount = Self.fileByteCount(at: temporaryURL)
             let mimeType = response.mimeType ?? "unknown"
@@ -441,7 +441,7 @@ public actor DSAudioHTTPTransport: DSAudioTransport {
         Self.logger.info(
             "stream download request source=\(configuration.sourceID.rawValue) item=\(itemID.externalID) transcoded=\(isTranscoded)"
         )
-        let (temporaryURL, response) = try await httpClient.download(for: request)
+        let (temporaryURL, response) = try await httpClient.download(for: request, progress: options.progress)
         do {
             let byteCount = Self.fileByteCount(at: temporaryURL)
             let responseKind = Self.downloadResponseKind(

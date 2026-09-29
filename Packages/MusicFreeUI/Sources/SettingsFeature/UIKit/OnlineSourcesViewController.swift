@@ -124,9 +124,15 @@ public final class OnlineSourcesViewController: UIViewController,
         downloadObservationTask = Task { @MainActor [weak self] in
             guard let self else { return }
             let stream = model.downloadQueue.makeSnapshotStream()
-            for await snapshot in stream {
+            for await _ in stream {
                 guard !Task.isCancelled else { return }
-                self.refreshDownloadQueueSummary(snapshot)
+                do {
+                    try await Task.sleep(for: .milliseconds(100))
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled else { return }
+                self.refreshDownloadQueueSummary(model.downloadQueue.snapshot)
             }
         }
     }
@@ -1697,6 +1703,9 @@ private final class OnlineSourceCatalogViewController: UIViewController,
     private var appliedRows: [CatalogRow] = []
     private var appliedRowSignatures: [CatalogRow: String] = [:]
     private var items: [SourceCatalogItem] = []
+    private var itemsByID: [SourceObjectID: SourceCatalogItem] = [:]
+    private var selectedDownloadItemIDs: Set<SourceObjectID> = []
+    private var isSelectingDownloads = false
     private var nextPageToken: MediaSourceCursor?
     private var catalogSort = SourceCatalogSort.standard
     private var loadTask: Task<Void, Never>?
@@ -1747,13 +1756,13 @@ private final class OnlineSourceCatalogViewController: UIViewController,
 
         configureCollectionView()
         configureSearchBar()
-        observeModel()
         render(force: true)
         beginLoadingCatalog()
     }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        observeModel()
         Task { @MainActor [weak self] in
             guard let self else { return }
             await model.start()
@@ -1762,6 +1771,13 @@ private final class OnlineSourceCatalogViewController: UIViewController,
             render(force: true)
             ensureCatalogLoadIfNeeded()
         }
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        observationTask?.cancel(); observationTask = nil
+        auditionObservationTask?.cancel(); auditionObservationTask = nil
+        downloadObservationTask?.cancel(); downloadObservationTask = nil
     }
 
     private var summary: OnlineSourceSummary? {
@@ -1789,12 +1805,10 @@ private final class OnlineSourceCatalogViewController: UIViewController,
     }
 
     private var currentImportSnapshot: OnlineSourceImportSnapshot? {
-        if let snapshot = model.importSnapshots[currentDirectoryItem.id] {
-            return snapshot
-        }
-        guard isRoot else { return nil }
-        return model.importSnapshots.values.first {
-            $0.rootItemID.sourceID == sourceID && $0.displayName == directoryTitle
+        return model.importSnapshots.values.filter {
+            ($0.catalogRootItemID ?? $0.rootItemID) == currentDirectoryItem.id
+        }.max {
+            ($0.createdAt ?? .distantPast) < ($1.createdAt ?? .distantPast)
         }
     }
 
@@ -1860,11 +1874,11 @@ private final class OnlineSourceCatalogViewController: UIViewController,
         auditionObservationTask?.cancel()
         downloadObservationTask?.cancel()
 
+        let serving = model.serving
         observationTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            let stream = await self.model.serving.makeSnapshotStream()
+            let stream = await serving.makeSnapshotStream()
             for await _ in stream {
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled, let self else { return }
                 self.render()
                 self.ensureCatalogLoadIfNeeded()
                 await self.presentPendingAuthenticationIfNeeded()
@@ -1874,12 +1888,12 @@ private final class OnlineSourceCatalogViewController: UIViewController,
         // The shared scene model also observes this stream, but that update is
         // scheduled independently from the catalog action. Keep a local copy
         // so the cell state cannot miss the short-lived preparing transition.
+        let auditionStream = model.auditionServing.makeSnapshotStream()
         auditionObservationTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            let stream = self.model.auditionServing.makeSnapshotStream()
+            let stream = auditionStream
             var hasObservedInitialSnapshot = false
             for await snapshot in stream {
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled, let self else { return }
                 let isInitialSnapshot = !hasObservedInitialSnapshot
                 hasObservedInitialSnapshot = true
                 self.latestAuditionSnapshot = snapshot
@@ -1903,13 +1917,18 @@ private final class OnlineSourceCatalogViewController: UIViewController,
             }
         }
 
+        let downloadStream = model.downloadQueue.makeSnapshotStream()
         downloadObservationTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            let stream = self.model.downloadQueue.makeSnapshotStream()
+            let stream = downloadStream
             for await _ in stream {
+                guard !Task.isCancelled, let self else { return }
+                do {
+                    try await Task.sleep(for: .milliseconds(100))
+                } catch {
+                    return
+                }
                 guard !Task.isCancelled else { return }
-                await Task.yield()
-                self.render(force: true)
+                self.render()
                 self.updateDirectoryImportButton(for: self.summary)
             }
         }
@@ -2071,7 +2090,8 @@ private final class OnlineSourceCatalogViewController: UIViewController,
     }
 
     private func render(force: Bool = false) {
-        guard isViewLoaded else { return }
+        guard isViewLoaded, viewIfLoaded?.window != nil else { return }
+        itemsByID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
         if snapshotApplyInFlight {
             pendingRender = true
             pendingRenderForce = pendingRenderForce || force
@@ -2088,14 +2108,15 @@ private final class OnlineSourceCatalogViewController: UIViewController,
         }
 
         let rows = catalogRows(for: summary)
-        let contentSignature = catalogContentSignature(rows: rows)
-        guard rows != appliedRows
+        let rowSignatures = Dictionary(uniqueKeysWithValues: rows.map { ($0, catalogRowSignature($0)) })
+        let contentSignature = [rows.map { rowSignatures[$0] ?? "" }.joined(separator: "#"), String(describing: summary), submittedSearchQuery, "sort:\(catalogSort.key.rawValue):\(catalogSort.direction.rawValue)", nextPageToken?.rawValue ?? "none"].joined(separator: "::")
+        guard force || rows != appliedRows
             || contentSignature != lastCatalogContentSignature
         else {
             return
         }
 
-        let currentIdentifiers = collectionDataSource.snapshot().itemIdentifiers
+        let currentIdentifiers = Set(collectionDataSource.snapshot().itemIdentifiers)
         var snapshot = NSDiffableDataSourceSnapshot<CatalogSection, CatalogRow>()
         for section in CatalogSection.allCases {
             let sectionRows = rows.filter { catalogSection(for: $0) == section }
@@ -2105,14 +2126,11 @@ private final class OnlineSourceCatalogViewController: UIViewController,
         }
         let reloadable = rows.filter {
             currentIdentifiers.contains($0)
-                && appliedRowSignatures[$0] != catalogRowSignature($0)
+                && appliedRowSignatures[$0] != rowSignatures[$0]
         }
         if !reloadable.isEmpty {
             snapshot.reloadItems(reloadable)
         }
-        let rowSignatures = Dictionary(uniqueKeysWithValues: rows.map {
-            ($0, catalogRowSignature($0))
-        })
         snapshotApplyInFlight = true
         appliedRows = rows
         appliedRowSignatures = rowSignatures
@@ -2208,23 +2226,12 @@ private final class OnlineSourceCatalogViewController: UIViewController,
         return rows
     }
 
-    private func catalogContentSignature(rows: [CatalogRow]) -> String {
-        let rowSignature = rows.map(catalogRowSignature).joined(separator: "#")
-        return [
-            rowSignature,
-            String(describing: self.summary),
-            submittedSearchQuery,
-            "sort:\(catalogSort.key.rawValue):\(catalogSort.direction.rawValue)",
-            nextPageToken?.rawValue ?? "none",
-        ].joined(separator: "::")
-    }
-
     private func catalogRowSignature(_ row: CatalogRow) -> String {
         switch row {
         case let .category(mode): return "category:\(mode.rawValue)"
         case .googleDriveAuthorization: return "googleDriveAuthorization"
         case let .item(itemID):
-            let item = items.first { $0.id == itemID }
+            let item = itemsByID[itemID]
             let download = model.downloadSnapshots[itemID]
             return [
                 "item",
@@ -2234,6 +2241,7 @@ private final class OnlineSourceCatalogViewController: UIViewController,
                 catalogAuditionActionState(for: itemID).identifier,
                 String(describing: download?.phase),
                 download?.failureReason ?? "",
+                String(isSelectingDownloads), String(selectedDownloadItemIDs.contains(itemID)),
             ].joined(separator: "|")
         case let .feedback(message): return "feedback:\(message)"
         case .loading: return "loading"
@@ -2275,12 +2283,17 @@ private final class OnlineSourceCatalogViewController: UIViewController,
             cell.accessibilityIdentifier =
                 "onlineSources.source.\(sourceID.rawValue).googleDrive.authorization"
         case let .item(itemID):
-            guard let item = items.first(where: { $0.id == itemID }), let summary else {
+            guard let item = itemsByID[itemID], let summary else {
                 cell.configure(title: L("目录项"), systemImage: "questionmark")
                 return
             }
             let title = catalogItemTitle(item)
-            if item.kind.isContainer {
+            if isSelectingDownloads {
+                let selected = selectedDownloadItemIDs.contains(itemID)
+                cell.configure(title: title, subtitle: item.kind.isContainer ? catalogKindTitle(item.kind) : metadataLine(item), systemImage: selected ? "checkmark.circle.fill" : "circle", tintColor: selected ? MusicFreeUIColorTokens.accent : MusicFreeUIColorTokens.foregroundTertiary)
+                cell.accessibilityIdentifier = itemAccessibilityID(item, action: "select")
+                cell.accessibilityValue = selected ? L("已选择") : L("未选择")
+            } else if item.kind.isContainer {
                 cell.configure(
                     title: title,
                     subtitle: catalogKindTitle(item.kind),
@@ -2807,7 +2820,7 @@ private final class OnlineSourceCatalogViewController: UIViewController,
 
     private func makeCatalogDownloadAccessory(_ item: SourceCatalogItem) -> UIView {
         switch model.downloadSnapshots[item.id]?.phase {
-        case .downloading, .importing:
+        case .waiting, .downloading, .importing:
             // A custom accessory already has to share the trailing space with
             // the audition button. Combining a spinner and a 44pt button in
             // a second accessory overflows the list-cell trailing margin and
@@ -2960,6 +2973,12 @@ private final class OnlineSourceCatalogViewController: UIViewController,
             guard mode != browseMode else { return }
             pushCatalog(mode: mode, parentID: nil, title: browseModeTitle(mode))
         case let .item(itemID):
+            if isSelectingDownloads {
+                guard let item = itemsByID[itemID], item.isDownloadable || item.kind.isContainer else { return }
+                if !selectedDownloadItemIDs.insert(itemID).inserted { selectedDownloadItemIDs.remove(itemID) }
+                render(force: true)
+                return
+            }
             guard let item = items.first(where: { $0.id == itemID }), item.kind.isContainer else { return }
             pushCatalog(
                 mode: childBrowseMode(for: item),
@@ -3574,7 +3593,7 @@ private final class OnlineSourceCatalogViewController: UIViewController,
         // the circle/filled-circle pair used by multi-select rows.
         if let progress = currentImportSnapshot {
             switch progress.phase {
-            case .discovering, .downloading, .importing:
+            case .waiting, .discovering, .downloading, .importing:
                 button = UIBarButtonItem(
                     image: UIImage(systemName: "xmark.circle"),
                     style: .plain,
@@ -3625,6 +3644,21 @@ private final class OnlineSourceCatalogViewController: UIViewController,
         includeSort: Bool = true
     ) {
         var buttons = [UIBarButtonItem]()
+        if isSelectingDownloads {
+            let download = UIBarButtonItem(image: UIImage(systemName: "arrow.down.to.line"), primaryAction: UIAction { [weak self] _ in self?.downloadSelectedItems() })
+            download.isEnabled = !selectedDownloadItemIDs.isEmpty
+            download.accessibilityLabel = L("下载所选 %d 项", selectedDownloadItemIDs.count)
+            download.accessibilityIdentifier = "onlineSources.catalog.downloadSelected"
+            let done = UIBarButtonItem(title: L("完成"), primaryAction: UIAction { [weak self] _ in self?.toggleDownloadSelection() })
+            navigationItem.rightBarButtonItems = [download, done]
+            return
+        }
+        if importButton != nil {
+            let select = UIBarButtonItem(image: UIImage(systemName: "checklist"), primaryAction: UIAction { [weak self] _ in self?.toggleDownloadSelection() })
+            select.accessibilityLabel = L("选择下载项目")
+            select.accessibilityIdentifier = "onlineSources.catalog.selectDownloads"
+            buttons.append(select)
+        }
         if includeSort {
             buttons.append(makeCatalogSortBarButtonItem())
         }
@@ -3632,6 +3666,20 @@ private final class OnlineSourceCatalogViewController: UIViewController,
             buttons.append(importButton)
         }
         navigationItem.rightBarButtonItems = buttons.isEmpty ? nil : buttons
+    }
+
+    private func toggleDownloadSelection() {
+        isSelectingDownloads.toggle()
+        selectedDownloadItemIDs.removeAll()
+        render(force: true)
+    }
+
+    private func downloadSelectedItems() {
+        let selection = items.filter { selectedDownloadItemIDs.contains($0.id) }
+        guard !selection.isEmpty else { return }
+        model.startBatchImport(sourceID: sourceID, items: selection, displayName: L("%@ · %d 项", directoryTitle, selection.count))
+        toggleDownloadSelection()
+        navigationController?.pushViewController(OnlineSourceDownloadQueueViewController(model: model), animated: true)
     }
 
     private func makeCatalogSortBarButtonItem() -> UIBarButtonItem {
@@ -3689,12 +3737,20 @@ private final class OnlineSourceCatalogViewController: UIViewController,
     @objc private func importCurrentDirectory() {
         guard let summary, isImportAvailable(summary) else { return }
         if let progress = currentImportSnapshot,
-           [.discovering, .downloading, .importing].contains(progress.phase) {
+           progress.phase.isActive {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 await model.cancelImport(progress.rootItemID)
                 updateDirectoryImportButton(for: summary)
             }
+            return
+        }
+
+        if let progress = currentImportSnapshot,
+           progress.phase != .completed,
+           model.downloadQueue.canResumeTask(progress.rootItemID) {
+            model.resumeDownloadTask(progress.rootItemID)
+            updateDirectoryImportButton(for: summary)
             return
         }
 
@@ -3953,7 +4009,7 @@ private final class OnlineSourceCatalogViewController: UIViewController,
 
     private func makeDownloadControl(_ item: SourceCatalogItem) -> UIView {
         switch model.downloadSnapshots[item.id]?.phase {
-        case .downloading, .importing:
+        case .waiting, .downloading, .importing:
             let progress = UIActivityIndicatorView(style: .medium)
             progress.startAnimating()
             progress.isAccessibilityElement = true
@@ -4668,212 +4724,4 @@ private final class OnlineSourceCatalogActionContainer: UIView {
         )
     }
 
-}
-
-@MainActor
-private final class OnlineSourceDownloadQueueViewController: UIViewController,
-    UITableViewDataSource
-{
-    private enum Row: Hashable {
-        case download(SourceObjectID)
-        case `import`(SourceObjectID)
-    }
-
-    private let model: OnlineSourcesSceneModel
-    private let tableView = UITableView(frame: .zero, style: .insetGrouped)
-    private var observationTask: Task<Void, Never>?
-    private var sourceObservationTask: Task<Void, Never>?
-    private var rowIDs: [Row] = []
-    private var snapshotsByRow: [Row: String] = [:]
-    private var latestSnapshot = OnlineDownloadQueueSnapshot()
-
-    init(model: OnlineSourcesSceneModel) {
-        self.model = model
-        super.init(nibName: nil, bundle: nil)
-        title = L("下载任务")
-        restorationIdentifier = "onlineSources.downloadQueue.uikit"
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        view.backgroundColor = MusicFreeUIColorTokens.backgroundGrouped
-        view.accessibilityIdentifier = "onlineSources.downloadQueue.view"
-        tableView.translatesAutoresizingMaskIntoConstraints = false
-        tableView.dataSource = self
-        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "QueueCell")
-        view.addSubview(tableView)
-        NSLayoutConstraint.activate([
-            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            tableView.topAnchor.constraint(equalTo: view.topAnchor),
-            tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
-        ])
-        navigationItem.rightBarButtonItem = UIBarButtonItem(
-            title: L("取消全部"),
-            style: .plain,
-            target: self,
-            action: #selector(cancelAll)
-        )
-        observeQueue()
-    }
-
-    override func viewDidDisappear(_ animated: Bool) {
-        super.viewDidDisappear(animated)
-        observationTask?.cancel()
-        observationTask = nil
-        sourceObservationTask?.cancel()
-        sourceObservationTask = nil
-    }
-
-    deinit {
-        observationTask?.cancel()
-        sourceObservationTask?.cancel()
-    }
-
-    private func observeQueue() {
-        if observationTask == nil {
-            let stream = model.downloadQueue.makeSnapshotStream()
-            observationTask = Task { @MainActor [weak self] in
-                for await snapshot in stream {
-                    guard let self, !Task.isCancelled else { return }
-                    self.render(snapshot)
-                }
-            }
-        }
-        if sourceObservationTask == nil {
-            sourceObservationTask = Task { @MainActor [weak self] in
-                guard let self else { return }
-                let stream = await self.model.serving.makeSnapshotStream()
-                for await _ in stream {
-                    guard !Task.isCancelled else { return }
-                    // Download rows cache the source display name in their
-                    // signature. A source rename therefore only reloads the
-                    // affected rows instead of the whole table.
-                    self.render(self.latestSnapshot)
-                }
-            }
-        }
-    }
-
-    override func viewWillAppear(_ animated: Bool) {
-        super.viewWillAppear(animated)
-        observeQueue()
-    }
-
-    @objc private func cancelAll() {
-        Task { await model.cancelAllDownloads() }
-    }
-
-    private func render(_ snapshot: OnlineDownloadQueueSnapshot) {
-        latestSnapshot = snapshot
-        let nextRows = snapshot.imports.values
-            .sorted { left, right in
-                left.rootItemID < right.rootItemID
-            }
-            .map { Row.import($0.rootItemID) }
-            + snapshot.downloads.values
-                .sorted { left, right in
-                    left.itemID < right.itemID
-                }
-                .map { Row.download($0.itemID) }
-
-        var nextValues: [Row: String] = [:]
-        for row in nextRows {
-            switch row {
-            case .download(let itemID):
-                guard let value = snapshot.downloads[itemID] else { continue }
-                nextValues[row] = [
-                    value.displayName,
-                    sourceName(value.itemID.sourceID),
-                    downloadPhaseTitle(value.phase),
-                    value.failureReason ?? ""
-                ].joined(separator: "\u{001F}")
-            case .import(let rootItemID):
-                guard let value = snapshot.imports[rootItemID] else { continue }
-                nextValues[row] = [
-                    value.displayName,
-                    sourceName(value.rootItemID.sourceID),
-                    importPhaseTitle(value.phase),
-                    String(value.totalItems),
-                    String(value.processedItems),
-                    String(value.importedItems),
-                    String(value.duplicateItems),
-                    String(value.skippedItems),
-                    String(value.failedItems),
-                    value.currentItemName ?? "",
-                    value.failureReason ?? ""
-                ].joined(separator: "\u{001F}")
-            }
-        }
-
-        if nextRows != rowIDs {
-            rowIDs = nextRows
-            snapshotsByRow = nextValues
-            tableView.reloadData()
-            return
-        }
-
-        let changedIndexes = nextRows.indices.compactMap { index -> IndexPath? in
-            let row = nextRows[index]
-            return snapshotsByRow[row] == nextValues[row]
-                ? nil
-                : IndexPath(row: index, section: 0)
-        }
-        snapshotsByRow = nextValues
-        guard !changedIndexes.isEmpty else { return }
-        tableView.reloadRows(at: changedIndexes, with: .none)
-    }
-
-    func tableView(_: UITableView, numberOfRowsInSection _: Int) -> Int { rowIDs.count }
-
-    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        let cell = tableView.dequeueReusableCell(withIdentifier: "QueueCell", for: indexPath)
-        let rowID = rowIDs[indexPath.row]
-        var content = cell.defaultContentConfiguration()
-        switch rowID {
-        case .download(let itemID):
-            guard let row = latestSnapshot.downloads[itemID] else { return cell }
-            content.text = row.displayName
-            content.secondaryText = "\(sourceName(row.itemID.sourceID)) · \(downloadPhaseTitle(row.phase))"
-        case .import(let rootItemID):
-            guard let row = latestSnapshot.imports[rootItemID] else { return cell }
-            content.text = row.displayName
-            content.secondaryText = "\(sourceName(row.rootItemID.sourceID)) · \(importPhaseTitle(row.phase))"
-        }
-        content.image = UIImage(systemName: "arrow.down.circle")
-        content.imageProperties.tintColor = MusicFreeUIColorTokens.accent
-        cell.contentConfiguration = content
-        cell.accessibilityIdentifier = "onlineSources.downloadQueue.row.\(indexPath.row)"
-        return cell
-    }
-
-    private func sourceName(_ sourceID: MediaSourceID) -> String {
-        model.snapshot.sources.first(where: { $0.sourceID == sourceID })?.displayName ?? sourceID.rawValue
-    }
-
-    private func downloadPhaseTitle(_ phase: OnlineSourceDownloadPhase) -> String {
-        switch phase {
-        case .downloading: L("正在下载")
-        case .importing: L("正在导入媒体库")
-        case .completed: L("已完成")
-        case .alreadyImported: L("媒体已存在")
-        case .skipped: L("已跳过")
-        case .cancelled: L("已取消")
-        case .failed: L("失败，可重试")
-        }
-    }
-
-    private func importPhaseTitle(_ phase: OnlineSourceImportPhase) -> String {
-        switch phase {
-        case .discovering: L("正在扫描目录")
-        case .downloading: L("正在下载")
-        case .importing: L("正在导入媒体库")
-        case .completed: L("已完成")
-        case .cancelled: L("已取消")
-        case .failed: L("失败，可重试")
-        }
-    }
 }

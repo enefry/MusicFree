@@ -1038,6 +1038,142 @@ final class MusicFreeBVTUITests: XCTestCase {
     }
 
     @MainActor
+    func testDownloadTasksV1CancelsResumesAndClearsHistory() {
+        exerciseDownloadTasksV1(light: true, verifyResume: true)
+    }
+
+    @MainActor
+    func testDownloadTasksV1DarkOverview() {
+        exerciseDownloadTasksV1(light: false, verifyResume: false)
+    }
+
+    @MainActor
+    func testDownloadTasksV1CancelsQueuedDirectory() {
+        let app = prepareDownloadTasksApp(light: true, slow: true)
+        defer { app.terminate() }
+        let catalog = app.collectionViews["onlineSources.catalog.list"]
+        let first = catalog.cells["onlineSources.detail.bvt.dsaudio.item.bvt-folder.open"].firstMatch
+        XCTAssertTrue(first.waitForExistence(timeout: 10))
+        first.tap()
+        let startFirst = app.buttons["onlineSources.detail.bvt.dsaudio.item.bvt-folder.downloadAndImportAll"].firstMatch
+        XCTAssertTrue(startFirst.waitForExistence(timeout: 10))
+        startFirst.tap()
+        XCTAssertTrue(app.buttons["onlineSources.detail.bvt.dsaudio.item.bvt-folder.cancelImport"].firstMatch.waitForExistence(timeout: 5))
+        tapSystemNavigationBack(in: app, expectedPreviousTitle: "BVT DS Audio")
+        let second = catalog.cells["onlineSources.detail.bvt.dsaudio.item.bvt-folder-02.open"].firstMatch
+        XCTAssertTrue(second.waitForExistence(timeout: 10))
+        second.tap()
+        let startSecond = app.buttons["onlineSources.detail.bvt.dsaudio.item.bvt-folder-02.downloadAndImportAll"].firstMatch
+        XCTAssertTrue(startSecond.waitForExistence(timeout: 10))
+        startSecond.tap()
+        let cancel = app.buttons["onlineSources.detail.bvt.dsaudio.item.bvt-folder-02.cancelImport"].firstMatch
+        XCTAssertTrue(cancel.waitForExistence(timeout: 5))
+        cancel.tap()
+        XCTAssertTrue(cancel.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(startSecond.waitForExistence(timeout: 5))
+        XCTAssertEqual(startSecond.value as? String, "Retry available")
+        attachScreenshot(named: "downloads-review-queued-directory-cancelled")
+        startSecond.tap()
+        XCTAssertTrue(cancel.waitForExistence(timeout: 5))
+        app.tabBars.buttons["Online Sources"].firstMatch.doubleTap()
+        let entry = app.descendants(matching: .any)["onlineSources.downloadQueue"].firstMatch
+        XCTAssertTrue(entry.waitForExistence(timeout: 10))
+        entry.tap()
+        let tasks = app.tables["onlineSources.downloadQueue.list"].cells.matching(NSPredicate(format: "identifier BEGINSWITH 'onlineSources.downloadQueue.task.__import_'"))
+        XCTAssertTrue(tasks.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertEqual(tasks.count, 2, "Retrying the queued directory must resume its existing task.")
+    }
+
+    @MainActor
+    private func prepareDownloadTasksApp(light: Bool, slow: Bool = false) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["--bvt-seed-online-sources", "--bvt-reset-online-sources", "--bvt-reset-user-interface-preferences", "--bvt-download-progress"]
+        if light { app.launchArguments.append("--bvt-download-page-light") }
+        if slow { app.launchArguments.append("--bvt-download-progress-slow") }
+        app.launch()
+        tapTab("Online Sources", in: app)
+        let consent = app.buttons["onlineSources.applicationPrivacy.confirm"].firstMatch
+        XCTAssertTrue(consent.waitForExistence(timeout: 15))
+        consent.tap()
+        openOnlineSource(named: "BVT DS Audio", in: app)
+        acceptOnlineSourcePrivacy(sourceID: "bvt.dsaudio", in: app)
+        enableOnlineSourcesService(in: app)
+        enableOnlineSource(sourceID: "bvt.dsaudio", in: app)
+        return app
+    }
+
+    @MainActor
+    private func exerciseDownloadTasksV1(light: Bool, verifyResume: Bool) {
+        let app = prepareDownloadTasksApp(light: light)
+        defer { app.terminate() }
+        let folder = app.collectionViews["onlineSources.catalog.list"].cells["onlineSources.detail.bvt.dsaudio.item.bvt-folder.open"].firstMatch
+        XCTAssertTrue(folder.waitForExistence(timeout: 15))
+        if light {
+            folder.tap()
+            let start = app.buttons["onlineSources.detail.bvt.dsaudio.item.bvt-folder.downloadAndImportAll"].firstMatch
+            XCTAssertTrue(start.waitForExistence(timeout: 10))
+            start.tap()
+            app.tabBars.buttons["Online Sources"].firstMatch.doubleTap()
+            let entry = app.descendants(matching: .any)["onlineSources.downloadQueue"].firstMatch
+            XCTAssertTrue(entry.waitForExistence(timeout: 10))
+            entry.tap()
+        } else {
+            let select = app.buttons["onlineSources.catalog.selectDownloads"].firstMatch
+            XCTAssertTrue(select.waitForExistence(timeout: 10))
+            select.tap()
+            let catalog = app.collectionViews["onlineSources.catalog.list"]
+            let selectedFolder = catalog.cells["onlineSources.detail.bvt.dsaudio.item.bvt-folder.select"].firstMatch
+            XCTAssertTrue(selectedFolder.waitForExistence(timeout: 5))
+            selectedFolder.tap()
+            let second = catalog.cells["onlineSources.detail.bvt.dsaudio.item.bvt-folder-02.select"].firstMatch
+            XCTAssertTrue(second.waitForExistence(timeout: 5))
+            second.tap()
+            let download = app.buttons["onlineSources.catalog.downloadSelected"].firstMatch
+            XCTAssertTrue(download.isEnabled)
+            download.tap()
+        }
+        let table = app.tables["onlineSources.downloadQueue.list"].firstMatch
+        XCTAssertTrue(table.waitForExistence(timeout: 10))
+        let prefix = light ? "onlineSources.downloadQueue.task.__import_" : "onlineSources.downloadQueue.task.__selection_"
+        let task = table.cells.matching(NSPredicate(format: "identifier BEGINSWITH %@", prefix)).firstMatch
+        XCTAssertTrue(task.waitForExistence(timeout: 10))
+        XCTAssertTrue(table.cells.matching(NSPredicate(format: "identifier BEGINSWITH 'onlineSources.downloadQueue.file.'")).firstMatch.waitForExistence(timeout: 5))
+        attachScreenshot(named: light ? "downloads-v1-light-overview" : "downloads-v1-dark-overview")
+        task.tap()
+        XCTAssertTrue(app.buttons["onlineSources.downloadQueue.taskAction"].firstMatch.waitForExistence(timeout: 5))
+        attachScreenshot(named: light ? "downloads-v1-light-detail" : "downloads-v1-dark-detail")
+        app.buttons["onlineSources.downloadQueue.taskAction"].firstMatch.tap()
+        let resume = app.buttons["onlineSources.downloadQueue.resume"].firstMatch
+        XCTAssertTrue(resume.waitForExistence(timeout: 5))
+        if light {
+            XCTAssertEqual(app.staticTexts["onlineSources.downloadQueue.counter.failed"].label, "0")
+            XCTAssertEqual(app.staticTexts["onlineSources.downloadQueue.counter.waiting"].label, "1")
+        }
+        attachScreenshot(named: "downloads-v1-cancelled")
+        guard verifyResume else { return }
+        resume.tap()
+        XCTAssertTrue(resume.waitForNonExistence(timeout: 5))
+        let completed = app.staticTexts["Completed"].firstMatch
+        XCTAssertTrue(completed.waitForExistence(timeout: 45))
+        attachScreenshot(named: "downloads-v1-completed-detail")
+        tapSystemNavigationBack(in: app, expectedPreviousTitle: "下载任务")
+        let history = app.descendants(matching: .any)["onlineSources.downloadQueue.completed"].firstMatch
+        XCTAssertTrue(history.waitForExistence(timeout: 10))
+        if !history.isHittable { table.swipeUp() }
+        history.tap()
+        let clear = app.buttons["onlineSources.downloadQueue.clear"].firstMatch
+        XCTAssertTrue(clear.waitForExistence(timeout: 10))
+        attachScreenshot(named: "downloads-v1-completed-history")
+        clear.tap()
+        XCTAssertTrue(app.alerts.firstMatch.waitForExistence(timeout: 5))
+        attachScreenshot(named: "downloads-v1-clear-confirmation")
+        app.alerts.buttons["Clear"].tap()
+        XCTAssertTrue(app.staticTexts["No Completed Tasks"].waitForExistence(timeout: 10))
+        attachScreenshot(named: "downloads-v1-empty-history")
+        XCTAssertFalse(clear.isEnabled)
+    }
+
+    @MainActor
     func testOnlineSourcesBVTCompletesPrivacyMultiSourceCatalogSearchAndImportFlow() {
         let app = XCUIApplication()
         defer { app.terminate() }
