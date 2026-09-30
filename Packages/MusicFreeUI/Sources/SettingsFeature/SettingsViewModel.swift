@@ -865,12 +865,32 @@ final class SettingsViewModel {
     func setDuplicateImportPolicy(_ policy: DuplicateImportPolicy) {
         applyEdit { current in
             AppSettings(
-                importPreferences: ImportPreferences(
-                    duplicatePolicy: policy,
-                    metadataProviders: current.importPreferences.metadataProviders,
-                    lyricsProviders: current.importPreferences.lyricsProviders,
-                    privacyPreferences: current.importPreferences.privacyPreferences,
-                    onlineSourcePreferences: current.importPreferences.onlineSourcePreferences
+                importPreferences: current.importPreferences.settingDuplicatePolicy(policy),
+                playbackPreferences: current.playbackPreferences,
+                storagePreferences: current.storagePreferences
+            )
+        }
+    }
+
+    func setAutomaticAudioConversionEnabled(_ isEnabled: Bool) {
+        setAudioConversionPreferences { $0.settingAutomaticConversion(isEnabled) }
+    }
+
+    func setAudioConversionTarget(_ target: AudioConversionTarget) {
+        setAudioConversionPreferences { $0.settingTarget(target) }
+    }
+
+    func setAudioConversionConcurrency(_ concurrency: MediaConversionConcurrency) {
+        setAudioConversionPreferences { $0.settingMaximumConcurrency(concurrency) }
+    }
+
+    private func setAudioConversionPreferences(
+        _ transform: (AudioConversionPreferences) -> AudioConversionPreferences
+    ) {
+        applyEdit { current in
+            AppSettings(
+                importPreferences: current.importPreferences.settingAudioConversion(
+                    transform(current.importPreferences.audioConversion)
                 ),
                 playbackPreferences: current.playbackPreferences,
                 storagePreferences: current.storagePreferences

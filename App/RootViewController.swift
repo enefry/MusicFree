@@ -3,12 +3,14 @@ import Combine
 import DesignSystem
 import LibraryAPI
 import LibraryFeature
+import MediaSourceAPI
 import MusicDomain
 import OnlineSourceAdapter
 import PlaybackAPI
 import PlayerFeature
 import PlaylistFeature
 import SettingsFeature
+import SwiftUI
 import UIKit
 
 /// UIKit root shell for all production features.
@@ -1574,6 +1576,14 @@ final class RootViewController: UIViewController {
                     from: controller
                 )
             }
+            controller.onConvertTracks = { [weak self, weak controller] itemIDs in
+                guard let self, let controller else { return }
+                self.presentLibraryConversion(
+                    itemIDs: itemIDs,
+                    services: services,
+                    from: controller
+                )
+            }
             return controller
         }
 
@@ -1652,6 +1662,14 @@ final class RootViewController: UIViewController {
                 from: controller
             )
         }
+        controller.onConvertTracks = { [weak self, weak controller] itemIDs in
+            guard let self, let controller else { return }
+            self.presentLibraryConversion(
+                itemIDs: itemIDs,
+                services: services,
+                from: controller
+            )
+        }
         return controller
     }
 
@@ -1694,6 +1712,35 @@ final class RootViewController: UIViewController {
         navigationController.modalPresentationStyle = .pageSheet
         navigationController.navigationBar.prefersLargeTitles = false
         presenter.present(navigationController, animated: true)
+    }
+
+    private func presentLibraryConversion(
+        itemIDs: Set<MediaItemID>,
+        services: AppServiceContainer,
+        from presenter: UIViewController
+    ) {
+        guard !itemIDs.isEmpty, presenter.presentedViewController == nil else { return }
+        Task { @MainActor [weak presenter] in
+            let target = (try? await services.settingsServing.load())?
+                .importPreferences.audioConversion.target ?? .defaultAAC
+            guard let presenter, presenter.presentedViewController == nil else { return }
+            let controller = UIHostingController(rootView: LibraryAudioConversionView(
+                service: services.libraryConversionServing,
+                scope: .items(itemIDs),
+                initialTarget: target
+            ))
+            controller.title = L("转换音频")
+            controller.navigationItem.leftBarButtonItem = UIBarButtonItem(
+                image: UIImage(systemName: "xmark"),
+                primaryAction: UIAction { [weak presenter] _ in
+                    presenter?.dismiss(animated: true)
+                }
+            )
+            let navigationController = RootNavigationController(rootViewController: controller)
+            navigationController.modalPresentationStyle = .pageSheet
+            navigationController.navigationBar.prefersLargeTitles = false
+            presenter.present(navigationController, animated: true)
+        }
     }
 
     private func makeLibraryCollectionDetailViewController(
@@ -1752,6 +1799,14 @@ final class RootViewController: UIViewController {
             self.presentAddToPlaylist(
                 itemIDs: itemIDs,
                 playlistServing: services.playlistServing,
+                from: controller
+            )
+        }
+        controller.onConvertTracks = { [weak self, weak controller] itemIDs in
+            guard let self, let controller else { return }
+            self.presentLibraryConversion(
+                itemIDs: itemIDs,
+                services: services,
                 from: controller
             )
         }

@@ -112,6 +112,7 @@ public struct SettingsScene<AdditionsContent: View>: View {
     private let appIconOptions: [SettingsAppIconOption]
     private let appIconProvider: any SettingsAppIconProviding
     private let sleepTimerServing: (any SleepTimerServing)?
+    private let libraryConversion: (any LibraryConversionServing)?
     private let metadataServerEnabled: Bool
     private let lyricsEnabled: Bool
     private let additionContent: AdditionsContent?
@@ -133,6 +134,7 @@ public struct SettingsScene<AdditionsContent: View>: View {
         appIconOptions: [SettingsAppIconOption] = [],
         appIconProvider: any SettingsAppIconProviding = EmptySettingsAppIconProvider(),
         sleepTimerServing: (any SleepTimerServing)? = nil,
+        libraryConversion: (any LibraryConversionServing)? = nil,
         metadataEnrichment: (any MetadataEnrichmentServing)? = nil,
         lyricsServing: (any LyricsServing)? = nil,
         metadataServerEnabled: Bool = true,
@@ -146,6 +148,7 @@ public struct SettingsScene<AdditionsContent: View>: View {
         self.appIconOptions = appIconOptions
         self.appIconProvider = appIconProvider
         self.sleepTimerServing = sleepTimerServing
+        self.libraryConversion = libraryConversion
         self.metadataServerEnabled = metadataServerEnabled
         self.lyricsEnabled = lyricsEnabled
         self.onNavigationChange = onNavigationChange
@@ -174,6 +177,7 @@ public struct SettingsScene<AdditionsContent: View>: View {
         appIconOptions: [SettingsAppIconOption] = [],
         appIconProvider: any SettingsAppIconProviding = EmptySettingsAppIconProvider(),
         sleepTimerServing: (any SleepTimerServing)? = nil,
+        libraryConversion: (any LibraryConversionServing)? = nil,
         metadataEnrichment: (any MetadataEnrichmentServing)? = nil,
         lyricsServing: (any LyricsServing)? = nil,
         metadataServerEnabled: Bool = true,
@@ -187,6 +191,7 @@ public struct SettingsScene<AdditionsContent: View>: View {
         self.appIconOptions = appIconOptions
         self.appIconProvider = appIconProvider
         self.sleepTimerServing = sleepTimerServing
+        self.libraryConversion = libraryConversion
         self.metadataServerEnabled = metadataServerEnabled
         self.lyricsEnabled = lyricsEnabled
         self.onNavigationChange = onNavigationChange
@@ -215,6 +220,7 @@ public struct SettingsScene<AdditionsContent: View>: View {
         appIconOptions: [SettingsAppIconOption] = [],
         appIconProvider: any SettingsAppIconProviding = EmptySettingsAppIconProvider(),
         sleepTimerServing: (any SleepTimerServing)? = nil,
+        libraryConversion: (any LibraryConversionServing)? = nil,
         metadataServerEnabled: Bool = true,
         lyricsEnabled: Bool = true,
         onNavigationChange: ((SettingsDestination?) -> Void)? = nil,
@@ -225,6 +231,7 @@ public struct SettingsScene<AdditionsContent: View>: View {
         self.appIconOptions = appIconOptions
         self.appIconProvider = appIconProvider
         self.sleepTimerServing = sleepTimerServing
+        self.libraryConversion = libraryConversion
         self.metadataServerEnabled = metadataServerEnabled
         self.lyricsEnabled = lyricsEnabled
         self.onNavigationChange = onNavigationChange
@@ -251,6 +258,7 @@ public struct SettingsScene<AdditionsContent: View>: View {
             appIconOptions: [],
             appIconProvider: EmptySettingsAppIconProvider(),
             sleepTimerServing: nil,
+            libraryConversion: nil,
             metadataEnrichment: nil,
             lyricsServing: nil
         )
@@ -411,6 +419,7 @@ public struct SettingsScene<AdditionsContent: View>: View {
                 viewModel: viewModel,
                 metadataServerEnabled: metadataServerEnabled,
                 lyricsEnabled: lyricsEnabled,
+                libraryConversion: libraryConversion,
                 onNavigate: { destination in
                     onNavigationChange?(destination)
                 }
@@ -501,6 +510,7 @@ public struct SettingsScene<AdditionsContent: View>: View {
                         viewModel: viewModel,
                         metadataServerEnabled: metadataServerEnabled,
                         lyricsEnabled: lyricsEnabled,
+                        libraryConversion: libraryConversion,
                         onNavigate: { destination in
                             onNavigationChange?(destination)
                         }

@@ -35,6 +35,7 @@ public final class AppServiceContainer {
     public let library: any LibraryServing
     public let artwork: any ArtworkServing
     public let importer: any ImportServing
+    public let libraryConversion: any LibraryConversionServing
     public let metadataEnrichment: any MetadataEnrichmentServing
     public let lyrics: any LyricsServing
     public let playlists: any PlaylistServing
@@ -51,6 +52,8 @@ public final class AppServiceContainer {
     private let hasLibraryRepository: Bool
     private let artworkCoordinator: ArtworkCoordinator
     private let importCoordinator: ImportCoordinator
+    private let libraryConversionCoordinator: LibraryConversionCoordinator
+    private let mediaConversionScheduler: (any MediaConversionScheduling)?
     private let metadataEnrichmentCoordinator: MetadataEnrichmentCoordinator
     private let lyricsCoordinator: LyricsCoordinator
     private let playlistCoordinator: PlaylistCoordinator
@@ -146,7 +149,12 @@ public final class AppServiceContainer {
         )
         let importService = ImportCoordinator(
             importer: dependencies.mediaImporter,
-            metadataEnrichment: metadataEnrichmentService
+            metadataEnrichment: metadataEnrichmentService,
+            settingsRepository: dependencies.settingsRepository,
+            conversionScheduler: dependencies.mediaConversionScheduler
+        )
+        let libraryConversionService = LibraryConversionCoordinator(
+            converter: dependencies.managedLibraryConverter
         )
         let onlineDownloadQueueService = OnlineDownloadQueue(
             onlineSources: onlineSourceService,
@@ -161,6 +169,8 @@ public final class AppServiceContainer {
         self.metadataEnrichmentCoordinator = metadataEnrichmentService
         self.lyricsCoordinator = lyricsService
         self.importCoordinator = importService
+        self.libraryConversionCoordinator = libraryConversionService
+        self.mediaConversionScheduler = dependencies.mediaConversionScheduler
         self.playlistCoordinator = PlaylistCoordinator(repository: dependencies.playlistRepository)
         self.settingsCoordinator = SettingsCoordinator(
             repository: dependencies.settingsRepository,
@@ -179,6 +189,7 @@ public final class AppServiceContainer {
         library = libraryCoordinator
         artwork = artworkCoordinator
         importer = importCoordinator
+        libraryConversion = libraryConversionCoordinator
         metadataEnrichment = metadataEnrichmentCoordinator
         lyrics = lyricsCoordinator
         playlists = playlistCoordinator
@@ -195,6 +206,7 @@ public final class AppServiceContainer {
     public var libraryServing: any LibraryServing { library }
     public var artworkServing: any ArtworkServing { artwork }
     public var importServing: any ImportServing { importer }
+    public var libraryConversionServing: any LibraryConversionServing { libraryConversion }
     public var metadataEnrichmentServing: any MetadataEnrichmentServing {
         metadataEnrichment
     }
@@ -233,6 +245,11 @@ public final class AppServiceContainer {
                 let settingsResult = try await self.effectiveSettingsOrDefault()
                 try Task.checkCancellation()
                 let importPreferences = settingsResult.effective.settings.importPreferences
+                await self.mediaConversionScheduler?.updateMaximumConcurrency(
+                    importPreferences.audioConversion.maximumConcurrency
+                )
+                await self.libraryConversionCoordinator.recover()
+                try Task.checkCancellation()
                 await self.applyOnlineSourcePreferences(importPreferences)
                 await self.metadataEnrichmentCoordinator.setPrivacyPreferences(
                     importPreferences.privacyPreferences
@@ -266,7 +283,7 @@ public final class AppServiceContainer {
                     throw CancellationError()
                 }
 
-                self.installSettingsSubscription()
+                await self.installSettingsSubscription()
                 let report = AppStartupReport(
                     recovery: recovery,
                     effectiveSettings: settingsResult.effective,
@@ -443,11 +460,11 @@ public final class AppServiceContainer {
         await settingsCoordinator.currentSystemCapabilities()
     }
 
-    private func installSettingsSubscription() {
+    private func installSettingsSubscription() async {
         settingsTask?.cancel()
+        let stream = await settingsCoordinator.makeEffectiveChangeStream()
         settingsTask = Task { [weak self] in
             guard let self else { return }
-            let stream = await self.settingsCoordinator.makeEffectiveChangeStream()
             for await effective in stream {
                 guard !Task.isCancelled else { return }
                 await self.playbackCoordinator.apply(effective)
@@ -455,6 +472,9 @@ public final class AppServiceContainer {
                     preferences: effective.settings.playbackPreferences.sleepTimer
                 )
                 let importPreferences = effective.settings.importPreferences
+                await self.mediaConversionScheduler?.updateMaximumConcurrency(
+                    importPreferences.audioConversion.maximumConcurrency
+                )
                 await self.applyOnlineSourcePreferences(importPreferences)
                 await self.metadataEnrichmentCoordinator.setPrivacyPreferences(
                     importPreferences.privacyPreferences

@@ -1,5 +1,5 @@
 import Foundation
-import AppServices
+@testable import AppServices
 import LibraryAPI
 import MediaSourceAPI
 import MusicDomain
@@ -15,6 +15,68 @@ func appServiceErrorDescriptionIncludesDiagnosticCode() {
 
     #expect(error.description == "AppServiceError(app.missing_dependency)")
     #expect(error.description.contains(error.diagnosticCode))
+}
+
+@Test("Library conversion service reports a missing adapter and forwards supported operations")
+func libraryConversionCoordinatorDependencyAndForwarding() async throws {
+    let missing = LibraryConversionCoordinator(converter: nil)
+    await #expect(throws: AppServiceError.missingDependency("managedLibraryConverter")) {
+        _ = try await missing.preflight(scope: .allLocalMedia, target: .alac)
+    }
+
+    let converter = RecordingManagedLibraryConverter()
+    let coordinator = LibraryConversionCoordinator(converter: converter)
+    let scope = LibraryConversionScope.items([
+        MediaItemID(sourceID: .local, externalID: "conversion-forwarding")
+    ])
+    let target = AudioConversionTarget.aacLC(.kbps192)
+    let preflight = try await coordinator.preflight(scope: scope, target: target)
+    let batchID = try await coordinator.start(scope: scope, target: target)
+    await coordinator.pause(id: batchID)
+    await coordinator.resume(id: batchID)
+    await coordinator.cancel(id: batchID)
+    _ = try await coordinator.retryFailures(id: batchID)
+    await coordinator.recover()
+
+    #expect(preflight.scope == scope)
+    #expect(preflight.target == target)
+    #expect(await converter.calls == [
+        .preflight(scope, target),
+        .start(scope, target),
+        .pause(batchID),
+        .resume(batchID),
+        .cancel(batchID),
+        .retryFailures(batchID),
+        .recover,
+    ])
+}
+
+@MainActor
+@Test("App startup recovers conversions and applies later concurrency setting changes")
+func appStartupRecoversConversionsAndTracksConcurrencySettings() async throws {
+    let initial = AppSettings(importPreferences: ImportPreferences.defaults.settingAudioConversion(
+        AudioConversionPreferences.defaults.settingMaximumConcurrency(.four)
+    ))
+    let settings = StreamingConversionSettingsRepository(value: initial)
+    let scheduler = RecordingConversionScheduler()
+    let converter = RecordingManagedLibraryConverter()
+    let container = try AppServiceContainer(dependencies: AppDependencies(
+        mediaConversionScheduler: scheduler,
+        managedLibraryConverter: converter,
+        settingsRepository: settings
+    ))
+
+    _ = try await container.start()
+    #expect(await converter.recoverCount == 1)
+    #expect(await scheduler.updates == [.four])
+
+    let changed = AppSettings(importPreferences: initial.importPreferences.settingAudioConversion(
+        initial.importPreferences.audioConversion.settingMaximumConcurrency(.one)
+    ))
+    try await container.settings.update(changed)
+    try await waitForConversionSchedulerUpdates(scheduler, count: 2)
+    #expect(await scheduler.updates == [.four, .one])
+    await container.stop()
 }
 
 @MainActor
@@ -3916,6 +3978,141 @@ private final class TestSettingsRepository: SettingsRepository, @unchecked Senda
     func changes() -> AsyncStream<AppSettings> {
         AsyncStream { $0.finish() }
     }
+}
+
+private actor RecordingManagedLibraryConverter: ManagedLibraryConverting {
+    enum Call: Equatable {
+        case preflight(LibraryConversionScope, AudioConversionTarget)
+        case start(LibraryConversionScope, AudioConversionTarget)
+        case pause(UUID)
+        case resume(UUID)
+        case cancel(UUID)
+        case retryFailures(UUID)
+        case recover
+    }
+
+    private let batchID = UUID()
+    private(set) var calls: [Call] = []
+
+    var recoverCount: Int {
+        calls.filter { $0 == .recover }.count
+    }
+
+    func preflight(
+        scope: LibraryConversionScope,
+        target: AudioConversionTarget
+    ) async throws -> LibraryConversionPreflight {
+        calls.append(.preflight(scope, target))
+        return LibraryConversionPreflight(scope: scope, target: target, candidates: [])
+    }
+
+    func start(
+        scope: LibraryConversionScope,
+        target: AudioConversionTarget
+    ) async throws -> UUID {
+        calls.append(.start(scope, target))
+        return batchID
+    }
+
+    func snapshots() async -> [LibraryConversionBatchSnapshot] { [] }
+
+    func snapshot(id: UUID) async -> LibraryConversionBatchSnapshot? { nil }
+
+    func pause(id: UUID) async {
+        calls.append(.pause(id))
+    }
+
+    func resume(id: UUID) async {
+        calls.append(.resume(id))
+    }
+
+    func cancel(id: UUID) async {
+        calls.append(.cancel(id))
+    }
+
+    func retryFailures(id: UUID) async throws -> UUID {
+        calls.append(.retryFailures(id))
+        return batchID
+    }
+
+    func recover() async {
+        calls.append(.recover)
+    }
+
+    func makeEventStream() async -> AsyncStream<LibraryConversionEvent> {
+        AsyncStream { $0.finish() }
+    }
+}
+
+private actor RecordingConversionScheduler: MediaConversionScheduling {
+    private(set) var updates: [MediaConversionConcurrency] = []
+
+    func updateMaximumConcurrency(_ maximum: MediaConversionConcurrency) {
+        updates.append(maximum)
+    }
+
+    func schedule(
+        _ operation: @escaping @Sendable () async throws -> MediaTranscodeResult
+    ) async throws -> MediaTranscodeResult {
+        try await operation()
+    }
+}
+
+private final class StreamingConversionSettingsRepository: SettingsRepository,
+    @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: AppSettings
+    private var continuations: [UUID: AsyncStream<AppSettings>.Continuation] = [:]
+
+    init(value: AppSettings) {
+        self.value = value
+    }
+
+    func load() async throws -> AppSettings {
+        withLock(lock) { value }
+    }
+
+    func save(_ settings: AppSettings) async throws {
+        let validated = try settings.validated()
+        let currentContinuations = withLock(lock) {
+            value = validated
+            return Array(continuations.values)
+        }
+        currentContinuations.forEach { $0.yield(validated) }
+    }
+
+    func reset() async throws {
+        try await save(.defaults)
+    }
+
+    func changes() -> AsyncStream<AppSettings> {
+        let id = UUID()
+        return AsyncStream { continuation in
+            withLock(lock) {
+                continuations[id] = continuation
+            }
+            continuation.onTermination = { [weak self] _ in
+                self?.removeContinuation(id)
+            }
+        }
+    }
+
+    private func removeContinuation(_ id: UUID) {
+        withLock(lock) {
+            continuations[id] = nil
+        }
+    }
+}
+
+private func waitForConversionSchedulerUpdates(
+    _ scheduler: RecordingConversionScheduler,
+    count: Int
+) async throws {
+    for _ in 0..<100 {
+        if await scheduler.updates.count >= count { return }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    Issue.record("Timed out waiting for conversion scheduler settings update")
 }
 
 private actor ControlledStorageMaintenance: StorageMaintenanceServing {

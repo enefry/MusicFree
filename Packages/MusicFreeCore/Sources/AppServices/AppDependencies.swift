@@ -13,6 +13,8 @@ public struct AppDependencies {
     public let onlineSources: [any OnlineSource]
     public let onlineSourceFactory: (any OnlineSourceFactory)?
     public let mediaImporter: (any MediaImporting)?
+    public let mediaConversionScheduler: (any MediaConversionScheduling)?
+    public let managedLibraryConverter: (any ManagedLibraryConverting)?
     public let managedMediaRemover: (any ManagedMediaRemoving)?
     /// Writes artwork bytes and returns a receipt that keeps a new file
     /// reserved until the metadata transaction commits or rolls back.
@@ -48,6 +50,8 @@ public struct AppDependencies {
         onlineSources: [any OnlineSource] = [],
         onlineSourceFactory: (any OnlineSourceFactory)? = nil,
         mediaImporter: (any MediaImporting)? = nil,
+        mediaConversionScheduler: (any MediaConversionScheduling)? = nil,
+        managedLibraryConverter: (any ManagedLibraryConverting)? = nil,
         managedMediaRemover: (any ManagedMediaRemoving)? = nil,
         artworkWriter: (@Sendable (Data, ArtworkID) async throws -> ArtworkWriteReceipt)? = nil,
         libraryRepository: (any LibraryRepository)? = nil,
@@ -102,6 +106,8 @@ public struct AppDependencies {
         self.onlineSources = onlineSources
         self.onlineSourceFactory = onlineSourceFactory
         self.mediaImporter = mediaImporter
+        self.mediaConversionScheduler = mediaConversionScheduler
+        self.managedLibraryConverter = managedLibraryConverter
         self.managedMediaRemover = managedMediaRemover
         self.artworkWriter = artworkWriter
         self.libraryRepository = libraryRepository

@@ -223,6 +223,7 @@ struct UIKitSettingsRootView: View {
                 appIconOptions: appIconOptions,
                 appIconProvider: AppAlternateIconProvider(),
                 sleepTimerServing: services.sleepTimerServing,
+                libraryConversion: services.libraryConversionServing,
                 metadataServerEnabled: metadataServerEnabled,
                 lyricsEnabled: lyricsEnabled,
                 onNavigationChange: { destination in

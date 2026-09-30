@@ -88,6 +88,7 @@ public final class LibraryCollectionsViewController: UIViewController {
     public var onEnqueueNextTracks: (([MediaItemID]) -> Void)?
     public var onEnqueueTracks: (([MediaItemID]) -> Void)?
     public var onAddTracksToPlaylist: (([MediaItemID]) -> Void)?
+    public var onConvertTracks: ((Set<MediaItemID>) -> Void)?
 
     private let collectionView: UICollectionView
     private var dataSource: CollectionDataSource!
@@ -1233,6 +1234,19 @@ public final class LibraryCollectionsViewController: UIViewController {
                 self?.toggleAlbumFavorite(id, currentValue: album.isFavorite)
             }
             groups.insert(UIMenu(title: "", options: [.displayInline], children: [favorite]), at: 2)
+        }
+        if case .album = target, let onConvertTracks {
+            let convert = UIAction(
+                title: L("转换音频"),
+                image: UIImage(systemName: "arrow.triangle.2.circlepath"),
+                attributes: busy ? [.disabled] : []
+            ) { [weak self] _ in
+                guard let self else { return }
+                self.performCollectionAction(for: target) { ids in
+                    onConvertTracks(Set(ids))
+                }
+            }
+            groups.append(UIMenu(title: "", options: [.displayInline], children: [convert]))
         }
         if case let .album(id) = item,
            let artistID = albumsByID[id]?.artistIDs.first,

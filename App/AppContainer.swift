@@ -487,9 +487,12 @@ final class AppContainer: ObservableObject {
         // 本地文件的探测与元数据读取同样交给 ffmpeg 适配层；构造不失败。
         let probe: FFmpegMediaProbe? = FFmpegMediaProbe()
         let metadataReader: FFmpegMetadataReader? = FFmpegMetadataReader()
+        let conversionScheduler = MediaConversionScheduler()
+        let audioTranscoder = AppleAudioMediaTranscoder()
 
         let localSource: LocalMediaSource?
         let importer: LocalMediaImporter?
+        let libraryConverter: LocalMediaLibraryConverter?
         if let probe, let metadataReader {
             localSource = try LocalMediaSource(
                 configuration: localMediaConfiguration,
@@ -500,7 +503,18 @@ final class AppContainer: ObservableObject {
                 configuration: localMediaConfiguration,
                 probe: probe,
                 metadataReader: metadataReader,
-                libraryRepository: libraryRepository
+                libraryRepository: libraryRepository,
+                transcoder: audioTranscoder,
+                losslessValidator: audioTranscoder,
+                conversionScheduler: conversionScheduler
+            )
+            libraryConverter = try LocalMediaLibraryConverter(
+                configuration: localMediaConfiguration,
+                repository: libraryRepository,
+                probe: probe,
+                transcoder: audioTranscoder,
+                losslessValidator: audioTranscoder,
+                scheduler: conversionScheduler
             )
         } else {
             // Probe and metadata parsing are required by both the managed local
@@ -509,6 +523,7 @@ final class AppContainer: ObservableObject {
             // import are not advertised through half-functional adapters.
             localSource = nil
             importer = nil
+            libraryConverter = nil
             if !startupIssues.contains(.playbackUnavailable) {
                 startupIssues.append(.playbackUnavailable)
             }
@@ -615,6 +630,8 @@ final class AppContainer: ObservableObject {
             mediaSources: mediaSources,
             onlineSourceFactory: onlineSourceFactory,
             mediaImporter: importer,
+            mediaConversionScheduler: conversionScheduler,
+            managedLibraryConverter: libraryConverter,
             managedMediaRemover: remover,
             artworkWriter: artworkWriter,
             libraryRepository: libraryRepository,

@@ -128,6 +128,7 @@ public final class LibraryTracksViewController: UIViewController {
     public var onEnqueueNextTracks: (([MediaItemID]) -> Void)?
     public var onEnqueueTracks: (([MediaItemID]) -> Void)?
     public var onAddTracksToPlaylist: (([MediaItemID]) -> Void)?
+    public var onConvertTracks: ((Set<MediaItemID>) -> Void)?
 
     private let collectionView: UICollectionView
 //    private var sortButton: UIBarButtonItem?
@@ -1052,6 +1053,12 @@ extension LibraryTracksViewController: UICollectionViewDelegate {
                 title: L("添加到播放列表"),
                 image: UIImage(systemName: "text.badge.plus")
             ) { _ in onAddTracksToPlaylist([track.id]) })
+        }
+        if let onConvertTracks {
+            actions.append(UIAction(
+                title: L("转换音频"),
+                image: UIImage(systemName: "arrow.triangle.2.circlepath")
+            ) { _ in onConvertTracks([track.id]) })
         }
 
         return UIMenu(children: [

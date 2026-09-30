@@ -82,6 +82,7 @@ public final class LibraryCollectionDetailViewController: UIViewController {
     public var onEnqueueNextTracks: (([MediaItemID]) -> Void)?
     public var onEnqueueTracks: (([MediaItemID]) -> Void)?
     public var onAddTracksToPlaylist: (([MediaItemID]) -> Void)?
+    public var onConvertTracks: ((Set<MediaItemID>) -> Void)?
     public var onAlbumUpdated: ((Album) -> Void)?
 
     private let collectionView: UICollectionView
@@ -242,7 +243,16 @@ public final class LibraryCollectionDetailViewController: UIViewController {
             deleteItem.accessibilityLabel = L("删除所选歌曲")
             deleteItem.accessibilityIdentifier = "library.collection.deleteSelected"
             deleteItem.isEnabled = !selectedTrackIDs.isEmpty && deletingTrackIDs.isEmpty
-            navigationItem.rightBarButtonItems = [doneItem, deleteItem]
+            let convertItem = UIBarButtonItem(
+                image: UIImage(systemName: "arrow.triangle.2.circlepath"),
+                style: .plain,
+                target: self,
+                action: #selector(convertSelectedTracks)
+            )
+            convertItem.accessibilityLabel = L("转换所选歌曲")
+            convertItem.accessibilityIdentifier = "library.collection.convertSelected"
+            convertItem.isEnabled = !selectedTrackIDs.isEmpty && onConvertTracks != nil
+            navigationItem.rightBarButtonItems = [doneItem, convertItem, deleteItem]
         } else {
             let busy = collectionActionTask != nil
             var favoriteItem: UIBarButtonItem?
@@ -298,6 +308,17 @@ public final class LibraryCollectionDetailViewController: UIViewController {
                 ) { [weak self] _ in self?.editArtist() })
             }
             managementActions.append(select)
+            if let onConvertTracks {
+                managementActions.append(UIAction(
+                    title: L("转换音频"),
+                    image: UIImage(systemName: "arrow.triangle.2.circlepath"),
+                    attributes: tracks.isEmpty || busy ? [.disabled] : []
+                ) { [weak self] _ in
+                    guard let self else { return }
+                    onConvertTracks(Set(self.tracks.map(\.id)))
+                })
+            }
+
             let addToPlaylist = UIAction(
                 title: L("添加到播放列表"),
                 image: UIImage(systemName: "text.badge.plus"),
@@ -1444,6 +1465,12 @@ extension LibraryCollectionDetailViewController: UICollectionViewDelegate {
                 image: UIImage(systemName: "text.badge.plus")
             ) { _ in onAddTracksToPlaylist([track.id]) })
         }
+        if let onConvertTracks {
+            actions.append(UIAction(
+                title: L("转换音频"),
+                image: UIImage(systemName: "arrow.triangle.2.circlepath")
+            ) { _ in onConvertTracks([track.id]) })
+        }
 
         return UIMenu(children: [
             UIMenu(
@@ -1548,6 +1575,11 @@ extension LibraryCollectionDetailViewController: UICollectionViewDelegate {
             self?.deleteSelectedTracks()
         })
         present(alert, animated: true)
+    }
+
+    @objc private func convertSelectedTracks() {
+        guard !selectedTrackIDs.isEmpty else { return }
+        onConvertTracks?(selectedTrackIDs)
     }
 
     private func deleteSelectedTracks() {
