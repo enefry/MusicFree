@@ -369,6 +369,26 @@ public protocol ImportServing: Sendable {
     func makeStateStream() async -> AsyncStream<ImportSessionSnapshot>
 }
 
+/// Presentation-facing operations for durable conversion of media already in
+/// the managed local library.
+public protocol LibraryConversionServing: Sendable {
+    func preflight(
+        scope: LibraryConversionScope,
+        target: AudioConversionTarget
+    ) async throws -> LibraryConversionPreflight
+    func start(
+        scope: LibraryConversionScope,
+        target: AudioConversionTarget
+    ) async throws -> UUID
+    func snapshots() async -> [LibraryConversionBatchSnapshot]
+    func snapshot(id: UUID) async -> LibraryConversionBatchSnapshot?
+    func pause(id: UUID) async
+    func resume(id: UUID) async
+    func cancel(id: UUID) async
+    func retryFailures(id: UUID) async throws -> UUID
+    func makeEventStream() async -> AsyncStream<LibraryConversionEvent>
+}
+
 public enum OnlineSourceServingError: Error, Equatable, Sendable, LocalizedError,
     CustomStringConvertible {
     case applicationPrivacyRequired
