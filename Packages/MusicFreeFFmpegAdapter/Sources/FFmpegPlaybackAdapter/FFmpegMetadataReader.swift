@@ -15,7 +15,7 @@ public final class FFmpegMetadataReader: Sendable, MetadataReading {
 
     public func readMetadata(from resource: PlaybackResource) async throws -> RawMediaMetadata {
         try Task.checkCancellation()
-        guard case let .localFile(url) = resource else {
+        guard let url = resource.localFileURL else {
             throw MediaSourceError.invalidResource
         }
 

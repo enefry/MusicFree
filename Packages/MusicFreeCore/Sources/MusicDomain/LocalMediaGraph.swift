@@ -160,6 +160,114 @@ public struct PlaybackSelection: Codable, Equatable, Hashable, Sendable {
     public var logicalDuration: Duration? { range?.duration }
 }
 
+public enum MediaAssetConversionCodec: String, Codable, Equatable, Hashable, Sendable {
+    case alac
+    case aacLC
+}
+
+/// Stable provenance for a managed asset produced from different source bytes.
+public struct MediaAssetConversion: Codable, Equatable, Hashable, Sendable {
+    public let sourceHash: String
+    public let inputHash: String
+    public let sourceFileName: String?
+    public let sourceCodec: String?
+    public let targetCodec: MediaAssetConversionCodec
+    public let requestedBitRate: Int?
+    public let outputSampleRate: Double
+    public let outputChannelCount: Int
+    public let outputBitDepth: Int?
+    public let conversionVersion: Int
+
+    public init(
+        sourceHash: String,
+        inputHash: String,
+        sourceFileName: String? = nil,
+        sourceCodec: String? = nil,
+        targetCodec: MediaAssetConversionCodec,
+        requestedBitRate: Int? = nil,
+        outputSampleRate: Double,
+        outputChannelCount: Int,
+        outputBitDepth: Int? = nil,
+        conversionVersion: Int = 1
+    ) {
+        let normalizedSourceHash = sourceHash.lowercased()
+        let normalizedInputHash = inputHash.lowercased()
+        precondition(Self.isSHA256(normalizedSourceHash))
+        precondition(Self.isSHA256(normalizedInputHash))
+        precondition(outputSampleRate.isFinite && outputSampleRate > 0)
+        precondition(outputChannelCount > 0)
+        precondition(outputBitDepth == nil || outputBitDepth! > 0)
+        precondition(conversionVersion > 0)
+        switch targetCodec {
+        case .alac:
+            precondition(requestedBitRate == nil)
+        case .aacLC:
+            precondition(requestedBitRate != nil && requestedBitRate! > 0)
+        }
+        self.sourceHash = normalizedSourceHash
+        self.inputHash = normalizedInputHash
+        self.sourceFileName = musicDomainOptionalMetadataText(sourceFileName)
+        self.sourceCodec = musicDomainOptionalTechnicalText(sourceCodec)
+        self.targetCodec = targetCodec
+        self.requestedBitRate = requestedBitRate
+        self.outputSampleRate = outputSampleRate
+        self.outputChannelCount = outputChannelCount
+        self.outputBitDepth = outputBitDepth
+        self.conversionVersion = conversionVersion
+    }
+
+    private static func isSHA256(_ value: String) -> Bool {
+        value.count == 64 && value.allSatisfy(\.isHexDigit)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case sourceHash
+        case inputHash
+        case sourceFileName
+        case sourceCodec
+        case targetCodec
+        case requestedBitRate
+        case outputSampleRate
+        case outputChannelCount
+        case outputBitDepth
+        case conversionVersion
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let sourceHash = try container.decode(String.self, forKey: .sourceHash).lowercased()
+        let inputHash = try container.decode(String.self, forKey: .inputHash).lowercased()
+        let targetCodec = try container.decode(MediaAssetConversionCodec.self, forKey: .targetCodec)
+        let requestedBitRate = try container.decodeIfPresent(Int.self, forKey: .requestedBitRate)
+        let outputSampleRate = try container.decode(Double.self, forKey: .outputSampleRate)
+        let outputChannelCount = try container.decode(Int.self, forKey: .outputChannelCount)
+        let outputBitDepth = try container.decodeIfPresent(Int.self, forKey: .outputBitDepth)
+        let conversionVersion = try container.decodeIfPresent(Int.self, forKey: .conversionVersion) ?? 1
+        guard Self.isSHA256(sourceHash), Self.isSHA256(inputHash),
+              outputSampleRate.isFinite, outputSampleRate > 0,
+              outputChannelCount > 0,
+              outputBitDepth == nil || outputBitDepth! > 0,
+              conversionVersion > 0,
+              (targetCodec == .alac && requestedBitRate == nil)
+                || (targetCodec == .aacLC && (requestedBitRate ?? 0) > 0)
+        else {
+            throw musicDomainDecodingFailure(decoder, field: "MediaAssetConversion")
+        }
+        self.init(
+            sourceHash: sourceHash,
+            inputHash: inputHash,
+            sourceFileName: try container.decodeIfPresent(String.self, forKey: .sourceFileName),
+            sourceCodec: try container.decodeIfPresent(String.self, forKey: .sourceCodec),
+            targetCodec: targetCodec,
+            requestedBitRate: requestedBitRate,
+            outputSampleRate: outputSampleRate,
+            outputChannelCount: outputChannelCount,
+            outputBitDepth: outputBitDepth,
+            conversionVersion: conversionVersion
+        )
+    }
+}
+
 @available(macOS 13.0, *)
 public struct MediaAsset: Codable, Equatable, Hashable, Identifiable, Sendable {
     public let id: MediaAssetID
@@ -168,6 +276,7 @@ public struct MediaAsset: Codable, Equatable, Hashable, Identifiable, Sendable {
     public let folderPath: String?
     public let byteCount: Int64?
     public let technicalInfo: MediaTechnicalInfo?
+    public let conversion: MediaAssetConversion?
 
     public init(
         id: MediaAssetID,
@@ -175,7 +284,8 @@ public struct MediaAsset: Codable, Equatable, Hashable, Identifiable, Sendable {
         fileName: String? = nil,
         folderPath: String? = nil,
         byteCount: Int64? = nil,
-        technicalInfo: MediaTechnicalInfo? = nil
+        technicalInfo: MediaTechnicalInfo? = nil,
+        conversion: MediaAssetConversion? = nil
     ) {
         if let byteCount { precondition(byteCount >= 0, "MediaAsset.byteCount cannot be negative") }
         self.id = id
@@ -184,6 +294,7 @@ public struct MediaAsset: Codable, Equatable, Hashable, Identifiable, Sendable {
         self.folderPath = musicDomainOptionalMetadataText(folderPath)
         self.byteCount = byteCount
         self.technicalInfo = technicalInfo
+        self.conversion = conversion
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -193,6 +304,7 @@ public struct MediaAsset: Codable, Equatable, Hashable, Identifiable, Sendable {
         case folderPath
         case byteCount
         case technicalInfo
+        case conversion
     }
 
     public init(from decoder: Decoder) throws {
@@ -207,7 +319,8 @@ public struct MediaAsset: Codable, Equatable, Hashable, Identifiable, Sendable {
             fileName: try container.decodeIfPresent(String.self, forKey: .fileName),
             folderPath: try container.decodeIfPresent(String.self, forKey: .folderPath),
             byteCount: byteCount,
-            technicalInfo: try container.decodeIfPresent(MediaTechnicalInfo.self, forKey: .technicalInfo)
+            technicalInfo: try container.decodeIfPresent(MediaTechnicalInfo.self, forKey: .technicalInfo),
+            conversion: try container.decodeIfPresent(MediaAssetConversion.self, forKey: .conversion)
         )
     }
 }

@@ -13,12 +13,20 @@ public final class FFmpegAudioDecoder: @unchecked Sendable {
     public let format: AVAudioFormat
     /// 采样率下的总时长；未知为 nil。
     public let duration: Duration?
+    /// Effective integer source precision reported by the decoder, when known.
+    public let sourceBitDepth: Int?
 
     private let handle: OpaquePointer
     private let channels: Int
     // 自定义输入时持有；C 层通过 unretained 指针回调它，必须活得比 handle 久
     // （deinit 先 ffaudio_close，再释放存储属性）。
     private let ioBox: ByteSourceBox?
+    private var outputMode: OutputMode?
+
+    private enum OutputMode {
+        case float32
+        case signedInt32
+    }
 
     public enum DecoderError: Error {
         case open(Int32)
@@ -65,6 +73,9 @@ public final class FFmpegAudioDecoder: @unchecked Sendable {
         self.format = audioFormat
         self.channels = Int(raw.channels)
         self.duration = raw.duration_ms >= 0 ? .milliseconds(raw.duration_ms) : nil
+        self.sourceBitDepth = raw.source_bits_per_sample > 0
+            ? Int(raw.source_bits_per_sample)
+            : nil
     }
 
     deinit {
@@ -78,6 +89,10 @@ public final class FFmpegAudioDecoder: @unchecked Sendable {
     /// buffer 为非交错（planar）——AVAudioUnit / AVAudioEngine 连接所要求的
     /// 标准格式（交错格式会触发 `setFormat` -10868 kAudioUnitErr_FormatNotSupported）。
     public func nextBuffer(frameCapacity: AVAudioFrameCount = 8192) throws -> AVAudioPCMBuffer? {
+        guard outputMode == nil || outputMode == .float32 else {
+            throw DecoderError.unsupportedFormat
+        }
+        outputMode = .float32
         guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCapacity),
               let channelData = buffer.floatChannelData
         else {
@@ -109,6 +124,62 @@ public final class FFmpegAudioDecoder: @unchecked Sendable {
                     let dst = channelData[ch]
                     for frame in 0 ..< frames {
                         dst[frame] = base[frame * channelCount + ch]
+                    }
+                }
+            }
+        }
+        buffer.frameLength = AVAudioFrameCount(frames)
+        return buffer
+    }
+
+    /// Decodes signed Int32 PCM without passing source samples through Float32.
+    /// Integer samples below 32-bit are left-aligned; `sourceBitDepth` records
+    /// the valid precision for an ALAC encoder.
+    public func nextIntegerBuffer(
+        frameCapacity: AVAudioFrameCount = 8192
+    ) throws -> AVAudioPCMBuffer? {
+        guard outputMode == nil || outputMode == .signedInt32,
+              let integerFormat = AVAudioFormat(
+                  commonFormat: .pcmFormatInt32,
+                  sampleRate: format.sampleRate,
+                  channels: AVAudioChannelCount(channels),
+                  interleaved: false
+              ),
+              let buffer = AVAudioPCMBuffer(
+                  pcmFormat: integerFormat,
+                  frameCapacity: frameCapacity
+              ),
+              let channelData = buffer.int32ChannelData
+        else {
+            throw DecoderError.unsupportedFormat
+        }
+        outputMode = .signedInt32
+
+        let channelCount = channels
+        var interleaved = [Int32](repeating: 0, count: Int(frameCapacity) * channelCount)
+        let framesRead = interleaved.withUnsafeMutableBufferPointer { pointer in
+            ffaudio_read_s32(handle, pointer.baseAddress, Int32(frameCapacity))
+        }
+        if framesRead == FFAUDIO_ERR_IO.rawValue {
+            throw takeIOError()
+        }
+        if framesRead < 0 {
+            throw DecoderError.open(framesRead)
+        }
+        if framesRead == 0 {
+            return nil
+        }
+
+        let frames = Int(framesRead)
+        interleaved.withUnsafeBufferPointer { source in
+            guard let base = source.baseAddress else { return }
+            if channelCount == 1 {
+                channelData[0].update(from: base, count: frames)
+            } else {
+                for channel in 0 ..< channelCount {
+                    let destination = channelData[channel]
+                    for frame in 0 ..< frames {
+                        destination[frame] = base[frame * channelCount + channel]
                     }
                 }
             }

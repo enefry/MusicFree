@@ -63,7 +63,7 @@ struct LibraryMediaShareResolver: Sendable {
                 throw ShareError.unavailableTrack(track.title)
             }
 
-            guard case .localFile(let url) = resource, url.isFileURL else {
+            guard let url = resource.localFileURL, url.isFileURL else {
                 throw ShareError.nonLocalTrack(track.title)
             }
 

@@ -15,6 +15,7 @@ public struct ProbedAudioTrack: Codable, Equatable, Sendable {
   public let title: String?
   public let isDefault: Bool
   public let isDecodable: Bool
+  public let isLossless: Bool
 
   public init(
     index: Int,
@@ -27,7 +28,8 @@ public struct ProbedAudioTrack: Codable, Equatable, Sendable {
     language: String? = nil,
     title: String? = nil,
     isDefault: Bool = false,
-    isDecodable: Bool = true
+    isDecodable: Bool = true,
+    isLossless: Bool = false
   ) {
     self.index = index
     self.stableID = Self.trimmed(stableID)
@@ -40,6 +42,7 @@ public struct ProbedAudioTrack: Codable, Equatable, Sendable {
     self.title = Self.repaired(title)
     self.isDefault = isDefault
     self.isDecodable = isDecodable
+    self.isLossless = isLossless
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -54,6 +57,7 @@ public struct ProbedAudioTrack: Codable, Equatable, Sendable {
     case title
     case isDefault
     case isDecodable
+    case isLossless
   }
 
   public init(from decoder: Decoder) throws {
@@ -83,7 +87,8 @@ public struct ProbedAudioTrack: Codable, Equatable, Sendable {
       language: try container.decodeIfPresent(String.self, forKey: .language),
       title: try container.decodeIfPresent(String.self, forKey: .title),
       isDefault: try container.decodeIfPresent(Bool.self, forKey: .isDefault) ?? false,
-      isDecodable: try container.decodeIfPresent(Bool.self, forKey: .isDecodable) ?? true
+      isDecodable: try container.decodeIfPresent(Bool.self, forKey: .isDecodable) ?? true,
+      isLossless: try container.decodeIfPresent(Bool.self, forKey: .isLossless) ?? false
     )
   }
 

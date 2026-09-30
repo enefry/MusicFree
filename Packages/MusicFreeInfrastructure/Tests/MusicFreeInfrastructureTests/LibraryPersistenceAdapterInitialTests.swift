@@ -557,6 +557,95 @@ func trackOnlyUpdatesPreserveSourceMetadataSnapshots() async throws {
     await store.close()
 }
 
+@Test("replacing every shared variant prunes the old media asset atomically")
+func replacingSharedVariantAssetPrunesOldMediaAsset() async throws {
+    let store = try LibraryPersistenceStore(configuration: .inMemory)
+    let library = SwiftDataLibraryRepository(store: store)
+    let oldAssetID = MediaAssetID(
+        sourceID: .local,
+        externalID: "sha256-\(String(repeating: "a", count: 64))"
+    )
+    let newAssetID = MediaAssetID(
+        sourceID: .local,
+        externalID: "sha256-\(String(repeating: "b", count: 64))"
+    )
+    let first = Track(
+        id: MediaItemID(sourceID: .local, externalID: "replace-shared-first"),
+        logicalTrackID: LogicalTrackID("replace-shared-first-logical"),
+        assetID: oldAssetID,
+        playbackSelection: PlaybackSelection(range: PlaybackRange(
+            start: .zero,
+            end: .seconds(60)
+        )),
+        title: "First",
+        fileName: "shared.flac",
+        isFavorite: true,
+        statistics: PlaybackStatistics(playCount: 4)
+    )
+    let second = Track(
+        id: MediaItemID(sourceID: .local, externalID: "replace-shared-second"),
+        logicalTrackID: LogicalTrackID("replace-shared-second-logical"),
+        assetID: oldAssetID,
+        playbackSelection: PlaybackSelection(range: PlaybackRange(
+            start: .seconds(60),
+            end: .seconds(120)
+        )),
+        title: "Second",
+        fileName: "shared.flac"
+    )
+    try await library.apply(try LibraryTransaction(
+        idempotencyKey: "install-shared-asset-for-replacement",
+        mutations: [.upsert(.track(first)), .upsert(.track(second))]
+    ))
+
+    func replacing(_ track: Track) -> Track {
+        Track(
+            id: track.id,
+            logicalTrackID: track.logicalTrackID,
+            assetID: newAssetID,
+            playbackSelection: track.playbackSelection,
+            title: track.title,
+            fileName: "shared.m4a",
+            isFavorite: track.isFavorite,
+            statistics: track.statistics
+        )
+    }
+    let replacementAsset = MediaAsset(
+        id: newAssetID,
+        contentRevision: String(repeating: "b", count: 64),
+        fileName: "shared.m4a"
+    )
+    try await library.apply(try LibraryTransaction(
+        idempotencyKey: "replace-every-shared-asset-reference",
+        mutations: [
+            .upsert(.mediaAsset(replacementAsset)),
+            .upsert(.track(replacing(first))),
+            .upsert(.track(replacing(second))),
+            .upsert(.trackVariant(TrackVariant(
+                id: first.id,
+                logicalTrackID: first.logicalTrackID,
+                assetID: newAssetID,
+                selection: first.playbackSelection
+            ))),
+            .upsert(.trackVariant(TrackVariant(
+                id: second.id,
+                logicalTrackID: second.logicalTrackID,
+                assetID: newAssetID,
+                selection: second.playbackSelection
+            )))
+        ]
+    ))
+
+    #expect(try await library.mediaAsset(id: oldAssetID) == nil)
+    #expect(try await library.mediaAsset(id: newAssetID) == replacementAsset)
+    #expect(try await library.track(id: first.id)?.assetID == newAssetID)
+    #expect(try await library.track(id: second.id)?.assetID == newAssetID)
+    #expect(try await library.track(id: first.id)?.isFavorite == true)
+    #expect(try await library.track(id: first.id)?.statistics == first.statistics)
+    #expect(try await library.mediaAssets() == [replacementAsset])
+    await store.close()
+}
+
 @Test("explicit local graph mutations persist release, disc, and collection atomically")
 func explicitLocalGraphTransactionRoundTripsCollectionStructure() async throws {
     let store = try LibraryPersistenceStore(configuration: .inMemory)

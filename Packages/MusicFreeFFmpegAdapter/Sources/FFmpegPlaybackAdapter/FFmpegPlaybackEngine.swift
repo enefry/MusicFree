@@ -161,7 +161,7 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
         let open: @Sendable () throws -> FFmpegAudioDecoder
         var source: URLSessionByteSource?
         switch item.resource {
-        case let .localFile(url):
+        case let .localFile(url), let .leasedLocalFile(url, _):
             open = { try FFmpegAudioDecoder(localFileURL: url) }
         case let .remote(request):
             guard let scheme = request.url.scheme?.lowercased(),

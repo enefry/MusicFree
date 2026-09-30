@@ -11,6 +11,7 @@ public struct FFAudioTrackInfo: Equatable, Sendable {
     public let bitRate: Int?
     public let isDefault: Bool
     public let isDecodable: Bool
+    public let isLossless: Bool
 }
 
 /// 探测结果（格式中立）。
@@ -53,7 +54,8 @@ public enum FFmpegProbe {
                 bitDepth: raw.bits_per_sample > 0 ? Int(raw.bits_per_sample) : nil,
                 bitRate: raw.bit_rate > 0 ? Int(raw.bit_rate) : nil,
                 isDefault: raw.is_default != 0,
-                isDecodable: raw.is_decodable != 0
+                isDecodable: raw.is_decodable != 0,
+                isLossless: raw.is_lossless != 0
             ))
         }
 

@@ -13,6 +13,9 @@ public protocol LibraryRepository: Sendable {
     func trackVariant(id: MediaItemID) async throws -> TrackVariant?
     func variants(for logicalTrackID: LogicalTrackID) async throws -> [TrackVariant]
     func mediaAsset(id: MediaAssetID) async throws -> MediaAsset?
+    func mediaAssets() async throws -> [MediaAsset]
+    func trackVariants(referencing assetID: MediaAssetID) async throws -> [TrackVariant]
+    func currentRevision() async throws -> LibraryRevision?
     func release(id: AlbumReleaseID) async throws -> AlbumRelease?
     func discs(for releaseID: AlbumReleaseID) async throws -> [Disc]
     func collections() async throws -> [LibraryCollection]
@@ -78,6 +81,45 @@ public protocol LibraryRepository: Sendable {
 
 public extension LibraryRepository {
     func trackDateAdded(id: MediaItemID) async throws -> Date? { nil }
+
+    func currentRevision() async throws -> LibraryRevision? { nil }
+
+    func mediaAssets() async throws -> [MediaAsset] {
+        var request = try LibraryPageRequest(limit: LibraryPageRequest.maximumLimit)
+        var assets: [MediaAssetID: MediaAsset] = [:]
+        while true {
+            let page = try await tracks(matching: TrackQuery(), page: request)
+            for track in page.elements {
+                assets[track.assetID] = track.mediaAssetProjection
+            }
+            guard let next = try page.nextPage(limit: LibraryPageRequest.maximumLimit) else {
+                return assets.values.sorted { $0.id < $1.id }
+            }
+            request = next
+        }
+    }
+
+    func trackVariants(referencing assetID: MediaAssetID) async throws -> [TrackVariant] {
+        var request = try LibraryPageRequest(limit: LibraryPageRequest.maximumLimit)
+        var variants: [TrackVariant] = []
+        while true {
+            let page = try await tracks(
+                matching: TrackQuery(sourceID: assetID.sourceID),
+                page: request
+            )
+            for track in page.elements where track.assetID == assetID {
+                if let stored = try await trackVariant(id: track.id), stored.assetID == assetID {
+                    variants.append(stored)
+                } else {
+                    variants.append(track.trackVariantProjection)
+                }
+            }
+            guard let next = try page.nextPage(limit: LibraryPageRequest.maximumLimit) else {
+                return variants.sorted { $0.id < $1.id }
+            }
+            request = next
+        }
+    }
 
     func repairMetadata() async throws -> LibraryMetadataRepairResult {
         LibraryMetadataRepairResult()

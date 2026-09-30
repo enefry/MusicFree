@@ -1,5 +1,29 @@
 import Foundation
 
+/// Keeps a managed local resource alive while a consumer is reading it.
+/// The adapter supplies the release handler; public callers only retain or
+/// explicitly release the opaque token.
+public final class MediaResourceReadLease: @unchecked Sendable {
+  private let lock = NSLock()
+  private var releaseHandler: (@Sendable () -> Void)?
+
+  public init(release: @escaping @Sendable () -> Void) {
+    releaseHandler = release
+  }
+
+  public func release() {
+    lock.lock()
+    let handler = releaseHandler
+    releaseHandler = nil
+    lock.unlock()
+    handler?()
+  }
+
+  deinit {
+    release()
+  }
+}
+
 /// A sensitive request used only for the lifetime of one remote playback
 /// operation. It deliberately does not conform to Codable.
 public struct RemotePlaybackRequest: Sendable, CustomStringConvertible,
@@ -83,6 +107,7 @@ public enum PlaybackResource: Sendable, CustomStringConvertible,
   CustomDebugStringConvertible, CustomReflectable
 {
   case localFile(URL)
+  case leasedLocalFile(URL, MediaResourceReadLease)
   case remote(RemotePlaybackRequest)
 
   public static func local(_ url: URL) -> Self {
@@ -93,9 +118,18 @@ public enum PlaybackResource: Sendable, CustomStringConvertible,
     true
   }
 
+  public var localFileURL: URL? {
+    switch self {
+    case .localFile(let url), .leasedLocalFile(let url, _):
+      return url
+    case .remote:
+      return nil
+    }
+  }
+
   public var description: String {
     switch self {
-    case .localFile:
+    case .localFile, .leasedLocalFile:
       return "PlaybackResource(localFile: redacted)"
     case .remote:
       return "PlaybackResource(remote: redacted)"

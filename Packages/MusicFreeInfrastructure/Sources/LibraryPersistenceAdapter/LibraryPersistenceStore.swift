@@ -4,6 +4,24 @@ import MusicDomain
 import PlaybackAPI
 import SwiftData
 
+private func preservingMediaAssetConversion(
+    _ incoming: MediaAsset,
+    existing: MediaAsset?
+) -> MediaAsset {
+    guard incoming.conversion == nil, let conversion = existing?.conversion else {
+        return incoming
+    }
+    return MediaAsset(
+        id: incoming.id,
+        contentRevision: incoming.contentRevision,
+        fileName: incoming.fileName,
+        folderPath: incoming.folderPath,
+        byteCount: incoming.byteCount,
+        technicalInfo: incoming.technicalInfo,
+        conversion: conversion
+    )
+}
+
 private struct StoredTrack {
     var value: Track
     let dateAddedAt: Date
@@ -402,6 +420,24 @@ public actor LibraryPersistenceStore {
             predicate: #Predicate { $0.storageKey == key }
         )
         return try fetchFirst(descriptor).map(LocalMediaGraphRecordMapper.asset(from:))
+    }
+
+    internal func mediaAssets() throws -> [MediaAsset] {
+        try ensureOpen()
+        return try fetch(MediaAssetRecord.self)
+            .map(LocalMediaGraphRecordMapper.asset(from:))
+            .sorted { $0.id < $1.id }
+    }
+
+    internal func trackVariants(referencing assetID: MediaAssetID) throws -> [TrackVariant] {
+        try ensureOpen()
+        let assetKey = PersistenceKey.asset(assetID)
+        let descriptor = FetchDescriptor<TrackVariantRecord>(
+            predicate: #Predicate { $0.assetStorageKey == assetKey }
+        )
+        return try context.fetch(descriptor)
+            .map(LocalMediaGraphRecordMapper.variant(from:))
+            .sorted { $0.id < $1.id }
     }
 
     internal func release(id: AlbumReleaseID) throws -> AlbumRelease? {
@@ -3029,7 +3065,10 @@ public actor LibraryPersistenceStore {
         for itemID in projectedTrackIDs {
             guard let track = library.tracks[itemID]?.value else { continue }
             let logicalTrack = track.logicalTrackProjection
-            let asset = track.mediaAssetProjection
+            let asset = preservingMediaAssetConversion(
+                track.mediaAssetProjection,
+                existing: snapshot.assets[track.assetID]
+            )
             let projectedVariant = track.trackVariantProjection
             snapshot.logicalTracks[logicalTrack.id] = logicalTrack
             snapshot.assets[asset.id] = asset
@@ -3059,7 +3098,9 @@ public actor LibraryPersistenceStore {
         }
         snapshot.logicalTracks.merge(logicalTrackUpserts) { _, new in new }
         snapshot.variants.merge(variantUpserts) { _, new in new }
-        snapshot.assets.merge(assetUpserts) { _, new in new }
+        snapshot.assets.merge(assetUpserts) { old, new in
+            preservingMediaAssetConversion(new, existing: old)
+        }
         snapshot.groups.merge(albumGroupUpserts) { _, new in new }
         snapshot.releases.merge(releaseUpserts) { _, new in new }
         snapshot.discs.merge(discUpserts) { _, new in new }
@@ -3924,7 +3965,11 @@ public actor LibraryPersistenceStore {
             predicate: #Predicate { $0.storageKey == key }
         )
         if let record = try fetchFirst(descriptor) {
-            try LocalMediaGraphRecordMapper.update(record, from: value)
+            let existing = try LocalMediaGraphRecordMapper.asset(from: record)
+            try LocalMediaGraphRecordMapper.update(
+                record,
+                from: preservingMediaAssetConversion(value, existing: existing)
+            )
         } else {
             context.insert(try LocalMediaGraphRecordMapper.makeAsset(value))
         }
@@ -4066,12 +4111,17 @@ public actor LibraryPersistenceStore {
             context.insert(try LocalMediaGraphRecordMapper.makeLogicalTrack(logical))
         }
 
-        let asset = track.mediaAssetProjection
-        let assetKey = PersistenceKey.asset(asset.id)
+        let assetKey = PersistenceKey.asset(track.assetID)
         let assetDescriptor = FetchDescriptor<MediaAssetRecord>(
             predicate: #Predicate { $0.storageKey == assetKey }
         )
-        if let record = try fetchFirst(assetDescriptor) {
+        let existingAssetRecord = try fetchFirst(assetDescriptor)
+        let existingAsset = try existingAssetRecord.map(LocalMediaGraphRecordMapper.asset(from:))
+        let asset = preservingMediaAssetConversion(
+            track.mediaAssetProjection,
+            existing: existingAsset
+        )
+        if let record = existingAssetRecord {
             try LocalMediaGraphRecordMapper.update(record, from: asset)
         } else {
             context.insert(try LocalMediaGraphRecordMapper.makeAsset(asset))

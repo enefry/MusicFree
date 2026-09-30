@@ -31,11 +31,12 @@ typedef enum {
 /// 不透明解码器句柄。内部持有 ffmpeg 的 format/codec/swr 上下文。
 typedef struct FFAudioDecoder FFAudioDecoder;
 
-/// 解码输出的 PCM 规格。输出恒为交错(interleaved) Float32。
+/// 解码输出的 PCM 规格。Float32 与 Int32 输出均保持源采样率和声道数。
 typedef struct {
     int32_t sample_rate;   ///< 采样率，如 44100
     int32_t channels;      ///< 声道数，如 2
     int64_t duration_ms;   ///< 总时长(毫秒)，未知时为 -1
+    int32_t source_bits_per_sample; ///< 源有效位深，未知时为 0
 } FFAudioFormat;
 
 /// 打开本地文件，成功返回句柄，失败返回 NULL 并把错误码写入 out_status。
@@ -69,6 +70,11 @@ FFAudioFormat ffaudio_format(const FFAudioDecoder *decoder);
 /// 返回本次产出的帧数(每声道)：>0 有数据，0 到达文件尾，<0 为错误码。
 int32_t ffaudio_read_float(FFAudioDecoder *decoder, float *out, int32_t max_frames);
 
+/// 解码并填充交错 signed Int32 到 out。低于 32-bit 的整数源会左对齐到
+/// Int32 的完整幅度，供保留有效位深的无损编码器使用。
+/// 同一个 decoder 句柄不能混用 Float32 与 Int32 读取。
+int32_t ffaudio_read_s32(FFAudioDecoder *decoder, int32_t *out, int32_t max_frames);
+
 /// seek 到指定毫秒位置。返回 FFAUDIO_OK 或负错误码。
 int32_t ffaudio_seek_ms(FFAudioDecoder *decoder, int64_t position_ms);
 
@@ -94,6 +100,7 @@ typedef struct {
     int64_t bit_rate;         ///< 码率(bps)，未知为 0
     int32_t is_default;       ///< 是否为默认流
     int32_t is_decodable;     ///< 是否找得到对应解码器
+    int32_t is_lossless;      ///< 编解码器是否声明为无损
 } FFAudioTrack;
 
 /// 打开探测句柄。失败返回 NULL 并写 out_status。

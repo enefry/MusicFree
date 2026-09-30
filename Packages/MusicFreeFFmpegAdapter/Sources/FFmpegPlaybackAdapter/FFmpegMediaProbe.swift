@@ -11,7 +11,7 @@ public final class FFmpegMediaProbe: Sendable, MediaProbing {
 
     public func probe(_ resource: PlaybackResource) async throws -> MediaProbeResult {
         try Task.checkCancellation()
-        guard case let .localFile(url) = resource else {
+        guard let url = resource.localFileURL else {
             // 远程资源当前不支持探测。
             throw MediaSourceError.invalidResource
         }
@@ -40,7 +40,8 @@ public final class FFmpegMediaProbe: Sendable, MediaProbing {
                 language: nil,
                 title: nil,
                 isDefault: track.isDefault,
-                isDecodable: track.isDecodable
+                isDecodable: track.isDecodable,
+                isLossless: track.isLossless
             )
         }
         return try MediaProbeResult(

@@ -34,6 +34,10 @@ let package = Package(
                 .product(name: "MusicDomain", package: "MusicFreeCore"),
                 .product(name: "MediaSourceAPI", package: "MusicFreeCore"),
                 .product(name: "PlaybackAPI", package: "MusicFreeCore")
+            ],
+            linkerSettings: [
+                .linkedFramework("AudioToolbox"),
+                .linkedFramework("AVFoundation")
             ]
         ),
         .testTarget(

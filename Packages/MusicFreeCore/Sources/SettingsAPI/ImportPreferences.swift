@@ -16,6 +16,7 @@ public struct ImportPreferences: Codable, Equatable, Hashable, Sendable {
     public let lyricsProviders: [LyricsProviderPreference]
     public let privacyPreferences: PrivacyPreferences
     public let onlineSourcePreferences: OnlineSourcePreferences
+    public let audioConversion: AudioConversionPreferences
 
     public static let defaultMetadataProviders: [MetadataProviderPreference] = [
         MetadataProviderPreference(provider: .musicKit),
@@ -34,13 +35,15 @@ public struct ImportPreferences: Codable, Equatable, Hashable, Sendable {
         metadataProviders: [MetadataProviderPreference] = Self.defaultMetadataProviders,
         lyricsProviders: [LyricsProviderPreference] = Self.defaultLyricsProviders,
         privacyPreferences: PrivacyPreferences = .defaults,
-        onlineSourcePreferences: OnlineSourcePreferences = .defaults
+        onlineSourcePreferences: OnlineSourcePreferences = .defaults,
+        audioConversion: AudioConversionPreferences = .defaults
     ) {
         self.duplicatePolicy = duplicatePolicy
         self.metadataProviders = Self.normalizedProviders(metadataProviders)
         self.lyricsProviders = Self.providersAfterMigration(lyricsProviders)
         self.privacyPreferences = privacyPreferences
         self.onlineSourcePreferences = onlineSourcePreferences
+        self.audioConversion = audioConversion
     }
 
     /// Compatibility initializer for the temporary all-providers lyrics switch.
@@ -49,7 +52,8 @@ public struct ImportPreferences: Codable, Equatable, Hashable, Sendable {
         metadataProviders: [MetadataProviderPreference] = Self.defaultMetadataProviders,
         lyricsProvidersEnabled: Bool,
         privacyPreferences: PrivacyPreferences = .defaults,
-        onlineSourcePreferences: OnlineSourcePreferences = .defaults
+        onlineSourcePreferences: OnlineSourcePreferences = .defaults,
+        audioConversion: AudioConversionPreferences = .defaults
     ) {
         self.init(
             duplicatePolicy: duplicatePolicy,
@@ -58,7 +62,8 @@ public struct ImportPreferences: Codable, Equatable, Hashable, Sendable {
                 $0.settingEnabled(lyricsProvidersEnabled)
             },
             privacyPreferences: privacyPreferences,
-            onlineSourcePreferences: onlineSourcePreferences
+            onlineSourcePreferences: onlineSourcePreferences,
+            audioConversion: audioConversion
         )
     }
 
@@ -69,7 +74,8 @@ public struct ImportPreferences: Codable, Equatable, Hashable, Sendable {
         useMusicKitMetadataEnrichment: Bool,
         lyricsProvidersEnabled: Bool = false,
         privacyPreferences: PrivacyPreferences = .defaults,
-        onlineSourcePreferences: OnlineSourcePreferences = .defaults
+        onlineSourcePreferences: OnlineSourcePreferences = .defaults,
+        audioConversion: AudioConversionPreferences = .defaults
     ) {
         self.init(
             duplicatePolicy: duplicatePolicy,
@@ -84,7 +90,8 @@ public struct ImportPreferences: Codable, Equatable, Hashable, Sendable {
             ],
             lyricsProvidersEnabled: lyricsProvidersEnabled,
             privacyPreferences: privacyPreferences,
-            onlineSourcePreferences: onlineSourcePreferences
+            onlineSourcePreferences: onlineSourcePreferences,
+            audioConversion: audioConversion
         )
     }
 
@@ -139,6 +146,17 @@ public struct ImportPreferences: Codable, Equatable, Hashable, Sendable {
         metadataProviders.first { $0.provider == provider }?.isEnabled ?? false
     }
 
+    public func settingDuplicatePolicy(_ policy: DuplicateImportPolicy) -> Self {
+        Self(
+            duplicatePolicy: policy,
+            metadataProviders: metadataProviders,
+            lyricsProviders: lyricsProviders,
+            privacyPreferences: privacyPreferences,
+            onlineSourcePreferences: onlineSourcePreferences,
+            audioConversion: audioConversion
+        )
+    }
+
     public func settingMetadataProvider(
         _ provider: MetadataProviderID,
         enabled: Bool
@@ -154,7 +172,8 @@ public struct ImportPreferences: Codable, Equatable, Hashable, Sendable {
             metadataProviders: providers,
             lyricsProviders: lyricsProviders,
             privacyPreferences: privacyPreferences,
-            onlineSourcePreferences: onlineSourcePreferences
+            onlineSourcePreferences: onlineSourcePreferences,
+            audioConversion: audioConversion
         )
     }
 
@@ -166,7 +185,8 @@ public struct ImportPreferences: Codable, Equatable, Hashable, Sendable {
             metadataProviders: providers,
             lyricsProviders: lyricsProviders,
             privacyPreferences: privacyPreferences,
-            onlineSourcePreferences: onlineSourcePreferences
+            onlineSourcePreferences: onlineSourcePreferences,
+            audioConversion: audioConversion
         )
     }
 
@@ -189,7 +209,8 @@ public struct ImportPreferences: Codable, Equatable, Hashable, Sendable {
             metadataProviders: metadataProviders,
             lyricsProviders: providers,
             privacyPreferences: privacyPreferences,
-            onlineSourcePreferences: onlineSourcePreferences
+            onlineSourcePreferences: onlineSourcePreferences,
+            audioConversion: audioConversion
         )
     }
 
@@ -201,7 +222,8 @@ public struct ImportPreferences: Codable, Equatable, Hashable, Sendable {
             metadataProviders: metadataProviders,
             lyricsProviders: providers,
             privacyPreferences: privacyPreferences,
-            onlineSourcePreferences: onlineSourcePreferences
+            onlineSourcePreferences: onlineSourcePreferences,
+            audioConversion: audioConversion
         )
     }
 
@@ -215,7 +237,8 @@ public struct ImportPreferences: Codable, Equatable, Hashable, Sendable {
             metadataProviders: metadataProviders,
             lyricsProviders: lyricsProviders,
             privacyPreferences: preferences,
-            onlineSourcePreferences: onlineSourcePreferences
+            onlineSourcePreferences: onlineSourcePreferences,
+            audioConversion: audioConversion
         )
     }
 
@@ -227,7 +250,19 @@ public struct ImportPreferences: Codable, Equatable, Hashable, Sendable {
             metadataProviders: metadataProviders,
             lyricsProviders: lyricsProviders,
             privacyPreferences: privacyPreferences,
-            onlineSourcePreferences: preferences
+            onlineSourcePreferences: preferences,
+            audioConversion: audioConversion
+        )
+    }
+
+    public func settingAudioConversion(_ preferences: AudioConversionPreferences) -> Self {
+        Self(
+            duplicatePolicy: duplicatePolicy,
+            metadataProviders: metadataProviders,
+            lyricsProviders: lyricsProviders,
+            privacyPreferences: privacyPreferences,
+            onlineSourcePreferences: onlineSourcePreferences,
+            audioConversion: preferences
         )
     }
 
@@ -237,6 +272,7 @@ public struct ImportPreferences: Codable, Equatable, Hashable, Sendable {
         case lyricsProviders
         case privacyPreferences
         case onlineSourcePreferences
+        case audioConversion
         case lyricsProvidersEnabled
         case useMusicKitMetadataEnrichment
     }
@@ -259,6 +295,10 @@ public struct ImportPreferences: Codable, Equatable, Hashable, Sendable {
             OnlineSourcePreferences.self,
             forKey: .onlineSourcePreferences
         ) ?? .defaults
+        let audioConversion = try container.decodeIfPresent(
+            AudioConversionPreferences.self,
+            forKey: .audioConversion
+        ) ?? .defaults
         let lyricsProviders = try container.decodeIfPresent(
             [LyricsProviderPreference].self,
             forKey: .lyricsProviders
@@ -275,7 +315,8 @@ public struct ImportPreferences: Codable, Equatable, Hashable, Sendable {
                         $0.settingEnabled(legacyLyricsProvidersEnabled)
                     },
                 privacyPreferences: privacyPreferences,
-                onlineSourcePreferences: onlineSourcePreferences
+                onlineSourcePreferences: onlineSourcePreferences,
+                audioConversion: audioConversion
             )
         } else {
             self.init(
@@ -286,7 +327,8 @@ public struct ImportPreferences: Codable, Equatable, Hashable, Sendable {
                 ) ?? false,
                 lyricsProvidersEnabled: legacyLyricsProvidersEnabled,
                 privacyPreferences: privacyPreferences,
-                onlineSourcePreferences: onlineSourcePreferences
+                onlineSourcePreferences: onlineSourcePreferences,
+                audioConversion: audioConversion
             )
         }
     }
@@ -298,6 +340,7 @@ public struct ImportPreferences: Codable, Equatable, Hashable, Sendable {
         try container.encode(lyricsProviders, forKey: .lyricsProviders)
         try container.encode(privacyPreferences, forKey: .privacyPreferences)
         try container.encode(onlineSourcePreferences, forKey: .onlineSourcePreferences)
+        try container.encode(audioConversion, forKey: .audioConversion)
         // Keep emitting the legacy aggregate value so an older app can still
         // read whether at least one lyrics provider is enabled.
         try container.encode(lyricsProvidersEnabled, forKey: .lyricsProvidersEnabled)

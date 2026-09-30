@@ -50,6 +50,18 @@ public final class SwiftDataLibraryRepository: LibraryRepository, Sendable {
         try await store.mediaAsset(id: id)
     }
 
+    public func mediaAssets() async throws -> [MediaAsset] {
+        try await store.mediaAssets()
+    }
+
+    public func trackVariants(referencing assetID: MediaAssetID) async throws -> [TrackVariant] {
+        try await store.trackVariants(referencing: assetID)
+    }
+
+    public func currentRevision() async throws -> LibraryRevision? {
+        try await store.currentRevision()
+    }
+
     public func release(id: AlbumReleaseID) async throws -> AlbumRelease? {
         try await store.release(id: id)
     }

@@ -6,6 +6,7 @@
 
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
+#include <libavcodec/codec_desc.h>
 #include <libavutil/opt.h>
 #include <libavutil/dict.h>
 #include <libavutil/channel_layout.h>
@@ -22,17 +23,22 @@ struct FFAudioDecoder {
     AVFormatContext *format_ctx;
     AVCodecContext *codec_ctx;
     SwrContext *swr;
+    SwrContext *swr_s32;
     AVPacket *packet;
     AVFrame *frame;
 
     int audio_stream_index;
     int channels;
     int sample_rate;
+    int source_bits_per_sample;
+    int pcm_mode; // 0 unset, 1 Float32, 2 signed Int32
     char *source_path; // local input; reopen for exact zero-position playback
 
     // 交错 Float32 暂存区：hold_frames 帧尚未被读走，从 hold_offset 帧开始。
     float *hold;
+    int32_t *hold_s32;
     int hold_capacity_frames;
+    int hold_s32_capacity_frames;
     int hold_frames;
     int hold_offset;
 
@@ -50,6 +56,7 @@ struct FFAudioDecoder {
 static void ffaudio_free_internal(FFAudioDecoder *d) {
     if (!d) return;
     if (d->swr) swr_free(&d->swr);
+    if (d->swr_s32) swr_free(&d->swr_s32);
     if (d->frame) av_frame_free(&d->frame);
     if (d->packet) av_packet_free(&d->packet);
     if (d->codec_ctx) avcodec_free_context(&d->codec_ctx);
@@ -60,6 +67,7 @@ static void ffaudio_free_internal(FFAudioDecoder *d) {
         avio_context_free(&d->avio);
     }
     free(d->hold);
+    free(d->hold_s32);
     free(d->source_path);
     free(d);
 }
@@ -208,6 +216,13 @@ static FFAudioDecoder *ffaudio_finish_open(FFAudioDecoder *d, int32_t *out_statu
 
     d->channels = d->codec_ctx->ch_layout.nb_channels;
     d->sample_rate = d->codec_ctx->sample_rate;
+    d->source_bits_per_sample = d->codec_ctx->bits_per_raw_sample;
+    if (d->source_bits_per_sample <= 0) {
+        d->source_bits_per_sample = av_get_bits_per_sample(d->codec_ctx->codec_id);
+    }
+    if (d->source_bits_per_sample <= 0) {
+        d->source_bits_per_sample = av_get_bytes_per_sample(d->codec_ctx->sample_fmt) * 8;
+    }
     if (d->channels <= 0 || d->sample_rate <= 0) {
         if (out_status) *out_status = FFAUDIO_ERR_DECODER;
         ffaudio_free_internal(d);
@@ -222,8 +237,14 @@ static FFAudioDecoder *ffaudio_finish_open(FFAudioDecoder *d, int32_t *out_statu
         &out_layout, AV_SAMPLE_FMT_FLT, d->sample_rate,
         &d->codec_ctx->ch_layout, d->codec_ctx->sample_fmt, d->codec_ctx->sample_rate,
         0, NULL);
+    int s32_rc = swr_alloc_set_opts2(
+        &d->swr_s32,
+        &out_layout, AV_SAMPLE_FMT_S32, d->sample_rate,
+        &d->codec_ctx->ch_layout, d->codec_ctx->sample_fmt, d->codec_ctx->sample_rate,
+        0, NULL);
     av_channel_layout_uninit(&out_layout);
-    if (rc < 0 || !d->swr || swr_init(d->swr) < 0) {
+    if (rc < 0 || s32_rc < 0 || !d->swr || !d->swr_s32
+        || swr_init(d->swr) < 0 || swr_init(d->swr_s32) < 0) {
         if (out_status) *out_status = FFAUDIO_ERR_RESAMPLER;
         ffaudio_free_internal(d);
         return NULL;
@@ -241,10 +262,11 @@ static FFAudioDecoder *ffaudio_finish_open(FFAudioDecoder *d, int32_t *out_statu
 }
 
 FFAudioFormat ffaudio_format(const FFAudioDecoder *d) {
-    FFAudioFormat f = { 0, 0, -1 };
+    FFAudioFormat f = { 0, 0, -1, 0 };
     if (!d) return f;
     f.sample_rate = d->sample_rate;
     f.channels = d->channels;
+    f.source_bits_per_sample = d->source_bits_per_sample;
     if (d->format_ctx && d->format_ctx->duration != AV_NOPTS_VALUE) {
         f.duration_ms = d->format_ctx->duration / (AV_TIME_BASE / 1000);
     }
@@ -291,12 +313,56 @@ static int ffaudio_stage_frame(FFAudioDecoder *d) {
     return converted - d->hold_offset;
 }
 
+// Int32 path is separate from playback's Float32 hold so ALAC conversion never
+// round-trips integer PCM through a floating point client format.
+static int ffaudio_stage_frame_s32(FFAudioDecoder *d) {
+    int out_samples = swr_get_out_samples(d->swr_s32, d->frame->nb_samples);
+    if (out_samples < 0) return FFAUDIO_ERR_DECODE;
+
+    if (out_samples > d->hold_s32_capacity_frames) {
+        int32_t *grown = realloc(
+            d->hold_s32,
+            (size_t)out_samples * d->channels * sizeof(int32_t));
+        if (!grown) return FFAUDIO_ERR_ALLOC;
+        d->hold_s32 = grown;
+        d->hold_s32_capacity_frames = out_samples;
+    }
+
+    uint8_t *out_ptr = (uint8_t *)d->hold_s32;
+    int converted = swr_convert(
+        d->swr_s32, &out_ptr, out_samples,
+        (const uint8_t **)d->frame->extended_data, d->frame->nb_samples);
+    if (converted < 0) return FFAUDIO_ERR_DECODE;
+
+    d->hold_frames = converted;
+    d->hold_offset = 0;
+    if (d->seek_pending && converted > 0) {
+        AVStream *stream = d->format_ctx->streams[d->audio_stream_index];
+        int64_t pts = d->frame->best_effort_timestamp;
+        if (pts == AV_NOPTS_VALUE) return FFAUDIO_ERR_SEEK;
+        int64_t start = stream->start_time == AV_NOPTS_VALUE ? 0 : stream->start_time;
+        int64_t frame_start = av_rescale_q_rnd(
+            pts - start, stream->time_base, (AVRational){ 1, d->sample_rate },
+            AV_ROUND_NEAR_INF);
+        int64_t skip = d->seek_target_frame - frame_start;
+        if (skip >= converted) {
+            d->hold_offset = converted;
+            return 0;
+        }
+        if (skip > 0) d->hold_offset = (int)skip;
+        d->seek_pending = 0;
+    }
+    return converted - d->hold_offset;
+}
+
 // 解码下一帧填入 hold：返回 1 拿到数据，0 到达文件尾，<0 错误。
-static int ffaudio_fill_hold(FFAudioDecoder *d) {
+static int ffaudio_fill_hold(FFAudioDecoder *d, int use_s32) {
     for (;;) {
         int r = avcodec_receive_frame(d->codec_ctx, d->frame);
         if (r == 0) {
-            int staged = ffaudio_stage_frame(d);
+            int staged = use_s32
+                ? ffaudio_stage_frame_s32(d)
+                : ffaudio_stage_frame(d);
             if (staged < 0) return staged;
             if (staged == 0) continue; // 重采样暂无输出，继续要下一帧
             return 1;
@@ -342,11 +408,13 @@ static int32_t ffaudio_seek_by_decoding(FFAudioDecoder *d, int64_t target_frame)
 
 int32_t ffaudio_read_float(FFAudioDecoder *d, float *out, int32_t max_frames) {
     if (!d || !out || max_frames <= 0) return FFAUDIO_ERR_ARG;
+    if (d->pcm_mode == 2) return FFAUDIO_ERR_ARG;
+    d->pcm_mode = 1;
 
     int produced = 0;
     while (produced < max_frames) {
         if (d->hold_frames - d->hold_offset <= 0) {
-            int r = ffaudio_fill_hold(d);
+            int r = ffaudio_fill_hold(d, 0);
             if (r == FFAUDIO_ERR_SEEK && d->seek_pending && produced == 0) {
                 r = ffaudio_seek_by_decoding(d, d->seek_target_frame);
                 if (r == FFAUDIO_OK) continue;
@@ -361,6 +429,36 @@ int32_t ffaudio_read_float(FFAudioDecoder *d, float *out, int32_t max_frames) {
         memcpy(out + (size_t)produced * d->channels,
                d->hold + (size_t)d->hold_offset * d->channels,
                (size_t)take * d->channels * sizeof(float));
+
+        d->hold_offset += take;
+        produced += take;
+    }
+    return produced;
+}
+
+int32_t ffaudio_read_s32(FFAudioDecoder *d, int32_t *out, int32_t max_frames) {
+    if (!d || !out || max_frames <= 0) return FFAUDIO_ERR_ARG;
+    if (d->pcm_mode == 1) return FFAUDIO_ERR_ARG;
+    d->pcm_mode = 2;
+
+    int produced = 0;
+    while (produced < max_frames) {
+        if (d->hold_frames - d->hold_offset <= 0) {
+            int r = ffaudio_fill_hold(d, 1);
+            if (r == FFAUDIO_ERR_SEEK && d->seek_pending && produced == 0) {
+                r = ffaudio_seek_by_decoding(d, d->seek_target_frame);
+                if (r == FFAUDIO_OK) continue;
+            }
+            if (r < 0) return r;
+            if (r == 0) break;
+        }
+        int available = d->hold_frames - d->hold_offset;
+        int want = max_frames - produced;
+        int take = available < want ? available : want;
+
+        memcpy(out + (size_t)produced * d->channels,
+               d->hold_s32 + (size_t)d->hold_offset * d->channels,
+               (size_t)take * d->channels * sizeof(int32_t));
 
         d->hold_offset += take;
         produced += take;
@@ -393,15 +491,20 @@ static int32_t ffaudio_reopen_at_start(FFAudioDecoder *d) {
 // Containers without usable frame timestamps can still seek accurately by
 // counting decoded PCM frames from the start. This is slower for long tracks.
 static int32_t ffaudio_seek_by_decoding(FFAudioDecoder *d, int64_t target_frame) {
+    int pcm_mode = d->pcm_mode;
     int32_t status = ffaudio_reopen_at_start(d);
     if (status != FFAUDIO_OK) return status;
+    d->pcm_mode = pcm_mode;
     const int chunk_frames = 4096;
-    float *scratch = malloc((size_t)chunk_frames * d->channels * sizeof(float));
+    size_t sample_size = pcm_mode == 2 ? sizeof(int32_t) : sizeof(float);
+    void *scratch = malloc((size_t)chunk_frames * d->channels * sample_size);
     if (!scratch) return FFAUDIO_ERR_ALLOC;
     int64_t remaining = target_frame;
     while (remaining > 0) {
         int want = remaining < chunk_frames ? (int)remaining : chunk_frames;
-        int32_t read = ffaudio_read_float(d, scratch, want);
+        int32_t read = pcm_mode == 2
+            ? ffaudio_read_s32(d, scratch, want)
+            : ffaudio_read_float(d, scratch, want);
         if (read <= 0) {
             free(scratch);
             return read < 0 ? read : FFAUDIO_ERR_SEEK;
@@ -459,7 +562,10 @@ int32_t ffaudio_seek_us(FFAudioDecoder *d, int64_t position_us) {
     d->seek_target_frame = target_frame;
     d->seek_pending = 1;
     swr_close(d->swr);
-    if (swr_init(d->swr) < 0) return FFAUDIO_ERR_RESAMPLER;
+    swr_close(d->swr_s32);
+    if (swr_init(d->swr) < 0 || swr_init(d->swr_s32) < 0) {
+        return FFAUDIO_ERR_RESAMPLER;
+    }
     return FFAUDIO_OK;
 }
 
@@ -569,6 +675,9 @@ int32_t ffaudio_probe_track(const FFAudioProbe *p, int32_t i, FFAudioTrack *out)
     out->bit_rate = par->bit_rate;
     out->is_default = (s->disposition & AV_DISPOSITION_DEFAULT) ? 1 : 0;
     out->is_decodable = avcodec_find_decoder(par->codec_id) != NULL ? 1 : 0;
+    const AVCodecDescriptor *descriptor = avcodec_descriptor_get(par->codec_id);
+    out->is_lossless = descriptor != NULL
+        && (descriptor->props & AV_CODEC_PROP_LOSSLESS) != 0;
 
     int bits = par->bits_per_raw_sample;
     if (bits <= 0) bits = av_get_bits_per_sample(par->codec_id);
