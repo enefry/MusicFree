@@ -57,6 +57,24 @@ public final class LibraryCollectionsViewController: UIViewController {
         case status(String)
     }
 
+    private final class CollectionDataSource:
+        UICollectionViewDiffableDataSource<CollectionSection, CollectionItem> {
+        var indexTitlesProvider: () -> [String]? = { nil }
+        var indexPathProvider: (String, Int) -> IndexPath = { _, _ in IndexPath(index: 0) }
+
+        override func indexTitles(for collectionView: UICollectionView) -> [String]? {
+            indexTitlesProvider()
+        }
+
+        override func collectionView(
+            _ collectionView: UICollectionView,
+            indexPathForIndexTitle title: String,
+            at index: Int
+        ) -> IndexPath {
+            indexPathProvider(title, index)
+        }
+    }
+
     public let viewModel: LibraryViewModel
     public let section: LibrarySection
     public let artworkServing: (any ArtworkServing)?
@@ -72,7 +90,7 @@ public final class LibraryCollectionsViewController: UIViewController {
     public var onAddTracksToPlaylist: (([MediaItemID]) -> Void)?
 
     private let collectionView: UICollectionView
-    private var dataSource: UICollectionViewDiffableDataSource<CollectionSection, CollectionItem>!
+    private var dataSource: CollectionDataSource!
     private var viewModelObservations = Set<AnyCancellable>()
     private var artistNameTask: Task<Void, Never>?
     private var artistNameRequestSignature: String?
@@ -260,7 +278,7 @@ public final class LibraryCollectionsViewController: UIViewController {
     }
 
     private func configureDataSource() {
-        dataSource = UICollectionViewDiffableDataSource<CollectionSection, CollectionItem>(
+        let dataSource = CollectionDataSource(
             collectionView: collectionView
         ) { [weak self] collectionView, indexPath, item in
             guard let self else { return nil }
@@ -407,6 +425,13 @@ public final class LibraryCollectionsViewController: UIViewController {
             header.titleText = title
             return header
         }
+        dataSource.indexTitlesProvider = { [weak self] in
+            self?.sectionIndexTitles()
+        }
+        dataSource.indexPathProvider = { [weak self] title, index in
+            self?.indexPath(forSectionIndexTitle: title, at: index) ?? IndexPath(index: 0)
+        }
+        self.dataSource = dataSource
         collectionView.delegate = self
     }
 
@@ -679,6 +704,31 @@ public final class LibraryCollectionsViewController: UIViewController {
             snapshot.appendSections([.group(key)])
             snapshot.appendItems(grouped[key, default: []].map(item), toSection: .group(key))
         }
+    }
+
+    private func sectionIndexTitles() -> [String]? {
+        guard section == .artists else { return nil }
+        let titles = dataSource.snapshot().sectionIdentifiers.compactMap { section -> String? in
+            guard case let .group(title) = section else { return nil }
+            return title
+        }
+        return titles.count > 1 ? titles : nil
+    }
+
+    private func indexPath(forSectionIndexTitle title: String, at index: Int) -> IndexPath {
+        let snapshot = dataSource.snapshot()
+        let sectionIdentifier: CollectionSection
+        if snapshot.sectionIdentifiers.contains(.group(title)) {
+            sectionIdentifier = .group(title)
+        } else if let fallbackTitle = sectionIndexTitles()?[safe: index] {
+            sectionIdentifier = .group(fallbackTitle)
+        } else {
+            return IndexPath(index: 0)
+        }
+        guard let sectionIndex = snapshot.sectionIdentifiers.firstIndex(of: sectionIdentifier),
+              !snapshot.itemIdentifiers(inSection: sectionIdentifier).isEmpty
+        else { return IndexPath(index: 0) }
+        return IndexPath(item: 0, section: sectionIndex)
     }
 
     private var orderedAlbums: [Album] {

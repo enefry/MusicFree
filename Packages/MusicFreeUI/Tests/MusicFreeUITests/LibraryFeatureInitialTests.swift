@@ -197,6 +197,43 @@ func albumCollectionRefreshKeepsScrollAnchor() async throws {
     model.stopObservingChanges()
 }
 
+@MainActor
+@Test("Artist collection exposes section titles for quick navigation")
+func artistCollectionProvidesSectionIndexNavigation() async throws {
+    let service = FakeLibraryService()
+    service.defaultArtists = [
+        Artist(id: ArtistID("numeric"), name: "123"),
+        Artist(id: ArtistID("english"), name: "Beyond"),
+        Artist(id: ArtistID("chinese"), name: "阿里"),
+    ]
+    let model = LibraryViewModel(library: service, selection: .artists)
+    let controller = LibraryCollectionsViewController(viewModel: model, section: .artists)
+    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+    window.rootViewController = UINavigationController(rootViewController: controller)
+    window.makeKeyAndVisible()
+    defer {
+        window.isHidden = true
+        window.rootViewController = nil
+    }
+
+    controller.loadViewIfNeeded()
+    let collection = try #require(controller.contentScrollView(for: .top) as? UICollectionView)
+    await settleUntil {
+        collection.dataSource?.indexTitles?(for: collection) == ["A", "B", "#"]
+    }
+
+    let dataSource = try #require(collection.dataSource)
+    #expect(dataSource.indexTitles?(for: collection) == ["A", "B", "#"])
+    let indexPath = try #require(
+        dataSource.collectionView?(
+            collection,
+            indexPathForIndexTitle: "B",
+            at: 1
+        )
+    )
+    #expect(indexPath == IndexPath(item: 0, section: 1))
+}
+
 @Test("Track metadata editor preserves, edits, and clears relationship lists")
 func trackMetadataEditorRelationshipNames() {
     #expect(
@@ -1232,6 +1269,54 @@ func playbackHistoryPreservesRepeatedSessions() async throws {
     #expect(viewModel.recentTracks.map(\.id) == [track.id, track.id])
 }
 
+@MainActor
+@Test("Playback history screen keeps newest playback order instead of sorting titles")
+func playbackHistoryScreenKeepsPlaybackOrder() async throws {
+    let service = FakeLibraryService()
+    let newest = makeTrack("Zulu")
+    let older = makeTrack("Alpha")
+    service.historyResponses = [
+        .success(LibraryPage(elements: [
+            makeHistoryItem(
+                sessionID: UUID(uuidString: "00000000-0000-0000-0000-000000000611")!,
+                track: newest,
+                eventTime: 200
+            ),
+            makeHistoryItem(
+                sessionID: UUID(uuidString: "00000000-0000-0000-0000-000000000612")!,
+                track: older,
+                eventTime: 100
+            ),
+        ]))
+    ]
+    let viewModel = LibraryViewModel(library: service, selection: .recent)
+    let controller = LibraryTracksViewController(viewModel: viewModel, section: .recent)
+    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+    window.rootViewController = controller
+    window.makeKeyAndVisible()
+    defer {
+        window.isHidden = true
+        window.rootViewController = nil
+    }
+
+    controller.loadViewIfNeeded()
+    let collection = try #require(controller.contentScrollView(for: .top) as? UICollectionView)
+    await settleUntil {
+        controller.view.layoutIfNeeded()
+        return collection.visibleCells.filter {
+            $0.accessibilityIdentifier?.hasPrefix("library.track.play.") == true
+        }.count == 2
+    }
+
+    let visibleTrackIDs = collection.indexPathsForVisibleItems.sorted().compactMap { indexPath in
+        collection.cellForItem(at: indexPath)?.accessibilityIdentifier
+    }.filter { $0.hasPrefix("library.track.play.") }
+    #expect(visibleTrackIDs == [
+        "library.track.play.\(newest.id.externalID)",
+        "library.track.play.\(older.id.externalID)",
+    ])
+}
+
 @Test("UIKit track row identities disambiguate repeated playback tracks")
 func libraryTrackRowIdentitiesDisambiguateRepeatedTracks() {
     let track = makeTrack("repeated UIKit row")
@@ -1816,6 +1901,7 @@ private final class FakeLibraryService: LibraryServing {
     var trackRequests: [TrackQuery] = []
     var trackPageRequests: [LibraryPageRequest] = []
     var defaultAlbums: [Album] = []
+    var defaultArtists: [Artist] = []
     var holdNextAlbumPage = false
     var heldAlbumPage: CheckedContinuation<Void, Never>?
 
@@ -1914,7 +2000,7 @@ private final class FakeLibraryService: LibraryServing {
         matching query: ArtistQuery,
         page: LibraryPageRequest
     ) async throws -> LibraryPage<Artist> {
-        LibraryPage(elements: [])
+        LibraryPage(elements: defaultArtists)
     }
 
     func searchTracks(

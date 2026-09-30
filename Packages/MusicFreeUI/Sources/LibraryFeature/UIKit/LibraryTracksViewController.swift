@@ -51,6 +51,7 @@ public final class LibraryTracksViewController: UIViewController {
         let artistNames: [ArtistID: String]
         let albumNames: [AlbumID: String]
         let sortMode: TrackListSortMode
+        let preservesTrackOrder: Bool
         let showsFavoriteAlbums: Bool
         let noAlbumTitle: String
     }
@@ -86,6 +87,7 @@ public final class LibraryTracksViewController: UIViewController {
     private enum TrackSection: Hashable, Sendable {
         case favoriteAlbums
         case actions
+        case ordered
         case group(String)
         case status
     }
@@ -347,8 +349,9 @@ public final class LibraryTracksViewController: UIViewController {
     }
 
     func updateNavigationMenus() {
-        let metadata = [
-            (
+        var metadata: [(UIImage?, [UIAction], String)] = []
+        if section != .recent {
+            metadata.append((
                 UIImage(systemName: "line.3.horizontal.decrease.circle"),
                 [
                     UIAction(
@@ -365,18 +368,18 @@ public final class LibraryTracksViewController: UIViewController {
                     ) { [weak self] _ in self?.setSortMode(.album) },
                 ],
                 "library.tracks.sort"
-            ),
-            (
-                UIImage(systemName: "ellipsis"),
-                [
-                    UIAction(
-                        title: L("刷新资料库"),
-                        image: UIImage(systemName: "arrow.clockwise")
-                    ) { [weak self] _ in self?.refreshTriggered() },
-                ],
-                "library.tracks.options"
-            ),
-        ]
+            ))
+        }
+        metadata.append((
+            UIImage(systemName: "ellipsis"),
+            [
+                UIAction(
+                    title: L("刷新资料库"),
+                    image: UIImage(systemName: "arrow.clockwise")
+                ) { [weak self] _ in self?.refreshTriggered() },
+            ],
+            "library.tracks.options"
+        ))
         var items: [UIBarButtonItem] = []
         for meta in metadata {
             if let item = menuFor(image: meta.0, children: meta.1, additionPrepare: { item in
@@ -476,7 +479,7 @@ public final class LibraryTracksViewController: UIViewController {
             switch section {
             case .favoriteAlbums: title = L("专辑")
             case let .group(value): title = value
-            case .actions, .status: return nil
+            case .actions, .ordered, .status: return nil
             }
 
             let header = collectionView.dequeueReusableSupplementaryView(
@@ -553,6 +556,7 @@ public final class LibraryTracksViewController: UIViewController {
             artistNames: artistNames,
             albumNames: albumNames,
             sortMode: sortMode,
+            preservesTrackOrder: section == .recent,
             showsFavoriteAlbums: section == .favorites,
             noAlbumTitle: L("无专辑")
         )
@@ -599,15 +603,20 @@ public final class LibraryTracksViewController: UIViewController {
         input: TrackRenderInput,
         baseline: TrackRenderBaseline
     ) -> PreparedTrackRender {
-        let sortedTracks = input.tracks.sorted {
-            let lhs = TrackSectionIndex.normalizedSortValue(sortValue(for: $0, input: input))
-            let rhs = TrackSectionIndex.normalizedSortValue(sortValue(for: $1, input: input))
-            let result = lhs.localizedStandardCompare(rhs)
-            if result != .orderedSame { return result == .orderedAscending }
-            return $0.id.externalID.localizedStandardCompare($1.id.externalID)
-                == .orderedAscending
+        let displayedTracks: [Track]
+        if input.preservesTrackOrder {
+            displayedTracks = input.tracks
+        } else {
+            displayedTracks = input.tracks.sorted {
+                let lhs = TrackSectionIndex.normalizedSortValue(sortValue(for: $0, input: input))
+                let rhs = TrackSectionIndex.normalizedSortValue(sortValue(for: $1, input: input))
+                let result = lhs.localizedStandardCompare(rhs)
+                if result != .orderedSame { return result == .orderedAscending }
+                return $0.id.externalID.localizedStandardCompare($1.id.externalID)
+                    == .orderedAscending
+            }
         }
-        let orderedRows = LibraryTrackRowIdentity.rows(for: sortedTracks).map { row in
+        let orderedRows = LibraryTrackRowIdentity.rows(for: displayedTracks).map { row in
             TrackRenderRow(
                 id: row.id,
                 track: row.track,
@@ -652,16 +661,24 @@ public final class LibraryTracksViewController: UIViewController {
                 snapshot.appendItems([.playbackActions], toSection: .actions)
             }
 
-            let grouped = Dictionary(grouping: orderedRows) {
-                TrackSectionIndex.title(for: sortValue(for: $0.track, input: input))
-            }
-            let keys = grouped.keys.sorted(by: TrackSectionIndex.areInAscendingOrder)
-            for key in keys {
-                snapshot.appendSections([.group(key)])
+            if input.preservesTrackOrder {
+                snapshot.appendSections([.ordered])
                 snapshot.appendItems(
-                    grouped[key, default: []].map { .track($0.id) },
-                    toSection: .group(key)
+                    orderedRows.map { .track($0.id) },
+                    toSection: .ordered
                 )
+            } else {
+                let grouped = Dictionary(grouping: orderedRows) {
+                    TrackSectionIndex.title(for: sortValue(for: $0.track, input: input))
+                }
+                let keys = grouped.keys.sorted(by: TrackSectionIndex.areInAscendingOrder)
+                for key in keys {
+                    snapshot.appendSections([.group(key)])
+                    snapshot.appendItems(
+                        grouped[key, default: []].map { .track($0.id) },
+                        toSection: .group(key)
+                    )
+                }
             }
         }
 
@@ -840,7 +857,7 @@ public final class LibraryTracksViewController: UIViewController {
                 configuration.headerMode = self.traitCollection.horizontalSizeClass == .regular
                     ? .supplementary
                     : .none
-            case .actions, .status:
+            case .actions, .ordered, .status:
                 configuration.headerMode = .none
             }
             let layoutSection = NSCollectionLayoutSection.list(
