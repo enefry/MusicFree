@@ -1,6 +1,11 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "转为简体" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Convert to Simplified"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"转为简体"}},"zh-Hant":{"stringUnit":{"state":"translated","value":"轉為簡體"}}}},
+    "转为繁体" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Convert to Traditional"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"转为繁体"}},"zh-Hant":{"stringUnit":{"state":"translated","value":"轉為繁體"}}}},
+    "无可转换的歌词" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"No lyrics to convert"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"无可转换的歌词"}},"zh-Hant":{"stringUnit":{"state":"translated","value":"沒有可轉換的歌詞"}}}},
+    "歌词转换失败，请重试。" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Could not convert lyrics. Try again."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"歌词转换失败，请重试。"}},"zh-Hant":{"stringUnit":{"state":"translated","value":"歌詞轉換失敗，請重試。"}}}},
+    "这会覆盖当前保存的歌词，反向转换不一定能恢复原文。" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"This replaces the saved lyrics. Converting back may not restore the original text."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"这会覆盖当前保存的歌词，反向转换不一定能恢复原文。"}},"zh-Hant":{"stringUnit":{"state":"translated","value":"這會覆蓋目前儲存的歌詞，反向轉換不一定能還原原文。"}}}},
     "未知" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Unknown"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"未知"}}}},
     "无警告" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Clean"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"无警告"}}}},
     "成人内容" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Explicit"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"成人内容"}}}},

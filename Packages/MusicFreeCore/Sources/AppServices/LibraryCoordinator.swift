@@ -394,6 +394,38 @@ internal actor LibraryCoordinator: LibraryServing {
         return try await updateMetadataWhileHoldingGate(update, releaseGate: true)
     }
 
+    func convertLyrics(for itemID: MediaItemID, to script: LyricsScript) async throws -> TrackLyrics? {
+        guard let repository else {
+            throw AppServiceError.missingDependency("libraryRepository")
+        }
+        let acquired = await libraryMutationGate.enter()
+        guard acquired else { throw CancellationError() }
+        do {
+            try Task.checkCancellation()
+            guard let current = try await repository.track(id: itemID),
+                  let original = current.lyrics else {
+                await libraryMutationGate.leave()
+                return nil
+            }
+            let converted = original.converted(to: script)
+            if converted != original {
+                let updated = current.replacingLyrics(converted)
+                let transaction = try LibraryTransaction(
+                    idempotencyKey: Self.stableKey(prefix: "lyricsConversion", itemID: itemID)
+                        + "." + UUID().uuidString,
+                    mutations: [.upsert(.track(updated))]
+                )
+                try Task.checkCancellation()
+                try await repository.apply(transaction)
+            }
+            await libraryMutationGate.leave()
+            return converted
+        } catch {
+            await libraryMutationGate.leave()
+            throw AppServiceError.mapped(error, operation: "library.lyricsConversion")
+        }
+    }
+
     func updateAlbumMetadata(_ update: AlbumMetadataUpdate) async throws -> Album {
         guard let repository else {
             throw AppServiceError.missingDependency("libraryRepository")

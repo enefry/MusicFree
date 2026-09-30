@@ -15,6 +15,67 @@ private func acceptedPrivacy(
 
 @Suite(.serialized)
 struct LyricsCoordinatorTests {
+    @Test("Lyrics conversion persists both directions without changing other track data")
+    func convertsStoredLyrics() async throws {
+        let itemID = MediaItemID(sourceID: .local, externalID: "lyrics-script-conversion")
+        let original = TrackLyrics(rawText:
+            "[offset:500]\n[ar:測試]\n[00:01.000]夢裡愛你\n[00:20.000]头发干燥 Hello 123"
+        )
+        let track = Track(
+            id: itemID,
+            title: "Song",
+            trackNumber: 2,
+            duration: .seconds(180),
+            lyrics: original,
+            isFavorite: true
+        )
+        let repository = InMemoryLibraryRepository(tracks: [track])
+        let library = LibraryCoordinator(
+            repository: repository,
+            remover: nil,
+            queueRepository: nil,
+            historyRepository: nil
+        )
+        let service = LyricsCoordinator(providers: [], library: library)
+
+        let simplified = try #require(
+            try await service.convertLyrics(for: itemID, to: .simplified)
+        )
+        #expect(simplified.rawText.contains("[ar:测试]"))
+        #expect(simplified.timedLines.map(\.text) == ["梦里爱你", "头发干燥 Hello 123"])
+        #expect(simplified.timedLines.map(\.timestampMilliseconds) == [1_000, 20_000])
+        #expect(simplified.declaredOffsetMilliseconds == 500)
+        #expect(try await repository.track(id: itemID)?.lyrics == simplified)
+        #expect(try await service.fetchLyrics(
+            for: LyricsQuery(itemID: itemID, title: "Song"), forceRefresh: false
+        ) == simplified)
+
+        let traditional = try #require(
+            try await service.convertLyrics(for: itemID, to: .traditional)
+        )
+        #expect(traditional.timedLines.map(\.text) == ["夢里愛你", "頭髮乾燥 Hello 123"])
+        let persisted = try #require(try await repository.track(id: itemID))
+        #expect(persisted.lyrics == traditional)
+        #expect(persisted.replacingLyrics(original) == track)
+        #expect(try await service.convertLyrics(for: itemID, to: .traditional) == traditional)
+    }
+
+    @Test("Missing lyrics cannot create a replacement document")
+    func conversionWithoutLyricsDoesNotWrite() async throws {
+        let itemID = MediaItemID(sourceID: .local, externalID: "lyrics-script-empty")
+        let track = Track(id: itemID, title: "No Lyrics")
+        let repository = InMemoryLibraryRepository(tracks: [track])
+        let library = LibraryCoordinator(
+            repository: repository,
+            remover: nil,
+            queueRepository: nil,
+            historyRepository: nil
+        )
+        let service = LyricsCoordinator(providers: [], library: library)
+        #expect(try await service.convertLyrics(for: itemID, to: .simplified) == nil)
+        #expect(try await repository.track(id: itemID) == track)
+    }
+
     @Test("Lyrics coordinator persists lyrics without replacing existing metadata")
     func persistsLyricsWithoutReplacingMetadata() async throws {
         let itemID = MediaItemID(sourceID: .local, externalID: "lyrics-persistence")

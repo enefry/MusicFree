@@ -107,6 +107,10 @@ internal actor LyricsCoordinator: LyricsServing {
         return nil
     }
 
+    func convertLyrics(for itemID: MediaItemID, to script: LyricsScript) async throws -> TrackLyrics? {
+        try await library.convertLyrics(for: itemID, to: script)
+    }
+
     func preloadSnapshot() async -> LyricsPreloadSnapshot {
         preload
     }

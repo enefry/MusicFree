@@ -34,6 +34,7 @@ public final class PlayerLyricsViewController: UIViewController {
         systemImage: "quote.bubble"
     )
     private var snapshotCancellable: AnyCancellable?
+    private var conversionTask: Task<Void, Never>?
     private var loadTask: Task<Void, Never>?
     private var lyrics: TrackLyrics?
     private var loadState: LoadState = .idle
@@ -124,10 +125,12 @@ public final class PlayerLyricsViewController: UIViewController {
         navigationItem.rightBarButtonItem = UIBarButtonItem(
             image: UIImage(systemName: "ellipsis.circle"),
             style: .plain,
-            target: self,
-            action: #selector(showLyricsSettings)
+            target: nil,
+            action: nil
         )
         navigationItem.rightBarButtonItem?.accessibilityLabel = L("歌词设置")
+        navigationItem.rightBarButtonItem?.accessibilityIdentifier = "lyrics.settings"
+        updateLyricsSettingsMenu()
         render()
     }
 
@@ -264,28 +267,74 @@ public final class PlayerLyricsViewController: UIViewController {
         scrollView.scrollRectToVisible(labelRect.insetBy(dx: 0, dy: -80), animated: animated)
     }
 
-    @objc private func showLyricsSettings() {
-        let alert = UIAlertController(
-            title: L("歌词设置"),
-            message: L("当前偏移：%d 毫秒", runtimeOffsetMilliseconds),
-            preferredStyle: .actionSheet
-        )
-        alert.addAction(UIAlertAction(title: L("提前 250 毫秒"), style: .default) { [weak self] _ in
-            self?.runtimeOffsetMilliseconds -= 250
-            self?.updateActiveLine(animated: true)
-        })
-        alert.addAction(UIAlertAction(title: L("延后 250 毫秒"), style: .default) { [weak self] _ in
-            self?.runtimeOffsetMilliseconds += 250
-            self?.updateActiveLine(animated: true)
-        })
-        alert.addAction(UIAlertAction(title: L("重置歌词偏移"), style: .default) { [weak self] _ in
-            self?.runtimeOffsetMilliseconds = 0
-            self?.updateActiveLine(animated: true)
-        })
-        alert.addAction(UIAlertAction(title: L("取消"), style: .cancel))
-        if let popover = alert.popoverPresentationController {
-            popover.barButtonItem = navigationItem.rightBarButtonItem
+    private func updateLyricsSettingsMenu() {
+        navigationItem.rightBarButtonItem?.menu = LyricsConversionMenu.make(
+            offsetTitle: L("当前偏移：%d 毫秒", runtimeOffsetMilliseconds),
+            offsetActions: [
+            UIAction(title: L("提前 250 毫秒"), image: UIImage(systemName: "backward.end")) { [weak self] _ in
+                self?.runtimeOffsetMilliseconds -= 250
+                self?.updateActiveLine(animated: true)
+                self?.updateLyricsSettingsMenu()
+            },
+            UIAction(title: L("延后 250 毫秒"), image: UIImage(systemName: "forward.end")) { [weak self] _ in
+                self?.runtimeOffsetMilliseconds += 250
+                self?.updateActiveLine(animated: true)
+                self?.updateLyricsSettingsMenu()
+            },
+            UIAction(title: L("重置歌词偏移"), image: UIImage(systemName: "arrow.counterclockwise")) { [weak self] _ in
+                self?.runtimeOffsetMilliseconds = 0
+                self?.updateActiveLine(animated: true)
+                self?.updateLyricsSettingsMenu()
+            }
+        ]) { [weak self] script in
+            self?.confirmLyricsConversion(to: script)
         }
+    }
+
+    private func confirmLyricsConversion(to script: LyricsScript) {
+        guard presentedViewController == nil else { return }
+        let title = LyricsConversionMenu.title(for: script)
+        let alert = UIAlertController(
+            title: title,
+            message: L("这会覆盖当前保存的歌词，反向转换不一定能恢复原文。"),
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: L("取消"), style: .cancel))
+        alert.addAction(UIAlertAction(title: title, style: .default) { [weak self] _ in
+            self?.convertLyrics(to: script)
+        })
+        present(alert, animated: true)
+    }
+
+    func convertLyrics(to script: LyricsScript) {
+        guard conversionTask == nil else { return }
+        guard lyrics != nil, let query, let lyricsServing else {
+            presentConversionError(L("无可转换的歌词"))
+            return
+        }
+        conversionTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { conversionTask = nil }
+            do {
+                guard let converted = try await lyricsServing.convertLyrics(
+                    for: query.itemID, to: script
+                ) else {
+                    presentConversionError(L("无可转换的歌词"))
+                    return
+                }
+                lyrics = converted
+                renderedActiveIndex = nil
+                render()
+            } catch {
+                presentConversionError(L("歌词转换失败，请重试。"))
+            }
+        }
+    }
+
+    private func presentConversionError(_ message: String) {
+        guard presentedViewController == nil else { return }
+        let alert = UIAlertController(title: L("歌词设置"), message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: L("确定"), style: .default))
         present(alert, animated: true)
     }
 }

@@ -140,6 +140,7 @@ public protocol LibraryServing: Sendable {
     func updateAlbumMetadata(_ update: AlbumMetadataUpdate) async throws -> Album
     func updateArtistMetadata(_ update: ArtistMetadataUpdate) async throws -> Artist
     func supplementMetadata(_ supplement: TrackMetadataSupplement) async throws -> Track
+    func convertLyrics(for itemID: MediaItemID, to script: LyricsScript) async throws -> TrackLyrics?
     func delete(_ itemIDs: Set<MediaItemID>) async throws -> LibraryDeletionResult
     func recoverPendingRemovals() async throws -> LibraryRecoveryResult
     func makeChangeStream() async -> AsyncStream<LibraryChange>
@@ -221,6 +222,7 @@ public protocol LyricsServing: Sendable {
         for query: LyricsQuery,
         forceRefresh: Bool
     ) async throws -> TrackLyrics?
+    func convertLyrics(for itemID: MediaItemID, to script: LyricsScript) async throws -> TrackLyrics?
     func preloadSnapshot() async -> LyricsPreloadSnapshot
     func makePreloadSnapshotStream() async -> AsyncStream<LyricsPreloadSnapshot>
     func startPreload() async
@@ -237,6 +239,10 @@ public extension LyricsServing {
     ) async {}
 
     func setEnabled(_ enabled: Bool) async {}
+
+    func convertLyrics(for _: MediaItemID, to _: LyricsScript) async throws -> TrackLyrics? {
+        throw AppServiceError.missingDependency("lyricsConversion")
+    }
 
     func preloadSnapshot() async -> LyricsPreloadSnapshot {
         LyricsPreloadSnapshot()
@@ -256,6 +262,10 @@ public extension LyricsServing {
 }
 
 public extension LibraryServing {
+    func convertLyrics(for _: MediaItemID, to _: LyricsScript) async throws -> TrackLyrics? {
+        throw AppServiceError.missingDependency("lyricsConversion")
+    }
+
     func trackDateAdded(id: MediaItemID) async throws -> Date? { nil }
 
     func artist(id: ArtistID) async throws -> Artist? {

@@ -58,6 +58,23 @@ private final class RecordingPlaybackServing: PlaybackServing {
   }
 }
 
+private actor PersistingLyricsTestService: LyricsServing {
+  private var saved: TrackLyrics
+
+  init(_ lyrics: TrackLyrics) {
+    saved = lyrics
+  }
+
+  func fetchLyrics(for _: LyricsQuery, forceRefresh _: Bool) async throws -> TrackLyrics? {
+    saved
+  }
+
+  func convertLyrics(for _: MediaItemID, to script: LyricsScript) async throws -> TrackLyrics? {
+    saved = saved.converted(to: script)
+    return saved
+  }
+}
+
 @MainActor
 private func makePlayerSnapshot(
   phase: PlaybackPhase = .paused,
@@ -904,6 +921,60 @@ func selectedLyricSeekKeepsOffset() async {
   lyrics.seekToLine(at: 1)
   await model.waitForPendingWork()
   #expect(serving.commands == [.seek(to: .milliseconds(20_500))])
+}
+
+@MainActor
+@Test("Lyrics conversion commands save and refresh both player surfaces")
+func lyricsConversionCommandsRefreshSurfaces() async throws {
+  let playback = RecordingPlaybackServing(snapshot: makePlayerSnapshot())
+  let model = PlayerViewModel(serving: playback, autoStart: false)
+  let source = TrackLyrics(rawText: "[00:01.000]夢裡愛你")
+  let service = PersistingLyricsTestService(source)
+  let query = LyricsQuery(itemID: playback.snapshot.currentItemID!, title: "Track")
+  let embedded = PlayerEmbeddedLyricsView(lyricsServing: service, player: model)
+  embedded.update(query: query, initialLyrics: source)
+  embedded.convertLyrics(to: .simplified)
+  var embeddedLabel: UILabel?
+  for _ in 0..<100 {
+    embeddedLabel = findView(
+      withAccessibilityIdentifier: "player.nowPlaying.lyrics.line.0", in: embedded
+    ) as? UILabel
+    if embeddedLabel?.text == "梦里爱你" { break }
+    try await Task.sleep(for: .milliseconds(10))
+  }
+  #expect(embeddedLabel?.text == "梦里爱你")
+  #expect(try await service.fetchLyrics(for: query, forceRefresh: false)?.rawText
+    == "[00:01.000]梦里爱你")
+
+  let standalone = PlayerLyricsViewController(
+    serving: playback, lyricsServing: service, query: query
+  )
+  standalone.loadViewIfNeeded()
+  var standaloneLabel: UILabel?
+  for _ in 0..<100 {
+    standaloneLabel = findView(
+      withAccessibilityIdentifier: "lyrics.line.0", in: standalone.view
+    ) as? UILabel
+    if standaloneLabel?.text == "梦里爱你" { break }
+    try await Task.sleep(for: .milliseconds(10))
+  }
+  #expect(standaloneLabel?.text == "梦里爱你")
+  let menu = try #require(standalone.navigationItem.rightBarButtonItem?.menu)
+  let commands = try #require(menu.children.first as? UIMenu)
+  #expect(commands.children.compactMap { ($0 as? UIAction)?.identifier.rawValue }
+    == ["lyrics.convert.simplified", "lyrics.convert.traditional"])
+  standalone.convertLyrics(to: .traditional)
+  for _ in 0..<100 {
+    standaloneLabel = findView(
+      withAccessibilityIdentifier: "lyrics.line.0", in: standalone.view
+    ) as? UILabel
+    if standaloneLabel?.text == "夢里愛你" { break }
+    try await Task.sleep(for: .milliseconds(10))
+  }
+  #expect(standaloneLabel?.text == "夢里愛你")
+  #expect(try await service.fetchLyrics(for: query, forceRefresh: false)?.rawText
+    == "[00:01.000]夢里愛你")
+  #expect(playback.commands.isEmpty)
 }
 
 @MainActor

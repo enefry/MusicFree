@@ -1,5 +1,51 @@
 import Foundation
 
+@available(macOS 13.0, iOS 16.0, *)
+public enum LyricsScript: Sendable {
+    case simplified
+    case traditional
+
+    fileprivate func convert(_ text: String) -> String {
+        let identifier = switch self {
+        case .simplified: "Traditional-Simplified"
+        case .traditional: "Simplified-Traditional"
+        }
+        return text.applyingTransform(StringTransform(identifier), reverse: false) ?? text
+    }
+}
+
+@available(macOS 13.0, iOS 16.0, *)
+public extension Track {
+    func replacingLyrics(_ lyrics: TrackLyrics) -> Self {
+        Self(
+            id: id,
+            logicalTrackID: logicalTrackID,
+            assetID: assetID,
+            playbackSelection: playbackSelection,
+            title: title,
+            sortTitle: sortTitle,
+            albumID: albumID,
+            artistIDs: artistIDs,
+            genreIDs: genreIDs,
+            trackNumber: trackNumber,
+            trackTotal: trackTotal,
+            discNumber: discNumber,
+            discTotal: discTotal,
+            fileName: fileName,
+            folderPath: folderPath,
+            duration: duration,
+            technicalInfo: technicalInfo,
+            year: year,
+            comment: comment,
+            lyrics: lyrics,
+            artwork: artwork,
+            isFavorite: isFavorite,
+            statistics: statistics,
+            details: details
+        )
+    }
+}
+
 /// One timestamped lyric line. Timestamps are kept in milliseconds so the
 /// persisted value remains independent of a playback engine's clock type.
 @available(macOS 13.0, iOS 16.0, *)
@@ -108,6 +154,19 @@ public struct TrackLyrics: Codable, Equatable, Hashable, Sendable {
             return timedLines.map(\.text).joined(separator: "\n")
         }
         return rawText
+    }
+
+    public func converted(to script: LyricsScript) -> Self {
+        Self(
+            rawText: script.convert(rawText),
+            timedLines: timedLines.map {
+                LyricLine(
+                    timestampMilliseconds: $0.timestampMilliseconds,
+                    text: script.convert($0.text)
+                )
+            },
+            declaredOffsetMilliseconds: declaredOffsetMilliseconds
+        )
     }
 
     /// Returns the active line index for a playback position. A separate

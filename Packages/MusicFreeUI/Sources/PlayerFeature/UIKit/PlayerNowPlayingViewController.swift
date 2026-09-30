@@ -1217,7 +1217,17 @@ public final class PlayerNowPlayingViewController: UIViewController {
         lyricsOffsetButton.setImage(UIImage(systemName: "quote.bubble"), for: .normal)
         lyricsOffsetButton.accessibilityLabel = L("歌词设置")
         lyricsOffsetButton.accessibilityIdentifier = "player.nowPlaying.lyrics.settings"
-        lyricsOffsetButton.addTarget(self, action: #selector(showLyricsSettings), for: .touchUpInside)
+        lyricsOffsetButton.showsMenuAsPrimaryAction = true
+        lyricsOffsetButton.menu = LyricsConversionMenu.make(offsetActions: [
+            UIAction(title: L("重置歌词偏移"), image: UIImage(systemName: "arrow.counterclockwise")) { [weak self] _ in
+                self?.embeddedLyricsView.resetOffset()
+            }
+        ]) { [weak self] script in
+            self?.confirmLyricsConversion(to: script)
+        }
+        embeddedLyricsView.onConversionError = { [weak self] message in
+            self?.presentLyricsConversionError(message)
+        }
         NSLayoutConstraint.activate([
             lyricsOffsetButton.widthAnchor.constraint(equalToConstant: 56),
             lyricsOffsetButton.heightAnchor.constraint(equalToConstant: 56),
@@ -2804,20 +2814,25 @@ public final class PlayerNowPlayingViewController: UIViewController {
         return UIMenu(children: groups)
     }
 
-    @objc private func showLyricsSettings() {
+    private func confirmLyricsConversion(to script: LyricsScript) {
+        guard presentedViewController == nil else { return }
+        let title = LyricsConversionMenu.title(for: script)
         let alert = UIAlertController(
-            title: L("歌词设置"),
-            message: L("当前偏移：由播放器同步。"),
-            preferredStyle: .actionSheet
+            title: title,
+            message: L("这会覆盖当前保存的歌词，反向转换不一定能恢复原文。"),
+            preferredStyle: .alert
         )
-        alert.addAction(UIAlertAction(title: L("重置歌词偏移"), style: .default) { [weak self] _ in
-            self?.embeddedLyricsView.resetOffset()
-        })
         alert.addAction(UIAlertAction(title: L("取消"), style: .cancel))
-        if let popover = alert.popoverPresentationController {
-            popover.sourceView = lyricsOffsetButton
-            popover.sourceRect = lyricsOffsetButton.bounds
-        }
+        alert.addAction(UIAlertAction(title: title, style: .default) { [weak self] _ in
+            self?.embeddedLyricsView.convertLyrics(to: script)
+        })
+        present(alert, animated: true)
+    }
+
+    private func presentLyricsConversionError(_ message: String) {
+        guard presentedViewController == nil else { return }
+        let alert = UIAlertController(title: L("歌词设置"), message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: L("确定"), style: .default))
         present(alert, animated: true)
     }
 

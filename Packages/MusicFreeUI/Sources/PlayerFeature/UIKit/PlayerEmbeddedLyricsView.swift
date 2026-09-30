@@ -26,6 +26,8 @@ final class PlayerEmbeddedLyricsView: UIView, UIScrollViewDelegate {
     )
     private var loadTask: Task<Void, Never>?
     private var snapshotCancellable: AnyCancellable?
+    private var conversionTask: Task<Void, Never>?
+    var onConversionError: ((String) -> Void)?
     private var lyrics: TrackLyrics?
     private var query: LyricsQuery?
     private var loadState: LoadState = .idle
@@ -104,6 +106,7 @@ final class PlayerEmbeddedLyricsView: UIView, UIScrollViewDelegate {
 
     func update(query: LyricsQuery?, initialLyrics: TrackLyrics? = nil) {
         guard self.query != query || (initialLyrics != nil && lyrics == nil) else {
+            if contentStack.arrangedSubviews.isEmpty { render() }
             updateActiveLine(animated: true)
             return
         }
@@ -131,6 +134,37 @@ final class PlayerEmbeddedLyricsView: UIView, UIScrollViewDelegate {
     func resetOffset() {
         runtimeOffsetMilliseconds = 0
         updateActiveLine(animated: true)
+    }
+
+    func convertLyrics(to script: LyricsScript) {
+        guard conversionTask == nil else { return }
+        guard let query, lyrics != nil, let lyricsServing else {
+            onConversionError?(L("无可转换的歌词"))
+            return
+        }
+        conversionTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { conversionTask = nil }
+            do {
+                guard let converted = try await lyricsServing.convertLyrics(
+                    for: query.itemID, to: script
+                ) else {
+                    onConversionError?(L("无可转换的歌词"))
+                    return
+                }
+                guard self.query == query else { return }
+                lyrics = converted
+                renderedActiveIndex = nil
+                cancelPreview()
+                if isHidden {
+                    contentStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+                    lineLabels.removeAll()
+                }
+                render()
+            } catch {
+                onConversionError?(L("歌词转换失败，请重试。"))
+            }
+        }
     }
 
     private func configureViews() {
