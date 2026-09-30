@@ -243,17 +243,7 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
         timePitch.rate = configuredRate
         playerNode.volume = isMuted ? 0 : volume
 
-        do {
-            // 音频会话由 App 侧 AudioSessionManaging 统一配置并激活（在本 prepare
-            // 之前完成）。引擎不再自行 setActive，避免二次激活刚启动即触发路由/
-            // 配置变更而中断播放。
-            audioEngine.prepare()
-            try audioEngine.start()
-        } catch {
-            let playbackError = PlaybackError.engineFailure(code: "audio_engine_start_failed")
-            fail(playbackError, generation: generation, itemID: item.itemID)
-            throw playbackError
-        }
+        audioEngine.prepare()
 
         if let range = item.selection.range, range.start > .zero,
            remoteSource?.isSeekable == false {
@@ -354,8 +344,9 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
     }
 
     public func pause() {
+        let position = displayPosition()
         wantsPlayback = false
-        playerNode.pause()
+        updateOutput()
         bufferingTask?.cancel()
         bufferingTask = nil
         positionTask?.cancel()
@@ -365,7 +356,7 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
             phase: .paused,
             generation: generation,
             itemID: state.itemID,
-            position: displayPosition(),
+            position: position,
             duration: currentDuration
         )
         if let itemID = state.itemID {
@@ -562,8 +553,13 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
             if !playerNode.isPlaying {
                 playerNode.play()
             }
-        } else if playerNode.isPlaying {
-            playerNode.pause()
+        } else {
+            if playerNode.isPlaying {
+                playerNode.pause()
+            }
+            if !wantsPlayback, audioEngine.isRunning {
+                audioEngine.pause()
+            }
         }
     }
 
@@ -670,6 +666,7 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
         positionTask?.cancel()
         positionTask = nil
         let endPosition = currentDuration ?? currentPosition()
+        updateOutput()
         state = PlaybackState(
             phase: .stopped,
             generation: generation,
@@ -826,7 +823,9 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
 
         do {
             audioEngine.prepare()
-            try audioEngine.start()
+            if wantsPlayback {
+                try audioEngine.start()
+            }
         } catch {
             fail(
                 .engineFailure(code: "audio_engine_restart_failed"),
@@ -930,7 +929,9 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
             self.playerNode.volume = self.isMuted ? 0 : self.volume
             do {
                 self.audioEngine.prepare()
-                try self.audioEngine.start()
+                if self.wantsPlayback {
+                    try self.audioEngine.start()
+                }
             } catch {
                 self.fail(
                     .engineFailure(code: "audio_engine_restart_failed"),

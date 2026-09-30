@@ -27,20 +27,7 @@ private final class PlatformAudioSessionClient: AppleAudioSessionClient {
     }
 
     func setActive(_ active: Bool) async throws {
-        if #available(iOS 27.0, *) {
-            let succeeded = if active {
-                try await session.activate(options: [])
-            } else {
-                try await session.deactivate(options: [])
-            }
-            guard succeeded else {
-                throw active
-                    ? AppleSystemAdapterError.audioSessionActivationFailed
-                    : AppleSystemAdapterError.audioSessionDeactivationFailed
-            }
-        } else {
-            try await Self.setActiveOnBackgroundExecutor(active)
-        }
+        try await Self.setActiveOnBackgroundExecutor(active)
     }
 
     // Older systems only expose the blocking API. An async MainActor method

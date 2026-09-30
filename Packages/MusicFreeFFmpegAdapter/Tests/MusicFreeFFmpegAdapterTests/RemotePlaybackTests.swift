@@ -455,12 +455,15 @@ private func milliseconds(_ duration: Duration?) -> Int64? {
         }
         try await Task.sleep(for: .milliseconds(500))
         #expect(engine.state.phase == .paused)
+        #expect(!engine.audioEngine.isRunning)
         try engine.play()
+        #expect(engine.audioEngine.isRunning)
         for _ in 0 ..< 200 {
             if engine.state.phase == .stopped || engine.state.phase == .failed { break }
             try await Task.sleep(for: .milliseconds(20))
         }
         #expect(engine.state.phase == .stopped)
+        #expect(!engine.audioEngine.isRunning)
     }
 
     @Test func playAndStopDuringSequentialRouteRecoveryRespectLatestIntent() async throws {

@@ -1636,7 +1636,8 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
     private func publishSnapshot() async {
         guard let nowPlaying else { return }
         let snapshot = snapshotValue
-        guard let itemID = snapshot.currentItemID,
+        guard snapshot.phase != .stopped, snapshot.phase != .failed,
+              let itemID = snapshot.currentItemID,
               let display = snapshot.currentItem
         else {
             nowPlayingArtworkKey = nil
