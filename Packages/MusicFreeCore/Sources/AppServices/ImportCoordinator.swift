@@ -1,6 +1,7 @@
 import Foundation
 import MediaSourceAPI
 import MusicDomain
+import SettingsAPI
 
 internal actor ImportCoordinator: ImportServing {
     private static let logger = MusicLogger(
@@ -10,16 +11,22 @@ internal actor ImportCoordinator: ImportServing {
 
     private let importer: (any MediaImporting)?
     private let metadataEnrichment: (any MetadataEnrichmentServing)?
+    private let settingsRepository: (any SettingsRepository)?
+    private let conversionScheduler: (any MediaConversionScheduling)?
     private var sessions: [UUID: ImportSessionSnapshot] = [:]
     private var sessionTokens: [UUID: UUID] = [:]
     private var stateContinuations: [UUID: AsyncStream<ImportSessionSnapshot>.Continuation] = [:]
 
     init(
         importer: (any MediaImporting)?,
-        metadataEnrichment: (any MetadataEnrichmentServing)? = nil
+        metadataEnrichment: (any MetadataEnrichmentServing)? = nil,
+        settingsRepository: (any SettingsRepository)? = nil,
+        conversionScheduler: (any MediaConversionScheduling)? = nil
     ) {
         self.importer = importer
         self.metadataEnrichment = metadataEnrichment
+        self.settingsRepository = settingsRepository
+        self.conversionScheduler = conversionScheduler
     }
 
     func start(_ request: MediaImportRequest)
@@ -51,7 +58,15 @@ internal actor ImportCoordinator: ImportServing {
         sessions[request.importID] = ImportSessionSnapshot(importID: request.importID)
         publish(sessions[request.importID]!)
 
-        let upstream = importer.importMedia(request)
+        let conversionPreferences = (try? await settingsRepository?.load())?
+            .importPreferences.audioConversion ?? .defaults
+        await conversionScheduler?.updateMaximumConcurrency(
+            conversionPreferences.maximumConcurrency
+        )
+        let effectiveRequest = request.audioConversionPolicy == nil
+            ? request.settingAudioConversionPolicy(conversionPreferences.importPolicy)
+            : request
+        let upstream = importer.importMedia(effectiveRequest)
         Self.logger.debug("coordinator connected upstream id=\(request.importID.uuidString)")
         return AsyncThrowingStream { [weak self] continuation in
             let task = Task { [weak self] in
@@ -173,7 +188,8 @@ internal actor ImportCoordinator: ImportServing {
         case .completed(_, let value), .cancelled(_, let value):
             result = value
             isActive = false
-        case .discovered, .hashing, .probing, .copying, .confirmationRequired:
+        case .discovered, .hashing, .probing, .copying, .waitingForTranscoding,
+             .transcoding, .validatingTranscode, .confirmationRequired:
             break
         }
 

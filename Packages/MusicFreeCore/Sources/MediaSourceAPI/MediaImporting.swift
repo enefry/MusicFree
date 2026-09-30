@@ -90,13 +90,16 @@ public struct MediaImportRequest: Sendable, CustomStringConvertible,
   /// failures and wait for the user to approve importing the remaining files.
   /// Background scans leave this disabled so they never wait on UI.
   public let allowsFolderFailureConfirmation: Bool
+  /// Fixed audio conversion parameters for this import. Nil preserves source bytes.
+  public let audioConversionPolicy: AudioImportConversionPolicy?
 
   public init(
     importID: UUID,
     urls: [URL],
     duplicatePolicy: MediaImportDuplicatePolicy = .skip,
     metadataHints: [URL: MediaImportMetadataHint] = [:],
-    allowsFolderFailureConfirmation: Bool = false
+    allowsFolderFailureConfirmation: Bool = false,
+    audioConversionPolicy: AudioImportConversionPolicy? = nil
   ) {
     self.importID = importID
     self.urls = urls
@@ -105,6 +108,7 @@ public struct MediaImportRequest: Sendable, CustomStringConvertible,
       result[entry.key.standardizedFileURL] = entry.value
     }
     self.allowsFolderFailureConfirmation = allowsFolderFailureConfirmation
+    self.audioConversionPolicy = audioConversionPolicy
   }
 
   public init(
@@ -112,14 +116,16 @@ public struct MediaImportRequest: Sendable, CustomStringConvertible,
     urls: [URL],
     duplicatePolicy: MediaImportDuplicatePolicy = .skip,
     metadataHints: [URL: MediaImportMetadataHint] = [:],
-    allowsFolderFailureConfirmation: Bool = false
+    allowsFolderFailureConfirmation: Bool = false,
+    audioConversionPolicy: AudioImportConversionPolicy? = nil
   ) {
     self.init(
       importID: id,
       urls: urls,
       duplicatePolicy: duplicatePolicy,
       metadataHints: metadataHints,
-      allowsFolderFailureConfirmation: allowsFolderFailureConfirmation
+      allowsFolderFailureConfirmation: allowsFolderFailureConfirmation,
+      audioConversionPolicy: audioConversionPolicy
     )
   }
 
@@ -133,6 +139,19 @@ public struct MediaImportRequest: Sendable, CustomStringConvertible,
 
   public func metadataHint(for url: URL) -> MediaImportMetadataHint? {
     metadataHints[url.standardizedFileURL]
+  }
+
+  public func settingAudioConversionPolicy(
+    _ policy: AudioImportConversionPolicy?
+  ) -> Self {
+    Self(
+      importID: importID,
+      urls: urls,
+      duplicatePolicy: duplicatePolicy,
+      metadataHints: metadataHints,
+      allowsFolderFailureConfirmation: allowsFolderFailureConfirmation,
+      audioConversionPolicy: policy
+    )
   }
 
   public var description: String {
@@ -221,6 +240,9 @@ public enum MediaImportPhase: String, Codable, Sendable {
   case hashing
   case probing
   case copying
+  case waitingForTranscoding
+  case transcoding
+  case validatingTranscode
   case persisting
 }
 
@@ -232,6 +254,9 @@ public enum MediaImportEvent: Sendable, CustomStringConvertible,
   case hashing(importID: UUID, url: URL)
   case probing(importID: UUID, url: URL)
   case copying(importID: UUID, url: URL)
+  case waitingForTranscoding(importID: UUID, url: URL, target: AudioConversionTarget)
+  case transcoding(importID: UUID, url: URL, progress: MediaTranscodeProgress)
+  case validatingTranscode(importID: UUID, url: URL)
   case persisting(importID: UUID, itemID: MediaItemID)
   case itemFailed(importID: UUID, url: URL, error: MediaImportError)
   case confirmationRequired(importID: UUID)
@@ -244,6 +269,9 @@ public enum MediaImportEvent: Sendable, CustomStringConvertible,
       .hashing(let importID, _),
       .probing(let importID, _),
       .copying(let importID, _),
+      .waitingForTranscoding(let importID, _, _),
+      .transcoding(let importID, _, _),
+      .validatingTranscode(let importID, _),
       .persisting(let importID, _),
       .itemFailed(let importID, _, _),
       .confirmationRequired(let importID),
@@ -257,7 +285,8 @@ public enum MediaImportEvent: Sendable, CustomStringConvertible,
     switch self {
     case .completed, .cancelled:
       return true
-    case .discovered, .hashing, .probing, .copying, .persisting, .itemFailed,
+    case .discovered, .hashing, .probing, .copying, .waitingForTranscoding,
+      .transcoding, .validatingTranscode, .persisting, .itemFailed,
       .confirmationRequired:
       return false
     }
@@ -273,6 +302,12 @@ public enum MediaImportEvent: Sendable, CustomStringConvertible,
       return "MediaImportEvent.probing(\(importID.uuidString))"
     case .copying(let importID, _):
       return "MediaImportEvent.copying(\(importID.uuidString))"
+    case .waitingForTranscoding(let importID, _, _):
+      return "MediaImportEvent.waitingForTranscoding(\(importID.uuidString))"
+    case .transcoding(let importID, _, _):
+      return "MediaImportEvent.transcoding(\(importID.uuidString))"
+    case .validatingTranscode(let importID, _):
+      return "MediaImportEvent.validatingTranscode(\(importID.uuidString))"
     case .persisting(let importID, _):
       return "MediaImportEvent.persisting(\(importID.uuidString))"
     case .itemFailed(let importID, _, let error):

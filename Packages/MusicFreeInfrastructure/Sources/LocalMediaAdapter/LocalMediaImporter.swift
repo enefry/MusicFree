@@ -239,11 +239,14 @@ final class ImportCoordinator: @unchecked Sendable {
   let store: ManagedMediaStore
   fileprivate let sessions = ImportSessionRegistry()
   fileprivate let confirmationRegistry = ImportConfirmationRegistry()
-  fileprivate let contentGate = ImportContentGate()
+  let contentGate = ImportContentGate()
   let maintenanceGate = ImportMaintenanceGate()
+  let mediaAccess: ManagedMediaAccessCoordinator
 
   init(configuration: LocalMediaConfiguration) throws {
-    store = try ManagedMediaStore(configuration: configuration)
+    let store = try ManagedMediaStore(configuration: configuration)
+    self.store = store
+    mediaAccess = ManagedMediaAccessCoordinator(store: store)
     try StagingArea.prepareRoot(configuration: configuration)
   }
 }
@@ -282,7 +285,7 @@ final class ImportCoordinatorRegistry: @unchecked Sendable {
 /// Serializes the content-addressed recovery transaction. Different content
 /// IDs remain fully concurrent, while waiters for one ID are resumed FIFO and
 /// can be removed safely when their task is cancelled.
-fileprivate actor ImportContentGate {
+actor ImportContentGate {
   private struct Waiter {
     let id: UUID
     let continuation: CheckedContinuation<Void, Error>
@@ -510,6 +513,19 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
     let variants: [MediaItemID: TrackVariant]
   }
 
+  private struct PreparedStagedMedia: Sendable {
+    let stagedURL: URL
+    let managedContentHash: String
+    let probe: MediaProbeResult
+    let conversion: MediaAssetConversion?
+  }
+
+  private struct BundleAssetPreparation: Sendable {
+    let asset: PreparedLocalMediaAsset?
+    let stagedURLs: [URL]
+    let failure: MediaImportError?
+  }
+
   private static func importWorkItems(
     for urls: [URL],
     maximumGroupSize: Int
@@ -590,6 +606,9 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
   private let metadataReader: any MetadataReading
   private let libraryRepository: any LibraryRepository
   private let hasher: any LocalMediaHashing
+  private let transcoder: (any MediaTranscoding)?
+  private let losslessValidator: (any MediaLosslessValidating)?
+  private let conversionScheduler: (any MediaConversionScheduling)?
   private let sessions: ImportSessionRegistry
   private let confirmationRegistry: ImportConfirmationRegistry
   private let contentGate: ImportContentGate
@@ -599,7 +618,10 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
     probe: any MediaProbing,
     metadataReader: any MetadataReading,
     libraryRepository: any LibraryRepository,
-    hasher: (any LocalMediaHashing)? = nil
+    hasher: (any LocalMediaHashing)? = nil,
+    transcoder: (any MediaTranscoding)? = nil,
+    losslessValidator: (any MediaLosslessValidating)? = nil,
+    conversionScheduler: (any MediaConversionScheduling)? = nil
   ) throws {
     let coordinator = try ImportCoordinatorRegistry.shared.coordinator(for: configuration)
     self.configuration = configuration
@@ -610,9 +632,273 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
     self.metadataReader = metadataReader
     self.libraryRepository = libraryRepository
     self.hasher = hasher ?? ContentHasher()
+    self.transcoder = transcoder
+    self.losslessValidator = losslessValidator
+    self.conversionScheduler = conversionScheduler
     self.sessions = coordinator.sessions
     self.confirmationRegistry = coordinator.confirmationRegistry
     self.contentGate = coordinator.contentGate
+  }
+
+  private func prepareStagedMedia(
+    sourceStagedURL: URL,
+    sourceURL: URL,
+    sourceHash: String,
+    sourceProbe: MediaProbeResult,
+    request: MediaImportRequest,
+    continuation: AsyncThrowingStream<MediaImportEvent, Error>.Continuation
+  ) async throws -> PreparedStagedMedia {
+    guard let policy = request.audioConversionPolicy else {
+      return PreparedStagedMedia(
+        stagedURL: sourceStagedURL,
+        managedContentHash: sourceHash,
+        probe: sourceProbe,
+        conversion: nil
+      )
+    }
+    let sourceTrack = sourceProbe.decodableAudioTracks.first(where: \.isDefault)
+      ?? sourceProbe.decodableAudioTracks.first
+    guard let sourceTrack, sourceTrack.isLossless else {
+      return PreparedStagedMedia(
+        stagedURL: sourceStagedURL,
+        managedContentHash: sourceHash,
+        probe: sourceProbe,
+        conversion: nil
+      )
+    }
+    guard LocalAudioConversionEligibility.isSupported(sourceTrack, target: policy.target),
+          !LocalAudioConversionEligibility.isAlreadyTarget(sourceTrack, target: policy.target)
+    else {
+      return PreparedStagedMedia(
+        stagedURL: sourceStagedURL,
+        managedContentHash: sourceHash,
+        probe: sourceProbe,
+        conversion: nil
+      )
+    }
+    guard let transcoder, let conversionScheduler else {
+      throw LocalMediaError.unsupportedInput
+    }
+
+    let outputURL = sourceStagedURL.deletingLastPathComponent()
+      .appendingPathComponent("\(UUID().uuidString).m4a", isDirectory: false)
+    continuation.yield(.waitingForTranscoding(
+      importID: request.importID,
+      url: sourceURL,
+      target: policy.target
+    ))
+    let result = try await conversionScheduler.schedule {
+      try await transcoder.transcode(
+        MediaTranscodeRequest(
+          inputURL: sourceStagedURL,
+          outputURL: outputURL,
+          target: policy.target,
+          sourceTrack: sourceTrack,
+          sourceDuration: sourceProbe.duration
+        ),
+        progress: { progress in
+          continuation.yield(.transcoding(
+            importID: request.importID,
+            url: sourceURL,
+            progress: progress
+          ))
+        }
+      )
+    }
+
+    continuation.yield(.validatingTranscode(importID: request.importID, url: sourceURL))
+    let outputProbe: MediaProbeResult
+    do {
+      outputProbe = try await probeReader.probe(.localFile(result.outputURL)).validated()
+    } catch is CancellationError {
+      throw CancellationError()
+    } catch {
+      throw MediaTranscodeError.validationFailed
+    }
+    guard let outputTrack = outputProbe.decodableAudioTracks.first(where: \.isDefault)
+            ?? outputProbe.decodableAudioTracks.first,
+          outputTrack.channelCount == result.channelCount,
+          Self.isExpectedOutputCodec(outputTrack.codec, target: policy.target),
+          Self.durationsAreCompatible(sourceProbe.duration, outputProbe.duration)
+    else {
+      await staging.remove(result.outputURL)
+      throw MediaTranscodeError.validationFailed
+    }
+    if case .alac = policy.target {
+      guard let losslessValidator else {
+        await staging.remove(result.outputURL)
+        throw MediaTranscodeError.validationFailed
+      }
+      do {
+        try await losslessValidator.validateLosslessPCM(
+          inputURL: sourceStagedURL,
+          outputURL: result.outputURL
+        )
+      } catch is CancellationError {
+        await staging.remove(result.outputURL)
+        throw CancellationError()
+      } catch {
+        await staging.remove(result.outputURL)
+        throw MediaTranscodeError.validationFailed
+      }
+    }
+
+    let managedHash = try await hasher.hash(fileAt: result.outputURL).lowercased()
+    guard managedHash.count == 64, managedHash.allSatisfy(\.isHexDigit) else {
+      await staging.remove(result.outputURL)
+      throw LocalMediaError.hashingFailed
+    }
+    let targetCodec: MediaAssetConversionCodec
+    let requestedBitRate: Int?
+    switch policy.target {
+    case .alac:
+      targetCodec = .alac
+      requestedBitRate = nil
+    case .aacLC(let bitRate):
+      targetCodec = .aacLC
+      requestedBitRate = bitRate.rawValue
+    }
+    return PreparedStagedMedia(
+      stagedURL: result.outputURL,
+      managedContentHash: managedHash,
+      probe: outputProbe,
+      conversion: MediaAssetConversion(
+        sourceHash: sourceHash,
+        inputHash: sourceHash,
+        sourceFileName: sourceURL.lastPathComponent,
+        sourceCodec: sourceTrack.codec,
+        targetCodec: targetCodec,
+        requestedBitRate: requestedBitRate,
+        outputSampleRate: result.sampleRate,
+        outputChannelCount: result.channelCount,
+        outputBitDepth: result.bitDepth
+      )
+    )
+  }
+
+  private static func isExpectedOutputCodec(
+    _ codec: String?,
+    target: AudioConversionTarget
+  ) -> Bool {
+    guard let codec = codec?.lowercased() else { return false }
+    switch target {
+    case .alac: return codec == "alac"
+    case .aacLC: return codec == "aac"
+    }
+  }
+
+  private static func durationsAreCompatible(_ source: Duration?, _ output: Duration?) -> Bool {
+    guard let source, let output else { return true }
+    let sourceSeconds = durationSeconds(source)
+    let delta = abs(sourceSeconds - durationSeconds(output))
+    return delta <= max(0.1, sourceSeconds * 0.005)
+  }
+
+  private static func durationSeconds(_ duration: Duration) -> Double {
+    let components = duration.components
+    return Double(components.seconds)
+      + Double(components.attoseconds) / 1_000_000_000_000_000_000
+  }
+
+  private func prepareBundleAsset(
+    file: ImportFile,
+    bundle: FolderImportBundle,
+    allowRootArtwork: Bool,
+    request: MediaImportRequest,
+    continuation: AsyncThrowingStream<MediaImportEvent, Error>.Continuation
+  ) async throws -> BundleAssetPreparation {
+    var cleanupURLs: [URL] = []
+    do {
+      try Task.checkCancellation()
+      continuation.yield(.copying(importID: request.importID, url: file.url))
+      let staged = try await staging.stage(sourceURL: file.url, importID: request.importID)
+      cleanupURLs.append(staged)
+
+      continuation.yield(.hashing(importID: request.importID, url: file.url))
+      let contentHash = try await hasher.hash(fileAt: staged).lowercased()
+      guard contentHash.count == 64, contentHash.allSatisfy(\.isHexDigit) else {
+        throw LocalMediaError.hashingFailed
+      }
+
+      continuation.yield(.probing(importID: request.importID, url: file.url))
+      let resource = PlaybackResource.localFile(staged)
+      let probeResult: MediaProbeResult
+      do {
+        probeResult = try await probeReader.probe(resource).validated()
+      } catch let error as MediaSourceError {
+        throw Self.mapProbeError(error)
+      } catch let error as MediaProbeError {
+        throw Self.mapProbeError(MediaSourceError.probeFailed(error))
+      } catch is CancellationError {
+        throw CancellationError()
+      } catch {
+        throw LocalMediaError.probeFailed
+      }
+
+      let rawMetadata: RawMediaMetadata
+      do {
+        let embeddedMetadata = try await metadataReader.readMetadata(from: resource)
+        let sidecarLyrics = try? LocalLyricsReader.readSidecar(for: file.url)
+        let metadataWithLyrics = embeddedMetadata.lyrics == nil
+          ? embeddedMetadata.replacingLyrics(sidecarLyrics ?? nil)
+          : embeddedMetadata
+        rawMetadata = Self.applyingMetadataHint(
+          request.metadataHint(for: file.url),
+          to: metadataWithLyrics,
+          parsedFileURL: staged
+        )
+      } catch is CancellationError {
+        throw CancellationError()
+      } catch {
+        throw LocalMediaError.metadataFailed
+      }
+
+      let prepared = try await prepareStagedMedia(
+        sourceStagedURL: staged,
+        sourceURL: file.url,
+        sourceHash: contentHash,
+        sourceProbe: probeResult,
+        request: request,
+        continuation: continuation
+      )
+      if prepared.stagedURL != staged {
+        cleanupURLs.append(prepared.stagedURL)
+      }
+      let asset = PreparedLocalMediaAsset(
+        file: file,
+        stagedURL: prepared.stagedURL,
+        contentHash: contentHash,
+        managedContentHash: prepared.managedContentHash,
+        assetID: MediaAssetID(
+          sourceID: .local,
+          externalID: "sha256-\(prepared.managedContentHash)"
+        ),
+        probe: prepared.probe,
+        metadata: rawMetadata,
+        folderArtwork: FolderArtworkResolver().selection(
+          for: file.url,
+          in: bundle,
+          allowRootArtwork: allowRootArtwork
+        ),
+        conversion: prepared.conversion
+      )
+      return BundleAssetPreparation(asset: asset, stagedURLs: cleanupURLs, failure: nil)
+    } catch is CancellationError {
+      for url in cleanupURLs { await staging.remove(url) }
+      throw CancellationError()
+    } catch let error as LocalMediaError
+      where !Self.hasRecognizedAudioExtension(file.url) && error == .unsupportedInput
+    {
+      for url in cleanupURLs { await staging.remove(url) }
+      return BundleAssetPreparation(asset: nil, stagedURLs: [], failure: nil)
+    } catch {
+      for url in cleanupURLs { await staging.remove(url) }
+      return BundleAssetPreparation(
+        asset: nil,
+        stagedURLs: [],
+        failure: Self.mapImportError(error)
+      )
+    }
   }
 
   public nonisolated func importMedia(
@@ -1028,101 +1314,59 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
     do {
       var assets: [PreparedLocalMediaAsset] = []
       var preparationFailures: [(url: URL, error: MediaImportError)] = []
-      for file in bundle.mediaCandidates {
-        var stagedForFile: URL?
-        do {
-          try Task.checkCancellation()
-          continuation.yield(.copying(importID: request.importID, url: file.url))
-          let staged = try await staging.stage(
-            sourceURL: file.url,
-            importID: request.importID
-          )
-          stagedForFile = staged
-          stagedURLs.append(staged)
+      let preparedResults = try await withThrowingTaskGroup(
+        of: (ImportFile, BundleAssetPreparation).self,
+        returning: [(ImportFile, BundleAssetPreparation)].self
+      ) { group in
+        var iterator = bundle.mediaCandidates.makeIterator()
+        let maximumPreparedAssets = MediaConversionConcurrency.four.rawValue
 
-          continuation.yield(.hashing(importID: request.importID, url: file.url))
-          let contentHash = try await hasher.hash(fileAt: staged).lowercased()
-          guard contentHash.count == 64, contentHash.allSatisfy(\.isHexDigit) else {
-            throw LocalMediaError.hashingFailed
-          }
-
-          continuation.yield(.probing(importID: request.importID, url: file.url))
-          let resource = PlaybackResource.localFile(staged)
-          let probeResult: MediaProbeResult
-          do {
-            probeResult = try await probeReader.probe(resource).validated()
-          } catch let error as MediaSourceError {
-            throw Self.mapProbeError(error)
-          } catch let error as MediaProbeError {
-            throw Self.mapProbeError(MediaSourceError.probeFailed(error))
-          } catch is CancellationError {
-            throw CancellationError()
-          } catch {
-            throw LocalMediaError.probeFailed
-          }
-
-          let rawMetadata: RawMediaMetadata
-          do {
-            let embeddedMetadata = try await metadataReader.readMetadata(from: resource)
-            let sidecarLyrics = try? LocalLyricsReader.readSidecar(for: file.url)
-            let metadataWithLyrics = embeddedMetadata.lyrics == nil
-              ? embeddedMetadata.replacingLyrics(sidecarLyrics ?? nil)
-              : embeddedMetadata
-            rawMetadata = Self.applyingMetadataHint(
-              request.metadataHint(for: file.url),
-              to: metadataWithLyrics,
-              parsedFileURL: staged
+        for _ in 0..<min(maximumPreparedAssets, bundle.mediaCandidates.count) {
+          guard let file = iterator.next() else { break }
+          group.addTask { [self] in
+            let result = try await prepareBundleAsset(
+              file: file,
+              bundle: bundle,
+              allowRootArtwork: allowRootArtwork,
+              request: request,
+              continuation: continuation
             )
-          } catch is CancellationError {
-            throw CancellationError()
-          } catch {
-            throw LocalMediaError.metadataFailed
+            return (file, result)
           }
-
-          let externalID = "sha256-\(contentHash)"
-          assets.append(PreparedLocalMediaAsset(
-            file: file,
-            stagedURL: staged,
-            contentHash: contentHash,
-            assetID: MediaAssetID(sourceID: .local, externalID: externalID),
-            probe: probeResult,
-            metadata: rawMetadata,
-            folderArtwork: FolderArtworkResolver().selection(
-              for: file.url,
-              in: bundle,
-              allowRootArtwork: allowRootArtwork
-            )
-          ))
-        } catch let error as LocalMediaError
-          where !Self.hasRecognizedAudioExtension(file.url)
-            && error == .unsupportedInput
-        {
-          // A directory can contain checksum files or other unknown
-          // attachments. Ignore an unreferenced unknown file after probing;
-          // an explicitly referenced CUE file still fails in the planner.
-          if let stagedForFile {
-            await staging.remove(stagedForFile)
-          }
-          continue
-        } catch let error as LocalMediaError {
-          Self.logger.error(
-            "bundle file failed id=\(request.importID.uuidString) file=\(file.url.lastPathComponent) extension=\(file.url.pathExtension) code=\(error.diagnosticCode)"
-          )
-          if let stagedForFile {
-            await staging.remove(stagedForFile)
-          }
-          guard allowsFailureConfirmation else { throw error }
-          preparationFailures.append((file.url, error.importError))
-        } catch {
-          Self.logger.error(
-            "bundle file failed id=\(request.importID.uuidString) file=\(file.url.lastPathComponent) extension=\(file.url.pathExtension) code=\(Self.mapImportError(error).diagnosticCode)"
-          )
-          if let stagedForFile {
-            await staging.remove(stagedForFile)
-          }
-          guard allowsFailureConfirmation else { throw error }
-          preparationFailures.append((file.url, Self.mapImportError(error)))
         }
+        var results: [(ImportFile, BundleAssetPreparation)] = []
+        results.reserveCapacity(bundle.mediaCandidates.count)
+        while let result = try await group.next() {
+          results.append(result)
+          if let file = iterator.next() {
+            group.addTask { [self] in
+              let result = try await prepareBundleAsset(
+                file: file,
+                bundle: bundle,
+                allowRootArtwork: allowRootArtwork,
+                request: request,
+                continuation: continuation
+              )
+              return (file, result)
+            }
+          }
+        }
+        return results
+      }
+      for (file, result) in preparedResults.sorted(by: { $0.0.url.path < $1.0.url.path }) {
+        stagedURLs.append(contentsOf: result.stagedURLs)
+        if let asset = result.asset {
+          assets.append(asset)
+        }
+        if let failure = result.failure {
+          Self.logger.error(
+            "bundle file failed id=\(request.importID.uuidString) file=\(file.url.lastPathComponent) extension=\(file.url.pathExtension) code=\(failure.diagnosticCode)"
+          )
+          preparationFailures.append((file.url, failure))
+        }
+      }
+      if !allowsFailureConfirmation, let failure = preparationFailures.first {
+        throw MediaSourceError.importFailed(failure.error)
       }
 
       guard !assets.isEmpty else {
@@ -1280,7 +1524,7 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
         forExternalID: assetID.externalID
       ) {
         let managedHash = try await hasher.hash(fileAt: managedURL)
-        guard managedHash.caseInsensitiveCompare(canonical.contentHash) == .orderedSame else {
+        guard managedHash.caseInsensitiveCompare(canonical.managedContentHash) == .orderedSame else {
           throw LocalMediaError.destinationConflict
         }
         availableAssetIDs.insert(assetID)
@@ -1535,19 +1779,18 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
     continuation: AsyncThrowingStream<MediaImportEvent, Error>.Continuation
   ) async throws -> ItemOutcome {
     var stagedURL: URL? = staged
+    var sourceStagedURL: URL? = staged
     var managedLocation: ManagedMediaLocation?
     var artworkWriteClaim: ArtworkID?
 
     do {
       // Recheck the library only after acquiring the content lock. A prior
       // waiter may have restored this exact managed file and record.
-      let existingManagedURL = try await store.existingMediaURL(
-        forExternalID: itemID.externalID
-      )
       let existingTrack: Track?
       let existingVariant: TrackVariant?
       let existingAlbum: Album?
       let existingAssetID: MediaAssetID?
+      let existingAsset: MediaAsset?
       do {
         existingTrack = try await libraryRepository.track(id: itemID)
         existingVariant = try await libraryRepository.trackVariant(id: itemID)
@@ -1561,11 +1804,19 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
         } else {
           existingAssetID = existingVariant?.assetID
         }
+        if let existingAssetID {
+          existingAsset = try await libraryRepository.mediaAsset(id: existingAssetID)
+        } else {
+          existingAsset = nil
+        }
       } catch is CancellationError {
         throw CancellationError()
       } catch {
         throw LocalMediaError.persistenceFailed
       }
+      let existingManagedURL = try await store.existingMediaURL(
+        forExternalID: existingAssetID?.externalID ?? itemID.externalID
+      )
       let alreadyImported = existingAssetID != nil
       let shouldAttemptSourceMetadataRepair = Self.shouldAttemptSourceMetadataRepair(
         existingTrack: existingTrack,
@@ -1576,12 +1827,15 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
         "content state id=\(request.importID.uuidString) managed=\(existingManagedURL != nil) track=\(existingTrack != nil) variant=\(existingVariant != nil) asset=\(existingAssetID != nil) policy=\(request.duplicatePolicy.rawValue)"
       )
       if let existingManagedURL {
-        // The external ID identifies the source bytes, so an existing managed
-        // path is reusable only when its contents still match that identity.
+        // The asset external ID identifies the managed bytes. It intentionally
+        // differs from the item ID after a source file has been converted.
         // This check must precede duplicate handling; a corrupt managed file
         // must not be silently accepted by the skip policy.
         let managedContentHash = try await hasher.hash(fileAt: existingManagedURL)
-        guard managedContentHash.lowercased() == contentHash.lowercased() else {
+        let expectedManagedHash = existingAssetID
+          .flatMap { Self.sha256Hash(fromExternalID: $0.externalID) }
+          ?? contentHash.lowercased()
+        guard managedContentHash.lowercased() == expectedManagedHash else {
           throw LocalMediaError.destinationConflict
         }
 
@@ -1596,6 +1850,7 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
             )
             await staging.remove(staged)
             stagedURL = nil
+            sourceStagedURL = nil
             return .skipped
           case .report:
             Self.logger.info(
@@ -1639,13 +1894,49 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
         throw LocalMediaError.metadataFailed
       }
 
+      let prepared: PreparedStagedMedia
+      if existingManagedURL != nil, let existingAssetID {
+        prepared = PreparedStagedMedia(
+          stagedURL: staged,
+          managedContentHash: Self.sha256Hash(fromExternalID: existingAssetID.externalID)
+            ?? contentHash.lowercased(),
+          probe: probeResult,
+          conversion: existingAsset?.conversion
+        )
+      } else {
+        prepared = try await prepareStagedMedia(
+          sourceStagedURL: staged,
+          sourceURL: fileURL,
+          sourceHash: contentHash.lowercased(),
+          sourceProbe: probeResult,
+          request: request,
+          continuation: continuation
+        )
+      }
+      stagedURL = prepared.stagedURL
+      let managedAssetID = existingManagedURL != nil
+        ? (existingAssetID ?? MediaAssetID(
+          sourceID: .local,
+          externalID: "sha256-\(prepared.managedContentHash)"
+        ))
+        : MediaAssetID(
+          sourceID: .local,
+          externalID: "sha256-\(prepared.managedContentHash)"
+        )
+      let preferredFileName = Self.managedFileName(
+        sourceName: existingTrack?.fileName
+          ?? request.metadataHint(for: fileURL)?.displayName
+          ?? fileURL.lastPathComponent,
+        wasConverted: existingTrack == nil && prepared.conversion != nil
+      )
+
       let normalized = try MetadataNormalizer().normalize(
         fileURL: fileURL,
-        stagedFileURL: staged,
-        preferredFileName: request.metadataHint(for: fileURL)?.displayName,
+        stagedFileURL: prepared.stagedURL,
+        preferredFileName: preferredFileName,
         folderPath: folderPath,
         contentHash: contentHash,
-        probe: probeResult,
+        probe: prepared.probe,
         metadata: rawMetadata,
         fallbackArtwork: folderArtwork.map {
           RawArtwork(
@@ -1654,6 +1945,8 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
             pixelHeight: $0.pixelHeight
           )
         },
+        itemID: itemID,
+        assetID: managedAssetID,
         idempotencyKey: "local-import-\(request.importID.uuidString)-\(itemID.externalID)"
       )
 
@@ -1689,10 +1982,15 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
         sourceMetadataRepairItemIDs: sourceMetadataRepairItemIDs,
         albumIdentityRepairItemIDs: []
       )
-      let transaction = try preservingUserPlaybackState(
+      let statePreservingTransaction = try preservingUserPlaybackState(
         in: sourceAwareImport.transaction,
         existingTracks: existingTrack.map { [itemID: $0] } ?? [:],
         existingLogicalTracks: existingLogicalTracks
+      )
+      let transaction = try Self.appendingMediaAsset(
+        to: statePreservingTransaction,
+        track: sourceAwareImport.tracksByItemID[itemID] ?? normalized.track,
+        conversion: prepared.conversion
       )
       let countedTransaction = try await transactionWithReconciledTrackCounts(
         transaction,
@@ -1705,8 +2003,8 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
           "content decision id=\(request.importID.uuidString) result=imported managedFile=new repair=\(alreadyImported)"
         )
         managedLocation = try await store.moveToManaged(
-          stagedURL: staged,
-          externalID: normalized.itemID.externalID
+          stagedURL: prepared.stagedURL,
+          externalID: managedAssetID.externalID
         )
       }
       let artworkIDsToPersist = Set(sourceAwareImport.transaction.mutations.compactMap {
@@ -1735,7 +2033,11 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
         artworkWriteClaim = nil
       }
       await staging.remove(staged)
+      if prepared.stagedURL != staged {
+        await staging.remove(prepared.stagedURL)
+      }
       stagedURL = nil
+      sourceStagedURL = nil
       return .imported
     } catch {
       var recoveryFailed = false
@@ -1748,6 +2050,9 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
       }
       if let stagedURL {
         await staging.remove(stagedURL)
+      }
+      if let sourceStagedURL, sourceStagedURL != stagedURL {
+        await staging.remove(sourceStagedURL)
       }
       if let artworkWriteClaim {
         await store.finishImportedArtworkWrite(artworkWriteClaim, committed: false)
@@ -2667,6 +2972,44 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
     ) != nil
   }
 
+  private static func sha256Hash(fromExternalID externalID: String) -> String? {
+    guard externalID.hasPrefix("sha256-") else { return nil }
+    let value = String(externalID.dropFirst("sha256-".count)).lowercased()
+    guard value.count == 64, value.allSatisfy(\.isHexDigit) else { return nil }
+    return value
+  }
+
+  private static func managedFileName(sourceName: String, wasConverted: Bool) -> String {
+    guard wasConverted else { return sourceName }
+    let baseName = URL(fileURLWithPath: sourceName)
+      .deletingPathExtension()
+      .lastPathComponent
+    return (baseName.isEmpty ? "audio" : baseName) + ".m4a"
+  }
+
+  private static func appendingMediaAsset(
+    to transaction: LibraryTransaction,
+    track: Track,
+    conversion: MediaAssetConversion?
+  ) throws -> LibraryTransaction {
+    let projection = track.mediaAssetProjection
+    let asset = MediaAsset(
+      id: projection.id,
+      contentRevision: projection.contentRevision,
+      fileName: projection.fileName,
+      folderPath: projection.folderPath,
+      byteCount: projection.byteCount,
+      technicalInfo: projection.technicalInfo,
+      conversion: conversion
+    )
+    return try LibraryTransaction(
+      idempotencyKey: transaction.idempotencyKey,
+      expectedRevision: transaction.expectedRevision,
+      mutations: transaction.mutations + [.upsert(.mediaAsset(asset))],
+      albumMerge: transaction.albumMerge
+    )
+  }
+
   private static func mapImportError(_ error: Error) -> MediaImportError {
     if let error = error as? LocalMediaError {
       return error.importError
@@ -2678,6 +3021,15 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
     }
     if error is CancellationError {
       return .cancelled
+    }
+    if let error = error as? MediaTranscodeError {
+      switch error {
+      case .unsupportedInput, .unsupportedChannelCount, .unsupportedBitDepth,
+           .encoderUnavailable:
+        return .unsupportedFormat
+      case .invalidOutput, .decoderFailed, .encoderFailed, .validationFailed:
+        return .corruptedMedia
+      }
     }
     return .unknown
   }
@@ -2691,6 +3043,9 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
     }
     if error is CancellationError {
       return MediaSourceError.cancelled
+    }
+    if error is MediaTranscodeError {
+      return MediaSourceError.importFailed(mapImportError(error))
     }
     return MediaSourceError.importFailed(.unknown)
   }

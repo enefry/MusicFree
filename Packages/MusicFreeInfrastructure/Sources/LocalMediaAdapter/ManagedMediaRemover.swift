@@ -44,7 +44,9 @@ public final class ManagedMediaRemover: ManagedMediaRemoving, @unchecked Sendabl
           for: itemIDs,
           from: libraryRepository
         )
-        return try await store.prepareRemoval(of: itemIDs, assetIDs: assetIDs)
+        return try await coordinator.mediaAccess.withExclusiveAccess(to: assetIDs) {
+          try await self.store.prepareRemoval(of: itemIDs, assetIDs: assetIDs)
+        }
       }
     } catch {
       throw Self.mapRemovalError(error)

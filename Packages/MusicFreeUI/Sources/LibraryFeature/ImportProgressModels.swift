@@ -7,6 +7,9 @@ public enum LibraryImportProgressPhase: String, Equatable, Sendable {
     case hashing
     case probing
     case copying
+    case waitingForTranscoding
+    case transcoding
+    case validatingTranscode
     case persisting
 
     public init(_ phase: MediaImportPhase) {
@@ -15,6 +18,9 @@ public enum LibraryImportProgressPhase: String, Equatable, Sendable {
         case .hashing: self = .hashing
         case .probing: self = .probing
         case .copying: self = .copying
+        case .waitingForTranscoding: self = .waitingForTranscoding
+        case .transcoding: self = .transcoding
+        case .validatingTranscode: self = .validatingTranscode
         case .persisting: self = .persisting
         }
     }
@@ -25,6 +31,9 @@ public enum LibraryImportProgressPhase: String, Equatable, Sendable {
         case .hashing: return L("正在检查")
         case .probing: return L("正在解析")
         case .copying: return L("正在复制")
+        case .waitingForTranscoding: return L("等待转换")
+        case .transcoding: return L("正在转换")
+        case .validatingTranscode: return L("正在验证")
         case .persisting: return L("正在保存")
         }
     }
@@ -116,6 +125,15 @@ public enum ImportEventMapper {
             next.currentItemName = displayName(for: url)
         case .copying(_, let url):
             next.phase = .copying
+            next.currentItemName = displayName(for: url)
+        case .waitingForTranscoding(_, let url, _):
+            next.phase = .waitingForTranscoding
+            next.currentItemName = displayName(for: url)
+        case .transcoding(_, let url, _):
+            next.phase = .transcoding
+            next.currentItemName = displayName(for: url)
+        case .validatingTranscode(_, let url):
+            next.phase = .validatingTranscode
             next.currentItemName = displayName(for: url)
         case .persisting:
             next.phase = .persisting

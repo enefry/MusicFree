@@ -1092,7 +1092,8 @@ public final class LibraryViewModel: ObservableObject {
             let updated = ImportEventMapper.apply(event, to: progress)
             importFailures = updated.failures
             importState = .awaitingConfirmation(updated)
-        case .discovered, .hashing, .probing, .copying, .persisting, .itemFailed:
+        case .discovered, .hashing, .probing, .copying, .waitingForTranscoding,
+             .transcoding, .validatingTranscode, .persisting, .itemFailed:
             guard let progress = importState.progress else { return }
             let updated = ImportEventMapper.apply(event, to: progress)
             importFailures = updated.failures

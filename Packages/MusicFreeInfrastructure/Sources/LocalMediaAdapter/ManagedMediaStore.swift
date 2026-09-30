@@ -140,6 +140,21 @@ actor ManagedMediaStore {
     return try findItemURL(forExternalID: externalID)
   }
 
+  func removeManagedAsset(forExternalID externalID: String) throws {
+    guard Self.isValidAssetIdentifier(externalID) else {
+      throw LocalMediaError.invalidItemID
+    }
+    guard let url = try findItemURL(forExternalID: externalID) else { return }
+    guard try isSafeRegularFile(url, inside: itemsRoot) else {
+      throw LocalMediaError.rootContainmentViolation
+    }
+    do {
+      try fileManager.removeItem(at: url)
+    } catch {
+      throw LocalMediaError.deleteFailed
+    }
+  }
+
   func moveToManaged(stagedURL: URL, externalID: String) throws -> ManagedMediaLocation {
     guard Self.isValidAssetIdentifier(externalID),
           Self.isContained(stagedURL, in: configuration.stagingRoot),

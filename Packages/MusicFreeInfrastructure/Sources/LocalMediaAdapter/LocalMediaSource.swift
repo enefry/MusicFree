@@ -49,7 +49,9 @@ public final class LocalMediaSource: MediaSource, @unchecked Sendable {
       throw MediaSourceError.sourceNotFound(assetID.sourceID)
     }
     do {
-      return .localFile(try await store.mediaURL(forExternalID: assetID.externalID))
+      let mediaAssetID = MediaAssetID(sourceID: assetID.sourceID, externalID: assetID.externalID)
+      let (url, lease) = try await importCoordinator.mediaAccess.resolveAndAcquire(mediaAssetID)
+      return .leasedLocalFile(url, lease)
     } catch {
       throw Self.mapSourceError(error)
     }

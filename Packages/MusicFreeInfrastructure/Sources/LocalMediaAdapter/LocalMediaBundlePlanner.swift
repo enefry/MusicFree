@@ -7,11 +7,41 @@ import MusicDomain
 struct PreparedLocalMediaAsset: Sendable {
   let file: ImportFile
   let stagedURL: URL
+  /// SHA-256 of the originally selected bytes. This remains the item identity.
   let contentHash: String
+  /// SHA-256 of the staged bytes committed to managed storage.
+  let managedContentHash: String
   let assetID: MediaAssetID
   let probe: MediaProbeResult
   let metadata: RawMediaMetadata
   let folderArtwork: FolderArtworkSelection?
+  let conversion: MediaAssetConversion?
+
+  init(
+    file: ImportFile,
+    stagedURL: URL,
+    contentHash: String,
+    managedContentHash: String? = nil,
+    assetID: MediaAssetID,
+    probe: MediaProbeResult,
+    metadata: RawMediaMetadata,
+    folderArtwork: FolderArtworkSelection?,
+    conversion: MediaAssetConversion? = nil
+  ) {
+    self.file = file
+    self.stagedURL = stagedURL
+    self.contentHash = contentHash
+    self.managedContentHash = managedContentHash ?? contentHash
+    self.assetID = assetID
+    self.probe = probe
+    self.metadata = metadata
+    self.folderArtwork = folderArtwork
+    self.conversion = conversion
+  }
+
+  var sourceItemID: MediaItemID {
+    MediaItemID(sourceID: .local, externalID: "sha256-\(contentHash.lowercased())")
+  }
 }
 
 @available(macOS 13.0, iOS 16.0, *)
@@ -303,7 +333,7 @@ struct LocalMediaBundlePlanner: Sendable {
       let folder = releaseFolder(for: asset.file, bundle: bundle)
       planned.append(PlannedTrack(
         asset: asset,
-        itemID: asset.assetID.mediaItemID,
+        itemID: asset.sourceItemID,
         logicalTrackID: nil,
         selection: PlaybackSelection(audioStream: ProbedAudioStreamSelector.preferred(in: asset.probe)),
         metadata: asset.metadata,
@@ -531,7 +561,16 @@ struct LocalMediaBundlePlanner: Sendable {
     var discByID: [DiscID: Disc] = [:]
     for media in normalized {
       let track = media.track
-      assetByID[track.assetID] = track.mediaAssetProjection
+      let projection = track.mediaAssetProjection
+      assetByID[track.assetID] = MediaAsset(
+        id: projection.id,
+        contentRevision: projection.contentRevision,
+        fileName: projection.fileName,
+        folderPath: projection.folderPath,
+        byteCount: projection.byteCount,
+        technicalInfo: projection.technicalInfo,
+        conversion: plannedByID[media.itemID]?.asset.conversion
+      )
       mutations.append(.upsert(.logicalTrack(track.logicalTrackProjection)))
       let sourceRevision = plannedByID[media.itemID]?.sourceMetadataRevision
       let sourceIdentityHint = plannedByID[media.itemID]?.sourceIdentityHint
@@ -715,7 +754,7 @@ struct LocalMediaBundlePlanner: Sendable {
       ])
     }
     return MusicContentIdentity.compositeToken(
-      ["local-cue-v2-assets"] + resolvedAssets.map(\.assetID.externalID)
+      ["local-cue-v2-assets"] + resolvedAssets.map(\.contentHash)
     )
   }
 
@@ -751,7 +790,7 @@ struct LocalMediaBundlePlanner: Sendable {
       MusicContentIdentity.sha256Hex(cueData)
     ]
     for asset in resolvedAssets {
-      components.append(asset.assetID.externalID)
+      components.append(asset.contentHash)
       components.append(asset.folderArtwork.map {
         MusicContentIdentity.sha256Hex($0.data)
       } ?? "no-folder-artwork")

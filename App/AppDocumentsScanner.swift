@@ -113,7 +113,8 @@ actor AppDocumentsScanner {
                 discoveredMedia = true
             case .itemFailed(_, let url, let error):
                 itemFailures.append((url, error))
-            case .hashing, .probing, .copying, .persisting, .confirmationRequired:
+            case .hashing, .probing, .copying, .waitingForTranscoding, .transcoding,
+                 .validatingTranscode, .persisting, .confirmationRequired:
                 break
             }
         }
