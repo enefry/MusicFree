@@ -3220,6 +3220,128 @@ final class MusicFreeBVTUITests: XCTestCase {
     }
 
     @MainActor
+    func testEnhancedTrackDetailsSaveAndReload() {
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        app.launchArguments = ["--uikit-shell", "--bvt-seed-audio", "--bvt-reset-user-interface-preferences"]
+        app.launch()
+        let songs = app.descendants(matching: .any)["library.home.section.tracks"].firstMatch
+        XCTAssertTrue(songs.waitForExistence(timeout: 30))
+        songs.tap()
+        let track = app.collectionViews["library.tracks.collection"].cells.matching(NSPredicate(format: "label == %@", trackTitle)).firstMatch
+        XCTAssertTrue(track.waitForExistence(timeout: 30))
+        track.press(forDuration: 1)
+        let details = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@ OR label == %@", "View song details", "查看歌曲详情")).firstMatch
+        XCTAssertTrue(details.waitForExistence(timeout: 10))
+        details.tap()
+        let edit = app.buttons["library.trackDetail.edit"].firstMatch
+        XCTAssertTrue(edit.waitForExistence(timeout: 10))
+        attachScreenshot(named: "enhanced-track-detail")
+        edit.tap()
+        let form = app.scrollViews["library.trackEditor.scroll"].firstMatch
+        XCTAssertTrue(form.waitForExistence(timeout: 10))
+        let composer = app.textFields["library.trackEditor.composers"].firstMatch
+        scrollEnhancedField(composer, in: form)
+        replaceEnhancedText(composer, with: "Detail Composer")
+        app.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", "Save", "保存")).firstMatch.tap()
+        XCTAssertTrue(edit.waitForExistence(timeout: 15))
+        edit.tap()
+        XCTAssertTrue(form.waitForExistence(timeout: 10))
+        scrollEnhancedField(composer, in: form)
+        XCTAssertEqual(composer.value as? String, "Detail Composer")
+        attachScreenshot(named: "enhanced-track-editor")
+    }
+
+    @MainActor
+    func testEnhancedAlbumDetailsSaveAndReload() {
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        app.launchArguments = ["--uikit-shell", "--bvt-seed-audio", "--bvt-reset-user-interface-preferences"]
+        app.launch()
+        let albums = app.descendants(matching: .any)["library.home.section.albums"].firstMatch
+        XCTAssertTrue(albums.waitForExistence(timeout: 30))
+        albums.tap()
+        let album = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.album.open.")).firstMatch
+        XCTAssertTrue(album.waitForExistence(timeout: 30))
+        album.tap()
+        openEnhancedMetadataEditor(menuID: "library.collection.menu", title: "编辑专辑", englishTitle: "Edit Album", in: app)
+        let form = app.scrollViews["library.albumEditor.scroll"].firstMatch
+        XCTAssertTrue(form.waitForExistence(timeout: 10))
+        let label = app.textFields["library.albumEditor.recordLabel"].firstMatch
+        scrollEnhancedField(label, in: form)
+        replaceEnhancedText(label, with: "Detail Record Label")
+        app.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", "Save", "保存")).firstMatch.tap()
+        XCTAssertTrue(app.buttons["library.collection.menu"].waitForExistence(timeout: 15))
+        let collection = app.collectionViews["library.collectionDetail.collection"].firstMatch
+        for _ in 0..<4 { collection.swipeUp() }
+        attachScreenshot(named: "enhanced-album-information")
+        openEnhancedMetadataEditor(menuID: "library.collection.menu", title: "编辑专辑", englishTitle: "Edit Album", in: app)
+        XCTAssertTrue(form.waitForExistence(timeout: 10))
+        scrollEnhancedField(label, in: form)
+        XCTAssertEqual(label.value as? String, "Detail Record Label")
+        attachScreenshot(named: "enhanced-album-editor")
+    }
+
+    @MainActor
+    func testEnhancedArtistDetailsSaveAndReload() {
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        app.launchArguments = ["--uikit-shell", "--bvt-seed-audio", "--bvt-reset-user-interface-preferences"]
+        app.launch()
+        let artists = app.descendants(matching: .any)["library.home.section.artists"].firstMatch
+        XCTAssertTrue(artists.waitForExistence(timeout: 30))
+        artists.tap()
+        let artist = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.artist.open.")).firstMatch
+        XCTAssertTrue(artist.waitForExistence(timeout: 30))
+        artist.tap()
+        openEnhancedMetadataEditor(menuID: "library.artistDetail.menu", title: "编辑艺人", englishTitle: "Edit Artist", in: app)
+        let form = app.scrollViews["library.artistEditor.scroll"].firstMatch
+        XCTAssertTrue(form.waitForExistence(timeout: 10))
+        let origin = app.textFields["library.artistEditor.origin"].firstMatch
+        scrollEnhancedField(origin, in: form)
+        replaceEnhancedText(origin, with: "Shanghai")
+        app.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", "Save", "保存")).firstMatch.tap()
+        XCTAssertTrue(app.buttons["library.artistDetail.menu"].waitForExistence(timeout: 15))
+        let collection = app.collectionViews["library.artist.albums"].firstMatch
+        for _ in 0..<3 { collection.swipeUp() }
+        attachScreenshot(named: "enhanced-artist-information")
+        openEnhancedMetadataEditor(menuID: "library.artistDetail.menu", title: "编辑艺人", englishTitle: "Edit Artist", in: app)
+        XCTAssertTrue(form.waitForExistence(timeout: 10))
+        scrollEnhancedField(origin, in: form)
+        XCTAssertEqual(origin.value as? String, "Shanghai")
+        attachScreenshot(named: "enhanced-artist-editor")
+    }
+
+    @MainActor
+    private func openEnhancedMetadataEditor(menuID: String, title: String, englishTitle: String, in app: XCUIApplication) {
+        let menu = app.buttons[menuID].firstMatch
+        XCTAssertTrue(menu.waitForExistence(timeout: 15))
+        menu.tap()
+        let edit = app.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", title, englishTitle)).firstMatch
+        XCTAssertTrue(edit.waitForExistence(timeout: 10))
+        edit.tap()
+    }
+
+    @MainActor
+    private func scrollEnhancedField(_ field: XCUIElement, in form: XCUIElement) {
+        for _ in 0..<12 {
+            if field.exists && field.isHittable { break }
+            form.swipeUp()
+        }
+        XCTAssertTrue(field.isHittable)
+    }
+
+    @MainActor
+    private func replaceEnhancedText(_ field: XCUIElement, with text: String) {
+        field.tap()
+        let clear = field.buttons.firstMatch
+        if clear.exists {
+            clear.tap()
+        }
+        field.typeText(text)
+    }
+
+    @MainActor
     private func attachScreenshot(named name: String) {
         let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         attachment.name = name

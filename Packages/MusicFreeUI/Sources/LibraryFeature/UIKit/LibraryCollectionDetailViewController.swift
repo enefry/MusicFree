@@ -53,12 +53,14 @@ public final class LibraryCollectionDetailViewController: UIViewController {
     private enum DetailSection: Hashable {
         case header
         case tracks
+        case information
         case status
     }
 
     private enum DetailItem: Hashable {
         case header
         case track(MediaItemID)
+        case information
         case status(String)
     }
 
@@ -100,6 +102,8 @@ public final class LibraryCollectionDetailViewController: UIViewController {
     private var collectionSubtitle: String?
     private var artworkID: ArtworkID?
     private var collectionAlbum: Album?
+    private var collectionArtist: Artist?
+    private var collectionGenreNames: [String] = []
     private var knownAlbumIDs = Set<AlbumID>()
     private var favoriteMutationIDs: Set<MediaItemID> = []
     private var isUpdatingAlbumFavorite = false
@@ -120,7 +124,11 @@ public final class LibraryCollectionDetailViewController: UIViewController {
         mediaSourceResolver: (any MediaSourceResolving)? = nil,
         metadataEnrichment: (any MetadataEnrichmentServing)? = nil
     ) {
-        self.kind = kind
+        if case let .albums(ids) = kind, ids.count == 1, let id = ids.first {
+            self.kind = .album(id)
+        } else {
+            self.kind = kind
+        }
         self.library = library
         self.artworkServing = artworkServing
         self.metadataEnrichment = metadataEnrichment
@@ -283,8 +291,13 @@ public final class LibraryCollectionDetailViewController: UIViewController {
                     self?.editAlbum()
                 })
             }
+            if case .artist = kind {
+                managementActions.append(UIAction(
+                    title: L("编辑艺人"), image: UIImage(systemName: "pencil"),
+                    attributes: collectionArtist == nil ? [.disabled] : []
+                ) { [weak self] _ in self?.editArtist() })
+            }
             managementActions.append(select)
-
             let addToPlaylist = UIAction(
                 title: L("添加到播放列表"),
                 image: UIImage(systemName: "text.badge.plus"),
@@ -360,6 +373,7 @@ public final class LibraryCollectionDetailViewController: UIViewController {
             LibraryCollectionDetailStatusCell.self,
             forCellWithReuseIdentifier: LibraryCollectionDetailStatusCell.reuseIdentifier
         )
+        collectionView.register(LibraryCollectionInformationCell.self, forCellWithReuseIdentifier: "collection.information")
         view.addSubview(collectionView)
         NSLayoutConstraint.activate([
             collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -431,6 +445,11 @@ public final class LibraryCollectionDetailViewController: UIViewController {
                 trackCell.accessibilityIdentifier = "library.collection.track.play.\(track.id.externalID)"
                 return trackCell
 
+            case .information:
+                let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "collection.information", for: indexPath)
+                (cell as? LibraryCollectionInformationCell)?.informationView.configure(self.informationSections())
+                return cell
+
             case let .status(status):
                 let cell = collectionView.dequeueReusableCell(
                     withReuseIdentifier: LibraryCollectionDetailStatusCell.reuseIdentifier,
@@ -468,12 +487,17 @@ public final class LibraryCollectionDetailViewController: UIViewController {
             snapshot.appendSections([.status])
             snapshot.appendItems([.status("failed")], toSection: .status)
         case .empty:
-            snapshot.appendSections([.status])
+            snapshot.appendSections([.header, .status])
+            snapshot.appendItems([.header], toSection: .header)
             snapshot.appendItems([.status("empty")], toSection: .status)
         case .loaded:
             snapshot.appendSections([.header, .tracks])
             snapshot.appendItems([.header], toSection: .header)
             snapshot.appendItems(tracks.map { .track($0.id) }, toSection: .tracks)
+        }
+        if loadState == .loaded || loadState == .empty, collectionAlbum != nil || collectionArtist != nil {
+            snapshot.appendSections([.information])
+            snapshot.appendItems([.information], toSection: .information)
         }
 
         let previousSnapshot = dataSource.snapshot()
@@ -481,7 +505,7 @@ public final class LibraryCollectionDetailViewController: UIViewController {
             || previousSnapshot.itemIdentifiers != snapshot.itemIdentifiers
         let existingItems = Set(previousSnapshot.itemIdentifiers)
         var itemsToReconfigure = snapshot.itemIdentifiers.filter {
-            items.contains($0) && existingItems.contains($0)
+            (items.contains($0) || ($0 == .information && items.contains(.header))) && existingItems.contains($0)
         }
         let selectionChanged = renderedIsEditingSelection != isEditingSelection
             || renderedSelectedTrackIDs != selectedTrackIDs
@@ -936,6 +960,67 @@ public final class LibraryCollectionDetailViewController: UIViewController {
         present(navigationController, animated: true)
     }
 
+    @objc private func editArtist() {
+        guard let artist = collectionArtist, presentedViewController == nil, !isEditingSelection else { return }
+        let editor = LibraryArtistMetadataEditorViewController(
+            artist: artist, library: library, artworkServing: artworkServing
+        ) { [weak self] updated in
+            guard let self else { return }
+            collectionArtist = updated
+            collectionTitle = updated.name
+            artworkID = updated.artworkID ?? tracks.first?.artworkID
+            title = updated.name
+            renderSnapshot(reconfigure: [.header])
+            loadTask = Task { @MainActor [weak self] in await self?.reloadTracksPreservingSurface() }
+        }
+        let navigationController = UINavigationController(rootViewController: editor)
+        navigationController.modalPresentationStyle = .pageSheet
+        navigationController.sheetPresentationController?.detents = [.large()]
+        navigationController.sheetPresentationController?.prefersGrabberVisible = true
+        present(navigationController, animated: true)
+    }
+
+    private func informationSections() -> [LibraryDetailInfoSection] {
+        func text(_ value: String?) -> String { value?.isEmpty == false ? value! : L("未知") }
+        let durations = tracks.compactMap(\.duration)
+        let duration = !tracks.isEmpty && durations.count == tracks.count ? durations.reduce(.zero, +) : nil
+        if let artist = collectionArtist {
+            var sections: [LibraryDetailInfoSection] = [.init(title: L("艺人信息"), rows: [
+                .init(title: L("来自"), value: text(artist.details?.origin), symbol: "globe"),
+                .init(title: L("出生日期"), value: artist.details?.birthDate.map(LibraryMetadataForm.dateText) ?? L("未知"), symbol: "calendar"),
+                .init(title: L("歌曲"), value: String(tracks.count), symbol: "music.note"),
+                .init(title: L("专辑"), value: String(Set(tracks.compactMap(\.albumID)).count), symbol: "square.stack")
+            ])]
+            if let biography = artist.details?.biography {
+                sections.append(.init(title: L("简介"), rows: [.init(title: L("艺人"), value: biography, symbol: "text.alignleft")]))
+            }
+            return sections
+        }
+        guard let album = collectionAlbum else { return [] }
+        let details = album.details
+        let genres = details?.genres ?? collectionGenreNames
+        let discCount = details?.discCount ?? (tracks.isEmpty ? nil : Set(tracks.map { $0.discNumber ?? 1 }).count)
+        var sections: [LibraryDetailInfoSection] = [.init(title: L("专辑信息"), rows: [
+            .init(title: L("主要艺人"), value: text(album.artistIDs.compactMap { artistNames[$0] }.joined(separator: "、")), symbol: "mic"),
+            .init(title: L("其他艺人"), value: details?.additionalArtists.isEmpty == false ? details!.additionalArtists.joined(separator: "、") : L("无"), symbol: "person.2"),
+            .init(title: L("发行日期"), value: details?.releaseDate.map(LibraryMetadataForm.dateText) ?? album.releaseYear.map(String.init) ?? L("未知"), symbol: "calendar"),
+            .init(title: L("流派"), value: text(genres.joined(separator: "、")), symbol: "guitars"),
+            .init(title: L("碟片数量"), value: discCount.map(String.init) ?? L("未知"), symbol: "opticaldisc"),
+            .init(title: L("格式"), value: text(details?.format), symbol: "opticaldisc.fill"),
+            .init(title: L("专辑类型"), value: album.albumType.map(albumTypeTitle) ?? L("未知"), symbol: "square.stack"),
+            .init(title: L("总曲目数"), value: String(tracks.count), symbol: "number"),
+            .init(title: L("总时长"), value: LibraryMetadataForm.durationText(duration), symbol: "clock")
+        ])]
+        if let summary = details?.summary {
+            sections.append(.init(title: L("简介"), rows: [.init(title: L("专辑"), value: summary, symbol: "text.alignleft")]))
+        }
+        sections.append(.init(title: L("版权信息"), rows: [
+            .init(title: L("唱片公司"), value: text(details?.recordLabel), symbol: "building.2"),
+            .init(title: L("版权"), value: text(details?.copyright), symbol: "c.circle")
+        ]))
+        return sections
+    }
+
     private func loadTracks() async throws -> [Track] {
         let page = try LibraryPageRequest(limit: LibraryPageRequest.maximumLimit)
         switch kind {
@@ -985,6 +1070,10 @@ public final class LibraryCollectionDetailViewController: UIViewController {
                     from: library
                 )
                 artistNames = names ?? [:]
+                let genres = (try? await LibraryGenreNameLoader.load(
+                    genreIDs: Set(tracks.flatMap(\.genreIDs)), sourceID: .local, from: library
+                )) ?? [:]
+                collectionGenreNames = Array(Set(genres.values)).sorted()
                 var parts = album.artistIDs.compactMap { artistNames[$0] }
                 if let albumType = album.albumType {
                     parts.append(albumTypeTitle(albumType))
@@ -1028,6 +1117,7 @@ public final class LibraryCollectionDetailViewController: UIViewController {
             collectionSubtitle = L("%d tracks", tracks.count)
         case let .artist(artistID):
             if let artist = try? await findArtist(artistID) {
+                collectionArtist = artist
                 collectionTitle = artist.name
                 artworkID = artist.artworkID ?? tracks.first?.artworkID
             }
@@ -1116,7 +1206,7 @@ public final class LibraryCollectionDetailViewController: UIViewController {
         case .compilation: return L("精选集")
         case .soundtrack: return L("原声带")
         case .live: return L("现场录音")
-        case .unknown: return L("专辑")
+        case .unknown: return L("未知")
         }
     }
 
@@ -1174,7 +1264,7 @@ public final class LibraryCollectionDetailViewController: UIViewController {
             else { return nil }
 
             switch section {
-            case .header:
+            case .header, .information:
                 let itemSize = NSCollectionLayoutSize(
                     widthDimension: .fractionalWidth(1),
                     // Let the cell's Auto Layout content determine the hero
@@ -1225,6 +1315,26 @@ public final class LibraryCollectionDetailViewController: UIViewController {
             }
         }
     }
+}
+
+@MainActor
+final class LibraryCollectionInformationCell: UICollectionViewCell {
+    let informationView = LibraryDetailInfoView()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        informationView.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(informationView)
+        NSLayoutConstraint.activate([
+            informationView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            informationView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            informationView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16),
+            informationView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -24)
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 }
 
 extension LibraryCollectionDetailViewController: UICollectionViewDelegate {

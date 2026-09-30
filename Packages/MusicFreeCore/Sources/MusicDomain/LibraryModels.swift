@@ -31,6 +31,7 @@ public struct Track: Codable, Equatable, Hashable, Identifiable, Sendable {
     public let artwork: ArtworkReference?
     public let isFavorite: Bool
     public let statistics: PlaybackStatistics
+    public let details: TrackDetailMetadata?
 
     /// Creates a track. Missing metadata is represented by `nil` or an empty relationship list.
     public init(
@@ -56,7 +57,8 @@ public struct Track: Codable, Equatable, Hashable, Identifiable, Sendable {
         lyrics: TrackLyrics? = nil,
         artwork: ArtworkReference? = nil,
         isFavorite: Bool = false,
-        statistics: PlaybackStatistics = .empty
+        statistics: PlaybackStatistics = .empty,
+        details: TrackDetailMetadata? = nil
     ) {
         if let duration {
             _ = musicDomainNonNegativeDuration(duration, field: "duration")
@@ -101,6 +103,7 @@ public struct Track: Codable, Equatable, Hashable, Identifiable, Sendable {
         self.artwork = artwork
         self.isFavorite = isFavorite
         self.statistics = statistics
+        self.details = details
     }
 
     public var artworkID: ArtworkID? {
@@ -139,6 +142,7 @@ public struct Track: Codable, Equatable, Hashable, Identifiable, Sendable {
         case artwork
         case isFavorite
         case statistics
+        case details
     }
 
     public init(from decoder: Decoder) throws {
@@ -186,7 +190,8 @@ public struct Track: Codable, Equatable, Hashable, Identifiable, Sendable {
             lyrics: try container.decodeIfPresent(TrackLyrics.self, forKey: .lyrics),
             artwork: try container.decodeIfPresent(ArtworkReference.self, forKey: .artwork),
             isFavorite: try container.decodeIfPresent(Bool.self, forKey: .isFavorite) ?? false,
-            statistics: try container.decodeIfPresent(PlaybackStatistics.self, forKey: .statistics) ?? .empty
+            statistics: try container.decodeIfPresent(PlaybackStatistics.self, forKey: .statistics) ?? .empty,
+            details: try container.decodeIfPresent(TrackDetailMetadata.self, forKey: .details)
         )
     }
 
@@ -215,6 +220,7 @@ public struct Track: Codable, Equatable, Hashable, Identifiable, Sendable {
         try container.encodeIfPresent(artwork, forKey: .artwork)
         try container.encode(isFavorite, forKey: .isFavorite)
         try container.encode(statistics, forKey: .statistics)
+        try container.encodeIfPresent(details, forKey: .details)
     }
 
     private static func normalizedFolderPath(_ value: String?) -> String? {
@@ -330,6 +336,7 @@ public struct Album: Codable, Equatable, Hashable, Identifiable, Sendable {
     public let trackCount: Int?
     public let albumType: AlbumType?
     public let isFavorite: Bool
+    public let details: AlbumDetailMetadata?
 
     public init(
         id: AlbumID,
@@ -340,7 +347,8 @@ public struct Album: Codable, Equatable, Hashable, Identifiable, Sendable {
         releaseYear: Int? = nil,
         trackCount: Int? = nil,
         albumType: AlbumType? = nil,
-        isFavorite: Bool = false
+        isFavorite: Bool = false,
+        details: AlbumDetailMetadata? = nil
     ) {
         if let releaseYear {
             precondition((1...9_999).contains(releaseYear), "Album.releaseYear is out of range")
@@ -358,6 +366,7 @@ public struct Album: Codable, Equatable, Hashable, Identifiable, Sendable {
         self.trackCount = trackCount
         self.albumType = albumType
         self.isFavorite = isFavorite
+        self.details = details
     }
 
     public var artworkID: ArtworkID? {
@@ -378,6 +387,7 @@ public struct Album: Codable, Equatable, Hashable, Identifiable, Sendable {
         case trackCount
         case albumType
         case isFavorite
+        case details
     }
 
     public init(from decoder: Decoder) throws {
@@ -400,7 +410,8 @@ public struct Album: Codable, Equatable, Hashable, Identifiable, Sendable {
             releaseYear: releaseYear,
             trackCount: trackCount,
             albumType: try container.decodeIfPresent(AlbumType.self, forKey: .albumType),
-            isFavorite: try container.decodeIfPresent(Bool.self, forKey: .isFavorite) ?? false
+            isFavorite: try container.decodeIfPresent(Bool.self, forKey: .isFavorite) ?? false,
+            details: try container.decodeIfPresent(AlbumDetailMetadata.self, forKey: .details)
         )
     }
 
@@ -415,6 +426,7 @@ public struct Album: Codable, Equatable, Hashable, Identifiable, Sendable {
         try container.encodeIfPresent(trackCount, forKey: .trackCount)
         try container.encodeIfPresent(albumType, forKey: .albumType)
         try container.encode(isFavorite, forKey: .isFavorite)
+        try container.encodeIfPresent(details, forKey: .details)
     }
 }
 
@@ -424,17 +436,20 @@ public struct Artist: Codable, Equatable, Hashable, Identifiable, Sendable {
     public let name: String
     public let sortName: String?
     public let artwork: ArtworkReference?
+    public let details: ArtistDetailMetadata?
 
     public init(
         id: ArtistID,
         name: String,
         sortName: String? = nil,
-        artwork: ArtworkReference? = nil
+        artwork: ArtworkReference? = nil,
+        details: ArtistDetailMetadata? = nil
     ) {
         self.id = id
         self.name = musicDomainRequiredMetadataText(name, field: "Artist.name")
         self.sortName = musicDomainOptionalMetadataText(sortName)
         self.artwork = artwork
+        self.details = details
     }
 
     public var artworkID: ArtworkID? {
@@ -446,6 +461,7 @@ public struct Artist: Codable, Equatable, Hashable, Identifiable, Sendable {
         case name
         case sortName
         case artwork
+        case details
     }
 
     public init(from decoder: Decoder) throws {
@@ -458,7 +474,8 @@ public struct Artist: Codable, Equatable, Hashable, Identifiable, Sendable {
             id: try container.decode(ArtistID.self, forKey: .id),
             name: name,
             sortName: try container.decodeIfPresent(String.self, forKey: .sortName),
-            artwork: try container.decodeIfPresent(ArtworkReference.self, forKey: .artwork)
+            artwork: try container.decodeIfPresent(ArtworkReference.self, forKey: .artwork),
+            details: try container.decodeIfPresent(ArtistDetailMetadata.self, forKey: .details)
         )
     }
 
@@ -468,6 +485,7 @@ public struct Artist: Codable, Equatable, Hashable, Identifiable, Sendable {
         try container.encode(name, forKey: .name)
         try container.encodeIfPresent(sortName, forKey: .sortName)
         try container.encodeIfPresent(artwork, forKey: .artwork)
+        try container.encodeIfPresent(details, forKey: .details)
     }
 }
 

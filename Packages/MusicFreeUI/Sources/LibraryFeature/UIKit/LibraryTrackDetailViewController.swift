@@ -26,12 +26,16 @@ public final class LibraryTrackDetailViewController: UIViewController {
     private let favoriteButton = UIButton(type: .system)
     private let lyricsTitleLabel = UILabel()
     private let lyricsLabel = UILabel()
+    private let informationView = LibraryDetailInfoView()
     private var statusView: UIView?
     private var loadTask: Task<Void, Never>?
     private var artworkTask: Task<Void, Never>?
     private var track: Track?
     private var artistNames: [ArtistID: String] = [:]
     private var albumTitle: String?
+    private var albumArtistNames: [String] = []
+    private var genreNames: [String] = []
+    private var dateAdded: Date?
     private var isSavingFavorite = false
     private var isDeleting = false
 
@@ -100,7 +104,7 @@ public final class LibraryTrackDetailViewController: UIViewController {
         titleLabel.font = MusicFreeUIFontTokens.screenTitle
         titleLabel.textColor = MusicFreeUIColorTokens.foregroundPrimary
         titleLabel.textAlignment = .center
-        titleLabel.numberOfLines = 3
+        titleLabel.numberOfLines = 0
         titleLabel.accessibilityIdentifier = "library.trackDetail.title"
 
         artistLabel.font = MusicFreeUIFontTokens.sectionTitle
@@ -164,12 +168,22 @@ public final class LibraryTrackDetailViewController: UIViewController {
         lyricsStack.layer.cornerRadius = 10
         lyricsStack.layer.masksToBounds = true
 
-        contentStack.addArrangedSubview(artworkView)
+        let artworkContainer = UIView()
+        artworkContainer.addSubview(artworkView)
+        let artworkWidth = artworkView.widthAnchor.constraint(equalTo: artworkContainer.widthAnchor)
+        artworkWidth.priority = .defaultHigh
+        NSLayoutConstraint.activate([
+            artworkView.topAnchor.constraint(equalTo: artworkContainer.topAnchor),
+            artworkView.bottomAnchor.constraint(equalTo: artworkContainer.bottomAnchor),
+            artworkWidth
+        ])
+        contentStack.addArrangedSubview(artworkContainer)
         contentStack.addArrangedSubview(titleLabel)
         contentStack.addArrangedSubview(artistLabel)
         contentStack.addArrangedSubview(albumLabel)
         contentStack.addArrangedSubview(durationLabel)
         contentStack.addArrangedSubview(actionStack)
+        contentStack.addArrangedSubview(informationView)
         contentStack.addArrangedSubview(lyricsStack)
 
         view.addSubview(scrollView)
@@ -270,8 +284,9 @@ public final class LibraryTrackDetailViewController: UIViewController {
         } else {
             durationLabel.isHidden = true
         }
-        lyricsLabel.text = track.lyrics?.displayText
-        lyricsTitleLabel.superview?.isHidden = track.lyrics == nil
+        lyricsLabel.text = track.lyrics?.displayText ?? L("无歌词")
+        lyricsTitleLabel.superview?.isHidden = false
+        renderInformation(track)
         playButton.isEnabled = onPlayTrack != nil
         favoriteButton.isEnabled = !isSavingFavorite
         favoriteButton.configuration?.title = track.isFavorite ? L("取消收藏") : L("收藏")
@@ -326,12 +341,8 @@ public final class LibraryTrackDetailViewController: UIViewController {
             }
             try Task.checkCancellation()
             track = loadedTrack
-            artistNames = (try? await LibraryArtistNameLoader.load(
-                artistIDs: Set(loadedTrack.artistIDs),
-                sourceID: loadedTrack.id.sourceID,
-                from: library
-            )) ?? [:]
-            albumTitle = await resolveAlbumTitle(for: loadedTrack)
+            await loadRelationshipNames(for: loadedTrack)
+            dateAdded = try? await library.trackDateAdded(id: trackID)
             try Task.checkCancellation()
             renderLoaded()
         } catch is CancellationError {
@@ -341,17 +352,70 @@ public final class LibraryTrackDetailViewController: UIViewController {
         }
     }
 
-    private func resolveAlbumTitle(for track: Track) async -> String? {
-        guard let albumID = track.albumID else { return nil }
-        do {
-            let page = try await library.browseAlbums(
-                matching: AlbumQuery(sourceID: track.id.sourceID),
-                page: try LibraryPageRequest(limit: LibraryPageRequest.maximumLimit)
-            )
-            return page.elements.first(where: { $0.id == albumID })?.title
-        } catch {
-            return nil
+    private func loadRelationshipNames(for track: Track) async {
+        let album: Album?
+        if let id = track.albumID {
+            album = try? await LibraryAlbumLoader.load(albumID: id, sourceID: track.id.sourceID, from: library)
+        } else {
+            album = nil
         }
+        let names = (try? await LibraryArtistNameLoader.load(
+            artistIDs: Set(track.artistIDs + (album?.artistIDs ?? [])),
+            sourceID: track.id.sourceID, from: library
+        )) ?? [:]
+        let genres = (try? await LibraryGenreNameLoader.load(
+            genreIDs: Set(track.genreIDs), sourceID: track.id.sourceID, from: library
+        )) ?? [:]
+        guard !Task.isCancelled else { return }
+        artistNames = names
+        albumArtistNames = album?.artistIDs.compactMap { names[$0] } ?? []
+        albumTitle = album?.title
+        genreNames = track.genreIDs.compactMap { genres[$0] }
+    }
+
+    private func renderInformation(_ track: Track) {
+        func text(_ value: String?) -> String { value?.isEmpty == false ? value! : L("未知") }
+        func names(_ values: [String]) -> String { text(values.joined(separator: "、")) }
+        let details = track.details
+        let technical = track.technicalInfo
+        var music: [LibraryDetailInfoRow] = [
+            .init(title: L("主要艺人"), value: names(track.artistIDs.compactMap { artistNames[$0] }), symbol: "mic"),
+            .init(title: L("其他艺人"), value: details?.additionalArtists.isEmpty == false ? names(details!.additionalArtists) : L("无"), symbol: "person.2"),
+            .init(title: L("作曲者"), value: names(details?.composers ?? []), symbol: "music.note"),
+            .init(title: L("专辑"), value: text(albumTitle), symbol: "square.stack"),
+            .init(title: L("专辑艺人"), value: names(albumArtistNames), symbol: "person"),
+            .init(title: L("流派"), value: names(genreNames), symbol: "guitars"),
+            .init(title: L("年份"), value: track.year.map(String.init) ?? L("未知"), symbol: "calendar"),
+            .init(title: L("曲目号"), value: track.trackNumber.map(String.init) ?? L("未知"), symbol: "number"),
+            .init(title: L("碟片号"), value: track.discNumber.map(String.init) ?? L("未知"), symbol: "opticaldisc"),
+            .init(title: L("内容分级"), value: LibraryMetadataForm.ratingTitle(details?.contentRating ?? .unknown), symbol: "exclamationmark.bubble")
+        ]
+        if let comment = track.comment {
+            music.append(.init(title: L("评论"), value: comment, symbol: "text.bubble"))
+        }
+        var file: [LibraryDetailInfoRow] = [
+            .init(title: L("时长"), value: LibraryMetadataForm.durationText(track.duration), symbol: "clock"),
+            .init(title: L("格式"), value: text(technical?.container), symbol: "waveform"),
+            .init(title: L("编码"), value: text(technical?.codec), symbol: "waveform.path"),
+            .init(title: L("大小"), value: technical?.fileSizeBytes.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? L("未知"), symbol: "internaldrive"),
+            .init(title: L("采样率"), value: technical?.sampleRate.map { String(format: "%.1f kHz", Double($0) / 1_000) } ?? L("未知"), symbol: "waveform.path.ecg"),
+            .init(title: L("位深"), value: technical?.bitDepth.map { "\($0) bit" } ?? L("未知"), symbol: "slider.horizontal.3"),
+            .init(title: L("声道"), value: technical?.channels.map(String.init) ?? L("未知"), symbol: "speaker.wave.2"),
+            .init(title: L("比特率"), value: (technical?.bitRate ?? technical?.primaryAudioStream?.bitRate).map { "\($0 / 1_000) kbps" } ?? L("未知"), symbol: "speedometer"),
+            .init(title: L("添加日期"), value: dateAdded?.formatted(date: .abbreviated, time: .shortened) ?? L("未知"), symbol: "calendar.badge.plus"),
+            .init(title: L("来源"), value: track.id.sourceID == .local ? L("文件") : track.id.sourceID.rawValue, symbol: "tray.and.arrow.down"),
+            .init(title: L("存储位置"), value: track.id.sourceID == .local ? L("本地资料库") : L("远端资料库"), symbol: "externaldrive"),
+            .init(title: L("文件名"), value: text(track.fileName), symbol: "doc")
+        ]
+        if let path = track.folderPath { file.append(.init(title: L("文件夹"), value: path, symbol: "folder")) }
+        informationView.configure([
+            .init(title: L("歌曲信息"), rows: music),
+            .init(title: L("文件信息"), rows: file),
+            .init(title: L("播放记录"), rows: [
+                .init(title: L("播放次数"), value: String(track.statistics.playCount), symbol: "play.circle"),
+                .init(title: L("上次播放"), value: track.statistics.lastPlayedAt?.formatted(date: .abbreviated, time: .shortened) ?? L("尚未播放"), symbol: "clock.arrow.circlepath")
+            ])
+        ])
     }
 
     @objc private func toggleFavorite() {
@@ -380,11 +444,19 @@ public final class LibraryTrackDetailViewController: UIViewController {
 
         let editor = LibraryTrackMetadataEditorViewController(
             track: track,
-            library: library
+            library: library,
+            artworkServing: artworkServing
         ) { [weak self] updatedTrack in
             guard let self else { return }
             self.track = updatedTrack
             self.renderLoaded()
+            self.loadTask?.cancel()
+            self.loadTask = Task { @MainActor [weak self] in
+                guard let self else { return }
+                await self.loadRelationshipNames(for: updatedTrack)
+                guard !Task.isCancelled else { return }
+                self.renderLoaded()
+            }
         }
         let navigationController = UINavigationController(rootViewController: editor)
         navigationController.modalPresentationStyle = .pageSheet

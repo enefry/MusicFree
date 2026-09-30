@@ -10,7 +10,8 @@ import UIKit
 @MainActor
 public final class LibraryAlbumMetadataEditorViewController: UIViewController,
     PHPickerViewControllerDelegate,
-    UITextFieldDelegate
+    UITextFieldDelegate,
+    UIGestureRecognizerDelegate
 {
     private let metadataEnrichment: (any MetadataEnrichmentServing)?
     private let artworkServing: (any ArtworkServing)?
@@ -22,6 +23,18 @@ public final class LibraryAlbumMetadataEditorViewController: UIViewController,
     private let titleField = UITextField()
     private let artistField = UITextField()
     private let yearField = UITextField()
+    private let additionalArtistField = LibraryMetadataForm.field(nil, identifier: "library.albumEditor.additionalArtists")
+    private let genreField = LibraryMetadataForm.field(nil, identifier: "library.albumEditor.genres")
+    private let discCountField = LibraryMetadataForm.field(nil, identifier: "library.albumEditor.discCount", numeric: true)
+    private let formatField = LibraryMetadataForm.field(nil, identifier: "library.albumEditor.format")
+    private let recordLabelField = LibraryMetadataForm.field(nil, identifier: "library.albumEditor.recordLabel")
+    private let copyrightField = LibraryMetadataForm.field(nil, identifier: "library.albumEditor.copyright")
+    private let summaryView = LibraryMetadataForm.textView(nil, identifier: "library.albumEditor.summary")
+    private let albumTypeButton = UIButton(type: .system)
+    private var selectedAlbumType: AlbumType?
+    private lazy var releaseDateControl = LibraryMetadataDateControl(
+        date: album.details?.releaseDate, title: L("发行日期"), identifier: "library.albumEditor.releaseDate"
+    )
     private let artworkPreview = MusicFreeUIKitArtworkView(
         accessibilityLabel: L("专辑封面"),
         placeholderSystemImage: "music.note"
@@ -33,6 +46,8 @@ public final class LibraryAlbumMetadataEditorViewController: UIViewController,
     private let loadingView = MusicFreeUIKitLoadingStateView(label: L("加载专辑艺人信息"))
     private var originalArtistNames: [String]?
     private var artworkEdit: ArtworkEdit = .keep
+    private var artworkVersion = UUID()
+    private var isLoadingArtwork = false
     private var isRelatedNamesLoaded = false
     private var relatedNamesLoadFailed = false
     private var isSaving = false
@@ -55,6 +70,7 @@ public final class LibraryAlbumMetadataEditorViewController: UIViewController,
         self.metadataEnrichment = metadataEnrichment
         self.artworkServing = artworkServing
         self.album = album
+        self.selectedAlbumType = album.albumType
         self.library = library
         self.onSaved = onSaved
         super.init(nibName: nil, bundle: nil)
@@ -133,6 +149,19 @@ public final class LibraryAlbumMetadataEditorViewController: UIViewController,
             $0.delegate = self
             $0.inputAccessoryView = makeKeyboardToolbar()
         }
+        additionalArtistField.text = album.details?.additionalArtists.joined(separator: "、")
+        genreField.text = album.details?.genres.joined(separator: "、")
+        discCountField.text = album.details?.discCount.map(String.init)
+        formatField.text = album.details?.format
+        recordLabelField.text = album.details?.recordLabel
+        copyrightField.text = album.details?.copyright
+        summaryView.text = album.details?.summary
+        [additionalArtistField, genreField, discCountField, formatField, recordLabelField, copyrightField].forEach {
+            $0.delegate = self
+            $0.inputAccessoryView = makeKeyboardToolbar()
+        }
+        summaryView.inputAccessoryView = makeKeyboardToolbar()
+        configureAlbumTypeMenu()
 
         artworkPreview.translatesAutoresizingMaskIntoConstraints = false
         artworkPreview.accessibilityIdentifier = "library.albumEditor.coverPreview"
@@ -157,13 +186,26 @@ public final class LibraryAlbumMetadataEditorViewController: UIViewController,
             title: L("基本信息"),
             rows: [
                 makeFieldRow(label: L("专辑名称"), field: titleField),
-                makeFieldRow(label: L("专辑艺人"), field: artistField)
+                makeFieldRow(label: L("专辑艺人"), field: artistField),
+                makeFieldRow(label: L("其他艺人"), field: additionalArtistField)
             ]
         ))
         contentStack.addArrangedSubview(makeFormSection(
             title: L("发行信息"),
-            rows: [makeFieldRow(label: L("年份"), field: yearField)]
+            rows: [
+                makeFieldRow(label: L("年份"), field: yearField),
+                releaseDateControl,
+                makeFieldRow(label: L("流派"), field: genreField),
+                makeFieldRow(label: L("碟片数量"), field: discCountField),
+                makeFieldRow(label: L("格式"), field: formatField),
+                LibraryMetadataForm.row(L("专辑类型"), control: albumTypeButton)
+            ]
         ))
+        contentStack.addArrangedSubview(makeFormSection(title: L("简介"), content: summaryView))
+        contentStack.addArrangedSubview(makeFormSection(title: L("版权信息"), rows: [
+            makeFieldRow(label: L("唱片公司"), field: recordLabelField),
+            makeFieldRow(label: L("版权"), field: copyrightField)
+        ]))
         contentStack.addArrangedSubview(makeFormSection(
             title: L("封面"),
             content: makeArtworkContent()
@@ -229,7 +271,12 @@ public final class LibraryAlbumMetadataEditorViewController: UIViewController,
             action: #selector(dismissKeyboard)
         )
         dismissKeyboardTap.cancelsTouchesInView = false
+        dismissKeyboardTap.delegate = self
         view.addGestureRecognizer(dismissKeyboardTap)
+    }
+
+    public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        LibraryMetadataForm.shouldDismissKeyboard(for: touch)
     }
 
     private func makeFormSection(title: String, rows: [UIView]) -> UIView {
@@ -387,6 +434,14 @@ public final class LibraryAlbumMetadataEditorViewController: UIViewController,
             }
             originalArtistNames = names
             artistField.text = TrackMetadataEditorRelationshipNames.displayNames(names)
+            if album.details == nil {
+                let tracks = try await loadAllAlbumTracks()
+                let ids = Set(tracks.flatMap(\.genreIDs))
+                let genres = try await LibraryGenreNameLoader.load(genreIDs: ids, sourceID: .local, from: library)
+                guard genres.count == ids.count else { throw RelatedNamesLoadError.missingRelationship }
+                genreField.text = Array(Set(genres.values)).sorted().joined(separator: "、")
+            }
+            try Task.checkCancellation()
             isRelatedNamesLoaded = true
             loadingView.isLoading = false
             updateSaveAvailability()
@@ -442,7 +497,30 @@ public final class LibraryAlbumMetadataEditorViewController: UIViewController,
             && !relatedNamesLoadFailed
             && !isSaving
             && !isRefreshing
+            && !isLoadingArtwork
         refreshButton.isEnabled = !isSaving && !isRefreshing
+        navigationItem.leftBarButtonItem?.isEnabled = !isSaving && !isRefreshing
+        isModalInPresentation = isSaving || isRefreshing
+        contentStack.isUserInteractionEnabled = !isSaving && !isRefreshing
+    }
+
+    private func configureAlbumTypeMenu() {
+        let values: [(AlbumType, String)] = [
+            (.unknown("unknown"), L("未知")), (.album, L("专辑")), (.single, L("单曲")),
+            (.extendedPlay, "EP"), (.compilation, L("合辑")),
+            (.soundtrack, L("原声带")), (.live, L("现场"))
+        ]
+        let title = values.first { $0.0 == selectedAlbumType }?.1 ?? selectedAlbumType?.code ?? L("未知")
+        albumTypeButton.setTitle(title, for: .normal)
+        albumTypeButton.contentHorizontalAlignment = .trailing
+        albumTypeButton.accessibilityIdentifier = "library.albumEditor.albumType"
+        albumTypeButton.showsMenuAsPrimaryAction = true
+        albumTypeButton.menu = UIMenu(children: values.map { type, title in
+            UIAction(title: title, state: (selectedAlbumType ?? .unknown("unknown")) == type ? .on : .off) { [weak self] _ in
+                self?.selectedAlbumType = type
+                self?.configureAlbumTypeMenu()
+            }
+        })
     }
 
     @objc private func pickArtwork() {
@@ -459,35 +537,55 @@ public final class LibraryAlbumMetadataEditorViewController: UIViewController,
         guard let provider = results.first?.itemProvider,
               provider.canLoadObject(ofClass: UIImage.self)
         else { return }
+        artworkVersion = UUID()
+        let version = artworkVersion
+        artworkLoadTask?.cancel()
+        isLoadingArtwork = true
+        artworkPreview.isLoading = true
+        artworkStatusLabel.text = L("正在载入新封面")
+        updateSaveAvailability()
         provider.loadDataRepresentation(forTypeIdentifier: "public.image") { [weak self] data, _ in
-            guard let data, !data.isEmpty else { return }
             Task { @MainActor [weak self] in
-                guard let self else { return }
-                artworkEdit = .replace(data)
-                artworkPreview.isLoading = true
-                artworkStatusLabel.text = L("正在载入新封面")
-                do {
-                    artworkPreview.image = try await ArtworkImageDecoding.image(
-                        from: .inMemory(data),
-                        maximumPixelDimension: 1_024
-                    )
-                    artworkPreview.isLoading = false
-                    artworkStatusLabel.text = L("已选择新封面")
-                } catch is CancellationError {
-                    return
-                } catch {
-                    artworkPreview.isLoading = false
-                    artworkStatusLabel.text = L("新封面无法读取")
+                guard let self, artworkVersion == version else { return }
+                artworkLoadTask = Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    defer {
+                        if artworkVersion == version {
+                            isLoadingArtwork = false
+                            artworkPreview.isLoading = false
+                            updateSaveAvailability()
+                        }
+                    }
+                    guard let data, !data.isEmpty, data.count <= ArtworkDataLimits.maximumByteCount else {
+                        artworkStatusLabel.text = L("新封面无法读取")
+                        return
+                    }
+                    do {
+                        let image = try await ArtworkImageDecoding.image(
+                            from: .inMemory(data), maximumPixelDimension: 1_024
+                        )
+                        guard !Task.isCancelled, artworkVersion == version else { return }
+                        artworkEdit = .replace(data)
+                        artworkPreview.image = image
+                        artworkStatusLabel.text = L("已选择新封面")
+                    } catch {
+                        guard !Task.isCancelled, artworkVersion == version else { return }
+                        artworkStatusLabel.text = L("新封面无法读取")
+                    }
                 }
             }
         }
     }
 
     @objc private func removeArtwork() {
+        artworkVersion = UUID()
+        artworkLoadTask?.cancel()
+        isLoadingArtwork = false
         artworkEdit = .remove
         artworkPreview.image = nil
         artworkPreview.isLoading = false
         artworkStatusLabel.text = L("保存后删除当前封面")
+        updateSaveAvailability()
     }
 
     @objc private func refreshSourceMetadata() {
@@ -596,7 +694,7 @@ public final class LibraryAlbumMetadataEditorViewController: UIViewController,
     }
 
     @objc private func save() {
-        guard isRelatedNamesLoaded, !relatedNamesLoadFailed, !isSaving, !isRefreshing else { return }
+        guard isRelatedNamesLoaded, !relatedNamesLoadFailed, !isSaving, !isRefreshing, !isLoadingArtwork else { return }
         let normalizedTitle = titleField.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !normalizedTitle.isEmpty else {
             presentMessage(title: L("无法保存专辑"), message: L("专辑名称不能为空。"))
@@ -607,6 +705,15 @@ public final class LibraryAlbumMetadataEditorViewController: UIViewController,
             presentMessage(title: L("无法保存专辑"), message: L("年份必须是有效数字。"))
             return
         }
+        let discCountText = discCountField.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard discCountText.isEmpty || (Int(discCountText).map { $0 > 0 } == true) else {
+            presentMessage(title: L("无法保存专辑"), message: L("碟片数量必须是正整数。"))
+            return
+        }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let releaseYear = releaseDateControl.date.map { calendar.component(.year, from: $0) }
+            ?? (yearText.isEmpty ? nil : Int(yearText))
         dismissKeyboard()
         let update = AlbumMetadataUpdate(
             albumID: album.id,
@@ -615,8 +722,17 @@ public final class LibraryAlbumMetadataEditorViewController: UIViewController,
                 originalNames: originalArtistNames,
                 currentValue: artistField.text ?? ""
             ),
-            releaseYear: yearText.isEmpty ? nil : Int(yearText),
-            artwork: artworkEdit
+            releaseYear: releaseYear,
+            artwork: artworkEdit,
+            albumType: selectedAlbumType,
+            details: AlbumDetailMetadata(
+                summary: summaryView.text,
+                additionalArtists: LibraryMetadataForm.names(additionalArtistField.text),
+                releaseDate: releaseDateControl.date,
+                genres: LibraryMetadataForm.names(genreField.text),
+                discCount: Int(discCountText), format: formatField.text,
+                recordLabel: recordLabelField.text, copyright: copyrightField.text
+            )
         )
         isSaving = true
         updateSaveAvailability()

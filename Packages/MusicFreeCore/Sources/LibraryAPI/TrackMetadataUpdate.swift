@@ -29,6 +29,8 @@ public struct TrackMetadataUpdate: Sendable {
     public let comment: String?
     public let lyrics: TrackLyrics?
     public let artwork: ArtworkEdit
+    /// Nil preserves supplemental metadata for callers using the original contract.
+    public let details: TrackDetailMetadata?
 
     public init(
         itemID: MediaItemID,
@@ -45,7 +47,8 @@ public struct TrackMetadataUpdate: Sendable {
         year: Int? = nil,
         comment: String? = nil,
         lyrics: TrackLyrics? = nil,
-        artwork: ArtworkEdit = .keep
+        artwork: ArtworkEdit = .keep,
+        details: TrackDetailMetadata? = nil
     ) {
         self.itemID = itemID
         self.title = MetadataTextRepair.repair(title)
@@ -63,6 +66,7 @@ public struct TrackMetadataUpdate: Sendable {
         self.comment = Self.normalized(comment)
         self.lyrics = lyrics
         self.artwork = artwork
+        self.details = details
     }
 
     private static func normalized(_ value: String?) -> String? {

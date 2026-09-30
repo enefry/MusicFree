@@ -4,6 +4,7 @@ import MusicDomain
 /// Repository contract for paged library reads and atomic library writes.
 public protocol LibraryRepository: Sendable {
     func track(id: MediaItemID) async throws -> Track?
+    func trackDateAdded(id: MediaItemID) async throws -> Date?
     func album(id: AlbumID) async throws -> Album?
     func artist(id: ArtistID) async throws -> Artist?
     func genre(id: GenreID) async throws -> Genre?
@@ -76,6 +77,8 @@ public protocol LibraryRepository: Sendable {
 }
 
 public extension LibraryRepository {
+    func trackDateAdded(id: MediaItemID) async throws -> Date? { nil }
+
     func repairMetadata() async throws -> LibraryMetadataRepairResult {
         LibraryMetadataRepairResult()
     }

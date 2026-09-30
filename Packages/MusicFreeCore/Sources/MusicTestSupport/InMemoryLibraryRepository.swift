@@ -417,7 +417,8 @@ public actor InMemoryLibraryRepository: LibraryRepository, PlaybackHistoryReposi
             switch mutation {
             case .upsert(let upsert):
                 switch upsert {
-                case .track(let value):
+                case .track(let incoming):
+                    let value = incoming.preservingDetails(from: nextTracks[incoming.id])
                     nextTracks[value.id] = value
                     if let artwork = value.artwork {
                         nextArtwork[artwork.id] = artwork
@@ -452,7 +453,8 @@ public actor InMemoryLibraryRepository: LibraryRepository, PlaybackHistoryReposi
                     }
                     trackIDs.insert(value.id)
                     categories.insert(.tracks)
-                case .album(let value):
+                case .album(let incoming):
+                    let value = incoming.preservingDetails(from: nextAlbums[incoming.id])
                     nextAlbums[value.id] = value
                     if let artwork = value.artwork {
                         nextArtwork[artwork.id] = artwork
@@ -463,7 +465,8 @@ public actor InMemoryLibraryRepository: LibraryRepository, PlaybackHistoryReposi
                     }
                     albumIDs.insert(value.id)
                     categories.insert(.albums)
-                case .artist(let value):
+                case .artist(let incoming):
+                    let value = incoming.preservingDetails(from: nextArtists[incoming.id])
                     nextArtists[value.id] = value
                     if let artwork = value.artwork {
                         nextArtwork[artwork.id] = artwork
@@ -1250,7 +1253,8 @@ public actor InMemoryLibraryRepository: LibraryRepository, PlaybackHistoryReposi
             lyrics: track.lyrics,
             artwork: track.artwork,
             isFavorite: track.isFavorite,
-            statistics: track.statistics
+            statistics: track.statistics,
+            details: track.details
         )
     }
 
@@ -1278,7 +1282,8 @@ public actor InMemoryLibraryRepository: LibraryRepository, PlaybackHistoryReposi
             lyrics: track.lyrics,
             artwork: track.artwork,
             isFavorite: track.isFavorite,
-            statistics: track.statistics
+            statistics: track.statistics,
+            details: track.details
         )
     }
 
@@ -1306,7 +1311,8 @@ public actor InMemoryLibraryRepository: LibraryRepository, PlaybackHistoryReposi
             lyrics: track.lyrics,
             artwork: track.artwork,
             isFavorite: track.isFavorite,
-            statistics: track.statistics
+            statistics: track.statistics,
+            details: track.details
         )
     }
 
@@ -1334,7 +1340,8 @@ public actor InMemoryLibraryRepository: LibraryRepository, PlaybackHistoryReposi
             lyrics: track.lyrics,
             artwork: artwork,
             isFavorite: track.isFavorite,
-            statistics: track.statistics
+            statistics: track.statistics,
+            details: track.details
         )
     }
 
@@ -1362,7 +1369,8 @@ public actor InMemoryLibraryRepository: LibraryRepository, PlaybackHistoryReposi
             lyrics: track.lyrics,
             artwork: track.artwork,
             isFavorite: track.isFavorite,
-            statistics: statistics
+            statistics: statistics,
+            details: track.details
         )
     }
 

@@ -19,6 +19,7 @@ public final class LibraryArtistDetailViewController: UIViewController {
         case header
         case albums
         case noAlbumTracks
+        case information
         case status
     }
 
@@ -26,6 +27,7 @@ public final class LibraryArtistDetailViewController: UIViewController {
         case header
         case album(AlbumID)
         case noAlbumTrack(LibraryTrackRowIdentity)
+        case information
         case status(String)
     }
 
@@ -229,6 +231,10 @@ public final class LibraryArtistDetailViewController: UIViewController {
                     preferredElementSize: .large,
                     children: [share]
                 ),
+                UIMenu(title: "", options: [.displayInline], children: [UIAction(
+                    title: L("编辑艺人"), image: UIImage(systemName: "pencil"),
+                    attributes: artist == nil || busy ? [.disabled] : []
+                ) { [weak self] _ in self?.editArtist() }]),
                 displayMenu,
                 sortMenu,
                 UIMenu(title: "", options: [.displayInline], children: queueActions),
@@ -272,6 +278,7 @@ public final class LibraryArtistDetailViewController: UIViewController {
             LibraryArtistDetailStatusCell.self,
             forCellWithReuseIdentifier: LibraryArtistDetailStatusCell.reuseIdentifier
         )
+        collectionView.register(LibraryCollectionInformationCell.self, forCellWithReuseIdentifier: "artist.information")
         view.addSubview(collectionView)
         NSLayoutConstraint.activate([
             collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -349,6 +356,11 @@ public final class LibraryArtistDetailViewController: UIViewController {
                     : "library.artist.track.play.\(track.id.externalID).\(rowID.occurrence)"
                 return trackCell
 
+            case .information:
+                let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "artist.information", for: indexPath)
+                (cell as? LibraryCollectionInformationCell)?.informationView.configure(self.informationSections())
+                return cell
+
             case let .status(status):
                 let cell = collectionView.dequeueReusableCell(
                     withReuseIdentifier: LibraryArtistDetailStatusCell.reuseIdentifier,
@@ -410,12 +422,16 @@ public final class LibraryArtistDetailViewController: UIViewController {
                 )
             }
         }
+        if artist != nil, loadState == .loaded || loadState == .empty {
+            snapshot.appendSections([.information])
+            snapshot.appendItems([.information], toSection: .information)
+        }
         let previousSnapshot = dataSource.snapshot()
         let structureChanged = previousSnapshot.sectionIdentifiers != snapshot.sectionIdentifiers
             || previousSnapshot.itemIdentifiers != snapshot.itemIdentifiers
         let existingItems = Set(previousSnapshot.itemIdentifiers)
         let itemsToReconfigure = snapshot.itemIdentifiers.filter {
-            items.contains($0) && existingItems.contains($0)
+            (items.contains($0) || ($0 == .information && items.contains(.header))) && existingItems.contains($0)
         }
         guard structureChanged || !itemsToReconfigure.isEmpty else { return }
         if #available(iOS 15.0, *), !itemsToReconfigure.isEmpty {
@@ -607,11 +623,7 @@ public final class LibraryArtistDetailViewController: UIViewController {
     }
 
     private func findArtist(_ id: ArtistID) async throws -> Artist? {
-        let page = try await library.browseArtists(
-            matching: ArtistQuery(sourceID: .local),
-            page: try LibraryPageRequest(limit: LibraryPageRequest.maximumLimit)
-        )
-        return page.elements.first { $0.id == id }
+        try await library.artist(id: id)
     }
 
     private func load() async {
@@ -625,16 +637,12 @@ public final class LibraryArtistDetailViewController: UIViewController {
         renderSnapshot()
 
         do {
-            let request = try LibraryPageRequest(limit: LibraryPageRequest.maximumLimit)
-            async let artistsPage = library.browseArtists(
-                matching: ArtistQuery(sourceID: .local),
-                page: request
-            )
+            async let currentArtist = library.artist(id: artistID)
             async let allAlbums = loadAllAlbums()
             async let allTracks = loadAllTracks()
-            let (artistPage, nextAlbums, nextTracks) = try await (artistsPage, allAlbums, allTracks)
+            let (loadedArtist, nextAlbums, nextTracks) = try await (currentArtist, allAlbums, allTracks)
             try Task.checkCancellation()
-            artist = artistPage.elements.first(where: { $0.id == artistID })
+            artist = loadedArtist
             tracks = LibraryArtistDetailContent.tracks(
                 for: artistID,
                 from: nextTracks,
@@ -1086,13 +1094,44 @@ public final class LibraryArtistDetailViewController: UIViewController {
         present(alert, animated: true)
     }
 
+    private func editArtist() {
+        guard let artist, presentedViewController == nil else { return }
+        let editor = LibraryArtistMetadataEditorViewController(
+            artist: artist, library: library, artworkServing: artworkServing
+        ) { [weak self] updated in
+            guard let self else { return }
+            self.artist = updated
+            self.title = updated.name
+            self.renderSnapshot(reconfigure: [.header])
+        }
+        let controller = UINavigationController(rootViewController: editor)
+        controller.modalPresentationStyle = .pageSheet
+        controller.sheetPresentationController?.detents = [.large()]
+        controller.sheetPresentationController?.prefersGrabberVisible = true
+        present(controller, animated: true)
+    }
+
+    private func informationSections() -> [LibraryDetailInfoSection] {
+        guard let artist else { return [] }
+        var sections: [LibraryDetailInfoSection] = [.init(title: L("艺人信息"), rows: [
+            .init(title: L("来自"), value: artist.details?.origin ?? L("未知"), symbol: "globe"),
+            .init(title: L("出生日期"), value: artist.details?.birthDate.map { LibraryMetadataForm.dateText($0) } ?? L("未知"), symbol: "calendar"),
+            .init(title: L("歌曲"), value: String(tracks.count), symbol: "music.note"),
+            .init(title: L("专辑"), value: String(albumGroups.count), symbol: "square.stack")
+        ])]
+        if let biography = artist.details?.biography {
+            sections.append(.init(title: L("简介"), rows: [.init(title: L("艺人"), value: biography, symbol: "text.alignleft")]))
+        }
+        return sections
+    }
+
     private func makeLayout() -> UICollectionViewLayout {
         UICollectionViewCompositionalLayout { [weak self] sectionIndex, environment in
             guard let self,
                   let section = self.dataSource?.snapshot().sectionIdentifiers[safe: sectionIndex]
             else { return nil }
             switch section {
-            case .header:
+            case .header, .information:
                 let size = NSCollectionLayoutSize(
                     widthDimension: .fractionalWidth(1),
                     heightDimension: .estimated(280)
@@ -1197,7 +1236,7 @@ extension LibraryArtistDetailViewController: UICollectionViewDelegate {
             if let track = noAlbumTrackByRowID[rowID] {
                 onPlayTrack?(track.id)
             }
-        case .header, .status:
+        case .header, .information, .status:
             break
         }
     }
@@ -1222,7 +1261,7 @@ extension LibraryArtistDetailViewController: UICollectionViewDelegate {
                 identifier: NSString(string: "track-\(track.id.externalID)-\(rowID.occurrence)"),
                 previewProvider: nil
             ) { [weak self] _ in self?.makeTrackContextMenu(for: track) }
-        case .header, .status:
+        case .header, .information, .status:
             return nil
         }
         configuration.preferredMenuElementOrder = .fixed

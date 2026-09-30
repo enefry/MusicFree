@@ -1,6 +1,50 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "未知" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Unknown"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"未知"}}}},
+    "无警告" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Clean"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"无警告"}}}},
+    "成人内容" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Explicit"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"成人内容"}}}},
+    "主要艺人" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Primary Artist"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"主要艺人"}}}},
+    "其他艺人" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Additional Artists"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"其他艺人"}}}},
+    "无" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"None"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"无"}}}},
+    "作曲者" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Composer"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"作曲者"}}}},
+    "内容分级" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Content Rating"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"内容分级"}}}},
+    "时长" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Duration"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"时长"}}}},
+    "格式" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Format"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"格式"}}}},
+    "大小" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Size"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"大小"}}}},
+    "比特率" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Bit Rate"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"比特率"}}}},
+    "文件" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"File"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"文件"}}}},
+    "存储位置" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Storage Location"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"存储位置"}}}},
+    "本地资料库" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Local Library"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"本地资料库"}}}},
+    "远端资料库" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Remote Library"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"远端资料库"}}}},
+    "文件名" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"File Name"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"文件名"}}}},
+    "歌曲信息" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Song Information"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"歌曲信息"}}}},
+    "文件信息" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"File Information"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"文件信息"}}}},
+    "播放记录" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Playback History"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"播放记录"}}}},
+    "播放次数" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Play Count"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"播放次数"}}}},
+    "上次播放" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Last Played"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"上次播放"}}}},
+    "尚未播放" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Never Played"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"尚未播放"}}}},
+    "无法读取封面" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Unable to Read Artwork"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"无法读取封面"}}}},
+    "图片为空、过大或无法读取。" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"The image is empty, too large, or unreadable."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"图片为空、过大或无法读取。"}}}},
+    "发行日期" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Release Date"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"发行日期"}}}},
+    "碟片数量" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Disc Count"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"碟片数量"}}}},
+    "专辑类型" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Album Type"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"专辑类型"}}}},
+    "简介" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"About"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"简介"}}}},
+    "版权信息" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Copyright Information"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"版权信息"}}}},
+    "唱片公司" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Record Label"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"唱片公司"}}}},
+    "版权" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Copyright"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"版权"}}}},
+    "合辑" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Compilation"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"合辑"}}}},
+    "碟片数量必须是正整数。" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Disc count must be a positive integer."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"碟片数量必须是正整数。"}}}},
+    "出生日期" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Date of Birth"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"出生日期"}}}},
+    "艺人名称" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Artist Name"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"艺人名称"}}}},
+    "国家 / 城市" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Country / City"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"国家 / 城市"}}}},
+    "艺人名称不能为空。" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Artist name cannot be empty."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"艺人名称不能为空。"}}}},
+    "无法保存艺人" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Unable to Save Artist"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"无法保存艺人"}}}},
+    "艺人信息" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Artist Information"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"艺人信息"}}}},
+    "来自" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Origin"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"来自"}}}},
+    "专辑信息" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Album Information"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"专辑信息"}}}},
+    "总曲目数" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Total Tracks"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"总曲目数"}}}},
+    "总时长" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Total Duration"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"总时长"}}}},
     "恢复任务" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Resume Task"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"恢复任务"}}}},
     "%d 个任务进行中 · %d 个文件正在下载" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Active tasks: %d · Downloading files: %d"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"%d 个任务进行中 · %d 个文件正在下载"}}}},
     "任务 · %d" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Tasks · %d"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"任务 · %d"}}}},
@@ -35715,7 +35759,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Edit songs"
+            "value" : "Edit Song"
           }
         },
         "es" : {
@@ -35797,7 +35841,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Edit artists"
+            "value" : "Edit Artist"
           }
         },
         "es" : {

@@ -14,6 +14,10 @@ public final class SwiftDataLibraryRepository: LibraryRepository, Sendable {
         try await store.track(id: id)
     }
 
+    public func trackDateAdded(id: MediaItemID) async throws -> Date? {
+        try await store.trackDateAdded(id: id)
+    }
+
     public func album(id: AlbumID) async throws -> Album? {
         try await store.album(id: id)
     }

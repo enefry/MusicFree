@@ -14,13 +14,18 @@ public struct AlbumMetadataUpdate: Sendable {
     public let artistNames: [String]?
     public let releaseYear: Int?
     public let artwork: ArtworkEdit
+    public let albumType: AlbumType?
+    /// Nil preserves supplemental metadata for existing callers.
+    public let details: AlbumDetailMetadata?
 
     public init(
         albumID: AlbumID,
         title: String,
         artistNames: [String]? = nil,
         releaseYear: Int? = nil,
-        artwork: ArtworkEdit = .keep
+        artwork: ArtworkEdit = .keep,
+        albumType: AlbumType? = nil,
+        details: AlbumDetailMetadata? = nil
     ) {
         self.albumID = albumID
         self.title = MetadataTextRepair.repair(title)
@@ -28,6 +33,8 @@ public struct AlbumMetadataUpdate: Sendable {
         self.artistNames = Self.normalizedList(artistNames)
         self.releaseYear = releaseYear
         self.artwork = artwork
+        self.albumType = albumType
+        self.details = details
     }
 
     private static func normalizedList(_ values: [String]?) -> [String]? {

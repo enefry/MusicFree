@@ -98,6 +98,8 @@ public struct EffectivePlaybackSettings: Codable, Equatable, Hashable, Sendable 
 
 public protocol LibraryServing: Sendable {
     func track(id: MediaItemID) async throws -> Track?
+    func trackDateAdded(id: MediaItemID) async throws -> Date?
+    func artist(id: ArtistID) async throws -> Artist?
     func browseTracks(
         matching query: TrackQuery,
         page: LibraryPageRequest
@@ -136,6 +138,7 @@ public protocol LibraryServing: Sendable {
     func repairMetadata() async throws -> LibraryMetadataRepairResult
     func updateMetadata(_ update: TrackMetadataUpdate) async throws -> Track
     func updateAlbumMetadata(_ update: AlbumMetadataUpdate) async throws -> Album
+    func updateArtistMetadata(_ update: ArtistMetadataUpdate) async throws -> Artist
     func supplementMetadata(_ supplement: TrackMetadataSupplement) async throws -> Track
     func delete(_ itemIDs: Set<MediaItemID>) async throws -> LibraryDeletionResult
     func recoverPendingRemovals() async throws -> LibraryRecoveryResult
@@ -253,6 +256,23 @@ public extension LyricsServing {
 }
 
 public extension LibraryServing {
+    func trackDateAdded(id: MediaItemID) async throws -> Date? { nil }
+
+    func artist(id: ArtistID) async throws -> Artist? {
+        var request = try LibraryPageRequest(limit: LibraryPageRequest.maximumLimit)
+        while true {
+            try Task.checkCancellation()
+            let page = try await browseArtists(matching: ArtistQuery(), page: request)
+            if let artist = page.elements.first(where: { $0.id == id }) { return artist }
+            guard let next = try page.nextPage(limit: request.limit) else { return nil }
+            request = next
+        }
+    }
+
+    func updateArtistMetadata(_ update: ArtistMetadataUpdate) async throws -> Artist {
+        throw AppServiceError.missingDependency("libraryArtistMetadataEditor")
+    }
+
     func setAlbumFavorite(_: Bool, for _: AlbumID) async throws -> Album {
         throw AppServiceError.missingDependency("albumFavorite")
     }

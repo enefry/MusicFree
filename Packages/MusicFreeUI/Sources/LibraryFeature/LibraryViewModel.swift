@@ -1448,7 +1448,8 @@ public final class LibraryViewModel: ObservableObject {
             lyrics: track.lyrics,
             artwork: track.artwork,
             isFavorite: isFavorite,
-            statistics: track.statistics
+            statistics: track.statistics,
+            details: track.details
         )
     }
 

@@ -105,7 +105,8 @@ enum LibraryArtistDetailContent {
             releaseYear: lhs.releaseYear ?? rhs.releaseYear,
             trackCount: [lhs.trackCount, rhs.trackCount].compactMap { $0 }.max(),
             albumType: lhs.albumType ?? rhs.albumType,
-            isFavorite: lhs.isFavorite || rhs.isFavorite
+            isFavorite: lhs.isFavorite || rhs.isFavorite,
+            details: lhs.details ?? rhs.details
         )
     }
 }

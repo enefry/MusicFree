@@ -309,6 +309,15 @@ public actor LibraryPersistenceStore {
         return try LibraryRecordMapper.track(from: record)
     }
 
+    internal func trackDateAdded(id: MediaItemID) throws -> Date? {
+        try ensureOpen()
+        let storageKey = PersistenceKey.item(id)
+        let descriptor = FetchDescriptor<TrackRecord>(
+            predicate: #Predicate { $0.storageKey == storageKey }
+        )
+        return try fetchFirst(descriptor)?.dateAddedAt
+    }
+
     internal func album(id: AlbumID) throws -> Album? {
         try ensureOpen()
         let storageKey = id.rawValue
@@ -1453,7 +1462,8 @@ public actor LibraryPersistenceStore {
                     ?? group.dropFirst().compactMap { $0.value.releaseYear }.first,
                 trackCount: mergedTrackCount,
                 albumType: .compilation,
-                isFavorite: group.contains { $0.value.isFavorite }
+                isFavorite: group.contains { $0.value.isFavorite },
+                details: canonicalAlbum.details ?? group.compactMap { $0.value.details }.first
             )
             mergedAlbums[canonicalAlbum.id] = mergedAlbum
 
@@ -1717,7 +1727,8 @@ public actor LibraryPersistenceStore {
         for mutation in transaction.mutations {
             guard case .upsert(let upsert) = mutation else { continue }
             switch upsert {
-            case .track(let value):
+            case .track(let incoming):
+                let value = incoming.preservingDetails(from: before.tracks[incoming.id]?.value)
                 guard upsertKeys.insert("track:\(PersistenceKey.item(value.id))").inserted else {
                     throw LibraryError.constraint(.duplicateMutation)
                 }
@@ -1727,7 +1738,8 @@ public actor LibraryPersistenceStore {
                 )
                 trackIDs.insert(value.id)
                 categories.insert(.tracks)
-            case .album(let value):
+            case .album(let incoming):
+                let value = incoming.preservingDetails(from: before.albums[incoming.id]?.value)
                 guard upsertKeys.insert("album:\(value.id.rawValue)").inserted else {
                     throw LibraryError.constraint(.duplicateMutation)
                 }
@@ -1737,7 +1749,8 @@ public actor LibraryPersistenceStore {
                 )
                 albumIDs.insert(value.id)
                 categories.insert(.albums)
-            case .artist(let value):
+            case .artist(let incoming):
+                let value = incoming.preservingDetails(from: before.artists[incoming.id]?.value)
                 guard upsertKeys.insert("artist:\(value.id.rawValue)").inserted else {
                     throw LibraryError.constraint(.duplicateMutation)
                 }
@@ -3521,7 +3534,8 @@ public actor LibraryPersistenceStore {
             lyrics: value.lyrics,
             artwork: value.artwork,
             isFavorite: value.isFavorite,
-            statistics: value.statistics
+            statistics: value.statistics,
+            details: value.details
         )
     }
 
@@ -3549,7 +3563,8 @@ public actor LibraryPersistenceStore {
             lyrics: value.lyrics,
             artwork: value.artwork,
             isFavorite: value.isFavorite,
-            statistics: value.statistics
+            statistics: value.statistics,
+            details: value.details
         )
     }
 
@@ -3577,7 +3592,8 @@ public actor LibraryPersistenceStore {
             lyrics: value.lyrics,
             artwork: value.artwork,
             isFavorite: value.isFavorite,
-            statistics: value.statistics
+            statistics: value.statistics,
+            details: value.details
         )
     }
 
@@ -3605,7 +3621,8 @@ public actor LibraryPersistenceStore {
             lyrics: value.lyrics,
             artwork: artwork,
             isFavorite: value.isFavorite,
-            statistics: value.statistics
+            statistics: value.statistics,
+            details: value.details
         )
     }
 
@@ -3633,7 +3650,8 @@ public actor LibraryPersistenceStore {
             lyrics: value.lyrics,
             artwork: value.artwork,
             isFavorite: value.isFavorite,
-            statistics: statistics
+            statistics: statistics,
+            details: value.details
         )
     }
 

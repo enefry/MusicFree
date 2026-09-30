@@ -1,6 +1,7 @@
 import AppServices
 import DesignSystem
 import LibraryAPI
+import MediaSourceAPI
 import MusicDomain
 import PhotosUI
 import UIKit
@@ -14,6 +15,7 @@ public final class LibraryTrackMetadataEditorViewController: UIViewController,
 {
     private let track: Track
     private let library: any LibraryServing
+    private let artworkServing: (any ArtworkServing)?
     private let onSaved: (Track) -> Void
     private let scrollView = UIScrollView()
     private let contentStack = UIStackView()
@@ -25,9 +27,16 @@ public final class LibraryTrackMetadataEditorViewController: UIViewController,
     private let trackNumberField = UITextField()
     private let discNumberField = UITextField()
     private let yearField = UITextField()
+    private let composerField = UITextField()
+    private let additionalArtistField = UITextField()
+    private let ratingControl = UISegmentedControl(items: TrackContentRating.allCases.map { LibraryMetadataForm.ratingTitle($0) })
     private let commentView = UITextView()
     private let lyricsView = UITextView()
     private let artworkStatusLabel = UILabel()
+    private let artworkPreview = MusicFreeUIKitArtworkView()
+    private var artworkTask: Task<Void, Never>?
+    private var artworkVersion = UUID()
+    private var isLoadingArtwork = false
     private let loadingView = MusicFreeUIKitLoadingStateView(label: L("加载歌曲关系信息"))
     private var originalArtistNames: [String]?
     private var originalAlbumArtistNames: [String]?
@@ -42,10 +51,12 @@ public final class LibraryTrackMetadataEditorViewController: UIViewController,
     public init(
         track: Track,
         library: any LibraryServing,
+        artworkServing: (any ArtworkServing)? = nil,
         onSaved: @escaping (Track) -> Void
     ) {
         self.track = track
         self.library = library
+        self.artworkServing = artworkServing
         self.onSaved = onSaved
         super.init(nibName: nil, bundle: nil)
         modalPresentationStyle = .pageSheet
@@ -84,11 +95,13 @@ public final class LibraryTrackMetadataEditorViewController: UIViewController,
         super.viewDidDisappear(animated)
         loadTask?.cancel()
         saveTask?.cancel()
+        artworkTask?.cancel()
     }
 
     deinit {
         loadTask?.cancel()
         saveTask?.cancel()
+        artworkTask?.cancel()
     }
 
     private func configureContent() {
@@ -107,6 +120,15 @@ public final class LibraryTrackMetadataEditorViewController: UIViewController,
         configure(trackNumberField, placeholder: L("曲目号"), keyboard: .numberPad)
         configure(discNumberField, placeholder: L("碟片号"), keyboard: .numberPad)
         configure(yearField, placeholder: L("年份"), keyboard: .numberPad)
+        trackNumberField.text = track.trackNumber.map(String.init)
+        discNumberField.text = track.discNumber.map(String.init)
+        yearField.text = track.year.map(String.init)
+        configure(composerField, placeholder: L("作曲者"), value: track.details?.composers.joined(separator: "、"))
+        configure(additionalArtistField, placeholder: L("其他艺人"), value: track.details?.additionalArtists.joined(separator: "、"))
+        composerField.accessibilityIdentifier = "library.trackEditor.composers"
+        additionalArtistField.accessibilityIdentifier = "library.trackEditor.additionalArtists"
+        ratingControl.selectedSegmentIndex = TrackContentRating.allCases.firstIndex(of: track.details?.contentRating ?? .unknown) ?? 0
+        ratingControl.accessibilityIdentifier = "library.trackEditor.contentRating"
         titleField.accessibilityIdentifier = "library.trackEditor.title"
         artistField.accessibilityIdentifier = "library.trackEditor.artist"
         albumArtistField.accessibilityIdentifier = "library.trackEditor.albumArtist"
@@ -120,20 +142,24 @@ public final class LibraryTrackMetadataEditorViewController: UIViewController,
         commentView.text = track.comment ?? ""
         lyricsView.text = track.lyrics?.rawText ?? ""
 
-        contentStack.addArrangedSubview(sectionLabel(L("基本信息")))
-        [titleField, artistField, albumArtistField, albumField, genreField].forEach {
-            contentStack.addArrangedSubview($0)
-        }
-        contentStack.addArrangedSubview(sectionLabel(L("编号与年份")))
-        [trackNumberField, discNumberField, yearField].forEach {
-            contentStack.addArrangedSubview($0)
-        }
-        contentStack.addArrangedSubview(sectionLabel(L("评论")))
-        contentStack.addArrangedSubview(commentView)
-        contentStack.addArrangedSubview(sectionLabel(L("歌词")))
-        contentStack.addArrangedSubview(lyricsView)
-        contentStack.addArrangedSubview(sectionLabel(L("封面")))
-        contentStack.addArrangedSubview(makeArtworkActionRow())
+        contentStack.addArrangedSubview(LibraryMetadataForm.section(L("封面"), rows: [makeArtworkActionRow()]))
+        contentStack.addArrangedSubview(LibraryMetadataForm.section(L("基本信息"), rows: [
+            LibraryMetadataForm.row(L("标题"), control: titleField),
+            LibraryMetadataForm.row(L("主要艺人"), control: artistField),
+            LibraryMetadataForm.row(L("其他艺人"), control: additionalArtistField),
+            LibraryMetadataForm.row(L("作曲者"), control: composerField),
+            LibraryMetadataForm.row(L("专辑艺人"), control: albumArtistField),
+            LibraryMetadataForm.row(L("专辑"), control: albumField),
+            LibraryMetadataForm.row(L("流派"), control: genreField)
+        ]))
+        contentStack.addArrangedSubview(LibraryMetadataForm.section(L("编号与年份"), rows: [
+            LibraryMetadataForm.row(L("曲目号"), control: trackNumberField),
+            LibraryMetadataForm.row(L("碟片号"), control: discNumberField),
+            LibraryMetadataForm.row(L("年份"), control: yearField)
+        ]))
+        contentStack.addArrangedSubview(LibraryMetadataForm.section(L("内容分级"), rows: [ratingControl]))
+        contentStack.addArrangedSubview(LibraryMetadataForm.section(L("评论"), rows: [commentView]))
+        contentStack.addArrangedSubview(LibraryMetadataForm.section(L("歌词"), rows: [lyricsView]))
 
         view.addSubview(scrollView)
         scrollView.addSubview(contentStack)
@@ -141,7 +167,7 @@ public final class LibraryTrackMetadataEditorViewController: UIViewController,
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             scrollView.topAnchor.constraint(equalTo: view.topAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
             contentStack.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor, constant: MusicFreeSpacingTokens.contentInset),
             contentStack.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -MusicFreeSpacingTokens.contentInset),
             contentStack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: MusicFreeSpacingTokens.large),
@@ -168,12 +194,15 @@ public final class LibraryTrackMetadataEditorViewController: UIViewController,
         value: String? = nil,
         keyboard: UIKeyboardType = .default
     ) {
-        field.borderStyle = .roundedRect
-        field.placeholder = placeholder
+        field.borderStyle = .none
+        field.placeholder = L("未设置")
         field.text = value
         field.keyboardType = keyboard
         field.clearButtonMode = .whileEditing
         field.font = MusicFreeUIFontTokens.body
+        field.textAlignment = .right
+        field.accessibilityLabel = placeholder
+        field.textColor = MusicFreeUIColorTokens.foregroundPrimary
         field.heightAnchor.constraint(greaterThanOrEqualToConstant: MusicFreeLayoutMetrics.minimumHitTarget).isActive = true
     }
 
@@ -201,10 +230,40 @@ public final class LibraryTrackMetadataEditorViewController: UIViewController,
         removeButton.addTarget(self, action: #selector(removeArtwork), for: .touchUpInside)
         removeButton.accessibilityIdentifier = "library.trackEditor.coverRemove"
 
-        let stack = UIStackView(arrangedSubviews: [pickButton, removeButton, artworkStatusLabel])
+        artworkPreview.translatesAutoresizingMaskIntoConstraints = false
+        artworkPreview.accessibilityIdentifier = "library.trackEditor.coverPreview"
+        artworkPreview.placeholderTitle = track.title
+        let previewContainer = UIView()
+        previewContainer.addSubview(artworkPreview)
+        NSLayoutConstraint.activate([
+            artworkPreview.widthAnchor.constraint(equalToConstant: 160),
+            artworkPreview.heightAnchor.constraint(equalTo: artworkPreview.widthAnchor),
+            artworkPreview.topAnchor.constraint(equalTo: previewContainer.topAnchor),
+            artworkPreview.bottomAnchor.constraint(equalTo: previewContainer.bottomAnchor),
+            artworkPreview.centerXAnchor.constraint(equalTo: previewContainer.centerXAnchor)
+        ])
+        let stack = UIStackView(arrangedSubviews: [previewContainer, pickButton, removeButton, artworkStatusLabel])
         stack.axis = .vertical
-        stack.alignment = .leading
+        stack.alignment = .fill
         stack.spacing = MusicFreeSpacingTokens.small
+        stack.isLayoutMarginsRelativeArrangement = true
+        stack.directionalLayoutMargins = .init(top: 16, leading: 16, bottom: 16, trailing: 16)
+        artworkStatusLabel.numberOfLines = 0
+        artworkStatusLabel.font = MusicFreeUIFontTokens.caption
+        artworkStatusLabel.textColor = MusicFreeUIColorTokens.foregroundSecondary
+        if let artworkID = track.artworkID, let artworkServing {
+            artworkPreview.image = LibraryArtworkImagePipeline.shared.cachedImage(
+                artworkID: artworkID, sourceID: track.id.sourceID, maximumPixelDimension: 1_024
+            )
+            artworkTask = Task { @MainActor [weak self] in
+                let image = try? await LibraryArtworkImagePipeline.shared.image(
+                    artworkID: artworkID, sourceID: self?.track.id.sourceID ?? .local,
+                    maximumPixelDimension: 1_024, serving: artworkServing
+                )
+                guard let self, !Task.isCancelled else { return }
+                artworkPreview.image = image
+            }
+        }
         return stack
     }
 
@@ -262,7 +321,10 @@ public final class LibraryTrackMetadataEditorViewController: UIViewController,
     }
 
     private func updateSaveAvailability() {
-        navigationItem.rightBarButtonItem?.isEnabled = isRelatedNamesLoaded && !relatedNamesLoadFailed && !isSaving
+        navigationItem.rightBarButtonItem?.isEnabled = isRelatedNamesLoaded && !relatedNamesLoadFailed && !isSaving && !isLoadingArtwork
+        navigationItem.leftBarButtonItem?.isEnabled = !isSaving
+        isModalInPresentation = isSaving
+        contentStack.isUserInteractionEnabled = !isSaving
     }
 
     @objc private func pickArtwork() {
@@ -279,23 +341,49 @@ public final class LibraryTrackMetadataEditorViewController: UIViewController,
         guard let provider = results.first?.itemProvider,
               provider.canLoadObject(ofClass: UIImage.self)
         else { return }
+        isLoadingArtwork = true
+        artworkVersion = UUID()
+        let version = artworkVersion
+        updateSaveAvailability()
         provider.loadDataRepresentation(forTypeIdentifier: "public.image") { [weak self] data, _ in
-            guard let data, !data.isEmpty else { return }
             Task { @MainActor [weak self] in
-                guard let self else { return }
-                artworkEdit = .replace(data)
-                artworkStatusLabel.text = L("已选择新封面")
+                guard let self, artworkVersion == version else { return }
+                artworkTask?.cancel()
+                artworkTask = Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    defer {
+                        if artworkVersion == version { isLoadingArtwork = false; updateSaveAvailability() }
+                    }
+                    do {
+                        guard let data, !data.isEmpty, data.count <= ArtworkDataLimits.maximumByteCount else {
+                            throw TrackArtworkError.invalidImage
+                        }
+                        let image = try await ArtworkImageDecoding.image(from: .inMemory(data), maximumPixelDimension: 1_024)
+                        guard !Task.isCancelled, artworkVersion == version else { return }
+                        artworkEdit = .replace(data)
+                        artworkPreview.image = image
+                        artworkStatusLabel.text = L("已选择新封面")
+                    } catch {
+                        guard !Task.isCancelled, artworkVersion == version else { return }
+                        presentMessage(title: L("无法读取封面"), message: error.localizedDescription)
+                    }
+                }
             }
         }
     }
 
     @objc private func removeArtwork() {
+        artworkVersion = UUID()
+        artworkTask?.cancel()
+        isLoadingArtwork = false
         artworkEdit = .remove
+        artworkPreview.image = nil
         artworkStatusLabel.text = L("保存后移除当前封面")
+        updateSaveAvailability()
     }
 
     @objc private func save() {
-        guard isRelatedNamesLoaded, !relatedNamesLoadFailed, !isSaving else { return }
+        guard isRelatedNamesLoaded, !relatedNamesLoadFailed, !isSaving, !isLoadingArtwork else { return }
         let normalizedTitle = titleField.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !normalizedTitle.isEmpty else {
             presentMessage(title: L("无法保存歌曲"), message: L("标题不能为空。"))
@@ -330,7 +418,12 @@ public final class LibraryTrackMetadataEditorViewController: UIViewController,
             year: year,
             comment: commentView.text,
             lyrics: lyricsView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : TrackLyrics(rawText: lyricsView.text),
-            artwork: artworkEdit
+            artwork: artworkEdit,
+            details: TrackDetailMetadata(
+                composers: LibraryMetadataForm.names(composerField.text),
+                additionalArtists: LibraryMetadataForm.names(additionalArtistField.text),
+                contentRating: TrackContentRating.allCases[max(0, ratingControl.selectedSegmentIndex)]
+            )
         )
         isSaving = true
         updateSaveAvailability()
@@ -380,6 +473,11 @@ public final class LibraryTrackMetadataEditorViewController: UIViewController,
 
 private enum RelatedNamesLoadError: Error {
     case missingRelationship
+}
+
+private enum TrackArtworkError: LocalizedError {
+    case invalidImage
+    var errorDescription: String? { L("图片为空、过大或无法读取。") }
 }
 
 private extension UITextView {

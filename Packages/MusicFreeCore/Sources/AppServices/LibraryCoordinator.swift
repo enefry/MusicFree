@@ -97,6 +97,16 @@ internal actor LibraryCoordinator: LibraryServing {
         }
     }
 
+    func trackDateAdded(id: MediaItemID) async throws -> Date? {
+        guard let repository else { throw AppServiceError.missingDependency("libraryRepository") }
+        return try await repository.trackDateAdded(id: id)
+    }
+
+    func artist(id: ArtistID) async throws -> Artist? {
+        guard let repository else { throw AppServiceError.missingDependency("libraryRepository") }
+        return try await repository.artist(id: id)
+    }
+
     func browseTracks(
         matching query: TrackQuery,
         page: LibraryPageRequest
@@ -289,7 +299,8 @@ internal actor LibraryCoordinator: LibraryServing {
                 lyrics: current.lyrics,
                 artwork: current.artwork,
                 isFavorite: isFavorite,
-                statistics: current.statistics
+                statistics: current.statistics,
+                details: current.details
             )
             let itemKey = Self.stableKey(prefix: "favorite", itemID: itemID)
             let operationKey = UUID().uuidString.lowercased()
@@ -330,7 +341,8 @@ internal actor LibraryCoordinator: LibraryServing {
                 releaseYear: current.releaseYear,
                 trackCount: current.trackCount,
                 albumType: current.albumType,
-                isFavorite: isFavorite
+                isFavorite: isFavorite,
+                details: current.details
             )
             let transaction = try LibraryTransaction(
                 idempotencyKey: Self.stableKey(prefix: "album-favorite", albumID: albumID)
@@ -428,7 +440,8 @@ internal actor LibraryCoordinator: LibraryServing {
                 : artistNames.map(Self.artistID)
             var mutations: [LibraryMutation] = []
             for (artistID, artistName) in zip(artistIDs, artistNames) {
-                mutations.append(.upsert(.artist(Artist(id: artistID, name: artistName))))
+                let artist = try await repository.artist(id: artistID) ?? Artist(id: artistID, name: artistName)
+                mutations.append(.upsert(.artist(artist)))
             }
 
             var artwork = current.artwork
@@ -476,8 +489,9 @@ internal actor LibraryCoordinator: LibraryServing {
                 artwork: artwork,
                 releaseYear: update.releaseYear,
                 trackCount: current.trackCount,
-                albumType: current.albumType,
-                isFavorite: current.isFavorite
+                albumType: update.albumType ?? current.albumType,
+                isFavorite: current.isFavorite,
+                details: update.details ?? current.details
             )
             mutations.append(.upsert(.album(updated)))
 
@@ -514,6 +528,60 @@ internal actor LibraryCoordinator: LibraryServing {
             }
             await libraryMutationGate.leave()
             throw AppServiceError.mapped(error, operation: "library.albumMetadata")
+        }
+    }
+
+    func updateArtistMetadata(_ update: ArtistMetadataUpdate) async throws -> Artist {
+        guard let repository else { throw AppServiceError.missingDependency("libraryRepository") }
+        guard !update.name.isEmpty else {
+            throw AppServiceError.invalidRequest(operation: "library.artistMetadata.name")
+        }
+        if case .replace = update.artwork { await waitForArtworkPrune() }
+        try Task.checkCancellation()
+        guard await libraryMutationGate.enter() else { throw CancellationError() }
+        var receipt: ArtworkWriteReceipt?
+        do {
+            try Task.checkCancellation()
+            guard let current = try await repository.artist(id: update.artistID) else {
+                throw AppServiceError.library(.constraint(.danglingReference))
+            }
+            var artwork = current.artwork
+            var mutations: [LibraryMutation] = []
+            switch update.artwork {
+            case .keep: break
+            case .remove: artwork = nil
+            case .replace(let data):
+                guard !data.isEmpty, data.count <= ArtworkDataLimits.maximumByteCount else {
+                    throw AppServiceError.invalidRequest(operation: "library.artistMetadata.artwork")
+                }
+                guard let artworkWriter else { throw AppServiceError.missingDependency("artworkWriter") }
+                let id = ArtworkID(rawValue: "sha256-\(MusicContentIdentity.sha256Hex(data))")
+                receipt = try await artworkWriter(data, id)
+                try Task.checkCancellation()
+                artwork = ArtworkReference(id: id, variants: [.original], preferredVariant: .original)
+                if let artwork { mutations.append(.upsert(.artwork(artwork))) }
+            }
+            let updated = Artist(
+                id: current.id,
+                name: update.name,
+                sortName: current.sortName == current.name ? update.name : current.sortName,
+                artwork: artwork,
+                details: update.details
+            )
+            mutations.append(.upsert(.artist(updated)))
+            try Task.checkCancellation()
+            try await repository.apply(LibraryTransaction(
+                idempotencyKey: "artist-metadata.\(UUID().uuidString)",
+                mutations: mutations
+            ))
+            await receipt?.finish(committed: true)
+            scheduleArtworkPrune()
+            await libraryMutationGate.leave()
+            return updated
+        } catch {
+            await receipt?.finish(committed: false)
+            await libraryMutationGate.leave()
+            throw AppServiceError.mapped(error, operation: "library.artistMetadata")
         }
     }
 
@@ -675,13 +743,16 @@ internal actor LibraryCoordinator: LibraryServing {
             var mutations: [LibraryMutation] = []
             if let artworkMutation { mutations.append(artworkMutation) }
             for (artistID, artistName) in zip(artistIDs, artistNames) {
-                mutations.append(.upsert(.artist(Artist(id: artistID, name: artistName))))
+                let artist = try await repository.artist(id: artistID) ?? Artist(id: artistID, name: artistName)
+                mutations.append(.upsert(.artist(artist)))
             }
             if let albumArtistNames {
                 for (albumArtistID, albumArtistName) in zip(albumArtistIDs, albumArtistNames)
                     where !artistIDs.contains(albumArtistID)
                 {
-                    mutations.append(.upsert(.artist(Artist(id: albumArtistID, name: albumArtistName))))
+                    let artist = try await repository.artist(id: albumArtistID)
+                        ?? Artist(id: albumArtistID, name: albumArtistName)
+                    mutations.append(.upsert(.artist(artist)))
                 }
             }
             for (genreID, genreName) in zip(genreIDs, genreNames) {
@@ -716,7 +787,8 @@ internal actor LibraryCoordinator: LibraryServing {
                     releaseYear: albumReleaseYear,
                     trackCount: albumTrackCount,
                     albumType: sourceAlbum?.albumType,
-                    isFavorite: targetAlbum?.isFavorite ?? false
+                    isFavorite: targetAlbum?.isFavorite ?? false,
+                    details: sourceAlbum?.details
                 ))))
             }
 
@@ -752,7 +824,8 @@ internal actor LibraryCoordinator: LibraryServing {
                 lyrics: update.lyrics,
                 artwork: artwork,
                 isFavorite: current.isFavorite,
-                statistics: current.statistics
+                statistics: current.statistics,
+                details: update.details ?? current.details
             )
             mutations.append(.upsert(.track(updated)))
             let transaction = try LibraryTransaction(

@@ -81,7 +81,8 @@ enum LibraryRecordMapper {
                 lastPlayedAt: record.lastPlayedAt,
                 lastCompletionReason: value.statistics.lastCompletionReason,
                 totalListeningDuration: value.statistics.totalListeningDuration
-            )
+            ),
+            details: value.details
         )
     }
 
