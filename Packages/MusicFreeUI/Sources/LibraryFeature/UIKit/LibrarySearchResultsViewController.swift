@@ -413,8 +413,14 @@ final class LibrarySearchResultsViewController: UIViewController {
         ])
     }
 
-    private func makeAlbumContextMenu(for album: Album) -> UIMenu {
+    func makeAlbumContextMenu(for album: Album) -> UIMenu {
         let busy = albumActionTask != nil
+        let favorite = UIAction(
+            title: album.isFavorite ? L("取消收藏专辑") : L("收藏专辑"),
+            image: UIImage(systemName: album.isFavorite ? "star.slash" : "star"),
+            attributes: busy ? [.disabled] : [],
+            state: album.isFavorite ? .on : .off
+        ) { [weak self] _ in self?.toggleAlbumFavorite(album) }
         let share = UIAction(
             title: L("分享"),
             image: UIImage(systemName: "square.and.arrow.up"),
@@ -430,9 +436,34 @@ final class LibrarySearchResultsViewController: UIViewController {
             self?.requestDeleteAlbum(album)
         }
         return UIMenu(children: [
-            UIMenu(title: "", options: [.displayInline], children: [share]),
+            UIMenu(
+                title: "",
+                options: [.displayAsPalette, .displayInline],
+                preferredElementSize: .large,
+                children: [favorite, share]
+            ),
             UIMenu(title: "", options: [.displayInline], children: [delete])
         ])
+    }
+
+    private func toggleAlbumFavorite(_ album: Album) {
+        guard albumActionTask == nil else { return }
+        albumActionTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.albumActionTask = nil
+                self.scheduleRender()
+            }
+            do {
+                _ = try await self.viewModel.library.setAlbumFavorite(!album.isFavorite, for: album.id)
+                self.viewModel.retrySearch()
+            } catch is CancellationError {
+                return
+            } catch {
+                self.presentMessage(title: L("无法更新收藏"), message: L(error.localizedDescription))
+            }
+        }
+        scheduleRender()
     }
 
     private func shareAlbum(_ album: Album) {

@@ -784,9 +784,17 @@ public final class LibraryArtistDetailViewController: UIViewController {
         updateNavigationItem()
     }
 
-    private func makeAlbumContextMenu(_ album: Album) -> UIMenu {
+    func makeAlbumContextMenu(_ album: Album) -> UIMenu {
         let albumIDs = albumGroup(for: album.id)?.albumIDs ?? [album.id]
         let busy = collectionActionTask != nil
+        let favorite = UIAction(
+            title: album.isFavorite ? L("取消收藏专辑") : L("收藏专辑"),
+            image: UIImage(systemName: album.isFavorite ? "star.slash" : "star"),
+            attributes: busy ? [.disabled] : [],
+            state: album.isFavorite ? .on : .off
+        ) { [weak self] _ in
+            self?.toggleAlbumFavorite(album, albumIDs: albumIDs)
+        }
         let playTracks = onPlayTracks
         let addTracksToPlaylist = onAddTracksToPlaylist
         let enqueueNextTracks = onEnqueueNextTracks
@@ -831,7 +839,7 @@ public final class LibraryArtistDetailViewController: UIViewController {
                 title: "",
                 options: [.displayAsPalette, .displayInline],
                 preferredElementSize: .large,
-                children: [share]
+                children: [favorite, share]
             ),
             UIMenu(title: "", options: [.displayInline], children: [play, shuffle]),
             UIMenu(
@@ -940,8 +948,14 @@ public final class LibraryArtistDetailViewController: UIViewController {
         updateNavigationItem()
     }
 
-    private func makeTrackContextMenu(for track: Track) -> UIMenu {
+    func makeTrackContextMenu(for track: Track) -> UIMenu {
         let busy = collectionActionTask != nil
+        let favorite = UIAction(
+            title: track.isFavorite ? L("取消收藏") : L("收藏"),
+            image: UIImage(systemName: track.isFavorite ? "star.slash" : "star"),
+            attributes: busy ? [.disabled] : [],
+            state: track.isFavorite ? .on : .off
+        ) { [weak self] _ in self?.toggleTrackFavorite(track) }
         let play = UIAction(
             title: L("播放"),
             image: UIImage(systemName: "play.fill"),
@@ -979,12 +993,58 @@ public final class LibraryArtistDetailViewController: UIViewController {
                 title: "",
                 options: [.displayAsPalette, .displayInline],
                 preferredElementSize: .large,
-                children: [share]
+                children: [favorite, share]
             ),
             UIMenu(title: "", options: [.displayInline], children: [play]),
             UIMenu(title: "", options: [.displayInline], children: queueActions),
             UIMenu(title: "", options: [.displayInline], children: [delete]),
         ])
+    }
+
+    private func toggleAlbumFavorite(_ album: Album, albumIDs: [AlbumID]) {
+        guard collectionActionTask == nil else { return }
+        collectionActionTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.collectionActionTask = nil
+                self.updateNavigationItem()
+                self.renderSnapshot(reconfigure: Set(self.albums.map { Item.album($0.id) }))
+            }
+            do {
+                for albumID in albumIDs {
+                    try Task.checkCancellation()
+                    _ = try await self.library.setAlbumFavorite(!album.isFavorite, for: albumID)
+                }
+                await self.reloadAlbums()
+            } catch is CancellationError {
+                return
+            } catch {
+                await self.reloadAlbums()
+                self.presentMessage(title: L("无法更新收藏"), message: L(error.localizedDescription))
+            }
+        }
+        updateNavigationItem()
+    }
+
+    private func toggleTrackFavorite(_ track: Track) {
+        guard collectionActionTask == nil else { return }
+        collectionActionTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.collectionActionTask = nil
+                self.updateNavigationItem()
+                self.renderSnapshot(reconfigure: Set(self.noAlbumTrackRows.map { Item.noAlbumTrack($0.id) }))
+            }
+            do {
+                _ = try await self.library.setFavorite(!track.isFavorite, for: track.id)
+                await self.reloadTracks()
+            } catch is CancellationError {
+                return
+            } catch {
+                self.presentMessage(title: L("无法更新收藏"), message: L(error.localizedDescription))
+            }
+        }
+        updateNavigationItem()
     }
 
     private func requestDeleteTrack(_ track: Track) {

@@ -414,6 +414,146 @@ func favoritesShowsAlbumsAlongsideTracks() async throws {
 }
 
 @MainActor
+@Test("Album detail groups favorite and share in the top palette", arguments: [false, true])
+func albumDetailGroupsFavoriteWithShare(isFavorite: Bool) async throws {
+    let album = Album(id: AlbumID("palette-album"), title: "Palette Album", isFavorite: isFavorite)
+    let service = FakeLibraryService()
+    service.defaultAlbums = [album]
+    let controller = LibraryCollectionDetailViewController(kind: .album(album.id), library: service)
+    controller.loadViewIfNeeded()
+    await settleUntil {
+        let menu = controller.navigationItem.rightBarButtonItems?.first?.menu
+        let palette = menu?.children.first as? UIMenu
+        let favorite = palette?.children.first as? UIAction
+        return favorite?.attributes.contains(.disabled) == false
+    }
+
+    #expect(controller.navigationItem.rightBarButtonItems?.count == 1)
+    #expect(controller.navigationItem.rightBarButtonItems?
+        .contains { $0.accessibilityIdentifier == "library.collection.albumFavorite" } == false)
+
+    let menu = try #require(controller.navigationItem.rightBarButtonItems?
+        .first { $0.accessibilityIdentifier == "library.collection.menu" }?.menu)
+    let palette = try #require(menu.children.first as? UIMenu)
+    #expect(palette.options.contains(.displayAsPalette))
+    #expect(palette.options.contains(.displayInline))
+    #expect(palette.preferredElementSize == .large)
+    #expect(palette.children.count == 2)
+    let favorite = try #require(palette.children.first as? UIAction)
+    let share = try #require(palette.children.last as? UIAction)
+    #expect(favorite.title == (isFavorite ? L("取消收藏专辑") : L("收藏专辑")))
+    #expect(favorite.state == (isFavorite ? .on : .off))
+    #expect(!favorite.attributes.contains(.disabled))
+    #expect(share.title == L("分享"))
+    #expect(menu.children.dropFirst().compactMap { $0 as? UIMenu }
+        .flatMap(\.children).allSatisfy { $0.title != favorite.title })
+}
+
+@MainActor
+@Test("Track detail moves favorite beside share and retains management actions", arguments: [false, true])
+func trackDetailGroupsFavoriteWithShare(isFavorite: Bool) async throws {
+    let track = Track(id: makeTrack("palette-track").id, title: "Palette Track", isFavorite: isFavorite)
+    let service = FakeLibraryService()
+    service.storedTracks[track.id] = track
+    let controller = LibraryTrackDetailViewController(trackID: track.id, library: service)
+    controller.onAddToPlaylist = { _ in }
+    controller.loadViewIfNeeded()
+    await settleUntil {
+        let palette = controller.navigationItem.rightBarButtonItems?.first?.menu?.children.first as? UIMenu
+        return (palette?.children.first as? UIAction)?.attributes.contains(.disabled) == false
+    }
+    #expect(controller.navigationItem.rightBarButtonItems?.count == 1)
+    let menu = try #require(controller.navigationItem.rightBarButtonItems?.first?.menu)
+    let favorite = try requireFavoriteSharePalette(menu, isFavorite: isFavorite, isAlbum: false)
+    let management = try #require(menu.children.dropFirst().first as? UIMenu)
+    #expect(management.children.map(\.title) == [L("添加到播放列表"), L("编辑歌曲")])
+    #expect(controller.view.allTestDescendants.contains {
+        $0.accessibilityIdentifier == "library.trackDetail.favorite"
+    } == false)
+    UIButton().sendAction(favorite)
+    await settleUntil { service.storedTracks[track.id]?.isFavorite == !isFavorite }
+    await settle()
+    let updatedMenu = try #require(controller.navigationItem.rightBarButtonItems?.first?.menu)
+    let updatedFavorite = try requireFavoriteSharePalette(updatedMenu, isFavorite: !isFavorite, isAlbum: false)
+    #expect(!updatedFavorite.attributes.contains(.disabled))
+}
+
+@MainActor
+@Test("Search album favorite sits beside share and saves the selected album", arguments: [false, true])
+func searchAlbumGroupsFavoriteWithShare(isFavorite: Bool) async throws {
+    let album = Album(id: AlbumID("search-palette"), title: "Search Album", isFavorite: isFavorite)
+    let service = FakeLibraryService()
+    service.defaultAlbums = [album]
+    let model = LibraryViewModel(library: service, searchDebounceNanoseconds: 0)
+    let controller = LibrarySearchResultsViewController(viewModel: model, artworkServing: nil)
+    let favorite = try requireFavoriteSharePalette(
+        controller.makeAlbumContextMenu(for: album), isFavorite: isFavorite, isAlbum: true
+    )
+    UIButton().sendAction(favorite)
+    await settleUntil { service.defaultAlbums.first?.isFavorite == !isFavorite }
+    #expect(service.albumFavoriteWrites.map(\.albumID) == [album.id])
+    #expect(service.albumFavoriteWrites.map(\.isFavorite) == [!isFavorite])
+}
+
+@MainActor
+@Test("Artist album favorite sits beside share and saves the selected album", arguments: [false, true])
+func artistAlbumGroupsFavoriteWithShare(isFavorite: Bool) async throws {
+    let artistID = ArtistID("palette-artist")
+    let album = Album(id: AlbumID("artist-palette"), title: "Artist Album", artistIDs: [artistID], isFavorite: isFavorite)
+    let service = FakeLibraryService()
+    service.defaultAlbums = [album]
+    let controller = LibraryArtistDetailViewController(artistID: artistID, library: service)
+    let favorite = try requireFavoriteSharePalette(
+        controller.makeAlbumContextMenu(album), isFavorite: isFavorite, isAlbum: true
+    )
+    UIButton().sendAction(favorite)
+    await settleUntil { service.defaultAlbums.first?.isFavorite == !isFavorite }
+    #expect(service.albumFavoriteWrites.map(\.albumID) == [album.id])
+    #expect(service.albumFavoriteWrites.map(\.isFavorite) == [!isFavorite])
+}
+
+@MainActor
+@Test("Artist song favorite sits beside share and saves the selected song", arguments: [false, true])
+func artistTrackGroupsFavoriteWithShare(isFavorite: Bool) async throws {
+    let track = Track(id: makeTrack("artist-palette-track").id, title: "Artist Song", isFavorite: isFavorite)
+    let service = FakeLibraryService()
+    service.storedTracks[track.id] = track
+    let controller = LibraryArtistDetailViewController(artistID: ArtistID("palette-artist"), library: service)
+    let favorite = try requireFavoriteSharePalette(
+        controller.makeTrackContextMenu(for: track), isFavorite: isFavorite, isAlbum: false
+    )
+    UIButton().sendAction(favorite)
+    await settleUntil { service.storedTracks[track.id]?.isFavorite == !isFavorite }
+    #expect(service.favoriteWrites == [!isFavorite])
+}
+
+@MainActor
+private func requireFavoriteSharePalette(_ menu: UIMenu, isFavorite: Bool, isAlbum: Bool) throws -> UIAction {
+    let palette = try #require(menu.children.first as? UIMenu)
+    #expect(palette.options.contains(.displayAsPalette))
+    #expect(palette.options.contains(.displayInline))
+    #expect(palette.preferredElementSize == .large)
+    #expect(palette.children.count == 2)
+    let favorite = try #require(palette.children.first as? UIAction)
+    let expectedTitle = isAlbum
+        ? (isFavorite ? L("取消收藏专辑") : L("收藏专辑"))
+        : (isFavorite ? L("取消收藏") : L("收藏"))
+    #expect(favorite.title == expectedTitle)
+    #expect(favorite.state == (isFavorite ? .on : .off))
+    #expect(palette.children.last?.title == L("分享"))
+    #expect(menu.children.dropFirst().compactMap { $0 as? UIMenu }
+        .flatMap(\.children).allSatisfy { $0.title != expectedTitle })
+    return favorite
+}
+
+@MainActor
+private extension UIView {
+    var allTestDescendants: [UIView] {
+        subviews.flatMap { [$0] + $0.allTestDescendants }
+    }
+}
+
+@MainActor
 @Test("Album name lookup follows every page and returns only requested albums")
 func libraryAlbumNameLookupFollowsPagination() async throws {
     let firstID = AlbumID("first-requested-album")
@@ -1901,6 +2041,7 @@ private final class FakeLibraryService: LibraryServing {
     var trackRequests: [TrackQuery] = []
     var trackPageRequests: [LibraryPageRequest] = []
     var defaultAlbums: [Album] = []
+    var albumFavoriteWrites: [(albumID: AlbumID, isFavorite: Bool)] = []
     var defaultArtists: [Artist] = []
     var holdNextAlbumPage = false
     var heldAlbumPage: CheckedContinuation<Void, Never>?
@@ -1994,6 +2135,20 @@ private final class FakeLibraryService: LibraryServing {
             tracks: tracks.elements,
             albums: albums.elements
         )
+    }
+
+    func setAlbumFavorite(_ isFavorite: Bool, for albumID: AlbumID) async throws -> Album {
+        let index = try #require(defaultAlbums.firstIndex { $0.id == albumID })
+        let album = defaultAlbums[index]
+        let updated = Album(
+            id: album.id, title: album.title, sortTitle: album.sortTitle,
+            artistIDs: album.artistIDs, artwork: album.artwork, releaseYear: album.releaseYear,
+            trackCount: album.trackCount, albumType: album.albumType, isFavorite: isFavorite,
+            details: album.details
+        )
+        defaultAlbums[index] = updated
+        albumFavoriteWrites.append((albumID, isFavorite))
+        return updated
     }
 
     func browseArtists(

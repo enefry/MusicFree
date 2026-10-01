@@ -2616,7 +2616,10 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
 
         let detail = app.descendants(matching: .any)["library.trackDetail"].firstMatch
         XCTAssertTrue(detail.waitForExistence(timeout: 10))
-        let edit = app.buttons["library.trackDetail.edit"].firstMatch
+        let detailMenu = app.buttons["library.trackDetail.menu"].firstMatch
+        XCTAssertTrue(detailMenu.waitForExistence(timeout: 5))
+        detailMenu.tap()
+        let edit = app.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", "Edit Song", "编辑歌曲")).firstMatch
         XCTAssertTrue(edit.waitForExistence(timeout: 5))
         edit.tap()
 

@@ -11,6 +11,7 @@ public final class LibraryTrackDetailViewController: UIViewController {
     public let trackID: MediaItemID
     public let library: any LibraryServing
     public let artworkServing: (any ArtworkServing)?
+    private let mediaShareResolver: LibraryMediaShareResolver?
     public var onPlayTrack: ((MediaItemID) -> Void)?
     public var onAddToPlaylist: (([MediaItemID]) -> Void)?
     public var onDeleted: (() -> Void)?
@@ -23,13 +24,13 @@ public final class LibraryTrackDetailViewController: UIViewController {
     private let albumLabel = UILabel()
     private let durationLabel = UILabel()
     private let playButton = MusicFreeUIKitPillActionButton(title: L("播放歌曲"), systemImage: "play.fill")
-    private let favoriteButton = UIButton(type: .system)
     private let lyricsTitleLabel = UILabel()
     private let lyricsLabel = UILabel()
     private let informationView = LibraryDetailInfoView()
     private var statusView: UIView?
     private var loadTask: Task<Void, Never>?
     private var artworkTask: Task<Void, Never>?
+    private var shareTask: Task<Void, Never>?
     private var track: Track?
     private var artistNames: [ArtistID: String] = [:]
     private var albumTitle: String?
@@ -42,11 +43,15 @@ public final class LibraryTrackDetailViewController: UIViewController {
     public init(
         trackID: MediaItemID,
         library: any LibraryServing,
-        artworkServing: (any ArtworkServing)? = nil
+        artworkServing: (any ArtworkServing)? = nil,
+        mediaSourceResolver: (any MediaSourceResolving)? = nil
     ) {
         self.trackID = trackID
         self.library = library
         self.artworkServing = artworkServing
+        mediaShareResolver = mediaSourceResolver.map {
+            LibraryMediaShareResolver(sourceResolver: $0)
+        }
         super.init(nibName: nil, bundle: nil)
         restorationIdentifier = "library.trackDetail.uikit"
         title = L("歌曲详情")
@@ -80,11 +85,13 @@ public final class LibraryTrackDetailViewController: UIViewController {
         super.viewWillDisappear(animated)
         loadTask?.cancel()
         artworkTask?.cancel()
+        shareTask?.cancel()
     }
 
     deinit {
         loadTask?.cancel()
         artworkTask?.cancel()
+        shareTask?.cancel()
     }
 
     private func configureContent() {
@@ -124,17 +131,7 @@ public final class LibraryTrackDetailViewController: UIViewController {
         durationLabel.textAlignment = .center
         durationLabel.accessibilityIdentifier = "library.trackDetail.duration"
 
-        favoriteButton.translatesAutoresizingMaskIntoConstraints = false
-        favoriteButton.titleLabel?.font = MusicFreeUIFontTokens.rowTitle
-        favoriteButton.configuration = .filled()
-        favoriteButton.configuration?.cornerStyle = .capsule
-        favoriteButton.configuration?.baseBackgroundColor = MusicFreeUIColorTokens.accentSoft
-        favoriteButton.configuration?.baseForegroundColor = MusicFreeUIColorTokens.accent
-        favoriteButton.addTarget(self, action: #selector(toggleFavorite), for: .touchUpInside)
-        favoriteButton.accessibilityIdentifier = "library.trackDetail.favorite"
-        favoriteButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 48).isActive = true
-
-        let actionStack = UIStackView(arrangedSubviews: [playButton, favoriteButton])
+        let actionStack = UIStackView(arrangedSubviews: [playButton])
         actionStack.axis = .horizontal
         actionStack.spacing = MusicFreeSpacingTokens.small
         actionStack.distribution = .fillEqually
@@ -206,34 +203,49 @@ public final class LibraryTrackDetailViewController: UIViewController {
     }
 
     private func configureNavigationItems() {
-        let addItem = UIBarButtonItem(
+        let favorite = UIAction(
+            title: track?.isFavorite == true ? L("取消收藏") : L("收藏"),
+            image: UIImage(systemName: track?.isFavorite == true ? "star.slash" : "star"),
+            attributes: track == nil || isSavingFavorite || isDeleting ? [.disabled] : [],
+            state: track?.isFavorite == true ? .on : .off
+        ) { [weak self] _ in self?.toggleFavorite() }
+        let share = UIAction(
+            title: L("分享"),
+            image: UIImage(systemName: "square.and.arrow.up"),
+            attributes: track == nil || mediaShareResolver == nil || shareTask != nil || isDeleting
+                ? [.disabled] : []
+        ) { [weak self] _ in self?.shareTrack() }
+        let add = UIAction(
+            title: L("添加到播放列表"),
             image: UIImage(systemName: "text.badge.plus"),
-            style: .plain,
-            target: self,
-            action: #selector(addToPlaylist)
-        )
-        addItem.accessibilityLabel = L("添加到播放列表")
-        addItem.accessibilityIdentifier = "library.trackDetail.addToPlaylist"
-
-        let editItem = UIBarButtonItem(
+            attributes: track == nil || onAddToPlaylist == nil || isDeleting ? [.disabled] : []
+        ) { [weak self] _ in self?.addToPlaylist() }
+        let edit = UIAction(
+            title: L("编辑歌曲"),
             image: UIImage(systemName: "pencil"),
-            style: .plain,
-            target: self,
-            action: #selector(editTrack)
+            attributes: track == nil || isDeleting ? [.disabled] : []
+        ) { [weak self] _ in self?.editTrack() }
+        let delete = UIAction(
+            title: L("删除歌曲"),
+            image: UIImage(systemName: "trash"),
+            attributes: track == nil || isDeleting ? [.destructive, .disabled] : [.destructive]
+        ) { [weak self] _ in self?.requestDelete() }
+        let menuItem = UIBarButtonItem(
+            image: UIImage(systemName: "ellipsis"),
+            menu: UIMenu(children: [
+                UIMenu(
+                    title: "",
+                    options: [.displayAsPalette, .displayInline],
+                    preferredElementSize: .large,
+                    children: [favorite, share]
+                ),
+                UIMenu(title: "", options: [.displayInline], children: [add, edit]),
+                UIMenu(title: "", options: [.displayInline], children: [delete]),
+            ])
         )
-        editItem.accessibilityLabel = L("编辑歌曲")
-        editItem.accessibilityIdentifier = "library.trackDetail.edit"
-
-        let deleteItem = UIBarButtonItem(
-            barButtonSystemItem: .trash,
-            target: self,
-            action: #selector(requestDelete)
-        )
-        deleteItem.accessibilityLabel = L("删除歌曲")
-        deleteItem.accessibilityIdentifier = "library.trackDetail.delete"
-        // Keep the action order aligned with the reference: destructive
-        // delete, metadata edit, then add-to-playlist.
-        navigationItem.rightBarButtonItems = [deleteItem, editItem, addItem]
+        menuItem.accessibilityLabel = L("更多选项")
+        menuItem.accessibilityIdentifier = "library.trackDetail.menu"
+        navigationItem.rightBarButtonItems = [menuItem]
     }
 
     private func renderLoading() {
@@ -288,10 +300,7 @@ public final class LibraryTrackDetailViewController: UIViewController {
         lyricsTitleLabel.superview?.isHidden = false
         renderInformation(track)
         playButton.isEnabled = onPlayTrack != nil
-        favoriteButton.isEnabled = !isSavingFavorite
-        favoriteButton.configuration?.title = track.isFavorite ? L("取消收藏") : L("收藏")
-        favoriteButton.configuration?.image = UIImage(systemName: track.isFavorite ? "star.fill" : "star")
-        favoriteButton.configuration?.imagePadding = MusicFreeSpacingTokens.xSmall
+        configureNavigationItems()
 
         artworkTask?.cancel()
         artworkView.placeholderTitle = track.title
@@ -419,12 +428,15 @@ public final class LibraryTrackDetailViewController: UIViewController {
     }
 
     @objc private func toggleFavorite() {
-        guard let track, !isSavingFavorite else { return }
+        guard let track, !isSavingFavorite, !isDeleting else { return }
         isSavingFavorite = true
-        favoriteButton.isEnabled = false
+        configureNavigationItems()
         Task { @MainActor [weak self] in
             guard let self else { return }
-            defer { self.isSavingFavorite = false }
+            defer {
+                self.isSavingFavorite = false
+                self.configureNavigationItems()
+            }
             do {
                 self.track = try await self.library.setFavorite(!track.isFavorite, for: track.id)
                 self.renderLoaded()
@@ -432,6 +444,32 @@ public final class LibraryTrackDetailViewController: UIViewController {
                 self.presentMessage(title: L("无法更新收藏"), message: L(error.localizedDescription))
             }
         }
+    }
+
+    private func shareTrack() {
+        guard let track, let mediaShareResolver, shareTask == nil, !isDeleting,
+              presentedViewController == nil else { return }
+        shareTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.shareTask = nil
+                self.configureNavigationItems()
+            }
+            do {
+                let urls = try await mediaShareResolver.urls(for: [track])
+                try Task.checkCancellation()
+                let activity = UIActivityViewController(activityItems: urls, applicationActivities: nil)
+                if let popover = activity.popoverPresentationController {
+                    popover.barButtonItem = self.navigationItem.rightBarButtonItem
+                }
+                self.present(activity, animated: true)
+            } catch is CancellationError {
+                return
+            } catch {
+                self.presentMessage(title: L("无法分享"), message: L(error.localizedDescription))
+            }
+        }
+        configureNavigationItems()
     }
 
     @objc private func addToPlaylist() {
@@ -485,9 +523,13 @@ public final class LibraryTrackDetailViewController: UIViewController {
     private func deleteTrack(_ track: Track) {
         guard !isDeleting else { return }
         isDeleting = true
+        configureNavigationItems()
         Task { @MainActor [weak self] in
             guard let self else { return }
-            defer { self.isDeleting = false }
+            defer {
+                self.isDeleting = false
+                self.configureNavigationItems()
+            }
             do {
                 _ = try await self.library.delete([track.id])
                 self.onDeleted?()

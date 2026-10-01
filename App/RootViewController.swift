@@ -1680,7 +1680,8 @@ final class RootViewController: UIViewController {
         let controller = LibraryTrackDetailViewController(
             trackID: trackID,
             library: services.libraryServing,
-            artworkServing: services.artworkServing
+            artworkServing: services.artworkServing,
+            mediaSourceResolver: services.mediaSourceResolver
         )
         controller.onPlayTrack = { itemID in
             Task { @MainActor in

@@ -1210,20 +1210,7 @@ public final class LibraryCollectionsViewController: UIViewController {
         ) { [weak self] _ in
             self?.shareCollection(target)
         }
-        var groups: [UIMenuElement] = [
-            UIMenu(
-                title: "",
-                options: [.displayAsPalette, .displayInline],
-                preferredElementSize: .large,
-                children: [share]
-            ),
-            UIMenu(title: "", options: [.displayInline], children: [play, shuffle]),
-            UIMenu(
-                title: "",
-                options: [.displayInline],
-                children: [addToPlaylist, playNext, enqueue]
-            ),
-        ]
+        var quickActions: [UIMenuElement] = []
         if case let .album(id) = item, let album = albumsByID[id] {
             let favorite = UIAction(
                 title: album.isFavorite ? L("取消收藏专辑") : L("收藏专辑"),
@@ -1233,8 +1220,23 @@ public final class LibraryCollectionsViewController: UIViewController {
             ) { [weak self] _ in
                 self?.toggleAlbumFavorite(id, currentValue: album.isFavorite)
             }
-            groups.insert(UIMenu(title: "", options: [.displayInline], children: [favorite]), at: 2)
+            quickActions.append(favorite)
         }
+        quickActions.append(share)
+        var groups: [UIMenuElement] = [
+            UIMenu(
+                title: "",
+                options: [.displayAsPalette, .displayInline],
+                preferredElementSize: .large,
+                children: quickActions
+            ),
+            UIMenu(title: "", options: [.displayInline], children: [play, shuffle]),
+            UIMenu(
+                title: "",
+                options: [.displayInline],
+                children: [addToPlaylist, playNext, enqueue]
+            ),
+        ]
         if case .album = target, let onConvertTracks {
             let convert = UIAction(
                 title: L("转换音频"),

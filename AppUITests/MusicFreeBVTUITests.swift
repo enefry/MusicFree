@@ -477,7 +477,19 @@ final class MusicFreeBVTUITests: XCTestCase {
         attachScreenshot(named: "uikit-collection-detail")
         let collectionMenu = app.buttons["library.collection.menu"].firstMatch
         XCTAssertTrue(collectionMenu.waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["library.collection.albumFavorite"].exists)
         collectionMenu.tap()
+
+        let albumFavorite = app.buttons.matching(NSPredicate(
+            format: "label IN %@", ["Favorite Album", "Remove Album from Favorites", "收藏专辑", "取消收藏专辑"]
+        )).firstMatch
+        let albumShare = app.buttons.matching(NSPredicate(
+            format: "label == %@ OR label == %@", "Share", "分享"
+        )).firstMatch
+        XCTAssertTrue(albumFavorite.waitForExistence(timeout: 5))
+        XCTAssertTrue(albumShare.exists)
+        XCTAssertEqual(albumFavorite.frame.midY, albumShare.frame.midY, accuracy: 2)
+        attachScreenshot(named: "uikit-album-favorite-share-palette")
 
         XCTAssertTrue(app.buttons["Play next"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Add to queue"].exists)
@@ -647,14 +659,20 @@ final class MusicFreeBVTUITests: XCTestCase {
         ].firstMatch
         XCTAssertTrue(title.waitForExistence(timeout: 15))
         XCTAssertEqual(title.label, trackTitle)
-        XCTAssertTrue(
-            detail.descendants(matching: .any)["library.trackDetail.favorite"]
-                .firstMatch.waitForExistence(timeout: 10)
-        )
-        XCTAssertTrue(
-            app.buttons["library.trackDetail.addToPlaylist"].firstMatch
-                .waitForExistence(timeout: 10)
-        )
+        XCTAssertFalse(detail.descendants(matching: .any)["library.trackDetail.favorite"].exists)
+        let detailMenu = app.buttons["library.trackDetail.menu"].firstMatch
+        XCTAssertTrue(detailMenu.waitForExistence(timeout: 10))
+        detailMenu.tap()
+        let favorite = app.buttons.matching(NSPredicate(
+            format: "label IN %@", ["Favorite", "Remove from favorites", "收藏", "取消收藏"]
+        )).firstMatch
+        let share = app.buttons.matching(NSPredicate(
+            format: "label == %@ OR label == %@", "Share", "分享"
+        )).firstMatch
+        XCTAssertTrue(favorite.waitForExistence(timeout: 5))
+        XCTAssertTrue(share.exists)
+        XCTAssertEqual(favorite.frame.midY, share.frame.midY, accuracy: 2)
+        XCTAssertTrue(app.buttons["Add to playlist"].exists)
         attachScreenshot(named: "uikit-track-detail")
     }
 
@@ -3234,9 +3252,12 @@ final class MusicFreeBVTUITests: XCTestCase {
         let details = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@ OR label == %@", "View song details", "查看歌曲详情")).firstMatch
         XCTAssertTrue(details.waitForExistence(timeout: 10))
         details.tap()
-        let edit = app.buttons["library.trackDetail.edit"].firstMatch
-        XCTAssertTrue(edit.waitForExistence(timeout: 10))
+        let detailMenu = app.buttons["library.trackDetail.menu"].firstMatch
+        XCTAssertTrue(detailMenu.waitForExistence(timeout: 10))
         attachScreenshot(named: "enhanced-track-detail")
+        detailMenu.tap()
+        let edit = app.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", "Edit Song", "编辑歌曲")).firstMatch
+        XCTAssertTrue(edit.waitForExistence(timeout: 5))
         edit.tap()
         let form = app.scrollViews["library.trackEditor.scroll"].firstMatch
         XCTAssertTrue(form.waitForExistence(timeout: 10))
@@ -3244,7 +3265,9 @@ final class MusicFreeBVTUITests: XCTestCase {
         scrollEnhancedField(composer, in: form)
         replaceEnhancedText(composer, with: "Detail Composer")
         app.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", "Save", "保存")).firstMatch.tap()
-        XCTAssertTrue(edit.waitForExistence(timeout: 15))
+        XCTAssertTrue(detailMenu.waitForExistence(timeout: 15))
+        detailMenu.tap()
+        XCTAssertTrue(edit.waitForExistence(timeout: 5))
         edit.tap()
         XCTAssertTrue(form.waitForExistence(timeout: 10))
         scrollEnhancedField(composer, in: form)

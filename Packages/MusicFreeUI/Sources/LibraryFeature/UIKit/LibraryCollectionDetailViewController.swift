@@ -255,20 +255,6 @@ public final class LibraryCollectionDetailViewController: UIViewController {
             navigationItem.rightBarButtonItems = [doneItem, convertItem, deleteItem]
         } else {
             let busy = collectionActionTask != nil
-            var favoriteItem: UIBarButtonItem?
-            if case .album = kind {
-                let item = UIBarButtonItem(
-                    image: UIImage(systemName: collectionAlbum?.isFavorite == true ? "star.fill" : "star"),
-                    style: .plain,
-                    target: self,
-                    action: #selector(toggleAlbumFavorite)
-                )
-                item.accessibilityLabel = collectionAlbum?.isFavorite == true
-                    ? L("取消收藏专辑") : L("收藏专辑")
-                item.accessibilityIdentifier = "library.collection.albumFavorite"
-                item.isEnabled = collectionAlbum != nil && !isUpdatingAlbumFavorite
-                favoriteItem = item
-            }
             let share = UIAction(
                 title: L("分享"),
                 image: UIImage(systemName: "square.and.arrow.up"),
@@ -284,12 +270,14 @@ public final class LibraryCollectionDetailViewController: UIViewController {
                 self?.beginEditingSelection()
             }
 
+            var quickActions: [UIMenuElement] = []
             var managementActions: [UIMenuElement] = []
             if case .album = kind {
-                managementActions.append(UIAction(
+                quickActions.append(UIAction(
                     title: collectionAlbum?.isFavorite == true ? L("取消收藏专辑") : L("收藏专辑"),
                     image: UIImage(systemName: collectionAlbum?.isFavorite == true ? "star.slash" : "star"),
-                    attributes: collectionAlbum == nil || isUpdatingAlbumFavorite ? [.disabled] : []
+                    attributes: collectionAlbum == nil || isUpdatingAlbumFavorite ? [.disabled] : [],
+                    state: collectionAlbum?.isFavorite == true ? .on : .off
                 ) { [weak self] _ in
                     self?.toggleAlbumFavorite()
                 })
@@ -301,6 +289,7 @@ public final class LibraryCollectionDetailViewController: UIViewController {
                     self?.editAlbum()
                 })
             }
+            quickActions.append(share)
             if case .artist = kind {
                 managementActions.append(UIAction(
                     title: L("编辑艺人"), image: UIImage(systemName: "pencil"),
@@ -345,7 +334,7 @@ public final class LibraryCollectionDetailViewController: UIViewController {
                     title: "",
                     options: [.displayAsPalette, .displayInline],
                     preferredElementSize: .large,
-                    children: [share]
+                    children: quickActions
                 ),
                 UIMenu(title: "", options: [.displayInline], children: managementActions),
                 UIMenu(
@@ -373,7 +362,7 @@ public final class LibraryCollectionDetailViewController: UIViewController {
             )
             menuItem.accessibilityLabel = L("集合选项")
             menuItem.accessibilityIdentifier = "library.collection.menu"
-            navigationItem.rightBarButtonItems = [menuItem] + [favoriteItem].compactMap { $0 }
+            navigationItem.rightBarButtonItems = [menuItem]
         }
     }
 
