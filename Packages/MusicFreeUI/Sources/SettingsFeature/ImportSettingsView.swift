@@ -141,7 +141,7 @@ private struct AudioConversionSettingsView: View {
 
     var body: some View {
         Form {
-            Section(L("导入转换")) {
+            Section {
                 Toggle(L("启用导入转换"), isOn: automaticConversionBinding)
                     .accessibilityIdentifier("settings.import.audioConversion.enabled")
 
@@ -161,6 +161,11 @@ private struct AudioConversionSettingsView: View {
                     }
                 }
                 .accessibilityIdentifier("settings.import.audioConversion.concurrency")
+            } header: {
+                Text(L("导入转换"))
+            } footer: {
+                Text(L("仅在音乐播放中转码；暂停、停止或缓冲时，转码也会暂停并保留进度，继续播放后自动恢复。播放中，前台按设置并发转码，后台仅运行一个转码任务。"))
+                    .accessibilityIdentifier("settings.import.audioConversion.backgroundTip")
             }
 
             if let libraryConversion {

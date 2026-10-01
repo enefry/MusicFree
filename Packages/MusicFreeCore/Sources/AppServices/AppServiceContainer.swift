@@ -53,7 +53,7 @@ public final class AppServiceContainer {
     private let artworkCoordinator: ArtworkCoordinator
     private let importCoordinator: ImportCoordinator
     private let libraryConversionCoordinator: LibraryConversionCoordinator
-    private let mediaConversionScheduler: (any MediaConversionScheduling)?
+    public let mediaConversionScheduler: (any MediaConversionScheduling)?
     private let metadataEnrichmentCoordinator: MetadataEnrichmentCoordinator
     private let lyricsCoordinator: LyricsCoordinator
     private let playlistCoordinator: PlaylistCoordinator
@@ -65,6 +65,8 @@ public final class AppServiceContainer {
     private let onlineAuditionCoordinator: OnlineAuditionCoordinator
     private let onlineDownloadQueueCoordinator: OnlineDownloadQueue
     private var settingsTask: Task<Void, Never>?
+    private var conversionPlaybackTasks: [Task<Void, Never>] = []
+    private var lastConversionPlaybackIsPlaying: Bool?
     private var startupReport: AppStartupReport?
     private var startTask: (id: UUID, task: Task<AppStartupReport, Error>)?
     private var automaticMaintenanceTask: (
@@ -248,6 +250,9 @@ public final class AppServiceContainer {
                 await self.mediaConversionScheduler?.updateMaximumConcurrency(
                     importPreferences.audioConversion.maximumConcurrency
                 )
+                try Task.checkCancellation()
+                await self.installConversionPlaybackSubscription()
+                try Task.checkCancellation()
                 await self.libraryConversionCoordinator.recover()
                 try Task.checkCancellation()
                 await self.applyOnlineSourcePreferences(importPreferences)
@@ -365,6 +370,9 @@ public final class AppServiceContainer {
             maintenanceAttempt?.task.cancel()
             self.settingsTask?.cancel()
             self.settingsTask = nil
+            let conversionPlaybackTasks = self.conversionPlaybackTasks
+            conversionPlaybackTasks.forEach { $0.cancel() }
+            self.conversionPlaybackTasks.removeAll()
             await self.metadataEnrichmentCoordinator.setEnabled(false)
             self.sleepTimerCoordinator.stop()
             await self.onlineDownloadQueueCoordinator.shutdown()
@@ -373,6 +381,11 @@ public final class AppServiceContainer {
             if let startAttempt {
                 _ = await startAttempt.task.result
             }
+            for conversionPlaybackTask in conversionPlaybackTasks {
+                await conversionPlaybackTask.value
+            }
+            await self.mediaConversionScheduler?.updatePlaybackIsPlaying(false)
+            self.lastConversionPlaybackIsPlaying = false
             if let maintenanceAttempt {
                 _ = await maintenanceAttempt.task.value
             }
@@ -458,6 +471,37 @@ public final class AppServiceContainer {
 
     private func settingsSystemCapabilities() async -> SystemIntegrationCapabilitySnapshot {
         await settingsCoordinator.currentSystemCapabilities()
+    }
+
+    private func installConversionPlaybackSubscription() async {
+        guard mediaConversionScheduler != nil, !isStopped, !Task.isCancelled else { return }
+        conversionPlaybackTasks.forEach { $0.cancel() }
+        let playbackStream = playbackCoordinator.makeSnapshotStream()
+        let auditionStream = onlineAuditionCoordinator.makeSnapshotStream()
+        conversionPlaybackTasks = [
+            Task { [weak self] in
+                for await _ in playbackStream {
+                    guard !Task.isCancelled, let self, !self.isStopped else { return }
+                    await self.updateConversionPlaybackPolicy()
+                }
+            },
+            Task { [weak self] in
+                for await _ in auditionStream {
+                    guard !Task.isCancelled, let self, !self.isStopped else { return }
+                    await self.updateConversionPlaybackPolicy()
+                }
+            }
+        ]
+        await updateConversionPlaybackPolicy()
+    }
+
+    private func updateConversionPlaybackPolicy() async {
+        guard !isStopped, !Task.isCancelled else { return }
+        let isPlaying = playbackCoordinator.snapshot.phase == .playing
+            || onlineAuditionCoordinator.snapshot.phase == .playing
+        guard lastConversionPlaybackIsPlaying != isPlaying else { return }
+        lastConversionPlaybackIsPlaying = isPlaying
+        await mediaConversionScheduler?.updatePlaybackIsPlaying(isPlaying)
     }
 
     private func installSettingsSubscription() async {

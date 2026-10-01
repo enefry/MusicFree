@@ -638,10 +638,13 @@ public actor LocalMediaLibraryConverter: ManagedLibraryConverting {
       throw MediaTranscodeError.validationFailed
     }
     if case .alac = target {
-      try await losslessValidator.validateLosslessPCM(
-        inputURL: inputURL,
-        outputURL: result.outputURL
-      )
+      _ = try await scheduler.schedule {
+        try await self.losslessValidator.validateLosslessPCM(
+          inputURL: inputURL,
+          outputURL: result.outputURL
+        )
+        return result
+      }
     }
 
     let managedHash = try await hasher.hash(fileAt: result.outputURL).lowercased()

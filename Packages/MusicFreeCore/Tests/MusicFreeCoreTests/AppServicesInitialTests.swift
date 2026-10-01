@@ -69,6 +69,7 @@ func appStartupRecoversConversionsAndTracksConcurrencySettings() async throws {
     _ = try await container.start()
     #expect(await converter.recoverCount == 1)
     #expect(await scheduler.updates == [.four])
+    #expect(await scheduler.playbackUpdates == [false])
 
     let changed = AppSettings(importPreferences: initial.importPreferences.settingAudioConversion(
         initial.importPreferences.audioConversion.settingMaximumConcurrency(.one)
@@ -77,6 +78,77 @@ func appStartupRecoversConversionsAndTracksConcurrencySettings() async throws {
     try await waitForConversionSchedulerUpdates(scheduler, count: 2)
     #expect(await scheduler.updates == [.four, .one])
     await container.stop()
+    #expect(await scheduler.playbackUpdates.last == false)
+}
+
+@MainActor
+@Test("Conversion follows actual playback, buffering, pause, failure, and shutdown")
+func conversionPolicyTracksPlaybackState() async throws {
+    let itemID = MediaItemID(sourceID: .local, externalID: "conversion-playback-policy")
+    let engine = FakePlaybackEngine()
+    let scheduler = RecordingConversionScheduler()
+    let container = try AppServiceContainer(dependencies: AppDependencies(
+        mediaSources: [TestSource()],
+        mediaConversionScheduler: scheduler,
+        libraryRepository: TestLibraryRepository(tracks: [
+            Track(id: itemID, title: "Conversion policy", duration: .seconds(60))
+        ]),
+        playbackQueueRepository: TestQueueRepository(),
+        playbackEngine: engine
+    ))
+    _ = try await container.start()
+    #expect(await scheduler.playbackUpdates == [false])
+
+    try await container.playback.execute(.play(itemID: itemID))
+    try await waitForConversionPlaybackUpdates(scheduler, count: 2)
+    #expect(await scheduler.playbackUpdates == [false, true])
+
+    engine.emit(.positionChanged(
+        generation: engine.state.generation,
+        itemID: itemID,
+        position: .seconds(1),
+        duration: .seconds(60)
+    ))
+    try await Task.sleep(for: .milliseconds(40))
+    #expect(await scheduler.playbackUpdates.count == 2)
+
+    engine.emit(.phaseChanged(
+        generation: engine.state.generation, itemID: itemID, phase: .buffering
+    ))
+    try await waitForConversionPlaybackUpdates(scheduler, count: 3)
+    #expect(await scheduler.playbackUpdates.last == false)
+
+    engine.emit(.phaseChanged(
+        generation: engine.state.generation, itemID: itemID, phase: .playing
+    ))
+    try await waitForConversionPlaybackUpdates(scheduler, count: 4)
+    try await container.playback.execute(.pause)
+    try await waitForConversionPlaybackUpdates(scheduler, count: 5)
+    #expect(await scheduler.playbackUpdates.last == false)
+
+    try await container.playback.execute(.resume)
+    try await waitForConversionPlaybackUpdates(scheduler, count: 6)
+    #expect(await scheduler.playbackUpdates.last == true)
+    try await container.playback.execute(.stop)
+    try await waitForConversionPlaybackUpdates(scheduler, count: 7)
+    #expect(await scheduler.playbackUpdates.last == false)
+
+    try await container.playback.execute(.play(itemID: itemID))
+    try await waitForConversionPlaybackUpdates(scheduler, count: 8)
+    engine.emit(.failed(
+        generation: engine.state.generation, itemID: itemID, error: .resourceUnavailable
+    ))
+    try await waitForConversionPlaybackUpdates(scheduler, count: 9)
+    #expect(await scheduler.playbackUpdates == [false, true, false, true, false, true, false, true, false])
+
+    await container.stop()
+    let updatesAfterStop = await scheduler.playbackUpdates
+    engine.emit(.phaseChanged(
+        generation: engine.state.generation, itemID: itemID, phase: .playing
+    ))
+    try await Task.sleep(for: .milliseconds(40))
+    #expect(await scheduler.playbackUpdates == updatesAfterStop)
+    #expect(updatesAfterStop.last == false)
 }
 
 @MainActor
@@ -4046,9 +4118,14 @@ private actor RecordingManagedLibraryConverter: ManagedLibraryConverting {
 
 private actor RecordingConversionScheduler: MediaConversionScheduling {
     private(set) var updates: [MediaConversionConcurrency] = []
+    private(set) var playbackUpdates: [Bool] = []
 
     func updateMaximumConcurrency(_ maximum: MediaConversionConcurrency) {
         updates.append(maximum)
+    }
+
+    func updatePlaybackIsPlaying(_ isPlaying: Bool) async {
+        playbackUpdates.append(isPlaying)
     }
 
     func schedule(
@@ -4113,6 +4190,17 @@ private func waitForConversionSchedulerUpdates(
         try await Task.sleep(for: .milliseconds(10))
     }
     Issue.record("Timed out waiting for conversion scheduler settings update")
+}
+
+private func waitForConversionPlaybackUpdates(
+    _ scheduler: RecordingConversionScheduler,
+    count: Int
+) async throws {
+    for _ in 0..<100 {
+        if await scheduler.playbackUpdates.count >= count { return }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    Issue.record("Timed out waiting for conversion scheduler playback update")
 }
 
 private actor ControlledStorageMaintenance: StorageMaintenanceServing {

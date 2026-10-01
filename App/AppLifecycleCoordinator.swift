@@ -1,3 +1,4 @@
+import MediaSourceAPI
 import UIKit
 
 enum AppLifecyclePhase: String, Equatable, Sendable {
@@ -21,6 +22,9 @@ final class AppLifecycleCoordinator {
     private let notificationCenter: NotificationCenter
     private let eventHandler: EventHandler
     private var observerTokens: [NSObjectProtocol] = []
+    private var mediaConversionScheduler: (any MediaConversionScheduling)?
+    private(set) var conversionPolicyTask: Task<Void, Never>?
+    private var applicationIsInBackground = false
 
     private(set) var phase: AppLifecyclePhase = .inactive
     private(set) var lastEvent: AppLifecycleEvent?
@@ -37,6 +41,8 @@ final class AppLifecycleCoordinator {
 
     func start() {
         guard observerTokens.isEmpty else { return }
+        applicationIsInBackground = UIApplication.shared.applicationState == .background
+        updateConversionPolicy()
 
         let notificationNames: [Notification.Name] = [
             UIApplication.willEnterForegroundNotification,
@@ -64,6 +70,24 @@ final class AppLifecycleCoordinator {
             notificationCenter.removeObserver(token)
         }
         observerTokens.removeAll(keepingCapacity: true)
+        applicationIsInBackground = true
+        updateConversionPolicy()
+    }
+
+    func setMediaConversionScheduler(_ scheduler: (any MediaConversionScheduling)?) {
+        mediaConversionScheduler = scheduler
+        applicationIsInBackground = UIApplication.shared.applicationState == .background
+        updateConversionPolicy()
+    }
+
+    private func updateConversionPolicy() {
+        guard let scheduler = mediaConversionScheduler else { return }
+        let previous = conversionPolicyTask
+        let isInBackground = applicationIsInBackground
+        conversionPolicyTask = Task {
+            await previous?.value
+            await scheduler.updateApplicationInBackground(isInBackground)
+        }
     }
 
     func handle(_ phase: AppLifecyclePhase) {
@@ -95,12 +119,18 @@ final class AppLifecycleCoordinator {
             self.phase = phase
         case .applicationWillEnterForeground:
             phase = .inactive
+            applicationIsInBackground = false
+            updateConversionPolicy()
         case .applicationDidBecomeActive:
             phase = .active
+            applicationIsInBackground = false
+            updateConversionPolicy()
         case .applicationWillResignActive:
             phase = .inactive
         case .applicationDidEnterBackground:
             phase = .background
+            applicationIsInBackground = true
+            updateConversionPolicy()
         }
 
         lastEvent = event

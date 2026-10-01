@@ -730,10 +730,13 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
         throw MediaTranscodeError.validationFailed
       }
       do {
-        try await losslessValidator.validateLosslessPCM(
-          inputURL: sourceStagedURL,
-          outputURL: result.outputURL
-        )
+        _ = try await conversionScheduler.schedule {
+          try await losslessValidator.validateLosslessPCM(
+            inputURL: sourceStagedURL,
+            outputURL: result.outputURL
+          )
+          return result
+        }
       } catch is CancellationError {
         await staging.remove(result.outputURL)
         throw CancellationError()

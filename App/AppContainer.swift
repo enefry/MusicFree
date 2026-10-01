@@ -99,6 +99,7 @@ final class AppContainer: ObservableObject {
 
         configureFileLogging(fileLoggingEnabled: false)
         self.diagnosticsExporter.record(startupState: startupState)
+        self.lifecycleCoordinator.setMediaConversionScheduler(serviceContainer?.mediaConversionScheduler)
     }
 
     static func makeForTesting(
@@ -278,6 +279,7 @@ final class AppContainer: ObservableObject {
             }
             if let services, self.serviceContainer === services {
                 self.serviceContainer = nil
+                self.lifecycleCoordinator.setMediaConversionScheduler(nil)
                 self.documentsScanner = nil
                 self.importAvailable = false
                 self.compositionIssues = []
@@ -340,6 +342,9 @@ final class AppContainer: ObservableObject {
                     }
 
                     self.serviceContainer = composition.services
+                    self.lifecycleCoordinator.setMediaConversionScheduler(
+                        composition.services.mediaConversionScheduler
+                    )
                     self.documentsScanner = composition.scanner
                     self.importAvailable = composition.importAvailable
                     self.compositionIssues = composition.startupIssues

@@ -273,6 +273,60 @@ func onlineSourceCoordinatorRebuildsChangedConfiguration() async throws {
 }
 
 @MainActor
+@Test("App conversion policy includes actual online audition playback")
+func conversionPolicyTracksOnlineAuditionPlayback() async throws {
+    let source = CoordinatorFixtureSource(playbackAccess: .http(
+        request: RemotePlaybackRequest(url: URL(string: "https://audio.example.test/conversion-policy")!),
+        transcode: nil
+    ))
+    let sourceID = source.descriptor.sourceID
+    let configuration = try OnlineSourceConfiguration(
+        sourceID: sourceID,
+        providerKind: .dsAudio,
+        displayName: source.descriptor.displayName,
+        isEnabled: true
+    ).acceptingPrivacyPolicy(version: source.privacyPolicyVersion)
+    let settings = InMemorySettingsRepository(value: AppSettings(importPreferences: ImportPreferences(
+        privacyPreferences: PrivacyPreferences.defaults.acceptingPrivacyPolicy(),
+        onlineSourcePreferences: try OnlineSourcePreferences().adding(configuration)
+    )))
+    let engine = FakePlaybackEngine()
+    let scheduler = AuditionConversionScheduler()
+    let container = try AppServiceContainer(dependencies: AppDependencies(
+        onlineSources: [source],
+        mediaConversionScheduler: scheduler,
+        settingsRepository: settings,
+        onlineAuditionEngine: engine
+    ))
+    _ = try await container.start()
+    #expect(await scheduler.playbackUpdates == [false])
+
+    let item = SourceCatalogItem(
+        id: SourceObjectID(sourceID: sourceID, externalID: "conversion-policy"),
+        kind: .track,
+        displayName: "Conversion policy",
+        duration: .seconds(30),
+        isPlayable: true
+    )
+    try await container.onlineAudition.audition(sourceID: sourceID, item: item)
+    try await scheduler.waitForUpdateCount(2)
+    #expect(await scheduler.playbackUpdates.last == true)
+
+    await container.onlineAudition.pause()
+    try await scheduler.waitForUpdateCount(3)
+    #expect(await scheduler.playbackUpdates.last == false)
+    try await container.onlineAudition.resume()
+    try await scheduler.waitForUpdateCount(4)
+    #expect(await scheduler.playbackUpdates.last == true)
+
+    await container.onlineAudition.close()
+    try await scheduler.waitForUpdateCount(5)
+    #expect(await scheduler.playbackUpdates == [false, true, false, true, false])
+    await container.stop()
+    #expect(await scheduler.playbackUpdates.last == false)
+}
+
+@MainActor
 @Test("online audition prepares a redacted remote resource without a queue")
 func onlineAuditionPreparesTransientRemoteResource() async throws {
     let sourceID = MediaSourceID("coordinator.audition")
@@ -832,6 +886,30 @@ func supersededOnlineAuditionCannotStopNewerOperation() async throws {
     #expect(engine.stopCallCount == 1)
 
     await coordinator.stop()
+}
+
+private actor AuditionConversionScheduler: MediaConversionScheduling {
+    private(set) var playbackUpdates: [Bool] = []
+
+    func updateMaximumConcurrency(_ maximum: MediaConversionConcurrency) async {}
+
+    func updatePlaybackIsPlaying(_ isPlaying: Bool) async {
+        playbackUpdates.append(isPlaying)
+    }
+
+    func schedule(
+        _ operation: @escaping @Sendable () async throws -> MediaTranscodeResult
+    ) async throws -> MediaTranscodeResult {
+        try await operation()
+    }
+
+    func waitForUpdateCount(_ count: Int) async throws {
+        for _ in 0..<100 {
+            if playbackUpdates.count >= count { return }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        Issue.record("Timed out waiting for audition conversion policy update")
+    }
 }
 
 private struct CoordinatorFixtureSource: PlaybackSource,

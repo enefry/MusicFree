@@ -172,7 +172,27 @@ public protocol MediaLosslessValidating: Sendable {
 public protocol MediaConversionScheduling: Sendable {
     func updateMaximumConcurrency(_ maximum: MediaConversionConcurrency) async
 
+    func updateApplicationInBackground(_ isInBackground: Bool) async
+
+    func updatePlaybackIsPlaying(_ isPlaying: Bool) async
+
     func schedule(
         _ operation: @escaping @Sendable () async throws -> MediaTranscodeResult
     ) async throws -> MediaTranscodeResult
+}
+
+extension MediaConversionScheduling {
+    public func updateApplicationInBackground(_ isInBackground: Bool) async {}
+
+    public func updatePlaybackIsPlaying(_ isPlaying: Bool) async {}
+}
+
+public enum MediaConversionExecution {
+    @TaskLocal public static var checkpoint: (@Sendable () async throws -> Void)?
+
+    public static func waitUntilRunnable() async throws {
+        try Task.checkCancellation()
+        try await checkpoint?()
+        try Task.checkCancellation()
+    }
 }

@@ -12,8 +12,11 @@ public struct AppleAudioMediaTranscoder: MediaTranscoding, MediaLosslessValidati
         _ request: MediaTranscodeRequest,
         progress: @escaping @Sendable (MediaTranscodeProgress) -> Void
     ) async throws -> MediaTranscodeResult {
+        let checkpoint = MediaConversionExecution.checkpoint
         let task = Task.detached(priority: .utility) {
-            try Self.transcodeSynchronously(request, progress: progress)
+            try await MediaConversionExecution.$checkpoint.withValue(checkpoint) {
+                try await Self.transcodeInWorker(request, progress: progress)
+            }
         }
         return try await withTaskCancellationHandler {
             try await task.value
@@ -23,8 +26,11 @@ public struct AppleAudioMediaTranscoder: MediaTranscoding, MediaLosslessValidati
     }
 
     public func validateLosslessPCM(inputURL: URL, outputURL: URL) async throws {
+        let checkpoint = MediaConversionExecution.checkpoint
         let task = Task.detached(priority: .utility) {
-            try Self.validateLosslessPCMSynchronously(inputURL: inputURL, outputURL: outputURL)
+            try await MediaConversionExecution.$checkpoint.withValue(checkpoint) {
+                try await Self.validateLosslessPCMInWorker(inputURL: inputURL, outputURL: outputURL)
+            }
         }
         return try await withTaskCancellationHandler {
             try await task.value
@@ -33,10 +39,11 @@ public struct AppleAudioMediaTranscoder: MediaTranscoding, MediaLosslessValidati
         }
     }
 
-    private static func validateLosslessPCMSynchronously(
+    private static func validateLosslessPCMInWorker(
         inputURL: URL,
         outputURL: URL
-    ) throws {
+    ) async throws {
+        try await MediaConversionExecution.waitUntilRunnable()
         let input = try FFmpegAudioDecoder(localFileURL: inputURL)
         let output = try FFmpegAudioDecoder(localFileURL: outputURL)
         guard input.format.channelCount == output.format.channelCount,
@@ -46,7 +53,7 @@ public struct AppleAudioMediaTranscoder: MediaTranscoding, MediaLosslessValidati
         }
 
         while true {
-            try Task.checkCancellation()
+            try await MediaConversionExecution.waitUntilRunnable()
             let inputBuffer = try input.nextIntegerBuffer()
             let outputBuffer = try output.nextIntegerBuffer()
             guard inputBuffer?.frameLength == outputBuffer?.frameLength else {
@@ -68,11 +75,11 @@ public struct AppleAudioMediaTranscoder: MediaTranscoding, MediaLosslessValidati
         }
     }
 
-    private static func transcodeSynchronously(
+    private static func transcodeInWorker(
         _ request: MediaTranscodeRequest,
         progress: @escaping @Sendable (MediaTranscodeProgress) -> Void
-    ) throws -> MediaTranscodeResult {
-        try Task.checkCancellation()
+    ) async throws -> MediaTranscodeResult {
+        try await MediaConversionExecution.waitUntilRunnable()
         guard request.inputURL.isFileURL,
               request.outputURL.isFileURL,
               request.inputURL.standardizedFileURL != request.outputURL.standardizedFileURL,
@@ -186,7 +193,7 @@ public struct AppleAudioMediaTranscoder: MediaTranscoding, MediaLosslessValidati
             ))
 
             while true {
-                try Task.checkCancellation()
+                try await MediaConversionExecution.waitUntilRunnable()
                 let buffer: AVAudioPCMBuffer?
                 switch request.target {
                 case .aacLC:

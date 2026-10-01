@@ -540,6 +540,54 @@ func appContainerKeepsAppOwnedServicesAcrossSceneChurn() throws {
 }
 
 @MainActor
+@Test("Conversion policy follows application state rather than one window's scene state")
+func appLifecycleConversionPolicyUsesApplicationNotifications() async {
+    let notificationCenter = NotificationCenter()
+    let scheduler = LifecycleConversionScheduler()
+    let coordinator = AppLifecycleCoordinator(notificationCenter: notificationCenter)
+    coordinator.setMediaConversionScheduler(scheduler)
+    coordinator.start()
+    await coordinator.conversionPolicyTask?.value
+    await scheduler.clear()
+    defer { coordinator.stop() }
+
+    coordinator.handle(.background)
+    coordinator.handle(.inactive)
+    await coordinator.conversionPolicyTask?.value
+    #expect(await scheduler.backgroundStates.isEmpty)
+
+    notificationCenter.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
+    notificationCenter.post(name: UIApplication.willResignActiveNotification, object: nil)
+    notificationCenter.post(name: UIApplication.willEnterForegroundNotification, object: nil)
+    notificationCenter.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
+    await coordinator.conversionPolicyTask?.value
+    #expect(await scheduler.backgroundStates == [true, false, true])
+
+    notificationCenter.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+    await coordinator.conversionPolicyTask?.value
+    #expect(await scheduler.backgroundStates == [true, false, true, false])
+
+    coordinator.stop()
+    await coordinator.conversionPolicyTask?.value
+    #expect(await scheduler.backgroundStates.last == true)
+}
+
+private actor LifecycleConversionScheduler: MediaConversionScheduling {
+    private(set) var backgroundStates: [Bool] = []
+
+    func clear() { backgroundStates.removeAll() }
+    func updateMaximumConcurrency(_ maximum: MediaConversionConcurrency) {}
+    func updateApplicationInBackground(_ isInBackground: Bool) async {
+        backgroundStates.append(isInBackground)
+    }
+    func schedule(
+        _ operation: @escaping @Sendable () async throws -> MediaTranscodeResult
+    ) async throws -> MediaTranscodeResult {
+        try await operation()
+    }
+}
+
+@MainActor
 @Test("AppStartupState classifies recoverable and blocking issues")
 func appStartupStateClassifiesIssues() {
     let degraded = AppStartupState.degraded(.playbackUnavailable)
