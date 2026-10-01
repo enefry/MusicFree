@@ -769,7 +769,7 @@ public final class LibraryCollectionDetailViewController: UIViewController {
         } catch {
             tracks = []
             trackByID = [:]
-            loadState = .failed(error.localizedDescription)
+            loadState = .failed(L(error.localizedDescription))
             renderSnapshot()
         }
     }
@@ -813,7 +813,7 @@ public final class LibraryCollectionDetailViewController: UIViewController {
             } catch {
                 self.presentMessage(
                     title: L("无法更新播放队列"),
-                    message: error.localizedDescription
+                    message: L(error.localizedDescription)
                 )
             }
         }
@@ -847,7 +847,7 @@ public final class LibraryCollectionDetailViewController: UIViewController {
             } catch {
                 self.presentMessage(
                     title: L("无法添加到播放列表"),
-                    message: error.localizedDescription
+                    message: L(error.localizedDescription)
                 )
             }
         }
@@ -893,7 +893,7 @@ public final class LibraryCollectionDetailViewController: UIViewController {
             } catch is CancellationError {
                 return
             } catch {
-                self.presentMessage(title: L("无法分享"), message: error.localizedDescription)
+                self.presentMessage(title: L("无法分享"), message: L(error.localizedDescription))
             }
         }
         configureNavigationItems()
@@ -942,7 +942,7 @@ public final class LibraryCollectionDetailViewController: UIViewController {
             } catch is CancellationError {
                 return
             } catch {
-                self.presentMessage(title: L("无法删除专辑"), message: error.localizedDescription)
+                self.presentMessage(title: L("无法删除专辑"), message: L(error.localizedDescription))
             }
         }
         configureNavigationItems()
@@ -1250,7 +1250,7 @@ public final class LibraryCollectionDetailViewController: UIViewController {
             } catch is CancellationError {
                 return
             } catch {
-                self.presentMessage(title: L("无法播放"), message: error.localizedDescription)
+                self.presentMessage(title: L("无法播放"), message: L(error.localizedDescription))
             }
         }
         configureNavigationItems()
@@ -1273,7 +1273,7 @@ public final class LibraryCollectionDetailViewController: UIViewController {
                     !album.isFavorite, for: albumID
                 )
             } catch {
-                self.presentMessage(title: L("无法更新收藏"), message: error.localizedDescription)
+                self.presentMessage(title: L("无法更新收藏"), message: L(error.localizedDescription))
             }
         }
     }
@@ -1498,7 +1498,7 @@ extension LibraryCollectionDetailViewController: UICollectionViewDelegate {
                 self.trackByID[updated.id] = updated
                 self.renderSnapshot()
             } catch {
-                self.presentMessage(title: L("无法更新收藏"), message: error.localizedDescription)
+                self.presentMessage(title: L("无法更新收藏"), message: L(error.localizedDescription))
             }
         }
     }
@@ -1537,7 +1537,7 @@ extension LibraryCollectionDetailViewController: UICollectionViewDelegate {
             } catch is CancellationError {
                 return
             } catch {
-                self.presentMessage(title: L("无法删除歌曲"), message: error.localizedDescription)
+                self.presentMessage(title: L("无法删除歌曲"), message: L(error.localizedDescription))
             }
         }
     }
@@ -1605,7 +1605,7 @@ extension LibraryCollectionDetailViewController: UICollectionViewDelegate {
             } catch is CancellationError {
                 return
             } catch {
-                self.presentMessage(title: L("无法删除歌曲"), message: error.localizedDescription)
+                self.presentMessage(title: L("无法删除歌曲"), message: L(error.localizedDescription))
             }
         }
     }
@@ -1637,7 +1637,7 @@ extension LibraryCollectionDetailViewController: UICollectionViewDelegate {
             } catch is CancellationError {
                 return
             } catch {
-                self.presentMessage(title: L("无法分享歌曲"), message: error.localizedDescription)
+                self.presentMessage(title: L("无法分享歌曲"), message: L(error.localizedDescription))
             }
         }
     }

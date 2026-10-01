@@ -1928,7 +1928,7 @@ final class SettingsViewModel {
         if let error = error as? AppServiceError {
             return SettingsFeatureFailure(
                 diagnosticCode: error.diagnosticCode,
-                message: error.failureReason,
+                message: L(error.failureReason),
                 isRetryable: error.isRetryable
             )
         }

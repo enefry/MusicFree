@@ -2972,7 +2972,7 @@ public final class PlayerNowPlayingViewController: UIViewController {
                     guard let self else { return }
                     let failure = UIAlertController(
                         title: L("无法删除歌曲"),
-                        message: error.localizedDescription,
+                        message: L(error.localizedDescription),
                         preferredStyle: .alert
                     )
                     failure.addAction(UIAlertAction(title: L("好"), style: .default))

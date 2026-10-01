@@ -2781,7 +2781,7 @@ private final class OnlineSourceCatalogViewController: UIViewController,
                     self.lastPresentedAuditionFailureKey = failureKey
                     self.presentMessage(
                         title: L("试听失败"),
-                        message: snapshot.failureReason ?? L("在线音频暂时无法播放，请重试。")
+                        message: snapshot.failureReason.map { L($0) } ?? L("在线音频暂时无法播放，请重试。")
                     )
                     return
                 }

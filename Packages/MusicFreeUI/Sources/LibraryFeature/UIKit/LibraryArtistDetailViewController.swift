@@ -669,7 +669,7 @@ public final class LibraryArtistDetailViewController: UIViewController {
         } catch is CancellationError {
             return
         } catch {
-            loadState = .failed(error.localizedDescription)
+            loadState = .failed(L(error.localizedDescription))
             renderSnapshot()
         }
     }
@@ -726,7 +726,7 @@ public final class LibraryArtistDetailViewController: UIViewController {
             } catch is CancellationError {
                 return
             } catch {
-                self.presentMessage(title: L("无法执行操作"), message: error.localizedDescription)
+                self.presentMessage(title: L("无法执行操作"), message: L(error.localizedDescription))
             }
         }
         updateNavigationItem()
@@ -778,7 +778,7 @@ public final class LibraryArtistDetailViewController: UIViewController {
             } catch is CancellationError {
                 return
             } catch {
-                self.presentMessage(title: L("无法执行操作"), message: error.localizedDescription)
+                self.presentMessage(title: L("无法执行操作"), message: L(error.localizedDescription))
             }
         }
         updateNavigationItem()
@@ -900,7 +900,7 @@ public final class LibraryArtistDetailViewController: UIViewController {
             } catch is CancellationError {
                 return
             } catch {
-                self.presentMessage(title: L("无法分享"), message: error.localizedDescription)
+                self.presentMessage(title: L("无法分享"), message: L(error.localizedDescription))
             }
         }
         updateNavigationItem()
@@ -934,7 +934,7 @@ public final class LibraryArtistDetailViewController: UIViewController {
             } catch is CancellationError {
                 return
             } catch {
-                self.presentMessage(title: L("无法分享歌曲"), message: error.localizedDescription)
+                self.presentMessage(title: L("无法分享歌曲"), message: L(error.localizedDescription))
             }
         }
         updateNavigationItem()
@@ -1021,7 +1021,7 @@ public final class LibraryArtistDetailViewController: UIViewController {
             } catch is CancellationError {
                 return
             } catch {
-                self.presentMessage(title: L("无法删除歌曲"), message: error.localizedDescription)
+                self.presentMessage(title: L("无法删除歌曲"), message: L(error.localizedDescription))
             }
         }
         updateNavigationItem()
@@ -1077,7 +1077,7 @@ public final class LibraryArtistDetailViewController: UIViewController {
             } catch is CancellationError {
                 return
             } catch {
-                self.presentMessage(title: L("无法删除专辑"), message: error.localizedDescription)
+                self.presentMessage(title: L("无法删除专辑"), message: L(error.localizedDescription))
             }
         }
         updateNavigationItem()

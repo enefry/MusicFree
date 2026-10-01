@@ -11,6 +11,7 @@ let package = Package(
         .library(name: "MusicFreeDebugSupport", targets: ["MusicFreeDebugSupport"])
     ],
     dependencies: [
+        .package(path: "../MusicFreeUI"),
         .package(
             url: "https://github.com/kean/Pulse.git",
             exact: "5.2.3"
@@ -24,6 +25,7 @@ let package = Package(
         .target(
             name: "MusicFreeDebugSupport",
             dependencies: [
+                .product(name: "DesignSystem", package: "MusicFreeUI"),
                 .product(name: "Pulse", package: "Pulse"),
                 .product(name: "PulseProxy", package: "Pulse"),
                 .product(name: "PulseUI", package: "Pulse"),

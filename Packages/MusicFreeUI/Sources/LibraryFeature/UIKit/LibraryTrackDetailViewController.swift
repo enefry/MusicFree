@@ -348,7 +348,7 @@ public final class LibraryTrackDetailViewController: UIViewController {
         } catch is CancellationError {
             return
         } catch {
-            renderFailure(error.localizedDescription)
+            renderFailure(L(error.localizedDescription))
         }
     }
 
@@ -429,7 +429,7 @@ public final class LibraryTrackDetailViewController: UIViewController {
                 self.track = try await self.library.setFavorite(!track.isFavorite, for: track.id)
                 self.renderLoaded()
             } catch {
-                self.presentMessage(title: L("无法更新收藏"), message: error.localizedDescription)
+                self.presentMessage(title: L("无法更新收藏"), message: L(error.localizedDescription))
             }
         }
     }
@@ -493,7 +493,7 @@ public final class LibraryTrackDetailViewController: UIViewController {
                 self.onDeleted?()
                 self.navigationController?.popViewController(animated: true)
             } catch {
-                self.presentMessage(title: L("无法删除歌曲"), message: error.localizedDescription)
+                self.presentMessage(title: L("无法删除歌曲"), message: L(error.localizedDescription))
             }
         }
     }

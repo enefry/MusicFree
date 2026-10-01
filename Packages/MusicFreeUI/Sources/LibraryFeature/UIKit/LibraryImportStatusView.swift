@@ -173,7 +173,7 @@ struct LibraryImportStatusPresentation: Equatable {
     private static func failureDetail(_ failure: LibraryImportFailure) -> String {
         let reason = failure.code == "corrupted_media"
             ? L("媒体解析失败或超时，请重试。")
-            : failure.message
+            : L(failure.message)
         return L("format.colonPair", failure.itemName, reason)
     }
 }

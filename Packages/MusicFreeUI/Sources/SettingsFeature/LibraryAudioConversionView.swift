@@ -57,7 +57,7 @@ final class LibraryAudioConversionViewModel {
         } catch is CancellationError {
             return
         } catch {
-            failureMessage = error.localizedDescription
+            failureMessage = L(error.localizedDescription)
         }
     }
 
@@ -80,7 +80,7 @@ final class LibraryAudioConversionViewModel {
         } catch is CancellationError {
             return
         } catch {
-            failureMessage = error.localizedDescription
+            failureMessage = L(error.localizedDescription)
         }
     }
 
@@ -109,7 +109,7 @@ final class LibraryAudioConversionViewModel {
         } catch is CancellationError {
             return
         } catch {
-            failureMessage = error.localizedDescription
+            failureMessage = L(error.localizedDescription)
         }
     }
 

@@ -1464,7 +1464,7 @@ public final class LibraryViewModel: ObservableObject {
         if let localizedError = error as? LocalizedError,
            let description = localizedError.errorDescription,
            !description.isEmpty {
-            return description
+            return L(description)
         }
         return L("资料库暂时无法加载，请稍后重试。")
     }

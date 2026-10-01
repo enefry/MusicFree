@@ -662,7 +662,7 @@ public final class LibraryAlbumMetadataEditorViewController: UIViewController,
                     return
                 } catch {
                     refreshStatusLabel.text = L("刷新失败")
-                    presentMessage(title: L("无法刷新专辑源信息"), message: error.localizedDescription)
+                    presentMessage(title: L("无法刷新专辑源信息"), message: L(error.localizedDescription))
                 }
             }
         })
@@ -749,7 +749,7 @@ public final class LibraryAlbumMetadataEditorViewController: UIViewController,
             } catch is CancellationError {
                 return
             } catch {
-                presentMessage(title: L("无法保存专辑"), message: error.localizedDescription)
+                presentMessage(title: L("无法保存专辑"), message: L(error.localizedDescription))
             }
         }
     }

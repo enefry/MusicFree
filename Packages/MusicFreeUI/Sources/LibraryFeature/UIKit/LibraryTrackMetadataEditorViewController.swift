@@ -365,7 +365,7 @@ public final class LibraryTrackMetadataEditorViewController: UIViewController,
                         artworkStatusLabel.text = L("已选择新封面")
                     } catch {
                         guard !Task.isCancelled, artworkVersion == version else { return }
-                        presentMessage(title: L("无法读取封面"), message: error.localizedDescription)
+                        presentMessage(title: L("无法读取封面"), message: L(error.localizedDescription))
                     }
                 }
             }
@@ -437,7 +437,7 @@ public final class LibraryTrackMetadataEditorViewController: UIViewController,
             } catch is CancellationError {
                 return
             } catch {
-                presentMessage(title: L("无法保存歌曲"), message: error.localizedDescription)
+                presentMessage(title: L("无法保存歌曲"), message: L(error.localizedDescription))
             }
         }
     }

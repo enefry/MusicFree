@@ -147,7 +147,7 @@ public enum ImportEventMapper {
                 LibraryImportFailure(
                     itemName: displayName(for: url),
                     code: error.diagnosticCode,
-                    message: error.userFacingReason
+                    message: L(error.userFacingReason)
                 )
             )
         case .confirmationRequired:

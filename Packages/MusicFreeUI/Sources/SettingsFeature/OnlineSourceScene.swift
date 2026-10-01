@@ -1762,6 +1762,6 @@ public final class OnlineSourcesSceneModel {
                 return L("此在线源暂不支持：%@。", operation)
             }
         }
-        return description.isEmpty ? L("在线源操作失败，请查看日志后重试。") : description
+        return description.isEmpty ? L("在线源操作失败，请查看日志后重试。") : L(description)
     }
 }

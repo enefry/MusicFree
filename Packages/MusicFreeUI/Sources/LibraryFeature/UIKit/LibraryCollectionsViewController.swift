@@ -1280,7 +1280,7 @@ public final class LibraryCollectionsViewController: UIViewController {
                 _ = try await self.viewModel.library.setAlbumFavorite(!currentValue, for: albumID)
                 self.viewModel.refresh(section: .albums)
             } catch {
-                self.presentMessage(title: L("无法更新收藏"), message: error.localizedDescription)
+                self.presentMessage(title: L("无法更新收藏"), message: L(error.localizedDescription))
             }
         }
     }
@@ -1310,7 +1310,7 @@ public final class LibraryCollectionsViewController: UIViewController {
             } catch is CancellationError {
                 return
             } catch {
-                self.presentMessage(title: L("无法执行操作"), message: error.localizedDescription)
+                self.presentMessage(title: L("无法执行操作"), message: L(error.localizedDescription))
             }
         }
     }
@@ -1344,7 +1344,7 @@ public final class LibraryCollectionsViewController: UIViewController {
             } catch is CancellationError {
                 return
             } catch {
-                self.presentMessage(title: L("无法分享"), message: error.localizedDescription)
+                self.presentMessage(title: L("无法分享"), message: L(error.localizedDescription))
             }
         }
     }
@@ -1381,7 +1381,7 @@ public final class LibraryCollectionsViewController: UIViewController {
             } catch is CancellationError {
                 return
             } catch {
-                self.presentMessage(title: L("无法删除专辑"), message: error.localizedDescription)
+                self.presentMessage(title: L("无法删除专辑"), message: L(error.localizedDescription))
             }
         }
         updateNavigationItems()

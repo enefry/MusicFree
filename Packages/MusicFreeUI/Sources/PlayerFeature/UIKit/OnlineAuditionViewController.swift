@@ -589,11 +589,11 @@ private final class OnlineAuditionQueueViewController: UITableViewController {
         mainButton.accessibilityLabel = isRetry
             ? (snapshot.phase == .failed ? L("重试试听") : L("重新试听"))
             : (snapshot.phase == .playing ? L("暂停试听") : L("继续试听"))
-        failureLabel.text = snapshot.failureReason
+        failureLabel.text = snapshot.failureReason.map { L($0) }
         failureLabel.isHidden = snapshot.failureReason == nil
         footerLabel.text = snapshot.queue.isEmpty
             ? nil
-            : L("共 \(snapshot.queue.count) 首 · 仅本次已加载歌曲；顺序播放，播放完毕后停止")
+            : L("共 %d 首 · 仅本次已加载歌曲；顺序播放，播放完毕后停止", snapshot.queue.count)
     }
 
     @objc private func beginSeeking() { isScrubbing = true }

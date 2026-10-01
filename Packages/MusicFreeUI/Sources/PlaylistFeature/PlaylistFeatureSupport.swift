@@ -330,13 +330,13 @@ final class AppServicesPlaybackBridge: PlaylistFeaturePlaybackServing {
 
 func playlistFeatureMessage(for error: Error) -> String {
     if let error = error as? PlaylistFeatureError {
-        return error.localizedDescription
+        return L(error.localizedDescription)
     }
     if let error = error as? AppServiceError {
-        return error.failureReason
+        return L(error.failureReason)
     }
     if let error = error as? LibraryError {
-        return error.userMessage
+        return L(error.userMessage)
     }
     return L("操作未完成，请重试。")
 }

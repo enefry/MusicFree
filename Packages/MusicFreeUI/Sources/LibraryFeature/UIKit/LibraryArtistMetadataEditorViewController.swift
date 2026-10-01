@@ -190,7 +190,7 @@ public final class LibraryArtistMetadataEditorViewController: UIViewController, 
                         artworkStatusLabel.text = L("已选择新封面")
                     } catch {
                         guard !Task.isCancelled, artworkVersion == version else { return }
-                        presentError(error.localizedDescription)
+                        presentError(L(error.localizedDescription))
                     }
                 }
             }
@@ -236,7 +236,7 @@ public final class LibraryArtistMetadataEditorViewController: UIViewController, 
             } catch is CancellationError {
                 return
             } catch {
-                presentError(error.localizedDescription)
+                presentError(L(error.localizedDescription))
             }
         }
     }

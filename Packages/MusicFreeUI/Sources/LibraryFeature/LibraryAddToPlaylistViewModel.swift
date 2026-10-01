@@ -167,7 +167,7 @@ final class LibraryAddToPlaylistViewModel {
     }
 
     private func message(for error: Error) -> String {
-        let text = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = L(error.localizedDescription).trimmingCharacters(in: .whitespacesAndNewlines)
         return text.isEmpty ? L("无法添加到播放列表，请稍后重试。") : text
     }
 }

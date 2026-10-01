@@ -1,4 +1,5 @@
 import AppServices
+import DesignSystem
 import Foundation
 import MediaSourceAPI
 
@@ -9,9 +10,9 @@ enum AppDocumentsScannerError: Error, LocalizedError, Sendable {
     var errorDescription: String? {
         switch self {
         case .documentsUnavailable:
-            "The shared Documents directory could not be scanned."
+            L("The shared Documents directory could not be scanned.")
         case .scanEndedWithoutResult:
-            "The Documents import ended without a result."
+            L("The Documents import ended without a result.")
         }
     }
 }

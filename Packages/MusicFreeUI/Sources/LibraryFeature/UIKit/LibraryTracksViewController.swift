@@ -1090,7 +1090,7 @@ extension LibraryTracksViewController: UICollectionViewDelegate {
                     self.viewModel.removeDeletedTrack(track.id)
                     self.renderSnapshot()
                 } catch {
-                    self.presentMessage(title: L("无法删除歌曲"), message: error.localizedDescription)
+                    self.presentMessage(title: L("无法删除歌曲"), message: L(error.localizedDescription))
                 }
             }
         })
@@ -1124,7 +1124,7 @@ extension LibraryTracksViewController: UICollectionViewDelegate {
             } catch is CancellationError {
                 return
             } catch {
-                self.presentMessage(title: L("无法分享歌曲"), message: error.localizedDescription)
+                self.presentMessage(title: L("无法分享歌曲"), message: L(error.localizedDescription))
             }
         }
     }

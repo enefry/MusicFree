@@ -2,6 +2,42 @@ import DesignSystem
 import Testing
 import UIKit
 
+@Test("New feature labels and error reasons resolve in each app language", arguments: MusicFreeLanguage.allCases)
+func recentStringsResolveInSupportedLanguages(language: MusicFreeLanguage) {
+    let expected: [MusicFreeLanguage: [String]] = [
+        .english: ["Favorite Album", "Audio Conversion", "The selected media could not be accessed."],
+        .chinese: ["收藏专辑", "音频转换", "无法访问所选媒体。"],
+        .french: ["Ajouter l’album aux favoris", "Conversion audio", "Impossible d’accéder au média sélectionné."],
+        .german: ["Album zu Favoriten hinzufügen", "Audiokonvertierung", "Auf die ausgewählten Medien konnte nicht zugegriffen werden."],
+        .spanish: ["Añadir álbum a favoritos", "Conversión de audio", "No se pudo acceder al contenido seleccionado."],
+        .japanese: ["アルバムをお気に入りに追加", "音声変換", "選択したメディアにアクセスできませんでした。"]
+    ]
+    let keys = ["收藏专辑", "音频转换", "The selected media could not be accessed."]
+    for (key, value) in zip(keys, expected[language]!) {
+        #expect(String(localized: MusicFreeLocalization.resource(key, language: language)) == value)
+    }
+}
+
+@Test("Audition count and privacy source name use translated format keys", arguments: MusicFreeLanguage.allCases)
+func parameterizedStringsResolveInSupportedLanguages(language: MusicFreeLanguage) {
+    let countKey = "共 %d 首 · 仅本次已加载歌曲；顺序播放，播放完毕后停止"
+    let sourceKey = "撤销“%@”后会停止此来源的新请求并清除来源级同意；已经导入本地的媒体不会删除。"
+    let countTemplate = String(localized: MusicFreeLocalization.resource(countKey, language: language))
+    let sourceTemplate = String(localized: MusicFreeLocalization.resource(sourceKey, language: language))
+    if language != .chinese {
+        #expect(countTemplate != countKey)
+        #expect(sourceTemplate != sourceKey)
+    }
+    let count = String(format: countTemplate, locale: language.locale, 7)
+    let source = String(format: sourceTemplate, locale: language.locale, "My NAS")
+    #expect(count.contains("7"))
+    #expect(source.contains("My NAS"))
+    #expect(!count.contains("%d"))
+    #expect(!source.contains("%@"))
+    #expect(!count.contains("snapshot.queue.count"))
+    #expect(!source.contains("currentConfiguration.displayName"))
+}
+
 @Test("String Catalog resolves all six supported languages")
 func stringCatalogResolvesSupportedLanguages() {
     #expect(

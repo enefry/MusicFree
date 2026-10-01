@@ -574,7 +574,7 @@ private struct OnlineSourcePrivacyDetailsView: View {
             Button(L("取消"), role: .cancel) {}
         } message: {
             Text(
-                L("撤销“\(currentConfiguration.displayName)”后会停止此来源的新请求并清除来源级同意；已经导入本地的媒体不会删除。")
+                L("撤销“%@”后会停止此来源的新请求并清除来源级同意；已经导入本地的媒体不会删除。", currentConfiguration.displayName)
             )
         }
     }
