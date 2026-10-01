@@ -20,6 +20,9 @@ CUE range that begins after zero cannot play on such a stream.
   persisted `vlc-media-id:N` versus `ffmpeg-stream:N` identifier change.
 - App-host automation has played the packaged format samples on a physical
   device, and live DS Audio audition and seek have passed on a simulator.
-  Audible headphone output, physical route changes, interruptions, background
-  playback, and the remaining advertised formats still need acceptance checks
-  before declaring behavioral replacement complete.
+  Physical-device audible output, interruptions, background playback, and lock
+  screen controls were manually accepted on 2026-09-30. iOS selects wired and
+  Bluetooth routes; the adapter observes audio-engine configuration changes and
+  rebuilds playback from the current position. A physical wired/Bluetooth route
+  switch is an optional release smoke test; live DS Audio playback on a device
+  remains outstanding.
