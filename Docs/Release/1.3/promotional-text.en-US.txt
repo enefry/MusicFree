@@ -1,0 +1,1 @@
+Make your music library your own: play local audio, edit song details, convert supported lossless files to AAC or ALAC, and switch Chinese lyrics between scripts.

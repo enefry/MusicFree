@@ -1,0 +1,29 @@
+MyMusic: Local Player helps you enjoy and organize the audio files you own on iPhone and iPad.
+
+Import music from Files or Finder file sharing. Browse songs, albums, artists, genres, folders, favorites, playlists, and playback history. Local importing and playback work without an account.
+
+LISTEN YOUR WAY
+- Play common audio formats, including MP3, AAC, FLAC, ALAC, WAV, and AIFF
+- Play individual tracks from CUE albums
+- Build a queue with play next, shuffle, and repeat
+- Keep listening in the background and control playback from the Lock Screen
+- Adjust playback speed, use the equalizer, and set a sleep timer
+
+ORGANIZE YOUR LIBRARY
+- View audio format, sample rate, bit depth, and other file details
+- Edit song, album, and artist information, artwork, and lyrics in your local library
+- Browse artists with an alphabetical index
+- Convert saved Chinese lyrics between Simplified and Traditional Chinese
+
+CONVERT SUPPORTED LOSSLESS AUDIO
+- Choose AAC-LC at 128, 160, 192, 256, or 320 kbps, or lossless ALAC, saved as M4A
+- Enable optional conversion when importing supported lossless files
+- Convert eligible audio already in your library, with progress and task controls
+- Conversion runs while music is playing and pauses when playback pauses, stops, or buffers
+
+OPTIONAL ONLINE SERVICES
+Connect your own DS Audio server to browse, preview, and import music. Connect Google Drive to browse and import audio files after authorization. Google Drive does not provide online preview playback.
+
+You can also enable supported metadata, artwork, and lyrics providers. Online features require the app privacy policy and the relevant provider or source disclosure to be accepted. Already imported music remains available offline when online services are disabled.
+
+MyMusic does not supply a music catalog. Bring audio you have the right to use and enjoy your personal library.
