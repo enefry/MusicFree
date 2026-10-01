@@ -1,22 +1,11 @@
-MyMusic: Local Player is a personal music player for audio files supplied by the user. No app account or login is required for local import, library management, or playback. The app does not supply a music catalog.
+This update primarily replaces the internal audio playback, media probing, and metadata-reading implementation from VLCKit with an FFmpeg-based audio implementation. The main local-player interface and review workflow remain substantially the same.
 
-Local review flow:
-1. Open Library and use the add/import action to choose an audio file from Files. Finder file sharing is also supported.
-2. Open Songs and play the imported track. Open the mini-player to test playback controls, seeking, queue, equalizer, and sleep timer.
-3. Background the app or lock the device while music is playing, then test the system playback controls.
-4. Open a song's details and editing actions. Album and artist pages also provide information and editing actions. Edits are saved to the app library.
+MyMusic: Local Player plays audio files supplied by the user. No app account or login is required for local import and playback. The app does not supply a music catalog.
 
-Audio conversion in this update:
-1. Import a supported lossless file such as a 16-bit or 24-bit WAV or FLAC. Include another playable track for listening during conversion.
-2. Open the import settings in Settings, then choose Audio Conversion. Choose AAC-LC or ALAC. Enable Import Conversion to convert supported lossless audio on subsequent imports, or choose Convert Existing Library to convert eligible audio already imported.
-3. For existing-library conversion, review the eligible files and confirm the operation. Start music playback to allow conversion to run and inspect its progress.
-4. Pausing, stopping, or buffering playback also pauses conversion; conversion resumes when music playback resumes. In the background, conversion concurrency is limited to one task while playback is active. Conversion does not play silent audio to keep the app running.
-5. AAC-LC is lossy compression; ALAC is lossless for supported inputs. Unsupported or ineligible inputs are not presented as successful conversions. Library metadata edits do not rewrite the original source file's tags.
+Review flow:
+1. Open Library and import an audio file from Files, or use Finder file sharing.
+2. Open Songs, play the imported track, and use the mini-player to open playback controls.
+3. Test play/pause, seeking, queue, playback speed, and equalizer. CUE albums can be imported with their referenced audio files to test individual track playback.
+4. Background the app or lock the device while music is playing, then test the system playback controls.
 
-Chinese lyrics conversion:
-For a song with saved Chinese lyrics, open the lyrics action menu and choose conversion to Simplified or Traditional Chinese. The converted lyrics are saved in the local library.
-
-Optional online services:
-DS Audio requires a user's own DSM/Audio Station server and account. It supports browsing, temporary audio preview, and import into the local library. Google Drive uses the user's Google OAuth authorization for browsing and importing audio files; it does not support online preview playback.
-
-Online services require acceptance of the app privacy policy and the relevant provider/source disclosure. The complete local player remains usable without enabling these services. Source credentials and OAuth tokens must not be sent in review attachments.
+DS Audio and Google Drive remain optional user-configured sources. Local playback does not require either service. DS Audio requires a DSM/Audio Station server and account; Google Drive uses Google OAuth for browsing and importing audio, without online preview playback. Online requests require the app privacy policy and the relevant provider/source disclosure to be accepted.
