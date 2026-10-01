@@ -93,8 +93,33 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
 
     /// 远程探测读取上限：够大多数容器识别编码参数，同时控制起播耗时。
     private static let remoteProbeSize: Int64 = 1024 * 1024
+    private static let defaultInFlightBufferCount = 3
+    private static let queueHeadroomDuration: TimeInterval = 1
+    private static let maximumInFlightBufferCount = 256
     /// 饥饿持续超过该时长才对外发布 `.buffering`，避免短暂抖动闪烁加载态。
     private static let bufferingDebounce: Duration = .milliseconds(300)
+
+    static func inFlightBufferCount(
+        sampleRate: Double,
+        outputLatency: TimeInterval
+    ) -> Int {
+        guard sampleRate.isFinite, sampleRate > 0 else {
+            return Self.defaultInFlightBufferCount
+        }
+        let reportedLatency = outputLatency.isFinite ? max(0, outputLatency) : 0
+        let targetQueueDuration = reportedLatency + Self.queueHeadroomDuration
+        // Clamp before converting to Int, including overflow from extreme latency values.
+        let targetBufferCount = Int(min(Double(Self.maximumInFlightBufferCount), ceil(
+            targetQueueDuration * sampleRate / Double(DecodeFeeder.bufferFrameCapacity)
+        )))
+        return min(
+            Self.maximumInFlightBufferCount,
+            max(
+                Self.defaultInFlightBufferCount,
+                targetBufferCount
+            )
+        )
+    }
 
     public convenience init() {
         self.init(remoteSessionConfiguration: .default)
@@ -487,12 +512,22 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
     ) {
         let epoch = feederEpoch
         isStarved = true
+        logOutputDiagnostics(event: "feeder-start", decoderSampleRate: decoder.format.sampleRate)
+        let session = AVAudioSession.sharedInstance()
+        let outputLatency = max(
+            session.outputLatency,
+            audioEngine.outputNode.presentationLatency
+        )
         let feeder = DecodeFeeder(
             decoder: decoder,
             playerNode: playerNode,
             queue: decodeQueue,
             initialSeek: initialSeek,
             playbackDuration: currentItem?.selection.range.map { $0.duration - basePosition },
+            maxInFlight: Self.inFlightBufferCount(
+                sampleRate: decoder.format.sampleRate,
+                outputLatency: outputLatency
+            ),
             onEnd: { [weak self] in
                 Task { @MainActor [weak self] in
                     self?.handlePlaybackEnded(epoch: epoch, generation: generation, itemID: itemID)
@@ -791,6 +826,10 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
     /// 放完后静默。逻辑与 `seek` 的重建路径一致。
     private func handleConfigurationChange() {
         guard let decoder, let item = currentItem, !didReachEnd else { return }
+        logOutputDiagnostics(
+            event: "engine-configuration-change",
+            decoderSampleRate: decoder.format.sampleRate
+        )
         switch state.phase {
         case .playing, .preparing, .paused, .buffering:
             break
@@ -842,6 +881,22 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
             itemID: item.itemID
         )
         updateOutput()
+    }
+
+    private func logOutputDiagnostics(event: String, decoderSampleRate: Double) {
+        let session = AVAudioSession.sharedInstance()
+        let routes = session.currentRoute.outputs
+            .map { $0.portType.rawValue }
+            .joined(separator: ",")
+        let ioBufferMilliseconds = session.ioBufferDuration * 1_000
+        let outputLatencyMilliseconds = session.outputLatency * 1_000
+        let presentationLatencyMilliseconds = audioEngine.outputNode.presentationLatency * 1_000
+        Self.logger.info(
+            "audio output event=\(event, privacy: .public) routes=\(routes, privacy: .public) decoderRate=\(decoderSampleRate, privacy: .public) sessionRate=\(session.sampleRate, privacy: .public)"
+        )
+        Self.logger.info(
+            "audio timing event=\(event, privacy: .public) ioBufferMs=\(ioBufferMilliseconds, format: .fixed(precision: 2), privacy: .public) outputLatencyMs=\(outputLatencyMilliseconds, format: .fixed(precision: 1), privacy: .public) presentationLatencyMs=\(presentationLatencyMilliseconds, format: .fixed(precision: 1), privacy: .public) engineRunning=\(self.audioEngine.isRunning, privacy: .public) wantsPlayback=\(self.wantsPlayback, privacy: .public)"
+        )
     }
 
     private func restartSequentialStreamAfterConfigurationChange(

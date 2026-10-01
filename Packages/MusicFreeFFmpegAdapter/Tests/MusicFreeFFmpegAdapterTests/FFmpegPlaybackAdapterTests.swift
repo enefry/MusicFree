@@ -111,6 +111,46 @@ private func toneAmplitude(_ samples: [Float], sampleRate: Double, frequency: Do
     }
 
     @MainActor
+    @Test func PCMQueueDepthAccountsForSystemOutputLatency() {
+        #expect(FFmpegPlaybackEngine.inFlightBufferCount(
+            sampleRate: 44_100,
+            outputLatency: 0.0154
+        ) == 6)
+        #expect(FFmpegPlaybackEngine.inFlightBufferCount(
+            sampleRate: 48_000,
+            outputLatency: 0.02
+        ) == 6)
+        #expect(FFmpegPlaybackEngine.inFlightBufferCount(
+            sampleRate: 192_000,
+            outputLatency: 0.02
+        ) == 24)
+        #expect(FFmpegPlaybackEngine.inFlightBufferCount(
+            sampleRate: 192_000,
+            outputLatency: 0.25
+        ) == 30)
+        #expect(FFmpegPlaybackEngine.inFlightBufferCount(
+            sampleRate: 48_000,
+            outputLatency: .nan
+        ) == 6)
+        #expect(FFmpegPlaybackEngine.inFlightBufferCount(
+            sampleRate: 44_100,
+            outputLatency: 2
+        ) == 17)
+        #expect(FFmpegPlaybackEngine.inFlightBufferCount(
+            sampleRate: 192_000,
+            outputLatency: 2
+        ) == 71)
+        #expect(FFmpegPlaybackEngine.inFlightBufferCount(
+            sampleRate: 192_000,
+            outputLatency: 60
+        ) == 256)
+        #expect(FFmpegPlaybackEngine.inFlightBufferCount(
+            sampleRate: 192_000,
+            outputLatency: .greatestFiniteMagnitude
+        ) == 256)
+    }
+
+    @MainActor
     @Test func equalizerAppliesAndRejectsInvalidEffectsWithoutChangingOutput() throws {
         let engine = FFmpegPlaybackEngine()
         defer { engine.dispose() }
