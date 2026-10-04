@@ -264,3 +264,60 @@ private struct LaneCounterProcessor: PluginDSPProcessor {
     }
     mutating func reset(_ reason: PluginDSPResetReason) { calls = 0 }
 }
+
+extension PluginDSPAppTests {
+    func testBuiltinEqualizerProcessesEachSelectedNodeOnceAndSupportsGainChain() async throws {
+        let root = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("BuiltinEQTests")
+        let url = root.appendingPathComponent("tone.wav")
+        try PluginReferenceMedia.create(at: url)
+        defer { try? FileManager.default.removeItem(at: root) }
+        func peak(eqEnabled: Bool, placement: PluginDSPPlacement, extraGain: Bool) async throws -> Float {
+            let engine = FFmpegPlaybackEngine(equalizerManagedExternally: true)
+            defer { engine.dispose() }
+            let runtime = PluginRuntime(registry: PluginRegistry(
+                ReferencePluginRegistrationProvider(mediaURL: url).registrations + [PluginHostService.equalizerRegistration]))
+            let graph = PluginAudioHostController(runtime: runtime, factories: PluginHostService.audioFactories,
+                installChain: { try engine.setPostEqualizerEffects($0) })
+            let pcm = PluginPCMHostController(runtime: runtime, excluding: Set(PluginHostService.audioFactories.keys)) { specs in
+                let factory: FFmpegPCMProcessorFactory = { format in try PluginFFmpegPCMAdapter(format: format, specifications: specs) }
+                try engine.setPCMProcessorFactory(specs.isEmpty ? nil : factory, preservesTiming: true)
+            }
+            defer { graph.unload(); pcm.unload() }
+            let id = PluginHostService.equalizerRegistration.descriptor.id
+            await runtime.apply(preferences: [
+                .init(pluginID: id, isEnabled: eqEnabled, isLoadAllowed: true, configuration: ["preamp": .number(-6)], dspPlacement: placement),
+                .init(pluginID: ReferencePluginRegistrationProvider.dspID, isEnabled: extraGain, isLoadAllowed: true,
+                    configuration: ["gain": .number(0.5)], dspPlacement: .postMix)
+            ], applicationPrivacyAccepted: false)
+            await graph.apply(); await pcm.apply()
+            // The old engine API still accepts EQ intent; production external
+            // management must bypass it so the same settings are not applied twice.
+            let legacy = try XCTUnwrap(engine.equalizerDescriptor)
+            try engine.apply(.init(equalizer: .init(preampDecibels: -6,
+                bandGains: legacy.bands.map { .init(centerFrequencyHz: $0.centerFrequencyHz, gainDecibels: 0) })))
+            XCTAssertTrue(engine.equalizerUnit.bypass)
+            try await engine.prepare(.init(itemID: .init(sourceID: .local, externalID: "eq-tone"), resource: .localFile(url), displaySnapshot: .init(title: "Tone")), startAt: nil)
+            engine.audioEngine.stop()
+            let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 1))
+            try engine.audioEngine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 512)
+            try engine.play()
+            let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 512))
+            var peak: Float = 0
+            for _ in 0..<60 {
+                XCTAssertEqual(try engine.audioEngine.renderOffline(512, to: buffer), .success)
+                for frame in 0..<Int(buffer.frameLength) { peak = max(peak, abs(buffer.floatChannelData![0][frame])) }
+                try await Task.sleep(for: .milliseconds(1))
+            }
+            return peak
+        }
+        let baseline = try await peak(eqEnabled: false, placement: .postMix, extraGain: false)
+        XCTAssertGreaterThan(baseline, 0.05)
+        let expected = Float(pow(10, -6.0 / 20))
+        for placement in [PluginDSPPlacement.perTrack, .postMix] {
+            let equalized = try await peak(eqEnabled: true, placement: placement, extraGain: false)
+            let stacked = try await peak(eqEnabled: true, placement: placement, extraGain: true)
+            XCTAssertEqual(equalized / baseline, expected, accuracy: 0.01)
+            XCTAssertEqual(stacked / baseline, expected * 0.5, accuracy: 0.01)
+        }
+    }
+}

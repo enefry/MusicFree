@@ -233,9 +233,10 @@ public final class OnlineSourcesViewController: UIViewController,
 
     private func refreshPluginDescriptors() async {
         guard let plugins else { return }
-        pluginDescriptors = await plugins.snapshots().filter {
-            $0.preference.isVisible && $0.descriptor.kinds.contains(.onlineSource)
-                && ![.compiledOut, .incompatible, .invalidRegistration].contains($0.state)
+        pluginDescriptors = await plugins.snapshots().filter { snapshot in
+            snapshot.preference.isVisible && snapshot.descriptor.kinds.contains(.onlineSource)
+                && !OnlineProviderKind.allCases.contains(where: { kind in kind.rawValue == snapshot.descriptor.onlineProviderID })
+                && ![.compiledOut, .incompatible, .invalidRegistration].contains(snapshot.state)
         }.map(\.descriptor)
         navigationItem.rightBarButtonItem?.menu = makeAddSourceMenu()
     }

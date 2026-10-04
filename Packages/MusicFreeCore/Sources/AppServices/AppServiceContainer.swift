@@ -178,6 +178,7 @@ public final class AppServiceContainer {
         self.playlistCoordinator = PlaylistCoordinator(repository: dependencies.playlistRepository)
         self.settingsCoordinator = SettingsCoordinator(
             repository: dependencies.settingsRepository,
+            plugins: dependencies.plugins,
             playbackCapabilities: dependencies.playbackCapabilities,
             equalizerDescriptor: dependencies.playbackEngine?.equalizerDescriptor,
             systemCapabilities: dependencies.systemCapabilities

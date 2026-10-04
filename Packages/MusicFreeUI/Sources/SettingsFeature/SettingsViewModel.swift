@@ -1835,19 +1835,19 @@ final class SettingsViewModel {
                 case .save(_, let value):
                     try await store.save(value)
                     try Task.checkCancellation()
-                    committedSettings = value
+                    if committedSettings?.settingPluginPreferences(value.pluginPreferences) != value { committedSettings = value }
                     failedSaveSettings = nil
                     rememberLocalWrite(value)
-                    if pendingOperation == nil, settings == value {
+                    if pendingOperation == nil, settings.settingPluginPreferences(value.pluginPreferences) == value {
                         mutationState = .saved
                         lastFailure = nil
                     }
                 case .reset:
                     try await store.reset()
                     try Task.checkCancellation()
-                    committedSettings = .defaults
+                    if committedSettings?.settingPluginPreferences([]) != .defaults { committedSettings = .defaults }
                     rememberLocalWrite(.defaults)
-                    if pendingOperation == nil, settings == .defaults {
+                    if pendingOperation == nil, settings.settingPluginPreferences([]) == .defaults {
                         mutationState = .saved
                         lastFailure = nil
                     }
@@ -1920,6 +1920,27 @@ final class SettingsViewModel {
     private func receiveExternal(_ value: AppSettings) {
         do {
             let validated = try value.validated()
+            // The host can normalize legacy settings into plugin preferences.
+            // Recognize that committed echo and rebase queued edits so a second
+            // slider change cannot restore stale plugin parameters or grants.
+            var localWrite: AppSettings?
+            if case .save(_, let value) = inFlightOperation,
+               validated.settingPluginPreferences(value.pluginPreferences) == value { localWrite = value }
+            if case .reset = inFlightOperation, validated.settingPluginPreferences([]) == .defaults { localWrite = .defaults }
+            if localWrite == nil {
+                localWrite = recentlyWrittenSettings.first { validated.settingPluginPreferences($0.pluginPreferences) == $0 }
+            }
+            if let localWrite, validated != localWrite {
+                recentlyWrittenSettings.remove(localWrite)
+                committedSettings = validated
+                if settings == localWrite { settings = validated }
+                else { settings = settings.settingPluginPreferences(validated.pluginPreferences) }
+                if case .save(let id, let queued) = pendingOperation {
+                    pendingOperation = .save(id: id, settings: queued.settingPluginPreferences(validated.pluginPreferences))
+                }
+                if pendingOperation == nil, inFlightOperation == nil { mutationState = .saved }
+                return
+            }
             if recentlyWrittenSettings.remove(validated) != nil {
                 committedSettings = validated
                 if pendingOperation == nil, inFlightOperation == nil, settings == validated {

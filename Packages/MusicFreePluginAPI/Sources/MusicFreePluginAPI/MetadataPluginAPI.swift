@@ -23,6 +23,16 @@ public struct PluginMetadataCandidate: Sendable {
 public enum PluginMetadataAuthorizationStatus: String, Sendable {
     case notDetermined, denied, restricted, authorized, unavailable
 }
+/// Permission-gated system authorization without constructing a data client.
+/// This keeps a disabled provider's existing enable -> authorize workflow.
+public struct PluginMetadataAuthorizationHandlers: Sendable {
+    public let status: @Sendable () async -> PluginMetadataAuthorizationStatus
+    public let request: @Sendable () async -> PluginMetadataAuthorizationStatus
+    public init(status: @escaping @Sendable () async -> PluginMetadataAuthorizationStatus,
+                request: (@Sendable () async -> PluginMetadataAuthorizationStatus)? = nil) {
+        self.status = status; self.request = request ?? status
+    }
+}
 public protocol MetadataPlugin: PluginInstance {
     func authorizationStatus() async -> PluginMetadataAuthorizationStatus
     func requestAuthorization() async -> PluginMetadataAuthorizationStatus

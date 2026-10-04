@@ -17,12 +17,18 @@ public actor MusicKitMetadataPlugin: CatalogProviding {
         self.artworkSession = artworkSession
     }
 
-    public func authorizationStatus() async -> PluginMetadataAuthorizationStatus {
+    public static func systemAuthorizationStatus() async -> PluginMetadataAuthorizationStatus {
         Self.mapAuthorization(MusicAuthorization.currentStatus)
+    }
+    public static func requestSystemAuthorization() async -> PluginMetadataAuthorizationStatus {
+        Self.mapAuthorization(await MusicAuthorization.request())
+    }
+    public func authorizationStatus() async -> PluginMetadataAuthorizationStatus {
+        await Self.systemAuthorizationStatus()
     }
 
     public func requestAuthorization() async -> PluginMetadataAuthorizationStatus {
-        Self.mapAuthorization(await MusicAuthorization.request())
+        await Self.requestSystemAuthorization()
     }
 
     public func search(
@@ -312,7 +318,7 @@ public actor MusicKitMetadataPlugin: CatalogProviding {
 
 extension MusicKitMetadataPlugin: MetadataPlugin {
     public static var descriptor: PluginDescriptor {
-        .init(id: .init(rawValue: "builtin.metadata.musicKit"), name: "MusicKit Metadata", kinds: [.metadata], permissions: [.network])
+        .init(id: .init(rawValue: "builtin.metadata.musicKit"), name: "MusicKit Metadata", kinds: [.metadata], permissions: [.network], policyVersion: "1.2.0", dataProviderID: "musicKit")
     }
     public func candidates(for query: PluginTrackQuery, fields: Set<PluginMetadataField>, context: PluginOperationContext) async throws -> [PluginMetadataCandidate] {
         try context.requireNetwork()

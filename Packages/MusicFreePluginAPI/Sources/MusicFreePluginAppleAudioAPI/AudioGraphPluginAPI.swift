@@ -8,7 +8,12 @@ import MusicFreePluginAPI
     var behavior: PluginDSPBehavior { get }
     func configure(format: AVAudioFormat) throws
     func reset(_ reason: PluginDSPResetReason)
+    /// Return true only when parameters can be updated without replacing the node.
+    func update(configuration: PluginInstanceConfiguration) throws -> Bool
     func setBypassed(_ bypassed: Bool)
+}
+public extension PluginAppleAudioEffect {
+    func update(configuration: PluginInstanceConfiguration) throws -> Bool { false }
 }
 @MainActor public protocol AudioGraphDSPAdapter: AnyObject {
     func attach(_ effect: any PluginAppleAudioEffect, format: AVAudioFormat, graphGeneration: UInt64) throws

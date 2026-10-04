@@ -33,6 +33,8 @@ public struct PluginDescriptor: Codable, Hashable, Sendable, Identifiable {
     public let policyVersion: String
     public let configuration: PluginConfigurationSchema
     public let sourceConfiguration: PluginConfigurationSchema
+    /// Stable host provider identity for settings, consent and enrichment records.
+    public let dataProviderID: String?
     public let onlineProviderID: String?
     public let onlineCapabilities: Set<PluginOnlineCapability>
     public let dspPlacements: PluginDSPPlacementOptions?
@@ -40,13 +42,14 @@ public struct PluginDescriptor: Codable, Hashable, Sendable, Identifiable {
                 apiVersion: PluginAPIVersion = .current, kinds: Set<PluginKind>,
                 permissions: Set<PluginPermission> = [], policyVersion: String = "1",
                 configuration: PluginConfigurationSchema = .init(), sourceConfiguration: PluginConfigurationSchema = .init(), onlineProviderID: String? = nil,
-                onlineCapabilities: Set<PluginOnlineCapability> = [], dspPlacements: PluginDSPPlacementOptions? = nil) {
+                onlineCapabilities: Set<PluginOnlineCapability> = [], dataProviderID: String? = nil, dspPlacements: PluginDSPPlacementOptions? = nil) {
         self.id = id; self.name = name; self.version = version; self.apiVersion = apiVersion
         self.kinds = kinds; self.permissions = permissions; self.policyVersion = policyVersion
         self.configuration = configuration; self.onlineProviderID = onlineProviderID
         self.sourceConfiguration = sourceConfiguration
         self.onlineCapabilities = onlineCapabilities
         self.dspPlacements = dspPlacements
+        self.dataProviderID = dataProviderID
     }
 }
 

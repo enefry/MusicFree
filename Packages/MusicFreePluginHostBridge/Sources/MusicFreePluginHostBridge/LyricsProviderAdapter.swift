@@ -6,7 +6,7 @@ import MusicFreePluginRuntime
 public struct PluginLyricsProviderAdapter: LyricsProviding {
     public let pluginID: PluginID
     public let runtime: PluginRuntime
-    public var provider: LyricsProviderID { .init(rawValue: pluginID.rawValue) }
+    public var provider: LyricsProviderID { .init(rawValue: runtime.registry.descriptors[pluginID]?.dataProviderID ?? pluginID.rawValue) }
     public init(pluginID: PluginID, runtime: PluginRuntime) { self.pluginID = pluginID; self.runtime = runtime }
     public func fetchLyrics(for query: LyricsQuery) async throws -> TrackLyrics? {
         let dto = PluginTrackQuery(title: query.title, artist: query.artistName, album: query.albumName, durationSeconds: query.durationSeconds)

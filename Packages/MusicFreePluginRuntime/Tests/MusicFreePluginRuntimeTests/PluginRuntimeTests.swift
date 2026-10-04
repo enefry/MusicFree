@@ -279,3 +279,19 @@ private actor FixtureCredentials: PluginCredentialAccess {
     }
     #expect(try await runtime.perform(pluginID: testID, configuration: .init(instanceID: "b"), kind: .onlineSource) { _, _ in true })
 }
+
+@Test func revokedOperationDiscardsOwnedLateResult() async throws {
+    let gate = Gate(), discarded = Counter(), runtime = runtime(TestLyrics())
+    await runtime.apply(preferences: [enabled()], applicationPrivacyAccepted: false)
+    let request = Task {
+        try await runtime.perform(pluginID: testID, discardResult: { (value: Int) in
+            #expect(value == 42); await discarded.increment()
+        }) { _, _ in await gate.arrive(); return 42 }
+    }
+    defer { request.cancel(); Task { await gate.release() } }
+    await gate.waitFor(1)
+    await runtime.apply(preferences: [], applicationPrivacyAccepted: false)
+    await gate.release()
+    await #expect(throws: CancellationError.self) { try await request.value }
+    #expect(await discarded.count == 1)
+}

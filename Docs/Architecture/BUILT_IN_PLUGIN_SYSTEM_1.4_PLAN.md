@@ -1,4 +1,6 @@
 
+
+2026-10-03 更新：用户已授权先提交现有工作，再迁移既有能力。歌词/歌曲信息、DS Audio/Google Drive 和 EQ 已进入生产 Runtime 路径，旧实现保留；后文规划基线中的兼容路径/roadmap 描述以 [当前迁移记录](../Testing/1.4_BUILTIN_PLUGIN_MIGRATION_2026-10-03.md) 为准。
 # MusicFree 1.4 内置插件系统详细计划（支线 A）
 
 状态：实施中；2026-10-01 用户已授权两个独立 session 并行开发。

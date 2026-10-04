@@ -6,10 +6,16 @@ import MusicFreePluginRuntime
 
 public actor PluginMetadataProviderAdapter: MetadataEnrichmentProviding {
     public nonisolated let pluginID: PluginID
-    public nonisolated var provider: MetadataEnrichmentProvider { .init(rawValue: pluginID.rawValue) }
+    public nonisolated var provider: MetadataEnrichmentProvider { .init(rawValue: runtime.registry.descriptors[pluginID]?.dataProviderID ?? pluginID.rawValue) }
     private let runtime: PluginRuntime
-    public init(pluginID: PluginID, runtime: PluginRuntime) { self.pluginID = pluginID; self.runtime = runtime }
+    private let durationProvider: (@Sendable (MediaItemID) async -> TimeInterval?)?
+    public init(pluginID: PluginID, runtime: PluginRuntime, durationProvider: (@Sendable (MediaItemID) async -> TimeInterval?)? = nil) {
+        self.pluginID = pluginID; self.runtime = runtime; self.durationProvider = durationProvider
+    }
     public func authorizationStatus() async -> MetadataEnrichmentAuthorizationStatus {
+        if let status = try? await runtime.metadataAuthorization(pluginID: pluginID, requesting: false) {
+            return MetadataEnrichmentAuthorizationStatus(rawValue: status.rawValue) ?? .unavailable
+        }
         guard let snapshot = await runtime.snapshots().first(where: { $0.id == pluginID }) else { return .unavailable }
         switch snapshot.state {
         case .registered, .loading, .ready, .running, .failed:
@@ -22,12 +28,19 @@ public actor PluginMetadataProviderAdapter: MetadataEnrichmentProviding {
         }
     }
     public func requestAuthorization() async -> MetadataEnrichmentAuthorizationStatus {
-        (try? await runtime.perform(pluginID: pluginID, kind: .metadata) { instances, _ in
+        if let status = try? await runtime.metadataAuthorization(pluginID: pluginID, requesting: true) {
+            return MetadataEnrichmentAuthorizationStatus(rawValue: status.rawValue) ?? .unavailable
+        }
+        return (try? await runtime.perform(pluginID: pluginID, kind: .metadata) { instances, _ in
             guard let plugin = instances.metadata else { return MetadataEnrichmentAuthorizationStatus.unavailable }
             return MetadataEnrichmentAuthorizationStatus(rawValue: await plugin.requestAuthorization().rawValue) ?? .unavailable
         }) ?? .unavailable
     }
-    public func search(_ query: MetadataEnrichmentQuery) async throws -> [MetadataEnrichmentCandidate] {
+    public func search(_ input: MetadataEnrichmentQuery) async throws -> [MetadataEnrichmentCandidate] {
+        let refreshed = await durationProvider?(input.itemID)
+        let query = MetadataEnrichmentQuery(itemID: input.itemID, title: input.title, artistName: input.artistName,
+            albumName: input.albumName, fileName: input.fileName, durationSeconds: refreshed ?? input.durationSeconds,
+            missingFields: input.missingFields, isFilenameFallback: input.isFilenameFallback)
         let title = query.isFilenameFallback ? query.filenameTitle : query.title
         let artist = query.artistName ?? (query.isFilenameFallback ? query.filenameArtist : nil)
         let dto = PluginTrackQuery(title: title ?? "", artist: artist, album: query.albumName, durationSeconds: query.durationSeconds)

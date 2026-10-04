@@ -929,7 +929,7 @@ private struct MusicBrainzFlexibleInt: Decodable {
 
 extension MusicBrainzMetadataPlugin: MetadataPlugin {
     public static var descriptor: PluginDescriptor {
-        .init(id: .init(rawValue: "builtin.metadata.musicBrainz"), name: "MusicBrainz Metadata", kinds: [.metadata], permissions: [.network])
+        .init(id: .init(rawValue: "builtin.metadata.musicBrainz"), name: "MusicBrainz Metadata", kinds: [.metadata], permissions: [.network], policyVersion: "1.2.0", dataProviderID: "musicBrainz")
     }
     public func candidates(for query: PluginTrackQuery, fields: Set<PluginMetadataField>, context: PluginOperationContext) async throws -> [PluginMetadataCandidate] {
         try context.requireNetwork()

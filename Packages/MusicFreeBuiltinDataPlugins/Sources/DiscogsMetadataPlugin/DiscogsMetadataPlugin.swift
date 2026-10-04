@@ -810,7 +810,7 @@ private struct DiscogsFlexibleInt: Decodable {
 
 extension DiscogsMetadataPlugin: MetadataPlugin {
     public static var descriptor: PluginDescriptor {
-        .init(id: .init(rawValue: "builtin.metadata.discogs"), name: "Discogs Metadata", kinds: [.metadata], permissions: [.network])
+        .init(id: .init(rawValue: "builtin.metadata.discogs"), name: "Discogs Metadata", kinds: [.metadata], permissions: [.network], policyVersion: "1.2.0", dataProviderID: "discogs")
     }
     public func candidates(for query: PluginTrackQuery, fields: Set<PluginMetadataField>, context: PluginOperationContext) async throws -> [PluginMetadataCandidate] {
         try context.requireNetwork()

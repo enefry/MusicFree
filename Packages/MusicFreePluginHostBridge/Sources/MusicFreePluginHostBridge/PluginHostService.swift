@@ -5,13 +5,26 @@ import MusicDomain
 import LibraryAPI
 import MusicFreePluginAPI
 import MusicFreePluginRuntime
+import EqualizerDSPPlugin
+import MusicFreePluginAppleAudioAPI
 
 public struct PluginHostService: PluginServing {
     public let runtime: PluginRuntime
     private let audio: [PluginAudioHostController]
     private let pcm: [PluginPCMHostController]
-    public init(runtime: PluginRuntime, audio: [PluginAudioHostController] = [], pcm: [PluginPCMHostController] = []) {
-        self.runtime = runtime; self.audio = audio; self.pcm = pcm
+    private let durationProvider: (@Sendable (MediaItemID) async -> TimeInterval?)?
+    public init(runtime: PluginRuntime, audio: [PluginAudioHostController] = [], pcm: [PluginPCMHostController] = [],
+                durationProvider: (@Sendable (MediaItemID) async -> TimeInterval?)? = nil) {
+        self.runtime = runtime; self.audio = audio; self.pcm = pcm; self.durationProvider = durationProvider
+    }
+    public func adaptingSettings(_ settings: AppSettings, previous: AppSettings?) async throws -> AppSettings {
+        try BuiltinPluginSettingsAdapter.adapt(settings, previous: previous, descriptors: Array(runtime.registry.descriptors.values))
+    }
+    public static var equalizerRegistration: BuiltInPluginRegistration {
+        .init(descriptor: EqualizerDSPPlugin.descriptor, dsp: EqualizerDSPPlugin.makeProcessor)
+    }
+    @MainActor public static var audioFactories: [PluginID: AppleAudioDSPPluginFactory] {
+        PluginAudioHostController.referenceFactories.merging([EqualizerDSPPlugin.id: EqualizerDSPPlugin.makeAppleEffect]) { _, builtin in builtin }
     }
     public func apply(_ settings: AppSettings) async {
         // Source gates are per account, in addition to plugin-level policy.
@@ -67,6 +80,7 @@ public struct PluginHostService: PluginServing {
     }
     public var metadataProviders: [any MetadataEnrichmentProviding] {
         runtime.registry.registrations.values.filter { $0.metadata != nil }.sorted { $0.descriptor.id < $1.descriptor.id }
-            .map { PluginMetadataProviderAdapter(pluginID: $0.descriptor.id, runtime: runtime) }
+            .map { PluginMetadataProviderAdapter(pluginID: $0.descriptor.id, runtime: runtime,
+                durationProvider: $0.descriptor.dataProviderID == "metadataServer" ? durationProvider : nil) }
     }
 }

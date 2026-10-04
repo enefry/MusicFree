@@ -106,3 +106,35 @@ private struct RawLRCFixture: LyricsPlugin {
     #expect(result.timedLines.first?.text == "中文歌词")
     #expect(result.declaredOffsetMilliseconds == -100)
 }
+
+private actor AuthorizationLoadCounter {
+    var count = 0
+    func loaded() { count += 1 }
+}
+@Test func disabledMetadataCanAuthorizeWithoutLoadingOrRunningCandidates() async throws {
+    let id = PluginID(rawValue: "builtin.metadata.fixture"), plugin = AuthorizationFixture(), loads = AuthorizationLoadCounter()
+    let runtime = PluginRuntime(registry: PluginRegistry([
+        .init(descriptor: .init(id: id, name: "Metadata", kinds: [.metadata], permissions: [.network], dataProviderID: "musicKit"),
+            metadata: { _ in await loads.loaded(); return plugin },
+            metadataAuthorization: .init(status: { await plugin.authorizationStatus() }, request: { await plugin.requestAuthorization() }))
+    ]))
+    let adapter = PluginMetadataProviderAdapter(pluginID: id, runtime: runtime)
+    let preference = PluginPreference(pluginID: id, isEnabled: false, isLoadAllowed: true,
+        grantedPermissions: [.network], acceptedPolicyVersion: "1")
+    await runtime.apply(preferences: [preference], applicationPrivacyAccepted: true)
+    #expect(await adapter.authorizationStatus() == .notDetermined)
+    #expect(await adapter.requestAuthorization() == .authorized)
+    #expect(await adapter.authorizationStatus() == .authorized)
+    #expect(await loads.count == 0)
+    #expect(await runtime.snapshots().first?.state == .disabled)
+    await #expect(throws: PluginError.disabled) { try await runtime.perform(pluginID: id, kind: .metadata) { _, _ in 1 } }
+    var revoked = preference; revoked.grantedPermissions = []; revoked.acceptedPolicyVersion = nil
+    await runtime.apply(preferences: [revoked], applicationPrivacyAccepted: true)
+    #expect(await adapter.requestAuthorization() == .unavailable)
+    await runtime.apply(preferences: [preference], applicationPrivacyAccepted: false)
+    #expect(await adapter.requestAuthorization() == .unavailable)
+    var blocked = preference; blocked.isLoadAllowed = false
+    await runtime.apply(preferences: [blocked], applicationPrivacyAccepted: true)
+    #expect(await adapter.requestAuthorization() == .unavailable)
+    #expect(await loads.count == 0)
+}

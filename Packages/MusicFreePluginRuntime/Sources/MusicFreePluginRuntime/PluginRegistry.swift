@@ -6,12 +6,13 @@ public struct BuiltInPluginRegistration: Sendable {
     public let descriptor: PluginDescriptor
     public let lyrics: LyricsPluginFactory?
     public let metadata: MetadataPluginFactory?
+    public let metadataAuthorization: PluginMetadataAuthorizationHandlers?
     public let onlineSource: OnlineSourcePluginFactory?
     public let dsp: DSPPluginFactory?
     public init(descriptor: PluginDescriptor, lyrics: LyricsPluginFactory? = nil,
-                metadata: MetadataPluginFactory? = nil, onlineSource: OnlineSourcePluginFactory? = nil,
+                metadata: MetadataPluginFactory? = nil, metadataAuthorization: PluginMetadataAuthorizationHandlers? = nil, onlineSource: OnlineSourcePluginFactory? = nil,
                 dsp: DSPPluginFactory? = nil) {
-        self.descriptor = descriptor; self.lyrics = lyrics; self.metadata = metadata
+        self.descriptor = descriptor; self.lyrics = lyrics; self.metadata = metadata; self.metadataAuthorization = metadataAuthorization
         self.onlineSource = onlineSource; self.dsp = dsp
     }
     var factoryKinds: Set<PluginKind> {
@@ -46,6 +47,7 @@ public struct PluginRegistry: Sendable {
             descriptors[descriptor.id] = descriptor
             guard !descriptor.id.rawValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   !descriptor.kinds.isEmpty, descriptor.kinds == entry.factoryKinds,
+                  entry.metadataAuthorization == nil || entry.metadata != nil,
                   descriptor.dspPlacements == nil || (descriptor.kinds.contains(.dsp) && descriptor.dspPlacements?.isValid == true),
                   descriptor.configuration.version > 0,
                   descriptor.sourceConfiguration.version > 0,

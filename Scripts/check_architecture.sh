@@ -18,7 +18,7 @@ check_exclusive_import() {
 }
 
 check_exclusive_import "SwiftData" "/Packages/MusicFreeInfrastructure/(Sources/LibraryPersistenceAdapter|Tests/MusicFreeInfrastructureTests)/"
-check_exclusive_import "AVFAudio" "/App/PluginFFmpegPCMAdapter\.swift:|/Packages/(MusicFreeInfrastructure/Sources/AppleSystemAdapter|MusicFreePluginAPI/Sources/MusicFreePluginAppleAudioAPI|MusicFreePluginAudio/(Sources/MusicFreePluginAudio|Tests/MusicFreePluginAudioTests)|MusicFreePluginHostBridge/(Sources/MusicFreePluginHostBridge|Tests/MusicFreePluginHostBridgeTests))/"
+check_exclusive_import "AVFAudio" "/App/PluginFFmpegPCMAdapter\.swift:|/Packages/(MusicFreeInfrastructure/Sources/AppleSystemAdapter|MusicFreePluginAPI/Sources/MusicFreePluginAppleAudioAPI|MusicFreePluginAudio/(Sources/MusicFreePluginAudio|Tests/MusicFreePluginAudioTests)|MusicFreePluginHostBridge/(Sources/MusicFreePluginHostBridge|Tests/MusicFreePluginHostBridgeTests)|MusicFreeBuiltinDSPPlugins/(Sources/EqualizerDSPPlugin|Tests/EqualizerDSPPluginTests))/"
 check_exclusive_import "MediaPlayer" "/Packages/MusicFreeInfrastructure/Sources/AppleSystemAdapter/"
 
 vlc_references=$(rg -n --glob '*.swift' --glob 'Package.swift' \

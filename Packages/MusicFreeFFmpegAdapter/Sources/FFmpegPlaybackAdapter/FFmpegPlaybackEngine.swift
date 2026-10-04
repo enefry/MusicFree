@@ -35,26 +35,32 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
     /// existing single/dual source graph, queues and transition clocks remain
     /// unchanged. Each engine owns a separate zero-latency/tail effect instance.
     public func setPostEqualizerEffect(_ node: AVAudioNode?) throws {
-        guard postEqualizerEffect !== node else { return }
-        guard !audioEngine.isRunning else { throw PlaybackError.invalidEffects }
+        try setPostEqualizerEffects(node.map { [$0] } ?? [])
+    }
+
+    public func setPostEqualizerEffects(_ nodes: [AVAudioNode]) throws {
+        guard nodes.count != postEqualizerEffects.count || !zip(nodes, postEqualizerEffects).allSatisfy({ $0 === $1 }) else { return }
+        guard !audioEngine.isRunning,
+              Set(nodes.map(ObjectIdentifier.init)).count == nodes.count,
+              nodes.allSatisfy({ node in node.engine == nil || (node.engine === audioEngine && postEqualizerEffects.contains(where: { $0 === node })) }) else { throw PlaybackError.invalidEffects }
         audioEngine.disconnectNodeOutput(equalizerUnit)
-        if let previous = postEqualizerEffect {
+        for previous in postEqualizerEffects {
             audioEngine.disconnectNodeOutput(previous); previous.reset()
-            audioEngine.detach(previous)
+            if !nodes.contains(where: { $0 === previous }) { audioEngine.detach(previous) }
         }
-        postEqualizerEffect = node
-        if let node { audioEngine.attach(node) }
+        postEqualizerEffects = nodes
+        for node in nodes where node.engine == nil { audioEngine.attach(node) }
         if let decoder { connectPostEqualizerOutput(format: transitionGraph?.format ?? feederFormat(for: decoder)) }
     }
 
     private func connectPostEqualizerOutput(format: AVAudioFormat) {
-        if let effect = postEqualizerEffect {
+        var upstream: AVAudioNode = equalizerUnit
+        for effect in postEqualizerEffects {
             effect.reset()
-            audioEngine.connect(equalizerUnit, to: effect, format: format)
-            audioEngine.connect(effect, to: audioEngine.mainMixerNode, format: format)
-        } else {
-            audioEngine.connect(equalizerUnit, to: audioEngine.mainMixerNode, format: format)
+            audioEngine.connect(upstream, to: effect, format: format)
+            upstream = effect
         }
+        audioEngine.connect(upstream, to: audioEngine.mainMixerNode, format: format)
     }
 
     private static let equalizerLayout: EqualizerDescriptor = {
@@ -98,7 +104,8 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
     // reconnect a running player and discard scheduled audio.
     let equalizerUnit = AVAudioUnitEQ(numberOfBands: 10)
     // Optional host-owned post-mix effect. This graph has no PluginRuntime dependency.
-    private var postEqualizerEffect: AVAudioNode?
+    private var postEqualizerEffects: [AVAudioNode] = []
+    private let equalizerManagedExternally: Bool
     private let decodeQueue = DispatchQueue(label: "com.musicfree.ffmpeg.decode")
     private let makeRemoteSource: (RemotePlaybackRequest) -> URLSessionByteSource
 
@@ -173,11 +180,12 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
         )
     }
 
-    public convenience init() {
-        self.init(remoteSessionConfiguration: .default)
+    public convenience init(equalizerManagedExternally: Bool = false) {
+        self.init(remoteSessionConfiguration: .default, equalizerManagedExternally: equalizerManagedExternally)
     }
 
-    init(remoteSessionConfiguration: URLSessionConfiguration) {
+    init(remoteSessionConfiguration: URLSessionConfiguration, equalizerManagedExternally: Bool = false) {
+        self.equalizerManagedExternally = equalizerManagedExternally
         makeRemoteSource = { request in
             URLSessionByteSource(request: request, configuration: remoteSessionConfiguration)
         }
@@ -593,7 +601,7 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
     }
 
     private func applyConfiguredEqualizer() {
-        guard let configuration = configuredEqualizer else {
+        guard !equalizerManagedExternally, let configuration = configuredEqualizer else {
             equalizerUnit.bypass = true
             return
         }

@@ -471,15 +471,6 @@ final class AppContainer: ObservableObject {
                 .appendingPathComponent("Library", isDirectory: true)
                 .appendingPathComponent("metadata-enrichment.json", isDirectory: false)
         )
-#if !METADATA_SERVER_DISABLED
-        let metadataServerConfiguration = MetadataServerConfiguration.from()
-#endif
-        let musicBrainzAPIConfiguration = MusicBrainzAPIConfiguration.from()
-        let discogsAPIConfiguration = DiscogsAPIConfiguration.from()
-#if !LYRICS_DISABLED
-        let lrclibAPIConfiguration = LRCLIBAPIConfiguration.from()
-#endif
-
         let localMediaConfiguration = try LocalMediaConfiguration(
             managedRoot: appSupportRoot.appendingPathComponent("Media", isDirectory: true),
             stagingRoot: cacheRoot.appendingPathComponent("ImportStaging", isDirectory: true),
@@ -489,8 +480,8 @@ final class AppContainer: ObservableObject {
         let diagnostics: [CompositionDiagnostic] = []
         // 本地播放与在线试听都使用独立、从源码编译的 FFmpegAudioKit（LGPL 动态库）；
         // 远程资源经 URLSession 读取。构造不失败，故不再有「引擎不可用」的启动降级分支。
-        let playbackEngine = FFmpegPlaybackEngine()
-        let onlineAuditionEngine = FFmpegPlaybackEngine()
+        let playbackEngine = FFmpegPlaybackEngine(equalizerManagedExternally: true)
+        let onlineAuditionEngine = FFmpegPlaybackEngine(equalizerManagedExternally: true)
 
         // 本地文件的探测与元数据读取同样交给 ffmpeg 适配层；构造不失败。
         let probe: FFmpegMediaProbe? = FFmpegMediaProbe()
@@ -537,61 +528,6 @@ final class AppContainer: ObservableObject {
             }
             startupIssues.append(.dependencyUnavailable)
         }
-        let metadataEnrichmentProvider = MusicKitMetadataProvider()
-        var metadataEnrichmentProviders: [any MetadataEnrichmentProviding] = [
-            metadataEnrichmentProvider
-        ]
-        if let musicBrainzAPIConfiguration {
-            metadataEnrichmentProviders.append(
-                MusicBrainzMetadataProvider(configuration: musicBrainzAPIConfiguration)
-            )
-        }
-#if !METADATA_SERVER_DISABLED
-        if let metadataServerConfiguration {
-            let durationProvider: MetadataServerMetadataProvider.DurationProvider?
-            if let localSource {
-                durationProvider = { [localSource] itemID in
-                    guard let duration = try? await localSource.probe(itemID).duration else {
-                        return nil
-                    }
-                    let components = duration.components
-                    return Double(components.seconds)
-                        + Double(components.attoseconds) / 1_000_000_000_000_000_000
-                }
-            } else {
-                durationProvider = nil
-            }
-            metadataEnrichmentProviders.append(
-                MetadataServerMetadataProvider(
-                    configuration: metadataServerConfiguration,
-                    durationProvider: durationProvider
-                )
-            )
-        }
-#endif
-        if let discogsAPIConfiguration {
-            metadataEnrichmentProviders.append(
-                DiscogsMetadataProvider(configuration: discogsAPIConfiguration)
-            )
-        }
-#if LYRICS_DISABLED
-        var lyricsProviders: [any LyricsProviding] = []
-#else
-        var lyricsProviders: [any LyricsProviding] = []
-#if !METADATA_SERVER_DISABLED
-        if let metadataServerConfiguration,
-           let lyricsConfiguration = MetadataServerLyricsConfiguration(
-               metadataServerConfiguration: metadataServerConfiguration
-           ) {
-            lyricsProviders.append(
-                MetadataServerLyricsProvider(configuration: lyricsConfiguration)
-            )
-        }
-#endif
-        if let lrclibAPIConfiguration {
-            lyricsProviders.append(LRCLIBLyricsProvider(configuration: lrclibAPIConfiguration))
-        }
-#endif
         let remover = try ManagedMediaRemover(
             configuration: localMediaConfiguration,
             libraryRepository: libraryRepository
@@ -650,18 +586,20 @@ final class AppContainer: ObservableObject {
         let dataPlugins = BuiltinDataPluginRegistrationProvider(includeLyrics: includeLyricsPlugins,
             includeMetadataServer: includeMetadataServerPlugins)
         let pluginRuntime = PluginRuntime(registry: PluginRegistry(
-            ReferencePluginRegistrationProvider(mediaURL: referenceMediaURL).registrations + dataPlugins.registrations,
+            ReferencePluginRegistrationProvider(mediaURL: referenceMediaURL).registrations + dataPlugins.registrations
+                + NativeOnlineSourceRegistrationProvider(factory: onlineSourceFactory).registrations
+                + [PluginHostService.equalizerRegistration],
             compiledOut: dataPlugins.unavailable),
             credentials: KeychainPluginCredentialStore())
         let formalPluginAudio = PluginAudioHostController(runtime: pluginRuntime,
-            factories: PluginAudioHostController.referenceFactories,
-            install: { [weak playbackEngine] node in try playbackEngine?.setPostEqualizerEffect(node) })
+            factories: PluginHostService.audioFactories,
+            installChain: { [weak playbackEngine] nodes in try playbackEngine?.setPostEqualizerEffects(nodes) })
         let auditionPluginAudio = PluginAudioHostController(runtime: pluginRuntime,
-            factories: PluginAudioHostController.referenceFactories,
-            install: { [weak onlineAuditionEngine] node in try onlineAuditionEngine?.setPostEqualizerEffect(node) })
+            factories: PluginHostService.audioFactories,
+            installChain: { [weak onlineAuditionEngine] nodes in try onlineAuditionEngine?.setPostEqualizerEffects(nodes) })
         // Placement declarations route DSPs; the exclusion set only preserves legacy registrations.
         // The PCM adapter admits zero latency/tail only, so both transition lanes retain timing.
-        let graphPluginIDs = Set(PluginAudioHostController.referenceFactories.keys)
+        let graphPluginIDs = Set(PluginHostService.audioFactories.keys)
         let formalPluginPCM = PluginPCMHostController(runtime: pluginRuntime, excluding: graphPluginIDs) { [weak playbackEngine] specifications in
             let factory: FFmpegPCMProcessorFactory?
             if specifications.isEmpty { factory = nil }
@@ -678,10 +616,19 @@ final class AppContainer: ObservableObject {
             }
             try onlineAuditionEngine?.setPCMProcessorFactory(factory, preservesTiming: true)
         }
+        let metadataDurationProvider: (@Sendable (MediaItemID) async -> TimeInterval?)?
+        if let localSource {
+            metadataDurationProvider = { [localSource] itemID in
+                guard let duration = try? await localSource.probe(itemID).duration else { return nil }
+                let components = duration.components
+                return Double(components.seconds) + Double(components.attoseconds) / 1_000_000_000_000_000_000
+            }
+        }
+        else { metadataDurationProvider = nil }
         let pluginService = PluginHostService(runtime: pluginRuntime, audio: [formalPluginAudio, auditionPluginAudio],
-            pcm: [formalPluginPCM, auditionPluginPCM])
-        metadataEnrichmentProviders.append(contentsOf: pluginService.metadataProviders)
-        lyricsProviders.append(contentsOf: pluginService.lyricsProviders)
+            pcm: [formalPluginPCM, auditionPluginPCM], durationProvider: metadataDurationProvider)
+        let metadataEnrichmentProviders = pluginService.metadataProviders
+        let lyricsProviders = pluginService.lyricsProviders
         let compositeSourceFactory = CompositeOnlineSourceFactory(legacy: onlineSourceFactory,
             runtime: pluginRuntime, downloadRoot: cacheRoot.appendingPathComponent("PluginDownloads"))
         let dependencies = try AppDependencies(

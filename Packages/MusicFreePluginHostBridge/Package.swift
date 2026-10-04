@@ -4,7 +4,7 @@ let package = Package(
     name: "MusicFreePluginHostBridge", platforms: [.iOS(.v17), .macOS(.v13)],
     products: [.library(name: "MusicFreePluginHostBridge", targets: ["MusicFreePluginHostBridge"])],
     dependencies: [.package(path: "../MusicFreeCore"), .package(path: "../MusicFreePluginRuntime"),
-        .package(path: "../MusicFreePluginAPI"), .package(path: "../MusicFreePluginAudio"), .package(path: "../MusicFreeBuiltinDataPlugins")],
+        .package(path: "../MusicFreePluginAPI"), .package(path: "../MusicFreePluginAudio"), .package(path: "../MusicFreeBuiltinDataPlugins"), .package(path: "../MusicFreeBuiltinDSPPlugins")],
     targets: [
         .target(name: "MusicFreePluginHostBridge", dependencies: [
             .product(name: "AppServices", package: "MusicFreeCore"),
@@ -23,7 +23,8 @@ let package = Package(
             .product(name: "MusicKitMetadataPlugin", package: "MusicFreeBuiltinDataPlugins"),
             .product(name: "MusicBrainzMetadataPlugin", package: "MusicFreeBuiltinDataPlugins"),
             .product(name: "MetadataServerMetadataPlugin", package: "MusicFreeBuiltinDataPlugins"),
-            .product(name: "DiscogsMetadataPlugin", package: "MusicFreeBuiltinDataPlugins")]),
+            .product(name: "DiscogsMetadataPlugin", package: "MusicFreeBuiltinDataPlugins"),
+            .product(name: "EqualizerDSPPlugin", package: "MusicFreeBuiltinDSPPlugins")]),
         .testTarget(name: "MusicFreePluginHostBridgeTests", dependencies: ["MusicFreePluginHostBridge"])
     ], swiftLanguageModes: [.v6]
 )

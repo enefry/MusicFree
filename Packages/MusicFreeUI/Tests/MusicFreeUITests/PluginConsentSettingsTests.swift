@@ -56,3 +56,18 @@ struct PluginConsentSettingsTests {
         }
     }
 }
+
+@Test func builtinDataGrantKeepsStableProviderOrderAndAppGate() {
+    let descriptor = PluginDescriptor(id: .init(rawValue: "builtin.metadata.musicKit"), name: "MusicKit", kinds: [.metadata],
+        permissions: [.network], policyVersion: "1.2.0", dataProviderID: "musicKit")
+    let current = AppSettings.defaults
+    let updated = PluginConsentSettings.grant(descriptor: descriptor, current: current)
+    #expect(updated.importPreferences.metadataProviders.map(\.provider) == current.importPreferences.metadataProviders.map(\.provider))
+    #expect(updated.importPreferences.isMetadataProviderEnabled(.musicKit))
+    #expect(!updated.importPreferences.privacyPreferences.isPrivacyPolicyAccepted)
+    #expect(updated.importPreferences.privacyPreferences.providerConsents.first?.providerID == "musicKit")
+    #expect(!updated.importPreferences.metadataProviders.contains { $0.provider.rawValue == descriptor.id.rawValue })
+    let revoked = PluginConsentSettings.revoke(descriptor: descriptor, current: updated)
+    #expect(!revoked.importPreferences.isMetadataProviderEnabled(.musicKit))
+    #expect(revoked.importPreferences.privacyPreferences.providerConsents.isEmpty)
+}

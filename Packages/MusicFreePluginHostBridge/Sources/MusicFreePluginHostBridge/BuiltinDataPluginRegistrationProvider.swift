@@ -15,20 +15,21 @@ public struct BuiltinDataPluginRegistrationProvider: BuiltInPluginRegistrationPr
 
     public init(bundle: Bundle = .main, includeLyrics: Bool = true, includeMetadataServer: Bool = true) {
         var entries: [BuiltInPluginRegistration] = [
-            .init(descriptor: MusicKitMetadataPlugin.descriptor, metadata: { _ in MusicKitMetadataPlugin() })
+            .init(descriptor: MusicKitMetadataPlugin.descriptor, metadata: { _ in MusicKitMetadataPlugin() },
+                metadataAuthorization: .init(status: MusicKitMetadataPlugin.systemAuthorizationStatus, request: MusicKitMetadataPlugin.requestSystemAuthorization))
         ]
         var unavailable: [PluginDescriptor] = []
         if let config = MusicBrainzAPIConfiguration.from(bundle: bundle) {
             entries.append(.init(descriptor: MusicBrainzMetadataPlugin.descriptor,
-                metadata: { _ in MusicBrainzMetadataPlugin(configuration: config) }))
+                metadata: { _ in MusicBrainzMetadataPlugin(configuration: config) }, metadataAuthorization: .init(status: { .authorized })))
         } else { unavailable.append(MusicBrainzMetadataPlugin.descriptor) }
         if let config = DiscogsAPIConfiguration.from(bundle: bundle) {
             entries.append(.init(descriptor: DiscogsMetadataPlugin.descriptor,
-                metadata: { _ in DiscogsMetadataPlugin(configuration: config) }))
+                metadata: { _ in DiscogsMetadataPlugin(configuration: config) }, metadataAuthorization: .init(status: { .authorized })))
         } else { unavailable.append(DiscogsMetadataPlugin.descriptor) }
         if includeMetadataServer, let config = MetadataServerConfiguration.from(bundle: bundle) {
             entries.append(.init(descriptor: MetadataServerMetadataPlugin.descriptor,
-                metadata: { _ in MetadataServerMetadataPlugin(configuration: config) }))
+                metadata: { _ in MetadataServerMetadataPlugin(configuration: config) }, metadataAuthorization: .init(status: { .authorized })))
         } else { unavailable.append(MetadataServerMetadataPlugin.descriptor) }
         if includeLyrics, let config = LRCLIBAPIConfiguration.from(bundle: bundle) {
             entries.append(.init(descriptor: LRCLIBLyricsPlugin.descriptor,

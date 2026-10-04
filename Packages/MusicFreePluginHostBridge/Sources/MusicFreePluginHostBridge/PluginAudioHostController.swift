@@ -5,36 +5,52 @@ import MusicFreePluginAppleAudioAPI
 import MusicFreePluginRuntime
 import MusicFreePluginAudio
 
-/// A separate controller for each formal/audition graph. The graph accepts only
-/// a node; Runtime and plugin preferences never enter the playback package.
+/// Each playback/audition graph owns an ordered chain of independent effects.
 @MainActor public final class PluginAudioHostController {
+    private struct Entry {
+        let id: PluginID
+        var preference: PluginPreference
+        let effect: any PluginAppleAudioEffect
+    }
     private let runtime: PluginRuntime
     private let factories: [PluginID: AppleAudioDSPPluginFactory]
-    private let install: @MainActor (AVAudioNode?) throws -> Void
+    private let install: @MainActor ([AVAudioNode]) throws -> Void
     private let authorizeDSP: @Sendable (PluginID) async throws -> Void
-    private var active: (id: PluginID, preference: PluginPreference, effect: any PluginAppleAudioEffect)?
-    private var pending: (id: PluginID, preference: PluginPreference, effect: any PluginAppleAudioEffect)?
-    private var pendingRemoval = false
-    private var hasActiveTap = false
+    private var active: [Entry] = []
+    private var pending: [Entry]?
+    private var tappedNode: AVAudioNode?
     private var observation: Task<Void, Never>?
     private var requestGeneration: UInt64 = 0
     private let analysis = PluginAnalysisQueue()
     private var graphGeneration: UInt64 = 0
     public private(set) var failedPluginIDs: Set<PluginID> = []
+
     public convenience init(runtime: PluginRuntime, factories: [PluginID: AppleAudioDSPPluginFactory],
-                install: @escaping @MainActor (AVAudioNode?) throws -> Void) {
+                            installChain: @escaping @MainActor ([AVAudioNode]) throws -> Void) {
+        self.init(runtime: runtime, factories: factories, installChain: installChain,
+                  authorizeDSP: { _ = try await runtime.dspConfiguration(pluginID: $0) })
+    }
+    public convenience init(runtime: PluginRuntime, factories: [PluginID: AppleAudioDSPPluginFactory],
+                            install: @escaping @MainActor (AVAudioNode?) throws -> Void) {
         self.init(runtime: runtime, factories: factories, install: install,
                   authorizeDSP: { _ = try await runtime.dspConfiguration(pluginID: $0) })
     }
-    init(runtime: PluginRuntime, factories: [PluginID: AppleAudioDSPPluginFactory],
-         install: @escaping @MainActor (AVAudioNode?) throws -> Void,
-         authorizeDSP: @escaping @Sendable (PluginID) async throws -> Void) {
-        self.runtime = runtime; self.factories = factories; self.install = install
+    convenience init(runtime: PluginRuntime, factories: [PluginID: AppleAudioDSPPluginFactory],
+                     install: @escaping @MainActor (AVAudioNode?) throws -> Void,
+                     authorizeDSP: @escaping @Sendable (PluginID) async throws -> Void) {
+        self.init(runtime: runtime, factories: factories, installChain: { nodes in
+            guard nodes.count <= 1 else { throw PluginError.unsupportedCapability }
+            try install(nodes.first)
+        }, authorizeDSP: authorizeDSP)
+    }
+    private init(runtime: PluginRuntime, factories: [PluginID: AppleAudioDSPPluginFactory],
+                 installChain: @escaping @MainActor ([AVAudioNode]) throws -> Void,
+                 authorizeDSP: @escaping @Sendable (PluginID) async throws -> Void) {
+        self.runtime = runtime; self.factories = factories; install = installChain
         self.authorizeDSP = authorizeDSP
     }
     public func apply() async {
-        requestGeneration &+= 1
-        let request = requestGeneration
+        requestGeneration &+= 1; let request = requestGeneration
         let snapshots = await runtime.snapshots()
         guard request == requestGeneration else { return }
         let candidates = snapshots.filter { snapshot in
@@ -43,41 +59,46 @@ import MusicFreePluginAudio
             return postMix && snapshot.descriptor.kinds.contains(.dsp) && snapshot.preference.isEnabled && snapshot.preference.isLoadAllowed
                 && [.registered, .ready, .running].contains(snapshot.state)
         }
-        // The playback graph currently offers one bus-effect slot. Report any
-        // unsupported backend or occupied slot instead of silently dropping it.
-        let candidate = candidates.first { factories[$0.id] != nil }
-        failedPluginIDs = Set(candidates.filter { $0.id != candidate?.id }.map(\.id))
-        guard let candidate else { unload(); return }
-        var operational = candidate.preference; operational.isVisible = true
-        if var previous = active?.preference {
-            previous.isVisible = true
-            if active?.id == candidate.id && previous == operational {
-                pending = nil; pendingRemoval = false; active?.effect.setBypassed(false)
-                installAnalysisTapIfNeeded()
-                return
+        failedPluginIDs = []
+        var next: [Entry] = []
+        for candidate in candidates {
+            guard let factory = factories[candidate.id] else { failedPluginIDs.insert(candidate.id); continue }
+            var operational = candidate.preference; operational.isVisible = true
+            if let previous = active.first(where: { $0.id == candidate.id }) {
+                var old = previous.preference; old.isVisible = true
+                if old == operational { next.append(previous); continue }
+            }
+            do {
+                try await authorizeDSP(candidate.id)
+                guard request == requestGeneration else { return }
+                let configuration = PluginInstanceConfiguration(values: candidate.preference.configuration,
+                    credentialRecordID: candidate.preference.credentialRecordID,
+                    acceptedPolicyVersion: candidate.preference.acceptedPolicyVersion,
+                    schemaVersion: candidate.preference.schemaVersion,
+                    dspPlacement: try candidate.descriptor.resolvedDSPPlacement(candidate.preference.dspPlacement))
+                let effect: any PluginAppleAudioEffect
+                if let previous = active.first(where: { $0.id == candidate.id }),
+                   Self.differsOnlyInParameters(previous.preference, candidate.preference),
+                   try previous.effect.update(configuration: configuration) {
+                    effect = previous.effect
+                } else { effect = try factory(configuration) }
+                guard effect.behavior.scope == .postMix, effect.behavior.latencyFrames == 0,
+                      effect.behavior.tailFrames == 0 else { throw PluginError.unsupportedCapability }
+                next.append(.init(id: candidate.id, preference: candidate.preference, effect: effect))
+            } catch {
+                guard request == requestGeneration else { return }
+                failedPluginIDs.insert(candidate.id)
             }
         }
-        active?.effect.setBypassed(true)
-        do {
-            try await authorizeDSP(candidate.id)
-            guard request == requestGeneration else { return }
-            guard let factory = factories[candidate.id] else { throw PluginError.unavailable }
-            let effect = try factory(.init(values: candidate.preference.configuration,
-                credentialRecordID: candidate.preference.credentialRecordID,
-                acceptedPolicyVersion: candidate.preference.acceptedPolicyVersion,
-                schemaVersion: candidate.preference.schemaVersion,
-                dspPlacement: try candidate.descriptor.resolvedDSPPlacement(candidate.preference.dspPlacement)))
-            guard effect.behavior.scope == .postMix, effect.behavior.latencyFrames == 0,
-                  effect.behavior.tailFrames == 0 else { throw PluginError.unsupportedCapability }
-            active?.effect.setBypassed(true)
-            pending = (candidate.id, candidate.preference, effect)
-            pendingRemoval = false
-            applyPending()
-        } catch {
-            guard request == requestGeneration else { return }
-            failedPluginIDs.insert(candidate.id)
-            unload()
-        }
+        guard request == requestGeneration else { return }
+        for previous in active where !next.contains(where: { $0.effect === previous.effect }) { previous.effect.setBypassed(true) }
+        pending = next
+        applyPending()
+    }
+    private static func differsOnlyInParameters(_ old: PluginPreference, _ new: PluginPreference) -> Bool {
+        var previous = old
+        previous.configuration = new.configuration; previous.isVisible = new.isVisible
+        return previous == new
     }
     public func observe<Snapshot: Sendable>(_ stream: AsyncStream<Snapshot>) {
         observation?.cancel()
@@ -89,43 +110,45 @@ import MusicFreePluginAudio
         }
     }
     private func applyPending() {
-        guard pending != nil || pendingRemoval else { return }
-        // Taps must be removed before an installer detaches the previous node.
-        // A running engine may defer installation after this safe bypass step.
-        if hasActiveTap { active?.effect.node.removeTap(onBus: 0); hasActiveTap = false }
+        guard let next = pending else { return }
+        let sameNodes = next.count == active.count && zip(next, active).allSatisfy { $0.effect.node === $1.effect.node }
+        if sameNodes {
+            active = next; pending = nil
+            for entry in active { entry.effect.setBypassed(false) }
+            installAnalysisTapIfNeeded()
+            return
+        }
+        // Remove taps before the engine detaches any node. A running engine
+        // defers topology changes; removed/revoked effects are already bypassed.
+        tappedNode?.removeTap(onBus: 0); tappedNode = nil
         do {
-            try install(pending?.effect.node)
-            active?.effect.reset(.stop)
-            active = pending; pending = nil; pendingRemoval = false
-            graphGeneration &+= 1
-            if let effect = active?.effect {
-                effect.setBypassed(false)
-                installAnalysisTapIfNeeded()
-            }
-        } catch { /* Running output defers graph mutation until stopped. */ }
+            try install(next.map { $0.effect.node })
+            for previous in active where !next.contains(where: { $0.effect === previous.effect }) { previous.effect.reset(.stop) }
+            active = next; pending = nil; graphGeneration &+= 1
+            for entry in active { entry.effect.setBypassed(false) }
+            installAnalysisTapIfNeeded()
+        } catch { /* Playback snapshots retry after pause/stop. */ }
     }
     private func installAnalysisTapIfNeeded() {
-        guard !hasActiveTap, let effect = active?.effect, effect.node.engine != nil else { return }
+        guard tappedNode == nil, let effect = active.last?.effect, effect.node.engine != nil else { return }
         effect.node.installTap(onBus: 0, bufferSize: 1024, format: nil,
             block: Self.makeAnalysisTap(queue: analysis, generation: graphGeneration))
-        hasActiveTap = true
+        tappedNode = effect.node
     }
     public func unload() {
         requestGeneration &+= 1
-        active?.effect.setBypassed(true)
-        pending = nil; pendingRemoval = true
-        applyPending()
+        for entry in active { entry.effect.setBypassed(true) }
+        pending = []; applyPending()
     }
     public func revokeChangedPreferences(_ preferences: [PluginPreference]) {
-        guard let active else { return }
-        var previous = active.preference; previous.isVisible = true
-        var updated = preferences.first { $0.pluginID == active.id } ?? .init(pluginID: active.id)
-        updated.isVisible = true
-        if previous != updated { active.effect.setBypassed(true) }
+        for entry in active {
+            var previous = entry.preference; previous.isVisible = true
+            var updated = preferences.first { $0.pluginID == entry.id } ?? .init(pluginID: entry.id)
+            updated.isVisible = true
+            if previous != updated { entry.effect.setBypassed(true) }
+        }
     }
     deinit { observation?.cancel() }
-    // SDK tap callbacks run on an audio-owned queue. Build this closure outside
-    // MainActor so Swift does not insert an executor assertion in the callback.
     nonisolated private static func makeAnalysisTap(queue: PluginAnalysisQueue, generation: UInt64) -> AVAudioNodeTapBlock {
         { buffer, _ in queue.ingest(buffer, generation: generation) }
     }

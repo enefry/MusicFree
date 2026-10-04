@@ -4,6 +4,7 @@ import MusicFreePluginAPI
 
 /// Host façade. Core knows only the generic API, never Runtime/HostBridge.
 public protocol PluginServing: Sendable {
+    func adaptingSettings(_ settings: AppSettings, previous: AppSettings?) async throws -> AppSettings
     func apply(_ settings: AppSettings) async
     func snapshots() async -> [PluginSnapshot]
     func stop() async
@@ -12,6 +13,7 @@ public protocol PluginServing: Sendable {
     func deleteCredential(recordID: String, pluginID: PluginID, instanceID: String) async throws
 }
 public extension PluginServing {
+    func adaptingSettings(_ settings: AppSettings, previous: AppSettings?) async throws -> AppSettings { settings }
     func audioAnalysis() async -> AsyncStream<PluginPCMAnalysisSnapshot> { AsyncStream { $0.finish() } }
     func saveCredential(_ data: Data, pluginID: PluginID, instanceID: String) async throws -> String { throw PluginError.unavailable }
     func deleteCredential(recordID: String, pluginID: PluginID, instanceID: String) async throws { throw PluginError.unavailable }

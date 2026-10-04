@@ -115,6 +115,7 @@ public actor PluginRuntime {
 
     /// Each operation owns a lease; concurrent queries share the load, never a request generation.
     public func perform<Result: Sendable>(pluginID: PluginID, configuration: PluginInstanceConfiguration? = nil, kind: PluginKind? = nil,
+        discardResult: (@Sendable (Result) async -> Void)? = nil,
         operation: @escaping @Sendable (LoadedPluginInstances, PluginOperationContext) async throws -> Result
     ) async throws -> Result {
         let preference = preferences[pluginID] ?? PluginPreference(pluginID: pluginID)
@@ -148,12 +149,33 @@ public actor PluginRuntime {
         }
         return try await withTaskCancellationHandler {
             let result = try await task.value
-            try Task.checkCancellation()
-            guard !task.isCancelled else { throw CancellationError() }
-            guard entries[key]?.generation == generation else { throw PluginError.staleOperation }
-            _ = try permit(pluginID, configuration: config, kind: requestedKind)
-            return result
+            do {
+                try Task.checkCancellation()
+                guard !task.isCancelled else { throw CancellationError() }
+                guard entries[key]?.generation == generation else { throw PluginError.staleOperation }
+                _ = try permit(pluginID, configuration: config, kind: requestedKind)
+                return result
+            } catch {
+                await discardResult?(result)
+                throw error
+            }
         } onCancel: { task.cancel() }
+    }
+
+    /// Explicit authorization operations can precede provider enablement.
+    /// They obey load/policy/app gates and never instantiate the data factory.
+    public func metadataAuthorization(pluginID: PluginID, requesting: Bool) async throws -> PluginMetadataAuthorizationStatus {
+        _ = try permit(pluginID, configuration: nil, kind: .metadata, requiresEnabled: false)
+        guard let registration = registry.registrations[pluginID], registration.descriptor.kinds.contains(.metadata),
+              let handlers = registration.metadataAuthorization else { throw PluginError.unsupportedCapability }
+        let expected = preferences[pluginID]
+        let appConsent = applicationPrivacyAccepted
+        let status = requesting ? await handlers.request() : await handlers.status()
+        try Task.checkCancellation()
+        _ = try permit(pluginID, configuration: nil, kind: .metadata, requiresEnabled: false)
+        var previous = expected; previous?.isVisible = preferences[pluginID]?.isVisible ?? true
+        guard previous == preferences[pluginID], appConsent == applicationPrivacyAccepted else { throw PluginError.staleOperation }
+        return status
     }
 
     public func dspConfiguration(pluginID: PluginID, configuration: PluginInstanceConfiguration? = nil) throws -> PluginInstanceConfiguration {
@@ -185,12 +207,12 @@ public actor PluginRuntime {
         }
     }
 
-    private func permit(_ id: PluginID, configuration: PluginInstanceConfiguration?, kind: PluginKind? = nil) throws -> PluginDescriptor {
+    private func permit(_ id: PluginID, configuration: PluginInstanceConfiguration?, kind: PluginKind? = nil, requiresEnabled: Bool = true) throws -> PluginDescriptor {
         guard !isStopped else { throw PluginError.unavailable }
         guard let registration = registry.registrations[id] else { throw PluginError.unavailable }
         let descriptor = registration.descriptor
         let preference = preferences[id] ?? PluginPreference(pluginID: id)
-        guard preference.isEnabled else { throw PluginError.disabled }
+        guard !requiresEnabled || preference.isEnabled else { throw PluginError.disabled }
         guard preference.isLoadAllowed else { throw PluginError.loadBlocked }
         if descriptor.kinds.contains(.dsp) || preference.dspPlacement != nil {
             _ = try descriptor.resolvedDSPPlacement(preference.dspPlacement)

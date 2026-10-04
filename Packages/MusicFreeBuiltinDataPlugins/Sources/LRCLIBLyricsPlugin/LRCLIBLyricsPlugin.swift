@@ -241,7 +241,7 @@ private struct LRCLIBResponse: Decodable {
 
 extension LRCLIBLyricsPlugin {
     public static var descriptor: PluginDescriptor {
-        .init(id: .init(rawValue: "builtin.lyrics.lrclib"), name: "LRCLIB Lyrics", kinds: [.lyrics], permissions: [.network])
+        .init(id: .init(rawValue: "builtin.lyrics.lrclib"), name: "LRCLIB Lyrics", kinds: [.lyrics], permissions: [.network], policyVersion: "1.2.0", dataProviderID: "lrclib")
     }
     public func candidates(for query: PluginTrackQuery, context: PluginOperationContext) async throws -> [PluginLyricsCandidate] {
         try context.requireNetwork()

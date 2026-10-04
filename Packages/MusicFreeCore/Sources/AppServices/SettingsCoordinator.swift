@@ -11,10 +11,12 @@ internal actor SettingsCoordinator: SettingsServing {
     }
 
     private let repository: (any SettingsRepository)?
+    private let plugins: (any PluginServing)?
     private var cachedSettings: AppSettings?
     private var playbackCapabilities: PlaybackCapabilities
     private let equalizerDescriptor: EqualizerDescriptor?
     private var systemCapabilities: SystemIntegrationCapabilitySnapshot
+    private var loadTask: (id: UUID, task: Task<AppSettings, Error>)?
     private var mutationTask: (id: UUID, task: Task<Void, Error>)?
     private var changeContinuations: [UUID: AsyncStream<AppSettings>.Continuation] = [:]
     private var effectiveContinuations:
@@ -22,11 +24,13 @@ internal actor SettingsCoordinator: SettingsServing {
 
     init(
         repository: (any SettingsRepository)?,
+        plugins: (any PluginServing)? = nil,
         playbackCapabilities: PlaybackCapabilities,
         equalizerDescriptor: EqualizerDescriptor?,
         systemCapabilities: SystemIntegrationCapabilitySnapshot
     ) {
         self.repository = repository
+        self.plugins = plugins
         self.playbackCapabilities = playbackCapabilities
         self.equalizerDescriptor = equalizerDescriptor
         self.systemCapabilities = systemCapabilities
@@ -36,14 +40,28 @@ internal actor SettingsCoordinator: SettingsServing {
         guard let repository else {
             throw AppServiceError.missingDependency("settingsRepository")
         }
+        if let loadTask { return try await loadTask.task.value }
+        let id = UUID(), predecessor = mutationTask?.task, plugins = self.plugins
+        let task = Task { [weak self] in
+            if let predecessor { _ = await predecessor.result }
+            let original = try await repository.load().validated()
+            let settings = try await plugins?.adaptingSettings(original, previous: nil).validated() ?? original
+            if settings != original { try await repository.save(settings) }
+            await self?.cacheLoaded(settings)
+            return settings
+        }
+        loadTask = (id, task)
         do {
-            let settings = try await repository.load().validated()
-            cachedSettings = settings
+            let settings = try await task.value
+            if loadTask?.id == id { loadTask = nil }
             return settings
         } catch {
+            if loadTask?.id == id { loadTask = nil }
             throw AppServiceError.mapped(error, operation: "settings.load")
         }
     }
+
+    private func cacheLoaded(_ settings: AppSettings) { cachedSettings = settings }
 
     func update(_ settings: AppSettings) async throws {
         guard let repository else {
@@ -139,22 +157,27 @@ internal actor SettingsCoordinator: SettingsServing {
         _ mutation: Mutation,
         repository: any SettingsRepository
     ) async throws {
+        let plugins = self.plugins
+        let loading = loadTask?.task
         let predecessor = mutationTask?.task
         let mutationID = UUID()
         let task = Task { [weak self] in
             if let predecessor {
                 _ = await predecessor.result
             }
+            if let loading { _ = await loading.result }
             try Task.checkCancellation()
 
             let committed: AppSettings
             switch mutation {
             case .save(let settings):
-                try await repository.save(settings)
-                committed = settings
+                let previous = await self?.cachedSettings
+                committed = try await plugins?.adaptingSettings(settings, previous: previous).validated() ?? settings
+                try await repository.save(committed)
             case .reset:
                 try await repository.reset()
-                committed = .defaults
+                committed = try await plugins?.adaptingSettings(.defaults, previous: nil).validated() ?? .defaults
+                if committed != .defaults { try await repository.save(committed) }
             }
 
             guard let self else { throw CancellationError() }
@@ -175,7 +198,8 @@ internal actor SettingsCoordinator: SettingsServing {
         }
     }
 
-    private func commitMutation(_ settings: AppSettings) {
+    private func commitMutation(_ settings: AppSettings) async {
+        await plugins?.apply(settings)
         cachedSettings = settings
         publish(settings)
         publishEffective(for: settings)

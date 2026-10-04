@@ -213,7 +213,7 @@ private struct MetadataServerLyricsResponse: Decodable {
 
 extension MetadataServerLyricsPlugin {
     public static var descriptor: PluginDescriptor {
-        .init(id: .init(rawValue: "builtin.lyrics.metadataServer"), name: "Metadata Server Lyrics", kinds: [.lyrics], permissions: [.network])
+        .init(id: .init(rawValue: "builtin.lyrics.metadataServer"), name: "Metadata Server Lyrics", kinds: [.lyrics], permissions: [.network], policyVersion: "1.2.0", dataProviderID: "metadataServer")
     }
     public func candidates(for query: PluginTrackQuery, context: PluginOperationContext) async throws -> [PluginLyricsCandidate] {
         try context.requireNetwork()

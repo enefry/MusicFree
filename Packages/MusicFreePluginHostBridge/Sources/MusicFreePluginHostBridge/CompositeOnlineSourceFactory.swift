@@ -12,6 +12,11 @@ public struct CompositeOnlineSourceFactory: OnlineSourceFactory {
         self.legacy = legacy; self.runtime = runtime; self.downloadRoot = downloadRoot
     }
     public func makeSource(for configuration: OnlineSourceConfiguration) throws -> (any OnlineSource)? {
+        if let registration = runtime.registry.registrations.values.first(where: {
+            NativeOnlineSourceRegistrationProvider.ids.contains($0.descriptor.id) && $0.descriptor.onlineProviderID == configuration.providerKind.rawValue
+        }) {
+            return makeNativeRuntimeSource(configuration: configuration, plugin: registration.descriptor, runtime: runtime)
+        }
         if OnlineProviderKind.allCases.contains(configuration.providerKind) { return try legacy.makeSource(for: configuration) }
         guard let registration = runtime.registry.registrations.values.first(where: {
             $0.descriptor.onlineProviderID == configuration.providerKind.rawValue && $0.onlineSource != nil

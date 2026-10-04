@@ -7,9 +7,11 @@ import PlaybackAPI
 import SettingsAPI
 import SystemIntegrationAPI
 import Testing
+import MusicFreePluginAPI
 
 @MainActor
 private final class SettingsFeatureTestStore: SettingsFeatureStore {
+    var normalize: ((AppSettings) -> AppSettings)?
     var current: AppSettings
     var playbackCapabilities: PlaybackCapabilities
     var equalizerDescriptor: EqualizerDescriptor?
@@ -56,9 +58,10 @@ private final class SettingsFeatureTestStore: SettingsFeatureStore {
             self.nextSaveError = nil
             throw nextSaveError
         }
-        current = settings
+        current = normalize?(settings) ?? settings
         savedValues.append(settings)
-        changeContinuation?.yield(settings)
+        changeContinuation?.yield(current)
+        if normalize != nil { await Task.yield() }
     }
 
     func reset() async throws {
@@ -67,8 +70,9 @@ private final class SettingsFeatureTestStore: SettingsFeatureStore {
             throw nextResetError
         }
         resetCount += 1
-        current = .defaults
-        changeContinuation?.yield(.defaults)
+        current = normalize?(.defaults) ?? .defaults
+        changeContinuation?.yield(current)
+        if normalize != nil { await Task.yield() }
     }
 
     func effective() async throws -> EffectivePlaybackSettings {
@@ -1324,4 +1328,41 @@ func appIconSelectionRollsBackAfterFailure() async {
 private func settleSettingsFeature() async {
     try? await Task.sleep(nanoseconds: 20_000_000)
     await Task.yield()
+}
+
+@Test @MainActor func settingsFeatureRebasesNormalizedPluginEchoBeforeNextSave() async throws {
+    let id = PluginID(rawValue: "builtin.dsp.equalizer")
+    let store = SettingsFeatureTestStore()
+    store.normalize = { settings in
+        settings.settingPluginPreferences([.init(pluginID: id, isEnabled: true, isLoadAllowed: true,
+            configuration: ["preamp": .number(settings.playbackPreferences.equalizer.preamp.decibels)])])
+    }
+    let descriptor = EqualizerDescriptor(bands: [.init(centerFrequencyHz: 500, minimumGainDecibels: -12, maximumGainDecibels: 12)])
+    store.playbackCapabilities = [.equalizer]; store.equalizerDescriptor = descriptor
+    let model = SettingsViewModel(store: store)
+    await model.load()
+    model.setEqualizerPreamp(2)
+    await model.waitForPendingWork(); await settleSettingsFeature()
+    #expect(model.mutationState == .saved)
+    #expect(model.settings.pluginPreferences.first?.configuration["preamp"] == .number(2))
+    model.setEqualizerPreamp(4)
+    await model.waitForPendingWork(); await settleSettingsFeature()
+    #expect(model.mutationState == .saved)
+    #expect(model.settings.pluginPreferences.first?.configuration["preamp"] == .number(4))
+    #expect(store.savedValues.last?.pluginPreferences.first?.configuration["preamp"] == .number(2))
+    #expect(model.settings == store.current)
+}
+
+@Test @MainActor func settingsFeatureRetainsPluginDefaultsFromNormalizedResetEcho() async throws {
+    let id = PluginID(rawValue: "builtin.dsp.equalizer")
+    let store = SettingsFeatureTestStore(settings: .init(playbackPreferences: .init(rate: try .init(value: 1.5))))
+    store.normalize = { $0.settingPluginPreferences([.init(pluginID: id, isLoadAllowed: true)]) }
+    let model = SettingsViewModel(store: store)
+    await model.load()
+    model.requestReset(); await model.confirmReset()
+    await model.waitForPendingWork(); await settleSettingsFeature()
+    #expect(model.mutationState == .saved)
+    #expect(model.settings.playbackPreferences.rate == .normal)
+    #expect(model.settings.pluginPreferences.first?.pluginID == id)
+    #expect(model.settings == store.current)
 }

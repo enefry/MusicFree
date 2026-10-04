@@ -16,7 +16,7 @@
 | 分类 | 入口 | 内容 |
 | --- | --- | --- |
 | 架构 | [`Architecture/`](Architecture/PROJECT_STRUCTURE.md) | 工程结构、接口基线和多数据源路线图 |
-| 1.4 插件规划 | [`插件系统详细计划`](Architecture/BUILT_IN_PLUGIN_SYSTEM_1.4_PLAN.md) | 四类通用能力；既有歌词/在线源拆离和 UI 插件列 roadmap，MusicLyricsAPI 暂缓；待确认 |
+| 1.4 插件系统 | [当前迁移与验证](Testing/1.4_BUILTIN_PLUGIN_MIGRATION_2026-10-03.md)、[详细计划](Architecture/BUILT_IN_PLUGIN_SYSTEM_1.4_PLAN.md) | 现有歌词/歌曲信息、DS Audio/Google Drive、双位置 EQ 已接入 Runtime；原实现保留，UI 插件与 MusicLyricsAPI 暂缓 |
 | 1.4 播放规划 | [`平滑播放详细计划`](Architecture/PLAYBACK_TRANSITIONS_1.4_PLAN.md) | 时长可调/可关闭/最长 3 s，gapless、crossfade、轨道调度与异常处理；待确认 |
 | 状态 | [`PROJECT_STATUS.md`](PROJECT_STATUS.md) | 当前构建身份、生产入口、限制和发布门禁 |
 | 模块 | [`Modules/`](Modules/README.md) | Core、Infrastructure、VLCKit Adapter、UI 和 App 的功能描述 |
