@@ -845,6 +845,7 @@ func settingsFeatureKeepsUnsupportedPreferences() async throws {
     #expect(!viewModel.supportsReplayGain)
     #expect(!viewModel.supportsGapless)
     #expect(!viewModel.supportsCrossfade)
+    #expect(!viewModel.supportsFade)
 
     viewModel.setPlaybackRate(1.5)
     await viewModel.waitForPendingWork()
@@ -856,7 +857,7 @@ func settingsFeatureKeepsUnsupportedPreferences() async throws {
     await viewModel.waitForPendingWork()
     viewModel.setGaplessPlaybackEnabled(false)
     await viewModel.waitForPendingWork()
-    viewModel.setCrossfadeDuration(.seconds(4))
+    viewModel.setCrossfadeDuration(.seconds(3))
     await viewModel.waitForPendingWork()
     viewModel.setDuplicateImportPolicy(.keepBoth)
     await viewModel.waitForPendingWork()
@@ -866,8 +867,36 @@ func settingsFeatureKeepsUnsupportedPreferences() async throws {
     #expect(viewModel.settings.playbackPreferences.equalizer.preamp.decibels == 3.5)
     #expect(viewModel.settings.playbackPreferences.replayGain == .album)
     #expect(!viewModel.settings.playbackPreferences.transition.gaplessPlaybackEnabled)
-    #expect(viewModel.settings.playbackPreferences.transition.crossfadeDuration == .seconds(4))
+    #expect(viewModel.settings.playbackPreferences.transition.crossfadeDuration == .seconds(3))
     #expect(viewModel.settings.importPreferences.duplicatePolicy == .keepBoth)
+    #expect(viewModel.mutationState == .saved)
+}
+
+@MainActor
+@Test("Settings persists fade controls independently from crossfade and gapless")
+func settingsFeatureEditsIndependentTransitionDurations() async throws {
+    let store = SettingsFeatureTestStore(playbackCapabilities: [.fade, .gapless, .crossfade])
+    let viewModel = SettingsViewModel(store: store)
+    await viewModel.load()
+    viewModel.setFadeDuration(.seconds(3), isFadeIn: true)
+    await viewModel.waitForPendingWork()
+    viewModel.setFadeDuration(.seconds(1), isFadeIn: false)
+    await viewModel.waitForPendingWork()
+    viewModel.setCrossfadeDuration(.seconds(2))
+    await viewModel.waitForPendingWork()
+    viewModel.setGaplessPlaybackEnabled(false)
+    await viewModel.waitForPendingWork()
+    #expect(store.current.playbackPreferences.transition == (try TransitionPreferences(
+        gaplessPlaybackEnabled: false, crossfadeDuration: .seconds(2),
+        fadeInDuration: .seconds(3), fadeOutDuration: .seconds(1))))
+
+    viewModel.setFadeDuration(.zero, isFadeIn: true)
+    await viewModel.waitForPendingWork()
+    viewModel.setCrossfadeDuration(.zero)
+    await viewModel.waitForPendingWork()
+    #expect(store.current.playbackPreferences.transition == (try TransitionPreferences(
+        gaplessPlaybackEnabled: false, crossfadeDuration: .zero,
+        fadeInDuration: .zero, fadeOutDuration: .seconds(1))))
     #expect(viewModel.mutationState == .saved)
 }
 

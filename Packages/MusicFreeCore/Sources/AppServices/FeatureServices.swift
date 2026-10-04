@@ -891,7 +891,8 @@ public extension SettingsServing {
                     .settingOnlineSourcePreferences(preferences),
                 playbackPreferences: current.playbackPreferences,
                 storagePreferences: current.storagePreferences,
-                loggingPreferences: current.loggingPreferences
+                loggingPreferences: current.loggingPreferences,
+                pluginPreferences: current.pluginPreferences
             )
         )
     }
@@ -912,7 +913,8 @@ public extension SettingsServing {
                 ),
                 playbackPreferences: current.playbackPreferences,
                 storagePreferences: current.storagePreferences,
-                loggingPreferences: current.loggingPreferences
+                loggingPreferences: current.loggingPreferences,
+                pluginPreferences: current.pluginPreferences
             )
         )
     }
@@ -928,7 +930,8 @@ public extension SettingsServing {
                 ),
                 playbackPreferences: current.playbackPreferences,
                 storagePreferences: current.storagePreferences,
-                loggingPreferences: current.loggingPreferences
+                loggingPreferences: current.loggingPreferences,
+                pluginPreferences: current.pluginPreferences
             )
         )
     }

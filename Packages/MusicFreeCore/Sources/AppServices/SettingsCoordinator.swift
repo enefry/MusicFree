@@ -238,10 +238,16 @@ internal actor SettingsCoordinator: SettingsServing {
             transition = .disabled
         }
 
+        let configuredTransition = AudioTransitionConfiguration(
+            mode: transition.mode,
+            crossfadeDuration: transition.crossfadeDuration,
+            fadeInDuration: playbackCapabilities.contains(.fade) ? preferences.transition.fadeInDuration : .zero,
+            fadeOutDuration: playbackCapabilities.contains(.fade) ? preferences.transition.fadeOutDuration : .zero
+        )
         let effects = AudioEffectConfiguration(
             equalizer: equalizer,
             replayGain: ReplayGainConfiguration(mode: replayGainMode),
-            transition: transition,
+            transition: configuredTransition,
             rate: rate
         )
         return EffectivePlaybackSettings(

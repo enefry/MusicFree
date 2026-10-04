@@ -14,15 +14,48 @@ import PlaybackAPI
 /// （`capabilities` 随之变化）。
 /// 支持 CUE 分段播放及 AVAudioUnitEQ 均衡器。其它效果能力位按实现逐步点亮。
 @MainActor
-public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControlling {
+public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControlling, PlaybackTransitionControlling {
     private static let logger = Logger(subsystem: "win.tools4me.music", category: "ffmpeg-playback")
     /// 随当前资源变化：远程顺序流（服务端不支持 Range，或尚未拿到响应头）
     /// 不含 `.seeking`，供上层据此隐藏进度拖动。
     public var capabilities: PlaybackCapabilities {
-        remoteSource?.isSeekable == false
-            ? [.variableRate, .equalizer] : [.seeking, .variableRate, .equalizer]
+        var result: PlaybackCapabilities = [.variableRate, .equalizer]
+        if remoteSource?.isSeekable != false { result.insert(.seeking) }
+        if configuredRate == 1, decoder.map({ $0.format.channelCount <= 8 }) ?? true {
+            result.insert(.fade)
+            if (currentItem.map(supportsLocalTransition) ?? true), pcmProcessorFactory == nil || processorPreservesTiming {
+                result.formUnion([.gapless, .crossfade])
+            }
+        }
+        return result
     }
     public var equalizerDescriptor: EqualizerDescriptor? { Self.equalizerLayout }
+
+    /// Narrow hook handed off to A in the 1.4 playback development log. The
+    /// existing single/dual source graph, queues and transition clocks remain
+    /// unchanged. Each engine owns a separate zero-latency/tail effect instance.
+    public func setPostEqualizerEffect(_ node: AVAudioNode?) throws {
+        guard postEqualizerEffect !== node else { return }
+        guard !audioEngine.isRunning else { throw PlaybackError.invalidEffects }
+        audioEngine.disconnectNodeOutput(equalizerUnit)
+        if let previous = postEqualizerEffect {
+            audioEngine.disconnectNodeOutput(previous); previous.reset()
+            audioEngine.detach(previous)
+        }
+        postEqualizerEffect = node
+        if let node { audioEngine.attach(node) }
+        if let decoder { connectPostEqualizerOutput(format: transitionGraph?.format ?? feederFormat(for: decoder)) }
+    }
+
+    private func connectPostEqualizerOutput(format: AVAudioFormat) {
+        if let effect = postEqualizerEffect {
+            effect.reset()
+            audioEngine.connect(equalizerUnit, to: effect, format: format)
+            audioEngine.connect(effect, to: audioEngine.mainMixerNode, format: format)
+        } else {
+            audioEngine.connect(equalizerUnit, to: audioEngine.mainMixerNode, format: format)
+        }
+    }
 
     private static let equalizerLayout: EqualizerDescriptor = {
         let bands = [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000].map {
@@ -64,6 +97,8 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
     // Kept in the signal chain even when disabled so applying EQ does not
     // reconnect a running player and discard scheduled audio.
     let equalizerUnit = AVAudioUnitEQ(numberOfBands: 10)
+    // Optional host-owned post-mix effect. This graph has no PluginRuntime dependency.
+    private var postEqualizerEffect: AVAudioNode?
     private let decodeQueue = DispatchQueue(label: "com.musicfree.ffmpeg.decode")
     private let makeRemoteSource: (RemotePlaybackRequest) -> URLSessionByteSource
 
@@ -77,6 +112,23 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
     // 远程资源的字节源。解码队列可能阻塞在它的 read 上，teardown 必须先取消它。
     private var remoteSource: URLSessionByteSource?
     private var feeder: DecodeFeeder?
+    private var transitionGraph: FFmpegAudioTransitionGraph?
+    private var transitionConfiguration: AudioTransitionConfiguration = .disabled
+    private var transitionContinuation: AsyncStream<LogicalPlaybackCommit>.Continuation?
+    private var transitionCommitHandler: (@MainActor (LogicalPlaybackCommit) -> Void)?
+    private var transitionRetirementHandler: (@MainActor (PlaybackTransitionRetirement) -> Void)?
+    private var transitionInvalidationHandler: (@MainActor (PlaybackTransitionTicket, PlaybackTransitionInvalidationReason) -> Void)?
+    private var preparedNextTicket: PlaybackTransitionTicket?
+    private var renderedDurationBase: Duration = .zero
+    private var retirementDurationBases: [UUID: Duration] = [:]
+    private var pcmProcessorFactory: FFmpegPCMProcessorFactory?
+    private var processorPreservesTiming = false
+    private var nextPreparationID: UUID?
+    private var controlVersion: UInt64 = 0
+    private var softControlTask: Task<Void, Never>?
+    private var graphBasePosition: Duration = .zero
+    private let nextDecodeQueue = DispatchQueue(label: "com.musicfree.ffmpeg.next")
+    private var currentDecodeQueue: DispatchQueue?
     // 每次取消/替换 feeder 都递增。feeder 的结束/错误回调经 Task 异步 hop 回
     // MainActor，可能晚于 seek/stop 到达；只有 epoch 匹配的回调才生效。
     private var feederEpoch: UInt64 = 0
@@ -162,10 +214,7 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
     }
 
     public func makeEventStream() -> AsyncStream<PlaybackEvent> {
-        precondition(
-            eventContinuation == nil,
-            "FFmpegPlaybackEngine supports one active event stream"
-        )
+        guard eventContinuation == nil else { return AsyncStream { $0.finish() } }
         let (stream, continuation) = AsyncStream<PlaybackEvent>.makeStream(
             bufferingPolicy: .bufferingNewest(64)
         )
@@ -259,14 +308,18 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
         }
 
         self.decoder = decoder
+        renderedDurationBase = .zero
+        currentDecodeQueue = decodeQueue
         currentDuration = item.selection.range?.duration ?? decoder.duration ?? item.display.duration
 
-        let format = decoder.format
+        let format = feederFormat(for: decoder)
         audioEngine.connect(playerNode, to: timePitch, format: format)
         audioEngine.connect(timePitch, to: equalizerUnit, format: format)
-        audioEngine.connect(equalizerUnit, to: audioEngine.mainMixerNode, format: format)
+        connectPostEqualizerOutput(format: format)
         timePitch.rate = configuredRate
-        playerNode.volume = isMuted ? 0 : volume
+        timePitch.bypass = configuredRate == 1
+        playerNode.volume = 1
+        audioEngine.mainMixerNode.outputVolume = isMuted ? 0 : volume
 
         audioEngine.prepare()
 
@@ -305,6 +358,9 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
     }
 
     public func play() throws {
+        softControlTask?.cancel(); softControlTask = nil
+        controlVersion &+= 1
+        transitionGraph?.onHalted = nil
         if recoveringSequentialRoute {
             guard currentItem != nil else { throw PlaybackError.noCurrentItem }
             wantsPlayback = true
@@ -356,7 +412,9 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
             position = .zero
         }
         wantsPlayback = true
+        transitionGraph?.ramp(configuredRate == 1 ? transitionConfiguration.fadeInDuration : .zero, pause: false)
         updateOutput()
+        if state.phase == .failed { throw state.error ?? PlaybackError.engineFailure(code: "audio_engine_start_failed") }
         state = PlaybackState(
             phase: .playing,
             generation: generation,
@@ -369,9 +427,37 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
     }
 
     public func pause() {
-        let position = displayPosition()
+        if configuredRate == 1, let graph = transitionGraph, transitionConfiguration.fadeOutDuration > .zero,
+           audioEngine.isRunning {
+            cancelNext()
+            controlVersion &+= 1
+            let version = controlVersion
+            let graph = transitionGraph ?? graph
+            graph.ramp(transitionConfiguration.fadeOutDuration, pause: true)
+            graph.onHalted = { [weak self] in
+                guard let self, self.controlVersion == version else { return }
+                self.hardPause()
+            }
+            scheduleSoftDeadline(transitionConfiguration.fadeOutDuration, version: version, stop: false)
+            wantsPlayback = false
+            let position = displayPosition()
+            state = PlaybackState(phase: .paused, generation: state.generation,
+                                  itemID: state.itemID, position: position, duration: currentDuration)
+            if let itemID = state.itemID { yield(.phaseChanged(generation: state.generation, itemID: itemID, phase: .paused)) }
+            return
+        }
+        hardPause()
+    }
+
+    public func hardPause() {
+        softControlTask?.cancel(); softControlTask = nil
         wantsPlayback = false
         updateOutput()
+        cancelNext()
+        controlVersion &+= 1
+        nextPreparationID = nil
+        let position = displayPosition()
+        transitionGraph?.interruptOverlap()
         bufferingTask?.cancel()
         bufferingTask = nil
         positionTask?.cancel()
@@ -390,6 +476,33 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
     }
 
     public func stop() {
+        if configuredRate == 1, let graph = transitionGraph, transitionConfiguration.fadeOutDuration > .zero,
+           audioEngine.isRunning {
+            cancelNext()
+            controlVersion &+= 1
+            let version = controlVersion
+            let graph = transitionGraph ?? graph
+            graph.ramp(transitionConfiguration.fadeOutDuration, pause: true)
+            graph.onHalted = { [weak self] in
+                guard let self, self.controlVersion == version else { return }
+                self.hardStop()
+            }
+            scheduleSoftDeadline(transitionConfiguration.fadeOutDuration, version: version, stop: true)
+            wantsPlayback = false
+            state = PlaybackState(phase: .stopped, generation: state.generation,
+                itemID: state.itemID, position: displayPosition(), duration: currentDuration)
+            return
+        }
+        hardStop()
+    }
+
+    public func waitForSoftStop() async { await softControlTask?.value }
+
+    public func hardStop() {
+        softControlTask?.cancel(); softControlTask = nil
+        cancelNext()
+        controlVersion &+= 1
+        nextPreparationID = nil
         let generation = state.generation
         let itemID = currentItem?.itemID
         teardown()
@@ -409,6 +522,9 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
     }
 
     public func seek(to position: Duration) async throws {
+        cancelNext()
+        softControlTask?.cancel(); softControlTask = nil
+        controlVersion &+= 1
         guard capabilities.contains(.seeking) else {
             throw PlaybackError.unsupportedCapability(.seeking)
         }
@@ -435,6 +551,7 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
         if wantsPlayback {
             startPositionUpdates()
         }
+        if state.phase == .failed { throw state.error ?? PlaybackError.engineFailure(code: "audio_engine_start_failed") }
     }
 
     public func setRate(_ rate: Float) throws {
@@ -442,8 +559,22 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
         guard rate == 1 || capabilities.contains(.variableRate) else {
             throw PlaybackError.unsupportedCapability(.variableRate)
         }
+        if configuredRate != rate { cancelNext() }
         configuredRate = rate
         timePitch.rate = rate
+        timePitch.bypass = rate == 1
+        // Rejoin the transition bus after a resource was prepared or seeked
+        // at non-1 speed, retaining its serial decoder owner and position.
+        if rate == 1, transitionGraph == nil, let decoder, let item = currentItem,
+           decoder.format.channelCount <= 8, capabilities.contains(.seeking),
+           !didReachEnd, !recoveringSequentialRoute {
+            restartFeeder(decoder: decoder, from: displayPosition(),
+                          generation: state.generation, itemID: item.itemID)
+            updateOutput()
+            if state.phase == .failed { throw state.error ?? PlaybackError.engineFailure(code: "audio_engine_start_failed") }
+        }
+        transitionGraph?.configureFadeOut(rate == 1 ? transitionConfiguration.fadeOutDuration : .zero)
+        if rate != 1 { transitionGraph?.ramp(.zero, pause: false) }
     }
 
     public func apply(_ effects: AudioEffectConfiguration) throws {
@@ -453,11 +584,9 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
         if effects.replayGain.mode != .disabled {
             throw PlaybackError.unsupportedCapability(.replayGain)
         }
-        switch effects.transition.mode {
-        case .disabled: break
-        case .gapless: throw PlaybackError.unsupportedCapability(.gapless)
-        case .crossfade: throw PlaybackError.unsupportedCapability(.crossfade)
-        }
+        if transitionConfiguration.mode != effects.transition.mode || transitionConfiguration.crossfadeDuration != effects.transition.crossfadeDuration { cancelNext() }
+        transitionConfiguration = effects.transition
+        transitionGraph?.configureFadeOut(effects.rate == 1 ? effects.transition.fadeOutDuration : .zero)
         try setRate(effects.rate)
         configuredEqualizer = effects.equalizer
         applyConfiguredEqualizer()
@@ -480,12 +609,12 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
             throw PlaybackError.invalidEffects
         }
         self.volume = volume
-        playerNode.volume = isMuted ? 0 : volume
+        audioEngine.mainMixerNode.outputVolume = isMuted ? 0 : volume
     }
 
     public func setMuted(_ muted: Bool) throws {
         isMuted = muted
-        playerNode.volume = muted ? 0 : volume
+        audioEngine.mainMixerNode.outputVolume = muted ? 0 : volume
     }
 
     public func dispose() {
@@ -496,9 +625,167 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
         }
         eventContinuation?.finish()
         eventContinuation = nil
+        transitionContinuation?.finish()
+        transitionContinuation = nil
+        transitionCommitHandler = nil
+        transitionRetirementHandler = nil
+        transitionInvalidationHandler = nil
     }
 
     // MARK: - Private
+
+    // A wall-clock deadline only terminates a starved/non-rendering soft stop;
+    // it never drives gain. Network reads cannot keep a soft control alive.
+    private func scheduleSoftDeadline(_ duration: Duration, version: UInt64, stop: Bool) {
+        softControlTask?.cancel()
+        softControlTask = Task { [weak self] in
+            // The command begins on an output callback; completion is polled
+            // afterwards. Normal completion still stops at envelope zero.
+            do { try await Task.sleep(for: duration + .milliseconds(250)) } catch { return }
+            guard let self, self.controlVersion == version else { return }
+            if stop { self.hardStop() } else { self.hardPause() }
+        }
+    }
+
+    public func makeTransitionStream() -> AsyncStream<LogicalPlaybackCommit> {
+        guard transitionContinuation == nil else { return AsyncStream { $0.finish() } }
+        return AsyncStream(bufferingPolicy: .bufferingNewest(8)) { transitionContinuation = $0 }
+    }
+
+    /// Install while output is stopped. Every decoder slot receives a separate
+    /// queue-owned processor. Unknown DSP delay/tail disables overlap timing.
+    public func setPCMProcessorFactory(_ factory: FFmpegPCMProcessorFactory?, preservesTiming: Bool = false) throws {
+        guard !audioEngine.isRunning else { throw PlaybackError.invalidEffects }
+        cancelNext()
+        pcmProcessorFactory = factory; processorPreservesTiming = preservesTiming
+        if let decoder, let item = currentItem {
+            restartFeeder(decoder: decoder, from: displayPosition(), generation: state.generation, itemID: item.itemID)
+        }
+    }
+
+    public func setTransitionCommitHandler(_ handler: (@MainActor (LogicalPlaybackCommit) -> Void)?) {
+        transitionCommitHandler = handler
+    }
+
+    public func setTransitionRetirementHandler(_ handler: (@MainActor (PlaybackTransitionRetirement) -> Void)?) {
+        transitionRetirementHandler = handler
+    }
+
+    public func setTransitionInvalidationHandler(_ handler: (@MainActor (PlaybackTransitionTicket, PlaybackTransitionInvalidationReason) -> Void)?) {
+        transitionInvalidationHandler = handler
+    }
+
+    // All unsegmented sources use decoder EOF as their exact boundary. A
+    // container suffix or AVAudioFile.length cannot prove decoded PCM length.
+    private func reliableFrames(_ item: PlaybackItem, format: AVAudioFormat) -> Int64? { nil }
+
+    private func remainingFrames(for item: PlaybackItem, decoder: FFmpegAudioDecoder, position: Duration) -> Int64? {
+        let total = item.selection.range.map { Self.seconds($0.duration) * decoder.format.sampleRate }
+            ?? reliableFrames(item, format: decoder.format).map(Double.init)
+        return total.map { max(0, Int64($0.rounded()) - Int64((Self.seconds(position) * decoder.format.sampleRate).rounded())) }
+    }
+
+    private static func seconds(_ duration: Duration) -> Double {
+        Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18
+    }
+
+    private func supportsLocalTransition(_ item: PlaybackItem) -> Bool {
+        guard item.selection.range == nil else { return false }
+        switch item.resource {
+        case .localFile, .leasedLocalFile: return true
+        case .remote: return false
+        }
+    }
+
+    private func feederFormat(for decoder: FFmpegAudioDecoder) -> AVAudioFormat {
+        configuredRate == 1 && decoder.format.channelCount <= 8
+            ? FFmpegAudioTransitionGraph.renderFormat(for: decoder.format) : decoder.format
+    }
+
+    public func prepareNext(_ item: PlaybackItem, ticket: PlaybackTransitionTicket) async throws {
+        guard configuredRate == 1, (pcmProcessorFactory == nil || processorPreservesTiming),
+              let currentItem, decoder != nil, let graph = transitionGraph,
+              ticket.generation == state.generation, ticket.currentItemID == currentItem.itemID,
+              supportsLocalTransition(currentItem), supportsLocalTransition(item),
+              transitionConfiguration.mode != .disabled else {
+            throw PlaybackError.unsupportedCapability(.gapless)
+        }
+        let url: URL
+        switch item.resource {
+        case .localFile(let value), .leasedLocalFile(let value, _): url = value
+        case .remote: throw PlaybackError.unsupportedCapability(.gapless)
+        }
+        let operationID = UUID()
+        nextPreparationID = operationID
+        preparedNextTicket = ticket
+        var prepared = false
+        defer {
+            if !prepared, nextPreparationID == operationID {
+                nextPreparationID = nil
+                preparedNextTicket = nil
+                cancelNext()
+            }
+        }
+        // A still owns its decoder during A/B overlap. Release that slot
+        // before opening C, keeping the engine at two decoder instances.
+        try await graph.releaseNextSlot()
+        guard nextPreparationID == operationID, transitionGraph === graph else { throw CancellationError() }
+        let queue = currentDecodeQueue === decodeQueue ? nextDecodeQueue : decodeQueue
+        let opened: FFmpegAudioDecoder = try await withCheckedThrowingContinuation { continuation in
+            queue.async {
+                do { continuation.resume(returning: try FFmpegAudioDecoder(localFileURL: url)) }
+                catch { continuation.resume(throwing: error) }
+            }
+        }
+        try Task.checkCancellation()
+        guard nextPreparationID == operationID, transitionGraph === graph else { throw CancellationError() }
+        guard opened.format.channelCount == graph.format.channelCount ||
+                (opened.format.channelCount <= 2 && graph.format.channelCount == 2) else {
+            throw PlaybackError.unsupportedCapability(.gapless)
+        }
+        let frames = reliableFrames(item, format: opened.format)
+        let overlap = transitionConfiguration.mode == .crossfade ? transitionConfiguration.crossfadeDuration ?? .zero : .zero
+        try await graph.prepareNext(decoder: opened, item: item, ticket: ticket, frameCount: frames ?? -1,
+                                   overlap: overlap, queue: queue) { [weak self, weak graph] commit in
+            guard let self, self.transitionGraph === graph else { return }
+            self.nextPreparationID = nil
+            self.preparedNextTicket = nil
+            self.retirementDurationBases[ticket.id] = self.renderedDurationBase
+            self.renderedDurationBase = .zero
+            self.currentItem = item; self.decoder = opened; self.currentDecodeQueue = queue
+            self.currentDuration = frames.map { .seconds(Double($0) / opened.format.sampleRate) }
+                ?? opened.duration ?? item.display.duration
+            self.graphBasePosition = .zero
+            self.state = PlaybackState(phase: .playing, generation: self.state.generation.advanced(),
+                itemID: item.itemID, position: graph?.position ?? .zero, duration: self.currentDuration)
+            self.transitionCommitHandler?(commit)
+            self.transitionContinuation?.yield(commit)
+        }
+        try Task.checkCancellation()
+        guard nextPreparationID == operationID else { throw CancellationError() }
+        prepared = true
+    }
+
+    public func cancelNext() {
+        transitionGraph?.synchronize()
+        var pausedForCommit = false
+        transitionGraph?.cancelNext {
+            // Only the tiny in-flight render claim needs quiescence. Ordinary
+            // cancellation leaves the running graph and fade untouched.
+            pausedForCommit = audioEngine.isRunning
+            if pausedForCommit { audioEngine.pause() }
+        }
+        nextPreparationID = nil
+        preparedNextTicket = nil
+        if pausedForCommit {
+            do { try audioEngine.start() }
+            catch {
+                if let itemID = state.itemID {
+                    fail(.engineFailure(code: "audio_engine_start_failed"), generation: state.generation, itemID: itemID)
+                }
+            }
+        }
+    }
 
     private func isCurrentPreparation(_ generation: PlaybackGeneration) -> Bool {
         state.generation == generation && state.phase == .preparing
@@ -510,6 +797,59 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
         generation: PlaybackGeneration,
         itemID: MediaItemID
     ) {
+        // A seek/rate change can rebuild a converted bus as a native-format
+        // legacy feeder. Release prepared formats before reconnecting the
+        // whole output chain, including when EOF has already paused output.
+        audioEngine.stop()
+        let outputFormat = feederFormat(for: decoder)
+        audioEngine.connect(timePitch, to: equalizerUnit, format: outputFormat)
+        connectPostEqualizerOutput(format: outputFormat)
+        if configuredRate == 1, decoder.format.channelCount <= 8,
+           decoder.format.sampleRate > 0, let item = currentItem {
+            let epoch = feederEpoch
+            let frameCount = remainingFrames(for: item, decoder: decoder, position: basePosition)
+            let graph: FFmpegAudioTransitionGraph
+            do { graph = try FFmpegAudioTransitionGraph(decoder: decoder, item: item,
+                start: initialSeek, frameCount: frameCount ?? -1, queue: currentDecodeQueue ?? decodeQueue,
+                processorFactory: pcmProcessorFactory,
+                onEnd: { [weak self] in
+                    guard let self, epoch == self.feederEpoch, let itemID = self.state.itemID else { return }
+                    self.handlePlaybackEnded(epoch: epoch, generation: self.state.generation, itemID: itemID)
+                }, onError: { [weak self] error in
+                    guard let self, epoch == self.feederEpoch else { return }
+                    self.transitionGraph?.synchronize()
+                    guard let itemID = self.state.itemID else { return }
+                    self.handleDecodeError(error, epoch: epoch, generation: self.state.generation, itemID: itemID)
+                }) } catch {
+                fail(.engineFailure(code: "transition_graph_failed"), generation: generation, itemID: itemID)
+                return
+            }
+            transitionGraph = graph
+            graph.onSecondaryFailure = { [weak self] in
+                guard let self else { return }
+                let ticket = self.preparedNextTicket
+                self.cancelNext()
+                if let ticket { self.transitionInvalidationHandler?(ticket, .preparationFailed) }
+            }
+            graph.onStarvationChanged = { [weak self] starved in self?.handleStarvationChanged(starved, epoch: epoch) }
+            graph.onRetirement = { [weak self] ticket, frame, duration, reason in
+                guard let self, self.feederEpoch == epoch else { return }
+                let base = self.retirementDurationBases.removeValue(forKey: ticket.id) ?? .zero
+                self.transitionRetirementHandler?(PlaybackTransitionRetirement(ticket: ticket,
+                    renderFrame: frame, playedDuration: base + duration, reason: reason))
+            }
+            graphBasePosition = basePosition
+            audioEngine.attach(graph.node)
+            audioEngine.disconnectNodeOutput(playerNode)
+            audioEngine.connect(graph.node, to: timePitch, format: graph.format)
+            graph.configureFadeOut(transitionConfiguration.fadeOutDuration)
+            graph.ramp(wantsPlayback ? transitionConfiguration.fadeInDuration : .zero, pause: !wantsPlayback)
+            isStarved = false
+            return
+        }
+        // The transition source disconnects this node. Restore the legacy
+        // chain before scheduling buffers after a rate/seek/replay rebuild.
+        audioEngine.connect(playerNode, to: timePitch, format: decoder.format)
         let epoch = feederEpoch
         isStarved = true
         logOutputDiagnostics(event: "feeder-start", decoderSampleRate: decoder.format.sampleRate)
@@ -521,13 +861,14 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
         let feeder = DecodeFeeder(
             decoder: decoder,
             playerNode: playerNode,
-            queue: decodeQueue,
+            queue: currentDecodeQueue ?? decodeQueue,
             initialSeek: initialSeek,
             playbackDuration: currentItem?.selection.range.map { $0.duration - basePosition },
             maxInFlight: Self.inFlightBufferCount(
                 sampleRate: decoder.format.sampleRate,
                 outputLatency: outputLatency
             ),
+            processorFactory: pcmProcessorFactory,
             onEnd: { [weak self] in
                 Task { @MainActor [weak self] in
                     self?.handlePlaybackEnded(epoch: epoch, generation: generation, itemID: itemID)
@@ -549,6 +890,20 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
     }
 
     private func cancelFeeder() {
+        nextPreparationID = nil
+        preparedNextTicket = nil
+        if let graph = transitionGraph {
+            renderedDurationBase += graph.position
+            audioEngine.stop()
+            graph.cancel()
+            audioEngine.disconnectNodeOutput(graph.node)
+            audioEngine.detach(graph.node)
+            transitionGraph = nil
+        } else if feeder != nil {
+            // A later return to the transition bus must retain the samples
+            // rendered by the legacy feeder, excluding seek offsets.
+            renderedDurationBase += max(.zero, currentPosition() - basePosition)
+        }
         feeder?.cancel()
         feeder = nil
         feederEpoch &+= 1
@@ -584,7 +939,28 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
     /// 按「用户想播 && 有数据可播」驱动 playerNode。饥饿时暂停节点，使时间轴
     /// 停在已播放内容处，而不是空转产生进度漂移。
     private func updateOutput() {
+        if transitionGraph != nil {
+            if wantsPlayback, !audioEngine.isRunning {
+                do { try audioEngine.start() }
+                catch {
+                    if let itemID = state.itemID {
+                        fail(.engineFailure(code: "audio_engine_start_failed"), generation: state.generation, itemID: itemID)
+                    }
+                }
+            }
+            if !wantsPlayback, audioEngine.isRunning { audioEngine.pause() }
+            return
+        }
         if wantsPlayback, !isStarved {
+            if !audioEngine.isRunning {
+                do { try audioEngine.start() }
+                catch {
+                    if let itemID = state.itemID {
+                        fail(.engineFailure(code: "audio_engine_start_failed"), generation: state.generation, itemID: itemID)
+                    }
+                    return
+                }
+            }
             if !playerNode.isPlaying {
                 playerNode.play()
             }
@@ -670,6 +1046,7 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
     }
 
     private func currentPosition() -> Duration {
+        if let graph = transitionGraph { return graphBasePosition + graph.position }
         guard let nodeTime = playerNode.lastRenderTime,
               let playerTime = playerNode.playerTime(forNodeTime: nodeTime),
               playerTime.sampleRate > 0
@@ -804,6 +1181,8 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
     }
 
     private func teardown() {
+        softControlTask?.cancel(); softControlTask = nil
+        controlVersion &+= 1
         recoveringSequentialRoute = false
         wantsPlayback = false
         bufferingTask?.cancel()
@@ -816,15 +1195,24 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
         remoteSource = nil
         decoder = nil
         playerNode.stop()
-        if audioEngine.isRunning {
-            audioEngine.stop()
-        }
+        // EOF and pause leave a prepared graph even when isRunning is false.
+        // Release those resources before connecting the next decoder's format.
+        audioEngine.stop()
     }
 
     /// 处理 AVAudioEngine 配置变更（路由/硬件格式变化）。此时引擎已自行停止，
     /// 需重连节点、重启引擎，并从当前位置恢复投喂，否则播放会在已排队 buffer
     /// 放完后静默。逻辑与 `seek` 的重建路径一致。
     private func handleConfigurationChange() {
+        // Flush a rendered handoff before capturing the decoder. Tell the
+        // queue owner when rebuilding discards its still-pending successor.
+        let invalidatedTicket = preparedNextTicket
+        cancelNext()
+        defer {
+            if let invalidatedTicket {
+                transitionInvalidationHandler?(invalidatedTicket, .outputRebuilt)
+            }
+        }
         guard let decoder, let item = currentItem, !didReachEnd else { return }
         logOutputDiagnostics(
             event: "engine-configuration-change",
@@ -853,12 +1241,13 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
         cancelFeeder()
         playerNode.stop()
 
-        let format = decoder.format
+        let format = feederFormat(for: decoder)
         audioEngine.connect(playerNode, to: timePitch, format: format)
         audioEngine.connect(timePitch, to: equalizerUnit, format: format)
-        audioEngine.connect(equalizerUnit, to: audioEngine.mainMixerNode, format: format)
+        connectPostEqualizerOutput(format: format)
         timePitch.rate = configuredRate
-        playerNode.volume = isMuted ? 0 : volume
+        playerNode.volume = 1
+        audioEngine.mainMixerNode.outputVolume = isMuted ? 0 : volume
 
         do {
             audioEngine.prepare()
@@ -979,9 +1368,10 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
             let format = replacement.format
             self.audioEngine.connect(self.playerNode, to: self.timePitch, format: format)
             self.audioEngine.connect(self.timePitch, to: self.equalizerUnit, format: format)
-            self.audioEngine.connect(self.equalizerUnit, to: self.audioEngine.mainMixerNode, format: format)
+            self.connectPostEqualizerOutput(format: format)
             self.timePitch.rate = self.configuredRate
-            self.playerNode.volume = self.isMuted ? 0 : self.volume
+            self.playerNode.volume = 1
+            self.audioEngine.mainMixerNode.outputVolume = self.isMuted ? 0 : self.volume
             do {
                 self.audioEngine.prepare()
                 if self.wantsPlayback {

@@ -72,6 +72,8 @@ public struct DefaultOnlineSourceFactory: OnlineSourceFactory, Sendable {
             )
         case .baiduPan, .gateway:
             return nil
+        default:
+            return nil
         }
     }
 }

@@ -17,6 +17,7 @@ let package = Package(
     ],
     dependencies: [
         .package(path: "../MusicFreeCore"),
+        .package(path: "../MusicFreePluginAPI"),
         .package(url: "https://github.com/onevcat/Kingfisher.git", exact: "8.12.0")
     ],
     targets: [
@@ -62,6 +63,7 @@ let package = Package(
         .target(
             name: "SettingsFeature",
             dependencies: [
+                .product(name: "MusicFreePluginAPI", package: "MusicFreePluginAPI"),
                 "DesignSystem",
                 .product(name: "BuildInfo", package: "MusicFreeCore"),
                 .product(name: "MusicDomain", package: "MusicFreeCore"),

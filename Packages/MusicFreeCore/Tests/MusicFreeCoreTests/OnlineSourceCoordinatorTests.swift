@@ -912,7 +912,7 @@ private actor AuditionConversionScheduler: MediaConversionScheduling {
     }
 }
 
-private struct CoordinatorFixtureSource: PlaybackSource,
+private struct CoordinatorFixtureSource: PlaybackSource, DownloadSource,
     OneTimeCodeAuthenticatingOnlineSource {
     let descriptor: MediaSourceDescriptor
     let capabilities: MediaSourceCapabilities = [.artwork, .metadataReading]

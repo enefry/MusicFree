@@ -35,6 +35,16 @@ public final class OnlineAuditionCoordinator: OnlineAuditionServing {
     private var pendingNaturalEndGeneration: PlaybackGeneration?
     private var hasStartedActiveGeneration = false
     private var isInterrupted = false
+    private var isolatedTransition: AudioTransitionConfiguration = .disabled
+
+    /// Audition uses isolated fades and never arms a formal queue successor.
+    public func applyTransitionSettings(_ configuration: AudioTransitionConfiguration) {
+        isolatedTransition = AudioTransitionConfiguration(fadeInDuration: configuration.fadeInDuration,
+                                                          fadeOutDuration: configuration.fadeOutDuration)
+        if let engine, engine.capabilities.contains(.fade), engine.state.itemID != nil {
+            try? engine.apply(AudioEffectConfiguration(transition: isolatedTransition))
+        }
+    }
 
     private var isMutatingEngine = false
     private var engineMutationWaiters: [CheckedContinuation<Void, Never>] = []
@@ -308,7 +318,8 @@ public final class OnlineAuditionCoordinator: OnlineAuditionServing {
                 if phase == .preparing {
                     self.stopEngine()
                 } else {
-                    self.engine?.pause()
+                    if let hardControl = self.engine as? any PlaybackTransitionControlling { hardControl.hardPause() }
+                    else { self.engine?.pause() }
                 }
                 if phase == .preparing || phase == .buffering || phase == .playing {
                     self.publishCurrent(
@@ -508,6 +519,9 @@ public final class OnlineAuditionCoordinator: OnlineAuditionServing {
                 try self.requireCurrent(operationID, sessionID: sessionID)
                 self.activeGeneration = engine.state.generation
                 self.hasStartedActiveGeneration = false
+                if engine.capabilities.contains(.fade) {
+                    try engine.apply(AudioEffectConfiguration(transition: self.isolatedTransition))
+                }
                 try engine.play()
                 try self.requireCurrent(operationID, sessionID: sessionID)
                 self.hasStartedActiveGeneration = true
@@ -815,7 +829,8 @@ public final class OnlineAuditionCoordinator: OnlineAuditionServing {
                 || engine.state.itemID != nil
                 || [.preparing, .buffering, .playing, .paused].contains(engine.state.phase)
         else { return }
-        engine.stop()
+        if let hardControl = engine as? any PlaybackTransitionControlling { hardControl.hardStop() }
+        else { engine.stop() }
     }
 
     private func withEngineMutation<Result>(

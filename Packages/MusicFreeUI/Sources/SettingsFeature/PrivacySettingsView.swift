@@ -589,6 +589,8 @@ private struct OnlineSourcePrivacyDetailsView: View {
             L("百度网盘来源配置和 Provider 实现实际需要的数据。当前版本未提供可用的百度网盘适配器。")
         case .gateway:
             L("网关 Provider 实现声明的目录和访问数据。当前版本未提供可用的网关适配器。")
+        default:
+            L("插件声明的来源目录与临时媒体访问数据。凭据只保存在系统 Keychain。")
         }
     }
 
@@ -600,6 +602,8 @@ private struct OnlineSourcePrivacyDetailsView: View {
             L("仅用于浏览 Google Drive 音频文件、下载并导入本地媒体库。")
         case .baiduPan, .gateway:
             L("仅用于未来 Provider 支持的在线源功能。")
+        default:
+            L("仅用于此插件注册并经你授权的来源功能。")
         }
     }
 
@@ -812,6 +816,7 @@ func onlineSourceProviderTitle(_ providerKind: OnlineProviderKind) -> String {
     case .googleDrive: return "Google Drive"
     case .baiduPan: return L("百度网盘")
     case .gateway: return L("网关")
+    default: return providerKind.rawValue
     }
 }
 
@@ -821,5 +826,6 @@ func onlineSourceProviderSymbol(_ providerKind: OnlineProviderKind) -> String {
     case .googleDrive: return "externaldrive"
     case .baiduPan: return "cloud"
     case .gateway: return "network"
+    default: return "puzzlepiece.extension"
     }
 }

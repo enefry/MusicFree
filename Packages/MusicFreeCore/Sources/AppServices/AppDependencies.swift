@@ -27,6 +27,7 @@ public struct AppDependencies {
     public let onlineDownloadQueueStore: (any OnlineDownloadQueueStore)?
     public let metadataEnrichmentProviders: [any MetadataEnrichmentProviding]
     public let lyricsProviders: [any LyricsProviding]
+    public let plugins: (any PluginServing)?
     public let metadataEnrichmentRecordRepository: (any MetadataEnrichmentRecordRepository)?
     public let storageMaintenance: (any StorageMaintenanceServing)?
     public let playbackEngine: (any PlaybackEngine)?
@@ -64,6 +65,7 @@ public struct AppDependencies {
         /// Compatibility injection for the original single-provider graph.
         metadataEnrichmentProvider: (any MetadataEnrichmentProviding)? = nil,
         lyricsProviders: [any LyricsProviding] = [],
+        plugins: (any PluginServing)? = nil,
         metadataEnrichmentRecordRepository: (any MetadataEnrichmentRecordRepository)? = nil,
         storageMaintenance: (any StorageMaintenanceServing)? = nil,
         playbackEngine: (any PlaybackEngine)? = nil,
@@ -105,6 +107,7 @@ public struct AppDependencies {
         self.mediaSources = mediaSources
         self.onlineSources = onlineSources
         self.onlineSourceFactory = onlineSourceFactory
+        self.plugins = plugins
         self.mediaImporter = mediaImporter
         self.mediaConversionScheduler = mediaConversionScheduler
         self.managedLibraryConverter = managedLibraryConverter

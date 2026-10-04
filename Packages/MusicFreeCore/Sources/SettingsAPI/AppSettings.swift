@@ -1,4 +1,5 @@
 import Foundation
+import MusicFreePluginAPI
 
 /// The current persisted settings schema version.
 @available(macOS 13.0, iOS 16.0, *)
@@ -14,18 +15,21 @@ public struct AppSettings: Codable, Equatable, Hashable, Sendable {
     public let playbackPreferences: PlaybackPreferences
     public let storagePreferences: StoragePreferences
     public let loggingPreferences: LoggingPreferences
+    public let pluginPreferences: [PluginPreference]
 
     public init(
         importPreferences: ImportPreferences = .defaults,
         playbackPreferences: PlaybackPreferences = .defaults,
         storagePreferences: StoragePreferences = .defaults,
-        loggingPreferences: LoggingPreferences = .defaults
+        loggingPreferences: LoggingPreferences = .defaults,
+        pluginPreferences: [PluginPreference] = []
     ) {
         self.schemaVersion = Self.currentSchemaVersion
         self.importPreferences = importPreferences
         self.playbackPreferences = playbackPreferences
         self.storagePreferences = storagePreferences
         self.loggingPreferences = loggingPreferences
+        self.pluginPreferences = pluginPreferences
     }
 
     public static let defaults = Self()
@@ -45,7 +49,9 @@ public struct AppSettings: Codable, Equatable, Hashable, Sendable {
         )
         _ = try TransitionPreferences(
             gaplessPlaybackEnabled: playbackPreferences.transition.gaplessPlaybackEnabled,
-            crossfadeDuration: playbackPreferences.transition.crossfadeDuration
+            crossfadeDuration: playbackPreferences.transition.crossfadeDuration,
+            fadeInDuration: playbackPreferences.transition.fadeInDuration,
+            fadeOutDuration: playbackPreferences.transition.fadeOutDuration
         )
         _ = try SleepTimerPreferences(schedules: playbackPreferences.sleepTimer.schedules)
         _ = try StoragePreferences(
@@ -62,6 +68,7 @@ public struct AppSettings: Codable, Equatable, Hashable, Sendable {
         case playbackPreferences
         case storagePreferences
         case loggingPreferences
+        case pluginPreferences
     }
 
     public init(from decoder: Decoder) throws {
@@ -83,7 +90,7 @@ public struct AppSettings: Codable, Equatable, Hashable, Sendable {
             playbackPreferences: try container.decodeIfPresent(
                 PlaybackPreferences.self,
                 forKey: .playbackPreferences
-            ) ?? .defaults,
+            ) ?? .legacyDefaults,
             storagePreferences: try container.decodeIfPresent(
                 StoragePreferences.self,
                 forKey: .storagePreferences
@@ -91,7 +98,8 @@ public struct AppSettings: Codable, Equatable, Hashable, Sendable {
             loggingPreferences: try container.decodeIfPresent(
                 LoggingPreferences.self,
                 forKey: .loggingPreferences
-            ) ?? .defaults
+            ) ?? .defaults,
+            pluginPreferences: try container.decodeIfPresent([PluginPreference].self, forKey: .pluginPreferences) ?? []
         )
     }
 
@@ -100,7 +108,20 @@ public struct AppSettings: Codable, Equatable, Hashable, Sendable {
             importPreferences: importPreferences,
             playbackPreferences: playbackPreferences,
             storagePreferences: storagePreferences,
-            loggingPreferences: preferences
+            loggingPreferences: preferences,
+            pluginPreferences: pluginPreferences
         )
+    }
+
+    public func settingPluginPreferences(_ preferences: [PluginPreference]) -> Self {
+        Self(importPreferences: importPreferences, playbackPreferences: playbackPreferences,
+             storagePreferences: storagePreferences, loggingPreferences: loggingPreferences,
+             pluginPreferences: preferences)
+    }
+
+    public func settingPlaybackPreferences(_ preferences: PlaybackPreferences) -> Self {
+        Self(importPreferences: importPreferences, playbackPreferences: preferences,
+             storagePreferences: storagePreferences, loggingPreferences: loggingPreferences,
+             pluginPreferences: pluginPreferences)
     }
 }

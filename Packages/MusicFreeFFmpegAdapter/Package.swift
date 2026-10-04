@@ -27,9 +27,11 @@ let package = Package(
         .package(path: "../MusicFreeInfrastructure")
     ],
     targets: [
+        .target(name: "CPlaybackTransition"),
         .target(
             name: "FFmpegPlaybackAdapter",
             dependencies: [
+                "CPlaybackTransition",
                 .product(name: "FFmpegAudioKit", package: "FFmpegAudioKit"),
                 .product(name: "MusicDomain", package: "MusicFreeCore"),
                 .product(name: "MediaSourceAPI", package: "MusicFreeCore"),

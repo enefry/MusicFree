@@ -18,7 +18,7 @@ check_exclusive_import() {
 }
 
 check_exclusive_import "SwiftData" "/Packages/MusicFreeInfrastructure/(Sources/LibraryPersistenceAdapter|Tests/MusicFreeInfrastructureTests)/"
-check_exclusive_import "AVFAudio" "/Packages/MusicFreeInfrastructure/Sources/AppleSystemAdapter/"
+check_exclusive_import "AVFAudio" "/App/PluginFFmpegPCMAdapter\.swift:|/Packages/(MusicFreeInfrastructure/Sources/AppleSystemAdapter|MusicFreePluginAPI/Sources/MusicFreePluginAppleAudioAPI|MusicFreePluginAudio/(Sources/MusicFreePluginAudio|Tests/MusicFreePluginAudioTests)|MusicFreePluginHostBridge/(Sources/MusicFreePluginHostBridge|Tests/MusicFreePluginHostBridgeTests))/"
 check_exclusive_import "MediaPlayer" "/Packages/MusicFreeInfrastructure/Sources/AppleSystemAdapter/"
 
 vlc_references=$(rg -n --glob '*.swift' --glob 'Package.swift' \
@@ -90,6 +90,48 @@ fi
 amperfy_references=$(rg -ni --glob '*.swift' --glob 'Package.swift' 'amperfy' "$project_root/App" "$project_root/Packages" || true)
 if [ -n "$amperfy_references" ]; then
     printf 'MusicFree source must not reference Amperfy:\n%s\n' "$amperfy_references" >&2
+    violations=1
+fi
+
+# Built-in data plugins must be independently reusable through the SDK.
+data_plugin_business_imports=$(rg -n --glob '*.swift' \
+    '^[[:space:]]*import[[:space:]]+(MusicDomain|LibraryAPI|MediaSourceAPI|AppServices|SettingsAPI|LocalMediaAdapter|MusicFreePluginRuntime|MusicFreePluginHostBridge|UIKit|SwiftUI|AVFAudio)([[:space:]]|$)' \
+    "$project_root/Packages/MusicFreeBuiltinDataPlugins/Sources" || true)
+if [ -n "$data_plugin_business_imports" ]; then
+    printf 'Data plugins must depend only on the plugin SDK and system libraries:\n%s\n' "$data_plugin_business_imports" >&2
+    violations=1
+fi
+
+# Foundation-only SDK/runtime targets have no host/business/platform imports.
+for target in MusicFreePluginAPI/Sources/MusicFreePluginAPI MusicFreePluginAPI/Sources/MusicFreePluginDSPAPI MusicFreePluginRuntime/Sources
+ do
+    matches=$(rg -n --glob '*.swift' '^[[:space:]]*(public[[:space:]]+)?import[[:space:]]+' "$project_root/Packages/$target" | rg -v 'import (Foundation|MusicFreePluginAPI|MusicFreePluginDSPAPI)([[:space:]]|$)' || true)
+    if [ -n "$matches" ]; then
+        printf 'Plugin API/Runtime must have zero business/platform dependencies:\n%s\n' "$matches" >&2
+        violations=1
+    fi
+ done
+# Check manifests too, so an unused business dependency cannot slip through.
+if ! python3 - "$project_root" <<'PY_ARCH'
+import json, subprocess, sys
+from pathlib import Path
+root = Path(sys.argv[1])
+allowed = {'MusicFreePluginAPI': {'MusicFreePluginAPI': set(), 'MusicFreePluginDSPAPI': {'MusicFreePluginAPI'}, 'MusicFreePluginAppleAudioAPI': {'MusicFreePluginDSPAPI'}},
+           'MusicFreePluginRuntime': {'MusicFreePluginRuntime': {'MusicFreePluginAPI', 'MusicFreePluginDSPAPI'}}}
+for package, targets in allowed.items():
+    manifest = json.loads(subprocess.check_output(['swift', 'package', '--package-path', str(root/'Packages'/package), 'dump-package']))
+    if any('fileSystem' not in dep for dep in manifest['dependencies']):
+        raise SystemExit('Forbidden external plugin package dependency: ' + package)
+    packages = {Path(dep['fileSystem'][0]['path']).name for dep in manifest['dependencies']}
+    if packages != (set() if package == 'MusicFreePluginAPI' else {'MusicFreePluginAPI'}):
+        raise SystemExit('Forbidden plugin package dependency: ' + package)
+    for target in manifest['targets']:
+        if target['name'] not in targets: continue
+        dependencies = {next(iter(dep.values()))[0] for dep in target['dependencies']}
+        if dependencies != targets[target['name']]: raise SystemExit('Forbidden plugin target dependency: ' + target['name'])
+print('Plugin zero-business-dependency checks passed.')
+PY_ARCH
+then
     violations=1
 fi
 

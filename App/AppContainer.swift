@@ -1,4 +1,7 @@
 import AppServices
+import MusicFreePluginAPI
+import MusicFreePluginRuntime
+import MusicFreePluginHostBridge
 import AppleSystemAdapter
 import Combine
 import FFmpegPlaybackAdapter
@@ -572,7 +575,7 @@ final class AppContainer: ObservableObject {
             )
         }
 #if LYRICS_DISABLED
-        let lyricsProviders: [any LyricsProviding] = []
+        var lyricsProviders: [any LyricsProviding] = []
 #else
         var lyricsProviders: [any LyricsProviding] = []
 #if !METADATA_SERVER_DISABLED
@@ -631,9 +634,59 @@ final class AppContainer: ObservableObject {
         } else {
             artworkWriter = nil
         }
+        let referenceMediaURL = cacheRoot.appendingPathComponent("PluginReference/tone.wav")
+        // Reference fixture failure must not make existing playback/library unavailable.
+        try? PluginReferenceMedia.create(at: referenceMediaURL)
+#if LYRICS_DISABLED
+        let includeLyricsPlugins = false
+#else
+        let includeLyricsPlugins = true
+#endif
+#if METADATA_SERVER_DISABLED
+        let includeMetadataServerPlugins = false
+#else
+        let includeMetadataServerPlugins = true
+#endif
+        let dataPlugins = BuiltinDataPluginRegistrationProvider(includeLyrics: includeLyricsPlugins,
+            includeMetadataServer: includeMetadataServerPlugins)
+        let pluginRuntime = PluginRuntime(registry: PluginRegistry(
+            ReferencePluginRegistrationProvider(mediaURL: referenceMediaURL).registrations + dataPlugins.registrations,
+            compiledOut: dataPlugins.unavailable),
+            credentials: KeychainPluginCredentialStore())
+        let formalPluginAudio = PluginAudioHostController(runtime: pluginRuntime,
+            factories: PluginAudioHostController.referenceFactories,
+            install: { [weak playbackEngine] node in try playbackEngine?.setPostEqualizerEffect(node) })
+        let auditionPluginAudio = PluginAudioHostController(runtime: pluginRuntime,
+            factories: PluginAudioHostController.referenceFactories,
+            install: { [weak onlineAuditionEngine] node in try onlineAuditionEngine?.setPostEqualizerEffect(node) })
+        // Placement declarations route DSPs; the exclusion set only preserves legacy registrations.
+        // The PCM adapter admits zero latency/tail only, so both transition lanes retain timing.
+        let graphPluginIDs = Set(PluginAudioHostController.referenceFactories.keys)
+        let formalPluginPCM = PluginPCMHostController(runtime: pluginRuntime, excluding: graphPluginIDs) { [weak playbackEngine] specifications in
+            let factory: FFmpegPCMProcessorFactory?
+            if specifications.isEmpty { factory = nil }
+            else {
+                factory = { format in try PluginFFmpegPCMAdapter(format: format, specifications: specifications) }
+            }
+            try playbackEngine?.setPCMProcessorFactory(factory, preservesTiming: true)
+        }
+        let auditionPluginPCM = PluginPCMHostController(runtime: pluginRuntime, excluding: graphPluginIDs) { [weak onlineAuditionEngine] specifications in
+            let factory: FFmpegPCMProcessorFactory?
+            if specifications.isEmpty { factory = nil }
+            else {
+                factory = { format in try PluginFFmpegPCMAdapter(format: format, specifications: specifications) }
+            }
+            try onlineAuditionEngine?.setPCMProcessorFactory(factory, preservesTiming: true)
+        }
+        let pluginService = PluginHostService(runtime: pluginRuntime, audio: [formalPluginAudio, auditionPluginAudio],
+            pcm: [formalPluginPCM, auditionPluginPCM])
+        metadataEnrichmentProviders.append(contentsOf: pluginService.metadataProviders)
+        lyricsProviders.append(contentsOf: pluginService.lyricsProviders)
+        let compositeSourceFactory = CompositeOnlineSourceFactory(legacy: onlineSourceFactory,
+            runtime: pluginRuntime, downloadRoot: cacheRoot.appendingPathComponent("PluginDownloads"))
         let dependencies = try AppDependencies(
             mediaSources: mediaSources,
-            onlineSourceFactory: onlineSourceFactory,
+            onlineSourceFactory: compositeSourceFactory,
             mediaImporter: importer,
             mediaConversionScheduler: conversionScheduler,
             managedLibraryConverter: libraryConverter,
@@ -647,6 +700,7 @@ final class AppContainer: ObservableObject {
             onlineDownloadQueueStore: onlineDownloadQueueStore,
             metadataEnrichmentProviders: metadataEnrichmentProviders,
             lyricsProviders: lyricsProviders,
+            plugins: pluginService,
             metadataEnrichmentRecordRepository: metadataEnrichmentRecordRepository,
             storageMaintenance: storageMaintenance,
             playbackEngine: playbackEngine,
@@ -657,6 +711,10 @@ final class AppContainer: ObservableObject {
             systemCapabilities: systemCapabilities
         )
         let services = try AppServiceContainer(dependencies: dependencies)
+        formalPluginAudio.observe(services.playback.makeSnapshotStream())
+        auditionPluginAudio.observe(services.onlineAudition.makeSnapshotStream())
+        formalPluginPCM.observe(services.playback.makeSnapshotStream())
+        auditionPluginPCM.observe(services.onlineAudition.makeSnapshotStream())
         return Composition(
             services: services,
             scanner: importer.map { _ in

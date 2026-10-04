@@ -1,6 +1,6 @@
 import AVFoundation
 import FFmpegAudioKit
-import FFmpegPlaybackAdapter
+@testable import FFmpegPlaybackAdapter
 import Foundation
 import MediaSourceAPI
 import MusicDomain
@@ -16,10 +16,111 @@ private let externalFFmpegFixtures: URL = {
         .first?.appendingPathComponent("ExternalFixtures", isDirectory: true) ?? bundled
 }()
 
+private let phoneTransitionFixtures = FileManager.default.urls(
+    for: .documentDirectory, in: .userDomainMask
+)[0].appendingPathComponent("PhoneTransitionFixtures", isDirectory: true)
+
 /// Runs inside the App test host, so Xcode can exercise the real audio graph
 /// on a physical device rather than a hostless Swift Package test bundle.
 @MainActor
 @Suite struct FFmpegDevicePlaybackTests {
+    /// Opt-in acceptance test using the original phone-recording files. Keep
+    /// these external media out of the test bundle; install them in Documents.
+    /// A failed handoff remains a failure even if ordinary playback succeeds.
+    @Test("Phone recording pairs must commit a smooth handoff after seeking",
+          .serialized,
+          .enabled(if: FileManager.default.fileExists(atPath: phoneTransitionFixtures.path)),
+          arguments: ["bvt-to-wmapro", "wmapro-to-musepack"], [0, 1, 3])
+    func phoneRecordingSmoothHandoff(_ pair: String, _ overlapSeconds: Int) async throws {
+        let names = pair == "bvt-to-wmapro"
+            ? ["bvt-tone.wav", "wmapro.wma"] : ["wmapro.wma", "mpc7.mpc"]
+        let items = try names.map { name in
+            let url = phoneTransitionFixtures.appendingPathComponent(name)
+            try #require(FileManager.default.fileExists(atPath: url.path), "Missing phone fixture: \(name)")
+            return PlaybackItem(itemID: MediaItemID(sourceID: .local, externalID: name),
+                                resource: .localFile(url), displaySnapshot: PlaybackDisplaySnapshot(title: name))
+        }
+        let label = "\(pair) overlap=\(overlapSeconds)s"
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.playback)
+        try session.setActive(true)
+        defer { try? session.setActive(false) }
+        let engine = FFmpegPlaybackEngine()
+        defer { engine.dispose() }
+        try engine.apply(AudioEffectConfiguration(transition: AudioTransitionConfiguration(
+            mode: overlapSeconds == 0 ? .gapless : .crossfade,
+            crossfadeDuration: overlapSeconds == 0 ? nil : .seconds(overlapSeconds),
+            fadeInDuration: .milliseconds(80), fadeOutDuration: .milliseconds(120))))
+        var commits: [LogicalPlaybackCommit] = []
+        var retirements: [PlaybackTransitionRetirement] = []
+        engine.setTransitionCommitHandler { commits.append($0) }
+        engine.setTransitionRetirementHandler { retirements.append($0) }
+        try await engine.prepare(items[0], startAt: nil)
+        let duration = try #require(engine.state.duration)
+        let outgoing = PhoneTransitionOutputCapture()
+        engine.audioEngine.mainMixerNode.installTap(onBus: 0, bufferSize: 512, format: nil,
+                                                    block: phoneTransitionTap(outgoing))
+        try engine.play()
+        try await Task.sleep(for: .milliseconds(150))
+        try await engine.seek(to: max(.zero, duration - .seconds(4)))
+        let ticket = PlaybackTransitionTicket(sessionID: UUID(), intent: 1, queueRevision: 1,
+            generation: engine.state.generation, currentItemID: items[0].itemID, nextEntryID: UUID())
+        var rejection: String?
+        do { try await engine.prepareNext(items[1], ticket: ticket) }
+        catch { rejection = String(describing: error) }
+        for _ in 0..<160 {
+            if engine.state.phase == .stopped || engine.state.phase == .failed || engine.state.itemID == items[1].itemID { break }
+            try await Task.sleep(for: .milliseconds(40))
+        }
+        engine.audioEngine.mainMixerNode.removeTap(onBus: 0)
+        let outgoingResult = outgoing.result
+        print("PHONE_TRANSITION \(label) rejected=\(rejection ?? "none") commits=\(commits.count) phase=\(engine.state.phase) outgoingFrames=\(outgoingResult.frames) outgoingEnergy=\(outgoingResult.energy)")
+        #expect(outgoingResult.frames > 0 && outgoingResult.energy > 0.01, "\(label): no outgoing mixer output")
+        #expect(engine.state.phase != .failed)
+        #expect(commits.count == 1 && commits.first?.ticket == ticket,
+                "\(label): no smooth handoff; prepareNext result: \(rejection ?? "accepted")")
+
+        // Diagnose fallback separately; this must not make the handoff
+        // assertion above pass. The Coordinator ordinarily loads B after EOF.
+        if commits.isEmpty {
+            #expect(engine.state.phase == .stopped && engine.state.itemID == items[0].itemID)
+            try await engine.prepare(items[1], startAt: nil)
+        }
+        let incoming = PhoneTransitionOutputCapture()
+        engine.audioEngine.mainMixerNode.installTap(onBus: 0, bufferSize: 512, format: nil,
+                                                    block: phoneTransitionTap(incoming))
+        try engine.play()
+        try await Task.sleep(for: .milliseconds(2500))
+        engine.audioEngine.mainMixerNode.removeTap(onBus: 0)
+        let incomingResult = incoming.result
+        print("PHONE_TRANSITION \(label) incomingPhase=\(engine.state.phase) incomingFrames=\(incomingResult.frames) incomingEnergy=\(incomingResult.energy) fallback=\(commits.isEmpty)")
+        #expect(engine.state.itemID == items[1].itemID && engine.state.phase == .playing)
+        #expect(incomingResult.frames > 0 && incomingResult.energy > 0.01, "\(label): no incoming mixer output")
+        if let commit = commits.first, let retirement = retirements.first {
+            let overlapFrames = retirement.renderFrame - commit.renderFrame
+            // Seeking to the last four seconds shortens the maximum overlap
+            // to half of that decoded remainder, consistent with short tracks.
+            let expectedFrames = min(Int64(overlapSeconds * 48_000), retirement.renderFrame / 2)
+            #expect(overlapFrames == expectedFrames)
+            print("PHONE_TRANSITION \(label) commitFrame=\(commit.renderFrame) retirementFrame=\(retirement.renderFrame) overlapFrames=\(overlapFrames)")
+        }
+        #expect(retirements.count == 1)
+        // B's decoder retains its native rate/channels after the converted
+        // handoff. Both native legacy seek and converted seek must still work.
+        for rate: Float in [1.5, 1] {
+            try engine.setRate(rate)
+            try await engine.seek(to: .seconds(2))
+            let resumed = PhoneTransitionOutputCapture()
+            engine.audioEngine.mainMixerNode.installTap(onBus: 0, bufferSize: 512, format: nil,
+                                                        block: phoneTransitionTap(resumed))
+            try await Task.sleep(for: .milliseconds(400))
+            engine.audioEngine.mainMixerNode.removeTap(onBus: 0)
+            #expect(resumed.result.energy > 0.01)
+            #expect(engine.state.itemID == items[1].itemID && engine.state.phase == .playing)
+        }
+        engine.hardStop()
+    }
+
     @Test("Packaged FFmpeg formats play to completion through the App audio graph")
     func packagedFormatsPlayToEnd() async throws {
         let bundle = Bundle(for: FFmpegFixtureBundleMarker.self)
@@ -296,4 +397,30 @@ private let externalFFmpegFixtures: URL = {
             }
         }
     }
+}
+
+private final class PhoneTransitionOutputCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var frames = 0
+    private var energy = 0.0
+    func record(_ buffer: AVAudioPCMBuffer) {
+        guard let samples = buffer.floatChannelData else { return }
+        var energy = 0.0
+        for channel in 0..<Int(buffer.format.channelCount) {
+            for frame in 0..<Int(buffer.frameLength) { energy += Double(samples[channel][frame] * samples[channel][frame]) }
+        }
+        lock.lock()
+        frames += Int(buffer.frameLength)
+        self.energy += energy
+        lock.unlock()
+    }
+    var result: (frames: Int, energy: Double) {
+        lock.lock(); defer { lock.unlock() }
+        return (frames, energy)
+    }
+}
+
+// Construct outside MainActor: the SDK audio callback runs on the render path.
+private func phoneTransitionTap(_ output: PhoneTransitionOutputCapture) -> @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void {
+    { buffer, _ in output.record(buffer) }
 }

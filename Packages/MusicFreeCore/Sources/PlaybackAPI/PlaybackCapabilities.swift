@@ -15,6 +15,7 @@ public struct PlaybackCapabilities: OptionSet, Codable, Equatable, Hashable, Sen
   public static let gapless = Self(rawValue: 1 << 4)
   public static let crossfade = Self(rawValue: 1 << 5)
   public static let visualization = Self(rawValue: 1 << 6)
+  public static let fade = Self(rawValue: 1 << 7)
 
   public static let all: Self = [
     .seeking,
@@ -24,6 +25,7 @@ public struct PlaybackCapabilities: OptionSet, Codable, Equatable, Hashable, Sen
     .gapless,
     .crossfade,
     .visualization,
+    .fade,
   ]
 
   public func encode(to encoder: Encoder) throws {

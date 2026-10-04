@@ -47,6 +47,8 @@ final class DecodeFeeder: @unchecked Sendable {
     private let onError: @Sendable (Error) -> Void
     private let onStarvationChanged: @Sendable (Bool) -> Void
     private let scheduleBufferOverride: BufferScheduler?
+    private let processorFactory: FFmpegPCMProcessorFactory?
+    private var processor: (any FFmpegPCMProcessing)?
 
     // `cancel()` 在调用方线程同步置位；调度 buffer 时持同一把锁，保证 `cancel()`
     // 返回后旧 feeder 不会再往 playerNode 塞 buffer（调用方紧接着会 `stop()`）。
@@ -82,6 +84,7 @@ final class DecodeFeeder: @unchecked Sendable {
         playbackDuration: Duration? = nil,
         maxInFlight: Int = 3,
         scheduleBuffer: BufferScheduler? = nil,
+        processorFactory: FFmpegPCMProcessorFactory? = nil,
         onEnd: @escaping @Sendable () -> Void,
         onError: @escaping @Sendable (Error) -> Void,
         onStarvationChanged: @escaping @Sendable (Bool) -> Void
@@ -102,6 +105,7 @@ final class DecodeFeeder: @unchecked Sendable {
         framesRemaining = frameLimit
         self.maxInFlight = maxInFlight
         scheduleBufferOverride = scheduleBuffer
+        self.processorFactory = processorFactory
         self.onEnd = onEnd
         self.onError = onError
         self.onStarvationChanged = onStarvationChanged
@@ -112,6 +116,8 @@ final class DecodeFeeder: @unchecked Sendable {
             let now = DispatchTime.now().uptimeNanoseconds
             startedAtNanoseconds = now
             lastSummaryAtNanoseconds = now
+            do { processor = try processorFactory?(decoder.format) }
+            catch { reportError(error); return }
             let nominalQueuedMilliseconds = Double(
                 Self.bufferFrameCapacity * maxInFlight
             ) / decoder.format.sampleRate * 1_000
@@ -135,6 +141,7 @@ final class DecodeFeeder: @unchecked Sendable {
         cancelLock.lock()
         cancelled = true
         cancelLock.unlock()
+        queue.async { [self] in processor?.reset(); processor = nil }
     }
 
     // MARK: - Private (queue-only)
@@ -183,6 +190,7 @@ final class DecodeFeeder: @unchecked Sendable {
         ))
         let started = DispatchTime.now().uptimeNanoseconds
         let buffer = try decoder.nextBuffer(frameCapacity: capacity)
+        if let buffer { try processor?.process(buffer) }
         let finished = DispatchTime.now().uptimeNanoseconds
         lastDecodeMilliseconds = Self.milliseconds(from: started, to: finished)
         maximumDecodeMilliseconds = max(maximumDecodeMilliseconds, lastDecodeMilliseconds)

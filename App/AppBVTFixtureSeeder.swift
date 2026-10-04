@@ -338,6 +338,8 @@ enum AppBVTFixtureSeeder {
                 )
             case .baiduPan, .gateway:
                 return nil
+            default:
+                return nil
             }
         }
     }

@@ -105,7 +105,7 @@ final class OnlineSourceCoordinator: OnlineSourceServing {
             "browse begin source=\(sourceID.rawValue) parent=\(request.parentID?.externalID ?? "root")"
         )
         let source = try authorizedAdapter(for: sourceID)
-        guard let source = source as? any DownloadSource else {
+        guard let source = source as? any CatalogBrowsingSource else {
             throw OnlineSourceServingError.operationUnsupported(sourceID, "browse")
         }
         do {
@@ -127,7 +127,7 @@ final class OnlineSourceCoordinator: OnlineSourceServing {
         request: SourceSearchRequest
     ) async throws -> SourceCatalogPage {
         let source = try authorizedAdapter(for: sourceID)
-        guard let source = source as? any SearchableDownloadSource else {
+        guard let source = source as? any CatalogSearchingSource else {
             throw OnlineSourceServingError.operationUnsupported(sourceID, "search")
         }
         do {

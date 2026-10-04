@@ -2,6 +2,7 @@ import AppServices
 import DesignSystem
 import MediaSourceAPI
 import MusicDomain
+import MusicFreePluginAPI
 import UIKit
 import WebKit
 
@@ -16,6 +17,8 @@ public final class OnlineSourcesViewController: UIViewController,
     /// column. Compact shells leave this unset and keep the normal push stack.
     public var onSelectDetail: ((UIViewController) -> Void)?
 
+    private let plugins: (any PluginServing)?
+    private var pluginDescriptors: [PluginDescriptor] = []
     private let model: OnlineSourcesSceneModel
     private let tableView = UITableView(frame: .zero, style: .insetGrouped)
     private var refreshTask: Task<Void, Never>?
@@ -25,8 +28,8 @@ public final class OnlineSourcesViewController: UIViewController,
     private var lastRenderSignature: String?
     private var lastRenderedDownloadQueueTaskCount: Int?
 
-    public init(model: OnlineSourcesSceneModel) {
-        self.model = model
+    public init(model: OnlineSourcesSceneModel, plugins: (any PluginServing)? = nil) {
+        self.model = model; self.plugins = plugins
         super.init(nibName: nil, bundle: nil)
         title = L("onlineSources.title")
         restorationIdentifier = "onlineSources.uikit"
@@ -56,6 +59,7 @@ public final class OnlineSourcesViewController: UIViewController,
         startTask = Task { @MainActor [weak self] in
             guard let self else { return }
             await model.start()
+            await refreshPluginDescriptors()
             render()
             observeModel()
             presentApplicationPrivacyIfVisible()
@@ -78,6 +82,7 @@ public final class OnlineSourcesViewController: UIViewController,
             try? await Task.sleep(for: .milliseconds(150))
             guard !Task.isCancelled else { return }
             await model.refreshPersistedState()
+            await refreshPluginDescriptors()
             render(force: true)
             presentApplicationPrivacyIfVisible()
         }
@@ -218,7 +223,34 @@ public final class OnlineSourcesViewController: UIViewController,
                 self?.beginAdding(providerKind: .googleDrive)
             })
         }
+        for descriptor in pluginDescriptors {
+            actions.append(UIAction(title: descriptor.name, image: UIImage(systemName: "puzzlepiece.extension")) { [weak self] _ in
+                self?.presentPluginForm(descriptor: descriptor, configuration: nil)
+            })
+        }
         return UIMenu(title: L("添加在线源"), children: actions)
+    }
+
+    private func refreshPluginDescriptors() async {
+        guard let plugins else { return }
+        pluginDescriptors = await plugins.snapshots().filter {
+            $0.preference.isVisible && $0.descriptor.kinds.contains(.onlineSource)
+                && ![.compiledOut, .incompatible, .invalidRegistration].contains($0.state)
+        }.map(\.descriptor)
+        navigationItem.rightBarButtonItem?.menu = makeAddSourceMenu()
+    }
+    private func presentPluginForm(descriptor: PluginDescriptor, configuration: OnlineSourceConfiguration?) {
+        guard let plugins else { return }
+        let controller = PluginSourceEditorViewController(descriptor: descriptor, configuration: configuration,
+            settings: model.settingsServing, plugins: plugins) { [weak self] in
+                self?.dismiss(animated: true)
+                Task { [weak self] in
+                    guard let self else { return }
+                    await model.refreshPersistedState(); render(force: true)
+                }
+            }
+        controller.navigationItem.leftBarButtonItem = UIBarButtonItem(systemItem: .cancel, primaryAction: UIAction { [weak self] _ in self?.dismiss(animated: true) })
+        present(UINavigationController(rootViewController: controller), animated: true)
     }
 
     private func beginAdding(providerKind: OnlineProviderKind) {
@@ -478,9 +510,19 @@ public final class OnlineSourcesViewController: UIViewController,
         guard indexPath.section == 1, rows.indices.contains(indexPath.row) else { return nil }
         let sourceID = rows[indexPath.row].sourceID
         return UIContextMenuConfiguration(identifier: sourceID.rawValue as NSString, previewProvider: nil) { [weak self] _ in
-            UIMenu(children: [UIAction(title: L("重命名"), image: UIImage(systemName: "pencil")) { [weak self] _ in
+            var actions = [UIAction(title: L("重命名"), image: UIImage(systemName: "pencil")) { [weak self] _ in
                 self?.presentRenameEditor(for: sourceID)
-            }])
+            }]
+            if let self, let descriptor = self.pluginDescriptors.first(where: { $0.onlineProviderID == rows[indexPath.row].providerKind.rawValue }) {
+                actions.append(UIAction(title: "配置来源", image: UIImage(systemName: "slider.horizontal.3")) { [weak self] _ in
+                    Task { [weak self] in
+                        guard let self, let current = try? await self.model.settingsServing.load(),
+                              let configuration = current.importPreferences.onlineSourcePreferences.sources.first(where: { $0.sourceID == sourceID }) else { return }
+                        self.presentPluginForm(descriptor: descriptor, configuration: configuration)
+                    }
+                })
+            }
+            return UIMenu(children: actions)
         }
     }
 
@@ -592,6 +634,7 @@ public final class OnlineSourcesViewController: UIViewController,
         case .googleDrive: L("Google Drive")
         case .baiduPan: L("百度网盘")
         case .gateway: L("网关")
+        default: kind.rawValue
         }
     }
 
@@ -601,6 +644,7 @@ public final class OnlineSourcesViewController: UIViewController,
         case .googleDrive: "externaldrive"
         case .baiduPan: "cloud"
         case .gateway: "network"
+        default: "puzzlepiece.extension"
         }
     }
 
@@ -4402,6 +4446,7 @@ private final class OnlineSourceCatalogViewController: UIViewController,
         case .googleDrive: L("Google Drive")
         case .baiduPan: L("百度网盘")
         case .gateway: L("网关")
+        default: kind.rawValue
         }
     }
 
@@ -4411,6 +4456,7 @@ private final class OnlineSourceCatalogViewController: UIViewController,
         case .googleDrive: "externaldrive"
         case .baiduPan: "cloud"
         case .gateway: "network"
+        default: "puzzlepiece.extension"
         }
     }
 

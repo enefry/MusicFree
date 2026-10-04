@@ -94,22 +94,41 @@ public enum AudioTransitionMode: String, Codable, CaseIterable, Hashable, Sendab
 public struct AudioTransitionConfiguration: Codable, Equatable, Hashable, Sendable {
   public let mode: AudioTransitionMode
   public let crossfadeDuration: Duration?
+  public let fadeInDuration: Duration
+  public let fadeOutDuration: Duration
 
   public init(
     mode: AudioTransitionMode = .disabled,
-    crossfadeDuration: Duration? = nil
+    crossfadeDuration: Duration? = nil,
+    fadeInDuration: Duration = .zero,
+    fadeOutDuration: Duration = .zero
   ) {
     if mode == .crossfade {
       precondition(
-        (crossfadeDuration ?? .zero) > .zero,
+        (crossfadeDuration ?? .zero) > .zero && (crossfadeDuration ?? .zero) <= .seconds(3),
         "AudioTransitionConfiguration crossfade duration must be positive"
       )
     }
     self.mode = mode
+    precondition(fadeInDuration >= .zero && fadeInDuration <= .seconds(3))
+    precondition(fadeOutDuration >= .zero && fadeOutDuration <= .seconds(3))
+    self.fadeInDuration = fadeInDuration
+    self.fadeOutDuration = fadeOutDuration
     self.crossfadeDuration = mode == .crossfade ? crossfadeDuration : nil
   }
 
   public static let disabled = Self()
+
+  private enum CodingKeys: String, CodingKey { case mode, crossfadeDuration, fadeInDuration, fadeOutDuration }
+  public init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    let mode = try c.decode(AudioTransitionMode.self, forKey: .mode)
+    let crossfade = min(.seconds(3), max(.zero, try c.decodeIfPresent(Duration.self, forKey: .crossfadeDuration) ?? .zero))
+    self.init(mode: mode == .crossfade && crossfade == .zero ? .disabled : mode,
+              crossfadeDuration: crossfade,
+              fadeInDuration: min(.seconds(3), max(.zero, try c.decodeIfPresent(Duration.self, forKey: .fadeInDuration) ?? .zero)),
+              fadeOutDuration: min(.seconds(3), max(.zero, try c.decodeIfPresent(Duration.self, forKey: .fadeOutDuration) ?? .zero)))
+  }
 }
 
 /// The complete user-selected effect intent applied to one engine session.

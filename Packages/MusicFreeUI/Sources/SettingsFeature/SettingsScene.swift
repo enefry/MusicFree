@@ -1,6 +1,7 @@
 import AppServices
 import DesignSystem
 import Observation
+import PlaybackAPI
 import SettingsAPI
 import SwiftUI
 
@@ -46,6 +47,13 @@ public enum SettingsSceneLayout: Sendable {
 @Observable
 public final class SettingsSceneModel {
     let viewModel: SettingsViewModel
+    /// Presentation only; preserve configured preferences across resource/rate limits.
+    public func observeTransitionCapabilities(_ stream: AsyncStream<PlaybackSessionSnapshot>) async {
+        for await snapshot in stream {
+            guard !Task.isCancelled else { return }
+            viewModel.transitionCapabilities = snapshot.capabilities
+        }
+    }
 
     public init(
         settingsServing: any SettingsServing,

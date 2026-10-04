@@ -10,7 +10,6 @@ import PlaybackAPI
 import PlayerFeature
 import PlaylistFeature
 import SettingsFeature
-import SwiftUI
 import UIKit
 
 /// UIKit root shell for all production features.
@@ -1215,7 +1214,7 @@ final class RootViewController: UIViewController {
                 accessibilityIdentifier: "onlineSources.migrationPlaceholder"
             )
         }
-        return OnlineSourcesViewController(model: onlineSourcesModel)
+        return OnlineSourcesViewController(model: onlineSourcesModel, plugins: services.plugins)
     }
 
     private func makeOnlineSourcesModel(
@@ -1725,11 +1724,11 @@ final class RootViewController: UIViewController {
             let target = (try? await services.settingsServing.load())?
                 .importPreferences.audioConversion.target ?? .defaultAAC
             guard let presenter, presenter.presentedViewController == nil else { return }
-            let controller = UIHostingController(rootView: LibraryAudioConversionView(
+            let controller = LibraryAudioConversionViewController(
                 service: services.libraryConversionServing,
                 scope: .items(itemIDs),
                 initialTarget: target
-            ))
+            )
             controller.title = L("转换音频")
             controller.navigationItem.leftBarButtonItem = UIBarButtonItem(
                 image: UIImage(systemName: "xmark"),

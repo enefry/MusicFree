@@ -293,12 +293,14 @@ func downloadReceiptsAndPlaybackAccessRemainEphemeral() {
   #expect(!String(reflecting: access).contains("secret-header"))
 }
 
-@Test("playback source contract includes browse and download operations")
-func playbackSourceContractIncludesDownloadOperations() async throws {
+@Test("a provider can explicitly offer playback, browsing and download together")
+func playbackSourceCanAlsoProvideDownloadOperations() async throws {
   let source: any PlaybackSource = ContractPlaybackSource()
-  let page = try await source.browse(SourceBrowseRequest())
+  let browsing = try #require(source as? any CatalogBrowsingSource)
+  let page = try await browsing.browse(SourceBrowseRequest())
   let itemID = try #require(page.items.first?.id)
-  let receipt = try await source.download(itemID, options: DownloadOptions())
+  let downloading = try #require(source as? any DownloadSource)
+  let receipt = try await downloading.download(itemID, options: DownloadOptions())
   let access = try await source.playbackAccess(for: itemID, purpose: .audition)
 
   #expect(source.providerKind == .dsAudio)
@@ -308,7 +310,7 @@ func playbackSourceContractIncludesDownloadOperations() async throws {
   #expect(access.isEphemeral)
 }
 
-private struct ContractPlaybackSource: PlaybackSource {
+private struct ContractPlaybackSource: PlaybackSource, DownloadSource {
   private let sourceID = MediaSourceID("contract.fixture")
 
   var descriptor: MediaSourceDescriptor {

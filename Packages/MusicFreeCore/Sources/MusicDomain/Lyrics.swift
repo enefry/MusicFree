@@ -48,21 +48,37 @@ public extension Track {
 
 /// One timestamped lyric line. Timestamps are kept in milliseconds so the
 /// persisted value remains independent of a playback engine's clock type.
+public struct LyricWord: Codable, Equatable, Hashable, Sendable {
+    public let startMilliseconds: Int64
+    public let durationMilliseconds: Int64
+    public let text: String
+    public init(startMilliseconds: Int64, durationMilliseconds: Int64, text: String) {
+        self.startMilliseconds = max(0, startMilliseconds)
+        self.durationMilliseconds = max(0, durationMilliseconds)
+        self.text = text
+    }
+}
 @available(macOS 13.0, iOS 16.0, *)
 public struct LyricLine: Codable, Equatable, Hashable, Sendable {
     public let timestampMilliseconds: Int64
     public let text: String
+    public let translation: String?
+    public let words: [LyricWord]
 
-    public init(timestampMilliseconds: Int64, text: String) {
+    public init(timestampMilliseconds: Int64, text: String, translation: String? = nil, words: [LyricWord] = []) {
         precondition(timestampMilliseconds >= 0, "LyricLine timestamp cannot be negative")
         self.timestampMilliseconds = timestampMilliseconds
         self.text = MetadataTextRepair.repair(text)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        self.translation = translation
+        self.words = words
     }
 
     private enum CodingKeys: String, CodingKey {
         case timestampMilliseconds
         case text
+        case translation
+        case words
     }
 
     public init(from decoder: Decoder) throws {
@@ -73,7 +89,9 @@ public struct LyricLine: Codable, Equatable, Hashable, Sendable {
         }
         self.init(
             timestampMilliseconds: timestampMilliseconds,
-            text: try container.decode(String.self, forKey: .text)
+            text: try container.decode(String.self, forKey: .text),
+            translation: try container.decodeIfPresent(String.self, forKey: .translation),
+            words: try container.decodeIfPresent([LyricWord].self, forKey: .words) ?? []
         )
     }
 
@@ -162,7 +180,10 @@ public struct TrackLyrics: Codable, Equatable, Hashable, Sendable {
             timedLines: timedLines.map {
                 LyricLine(
                     timestampMilliseconds: $0.timestampMilliseconds,
-                    text: script.convert($0.text)
+                    text: script.convert($0.text),
+                    translation: $0.translation.map { script.convert($0) },
+                    words: $0.words.map { LyricWord(startMilliseconds: $0.startMilliseconds,
+                        durationMilliseconds: $0.durationMilliseconds, text: script.convert($0.text)) }
                 )
             },
             declaredOffsetMilliseconds: declaredOffsetMilliseconds

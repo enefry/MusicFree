@@ -30,6 +30,14 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
     private var activeGeneration = PlaybackGeneration.initial
     private var acceptsEngineEvents = true
     private var playbackIntentVersion: UInt64 = 0
+    private var queueRevision: UInt64 = 0
+    private var nextPreparationTask: Task<Void, Never>?
+    private var nextTicket: PlaybackTransitionTicket?
+    private var transitionEventTask: Task<Void, Never>?
+    private var retiringSessions: [UUID: (sessionID: UUID, itemID: MediaItemID)] = [:]
+    private var transitionHistoryTask: Task<Void, Never>?
+    private var transitionQueueEditCount = 0
+    private static let historyLogger = MusicLogger(subsystem: "com.musicfree.app", category: "playback-transition-history")
     private var isMutatingQueue = false
     private var queueMutationWaiters: [CheckedContinuation<Void, Never>] = []
     private var isPreparingEngine = false
@@ -47,6 +55,7 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
     private var snapshotContinuations: [UUID: AsyncStream<PlaybackSessionSnapshot>.Continuation] = [:]
     private var audioSessionEventContinuations: [UUID: AsyncStream<AudioSessionEvent>.Continuation] = [:]
     private var transientPlaybackPreflight: (() async -> Void)?
+    private var configuredCapabilities: PlaybackCapabilities
     private var nowPlayingArtworkKey: String?
     private var nowPlayingArtworkProvider: SourceNowPlayingArtworkProvider?
 
@@ -66,6 +75,7 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
         idGenerator: any AppIDGenerating,
         randomSource: any AppRandomSource
     ) {
+        self.configuredCapabilities = playbackCapabilities
         self.libraryRepository = libraryRepository
         self.sourceResolver = sourceResolver
         self.queueRepository = queueRepository
@@ -263,6 +273,10 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
             }
             _ = self.beginPlaybackIntent()
             self.eventTask?.cancel()
+            self.transitionEventTask?.cancel()
+            self.transitionEventTask = nil
+            (self.engine as? any PlaybackTransitionControlling)?.setTransitionCommitHandler(nil)
+            (self.engine as? any PlaybackTransitionControlling)?.setTransitionInvalidationHandler(nil)
             self.audioEventTask?.cancel()
             self.remoteCommandTask?.cancel()
             self.displayEnrichmentTask?.task.cancel()
@@ -275,9 +289,13 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
             defer { self.releaseEnginePreparation() }
 
             if let engine = self.engine {
-                engine.stop()
+                if let transitioning = engine as? any PlaybackTransitionControlling { transitioning.hardStop() }
+                else { engine.stop() }
                 engine.dispose()
             }
+            (self.engine as? any PlaybackTransitionControlling)?.setTransitionRetirementHandler(nil)
+            await self.transitionHistoryTask?.value
+            self.transitionHistoryTask = nil
             self.nowPlayingArtworkKey = nil
             self.nowPlayingArtworkProvider = nil
             self.nowPlaying?.clear()
@@ -363,6 +381,8 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
                 intent: intent
             )
         case .resume:
+            // Duplicate remote play commands must not disarm a ready successor.
+            if snapshotValue.phase == .playing, engine?.state.phase == .playing { return }
             let intent = beginPlaybackIntent()
             await runTransientPlaybackPreflight()
             try await resume(intent: intent)
@@ -393,17 +413,19 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
         case .setEffects(let effects):
             try applyEffects(effects)
         case .enqueue(let itemID, let position):
-            try await enqueue(itemID: itemID, at: position)
+            try await withTransitionQueueEdit { try await enqueue(itemID: itemID, at: position) }
         case .enqueueItems(let itemIDs):
-            try await enqueue(itemIDs: itemIDs, afterCurrent: false)
+            try await withTransitionQueueEdit { try await enqueue(itemIDs: itemIDs, afterCurrent: false) }
         case .enqueueNext(let itemIDs):
-            try await enqueue(itemIDs: itemIDs, afterCurrent: true)
+            try await withTransitionQueueEdit { try await enqueue(itemIDs: itemIDs, afterCurrent: true) }
         case .editQueue(let edit):
-            try await applyQueueEdit(edit)
+            try await withTransitionQueueEdit { try await applyQueueEdit(edit) }
         }
     }
 
     func apply(_ settings: EffectivePlaybackSettings) async {
+        invalidateNextIfTransitionChanges(to: settings.effects)
+        configuredCapabilities = settings.playbackCapabilities
         snapshotValue = PlaybackSessionSnapshot(
             state: snapshotValue.state,
             currentItem: snapshotValue.currentItem,
@@ -421,9 +443,11 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
             }
         }
         await publishSnapshot()
+        scheduleNextPreparation()
     }
 
     func updateCapabilities(_ capabilities: PlaybackCapabilities) async {
+        configuredCapabilities = capabilities
         snapshotValue = PlaybackSessionSnapshot(
             state: snapshotValue.state,
             currentItem: snapshotValue.currentItem,
@@ -439,6 +463,9 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
     /// Prunes durable and live queue state as one serialized queue mutation.
     func handleLibraryDeletion(_ itemIDs: Set<MediaItemID>) async throws {
         guard !itemIDs.isEmpty else { return }
+        transitionQueueEditCount += 1
+        defer { transitionQueueEditCount -= 1; scheduleNextPreparation() }
+        if queue.entries.contains(where: { ($0.id == queue.currentEntryID || $0.id == nextTicket?.nextEntryID) && $0.itemID.map(itemIDs.contains) == true }) { invalidateNext() }
 
         if let currentItemID = snapshotValue.currentItemID,
            itemIDs.contains(currentItemID) {
@@ -453,8 +480,10 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
                 durableQueue = queue
             }
 
-            var updatedQueue = durableQueue
-            for entry in durableQueue.entries {
+            // A rendered handoff is already authoritative even if its disk
+            // save is queued behind this mutation. Prune the live identity.
+            var updatedQueue = started ? queue : durableQueue
+            for entry in updatedQueue.entries {
                 guard let entryItemID = entry.itemID,
                       itemIDs.contains(entryItemID)
                 else { continue }
@@ -463,6 +492,7 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
             if updatedQueue != durableQueue, queueRepository != nil {
                 try await saveQueue(updatedQueue)
             }
+            noteQueueRevision(updatedQueue)
             queue = updatedQueue
 
             guard let currentItemID = snapshotValue.currentItemID,
@@ -546,6 +576,7 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
                 try engine.play()
                 updateSnapshot(state: engine.state)
                 await publishSnapshot()
+                scheduleNextPreparation()
             } else {
                 try await prepareAndPlay(entry: currentEntry, intent: intent)
             }
@@ -676,10 +707,10 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
             throw AppServiceError.missingDependency("playbackEngine")
         }
 
-        // Capture the exact engine resource before creating the intent. The
-        // queue fallback in snapshot.currentItemID is not sufficient here:
-        // while a new item is preparing, it can still describe an item that
-        // the engine has not attached yet.
+        // Creating the intent flushes any render-side handoff. Capture the
+        // incoming identity afterwards so a boundary seek is not discarded
+        // merely because the MainActor had not yet published the new track.
+        let intent = beginPlaybackIntent()
         guard let itemID = snapshotValue.state.itemID,
               engine.state.itemID == itemID,
               engine.state.generation == activeGeneration
@@ -689,8 +720,6 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
         let generation = engine.state.generation
         let duration = engine.state.duration ?? snapshotValue.duration
         let targetPosition = Self.normalizedPosition(position, duration: duration)
-        let intent = beginPlaybackIntent()
-
         // Prepare/play/stop and seek must not overlap on a single-resource
         // engine. A newer intent can still supersede this operation while it
         // is awaiting the engine; the identity checks below then discard the
@@ -757,6 +786,9 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
             throw SupersededPlaybackIntent()
         }
         updateSnapshot(state: normalizedState)
+        // Seeking invalidates the old handoff and rebuilds the render feeder.
+        // Prepare the successor again using this seek's current intent.
+        scheduleNextPreparation()
         await publishSnapshot()
     }
 
@@ -768,13 +800,14 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
         guard let engine else {
             throw AppServiceError.missingDependency("playbackEngine")
         }
+        if rate != snapshotValue.effectiveEffects.rate { invalidateNext() }
         try engine.setRate(rate)
         let current = snapshotValue.effectiveEffects
         snapshotValue = PlaybackSessionSnapshot(
             state: snapshotValue.state,
             currentItem: snapshotValue.currentItem,
             queue: PlaybackQueueSummary(snapshot: queue),
-            capabilities: snapshotValue.capabilities,
+            capabilities: self.engine?.capabilities.intersection(configuredCapabilities) ?? configuredCapabilities,
             effectiveEffects: AudioEffectConfiguration(
                 equalizer: current.equalizer,
                 replayGain: current.replayGain,
@@ -784,6 +817,7 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
             systemCapabilities: snapshotValue.systemCapabilities
         )
         Task { await publishSnapshot() }
+        scheduleNextPreparation()
     }
 
     private func applyEffects(_ requested: AudioEffectConfiguration) throws {
@@ -791,16 +825,18 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
             throw AppServiceError.missingDependency("playbackEngine")
         }
         let effective = clipped(requested)
+        invalidateNextIfTransitionChanges(to: effective)
         try engine.apply(effective)
         snapshotValue = PlaybackSessionSnapshot(
             state: snapshotValue.state,
             currentItem: snapshotValue.currentItem,
             queue: PlaybackQueueSummary(snapshot: queue),
-            capabilities: snapshotValue.capabilities,
+            capabilities: self.engine?.capabilities.intersection(configuredCapabilities) ?? configuredCapabilities,
             effectiveEffects: effective,
             systemCapabilities: snapshotValue.systemCapabilities
         )
         Task { await publishSnapshot() }
+        scheduleNextPreparation()
     }
 
     private func enqueue(itemID: MediaItemID, at position: Int?) async throws {
@@ -1096,6 +1132,11 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
             }
         }
 
+        // Resource lookup can run during the outgoing render fade. A manual
+        // replacement waits for that bounded fade before tearing down its bus.
+        if let transitioning = engine as? any PlaybackTransitionControlling {
+            try await valueForCurrentIntent(intent) { await transitioning.waitForSoftStop() }
+        }
         try await prepareEngine(
             engine,
             item: PlaybackItem(
@@ -1133,6 +1174,7 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
         }
         updateSnapshot(state: engine.state)
         await publishSnapshot()
+        scheduleNextPreparation()
     }
 
     private func handle(_ event: PlaybackEvent) async {
@@ -1173,6 +1215,7 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
             ))
             if queue.currentEntryID != nil {
                 try? await withQueueMutation {
+                    guard event.generation == activeGeneration, event.itemID == snapshotValue.currentItemID else { return }
                     let updatedQueue = try queue.applying(
                         .setResumePosition(normalizedPosition)
                     )
@@ -1249,6 +1292,7 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
 
     private func recordCompletion(itemID: MediaItemID, reason: PlaybackCompletionReason) async {
         guard let historyRepository, let sessionID else { return }
+        await transitionHistoryTask?.value
         let occurredAt = await clock.now()
         try? await historyRepository.recordCompleted(
             PlaybackCompletion(
@@ -1261,6 +1305,26 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
     }
 
     private func installSubscriptions() {
+        if let transitioning = engine as? any PlaybackTransitionControlling {
+            transitioning.setTransitionCommitHandler { [weak self] commit in self?.handleTransitionCommit(commit) }
+            transitioning.setTransitionRetirementHandler { [weak self] event in self?.handleTransitionRetirement(event) }
+            transitioning.setTransitionInvalidationHandler { [weak self] ticket, reason in
+                guard let self, self.nextTicket == ticket else { return }
+                self.nextPreparationTask?.cancel()
+                self.nextPreparationTask = nil
+                self.nextTicket = nil
+                // Bad speculative media falls back at EOF; a rebuilt output
+                // can immediately prepare the same queue successor again.
+                if reason == .outputRebuilt { self.scheduleNextPreparation() }
+            }
+            let stream = transitioning.makeTransitionStream()
+            transitionEventTask = Task { [weak self] in
+                for await commit in stream {
+                    guard !Task.isCancelled else { return }
+                    self?.handleTransitionCommit(commit)
+                }
+            }
+        }
         if let engine {
             let engineStream = engine.makeEventStream()
             eventTask = Task { [weak self] in
@@ -1304,6 +1368,7 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
         audioSessionEventContinuations.values.forEach { $0.yield(event) }
         switch event {
         case .interruption(.began):
+            (engine as? any PlaybackTransitionControlling)?.hardPause()
             wasPlayingBeforeInterruption = snapshotValue.phase == .playing
             if wasPlayingBeforeInterruption {
                 _ = beginPlaybackIntent()
@@ -1316,9 +1381,11 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
             wasPlayingBeforeInterruption = false
         case .routeChanged(let change):
             if change.isOldDeviceUnavailable {
+                (engine as? any PlaybackTransitionControlling)?.hardPause()
                 await send(.pause)
             }
         case .mediaServicesReset:
+            (engine as? any PlaybackTransitionControlling)?.hardStop()
             await recoverFromMediaServicesReset()
         }
     }
@@ -1451,25 +1518,47 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
         return PlaybackQueueEntry(id: id, track: track)
     }
 
-    private func persistQueue(_ updated: PlaybackQueueSnapshot) async throws {
-        try await saveQueue(updated)
-        queue = updated
+    private func queueEditPreservingRenderedIdentity(_ requested: PlaybackQueueSnapshot,
+                                                    originalCurrent: UUID?) -> PlaybackQueueSnapshot {
+        guard requested.currentEntryID == originalCurrent, queue.currentEntryID != originalCurrent,
+              requested.entries.contains(where: { $0.id == queue.currentEntryID }) else { return requested }
+        return PlaybackQueueSnapshot(entries: requested.entries, currentEntryID: queue.currentEntryID,
+            repeatMode: requested.repeatMode, shuffleMode: requested.shuffleMode,
+            shuffleSeed: requested.shuffleSeed, shuffleOrder: requested.shuffleOrder, resumePosition: queue.resumePosition)
     }
 
-    private func persistQueue(
-        _ updated: PlaybackQueueSnapshot,
-        intent: UInt64
-    ) async throws {
-        try requireCurrentIntent(intent)
-        do {
+    private func persistQueue(_ requested: PlaybackQueueSnapshot) async throws {
+        let originalCurrent = queue.currentEntryID
+        invalidateNextIfSuccessorChanges(to: requested)
+        var updated = queueEditPreservingRenderedIdentity(requested, originalCurrent: originalCurrent)
+        while true {
+            let revision = queueRevision
             try await saveQueue(updated)
-        } catch {
-            try requireCurrentIntent(intent)
-            throw error
+            if revision == queueRevision { noteQueueRevision(updated); queue = updated; return }
+            // A handoff can happen during any repository hop. Merge structural
+            // edits with the latest rendered identity, including multiple hops.
+            updated = queueEditPreservingRenderedIdentity(requested, originalCurrent: originalCurrent)
         }
-        // A newer command must observe a queue save that already committed.
-        queue = updated
+    }
+
+    private func persistQueue(_ requested: PlaybackQueueSnapshot, intent: UInt64) async throws {
         try requireCurrentIntent(intent)
+        let originalCurrent = queue.currentEntryID
+        invalidateNextIfSuccessorChanges(to: requested)
+        var updated = queueEditPreservingRenderedIdentity(requested, originalCurrent: originalCurrent)
+        while true {
+            let revision = queueRevision
+            do { try await saveQueue(updated) }
+            catch { try requireCurrentIntent(intent); throw error }
+            // A newer command must observe saves that already committed. It
+            // cannot restore an outgoing identity after an audible handoff.
+            if revision == queueRevision {
+                noteQueueRevision(updated); queue = updated
+                try requireCurrentIntent(intent); return
+            }
+            try requireCurrentIntent(intent)
+            updated = queueEditPreservingRenderedIdentity(requested, originalCurrent: originalCurrent)
+        }
     }
 
     private func loadQueue() async throws -> PlaybackQueueSnapshot {
@@ -1556,15 +1645,19 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
 
     private func clipped(_ requested: AudioEffectConfiguration) -> AudioEffectConfiguration {
         let capabilities = snapshotValue.capabilities
+        // Resource/rate restrictions are transient. Retain supported transition
+        // intent so applying rate 1 in this same configuration can restore it.
+        // The engine decides whether the current resource can render it.
+        let transitionCapabilities = configuredCapabilities
         let equalizer = capabilities.contains(.equalizer) ? requested.equalizer : nil
         let replayGain = capabilities.contains(.replayGain)
             ? requested.replayGain
             : .disabled
         let transition: AudioTransitionConfiguration
         switch requested.transition.mode {
-        case .crossfade where capabilities.contains(.crossfade):
+        case .crossfade where transitionCapabilities.contains(.crossfade):
             transition = requested.transition
-        case .gapless where capabilities.contains(.gapless):
+        case .gapless where transitionCapabilities.contains(.gapless):
             transition = requested.transition
         default:
             transition = .disabled
@@ -1573,7 +1666,9 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
         return AudioEffectConfiguration(
             equalizer: equalizer,
             replayGain: replayGain,
-            transition: transition,
+            transition: AudioTransitionConfiguration(mode: transition.mode, crossfadeDuration: transition.crossfadeDuration,
+                fadeInDuration: transitionCapabilities.contains(.fade) ? requested.transition.fadeInDuration : .zero,
+                fadeOutDuration: transitionCapabilities.contains(.fade) ? requested.transition.fadeOutDuration : .zero),
             rate: rate
         )
     }
@@ -1587,7 +1682,7 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
             state: snapshotValue.state,
             currentItem: display,
             queue: PlaybackQueueSummary(snapshot: queue),
-            capabilities: snapshotValue.capabilities,
+            capabilities: self.engine?.capabilities.intersection(configuredCapabilities) ?? configuredCapabilities,
             effectiveEffects: snapshotValue.effectiveEffects,
             systemCapabilities: snapshotValue.systemCapabilities
         )
@@ -1599,7 +1694,7 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
             state: normalizedState,
             currentItem: snapshotValue.currentItem,
             queue: PlaybackQueueSummary(snapshot: queue),
-            capabilities: snapshotValue.capabilities,
+            capabilities: self.engine?.capabilities.intersection(configuredCapabilities) ?? configuredCapabilities,
             effectiveEffects: snapshotValue.effectiveEffects,
             systemCapabilities: snapshotValue.systemCapabilities
         )
@@ -1693,8 +1788,190 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
 
     @discardableResult
     private func beginPlaybackIntent() -> UInt64 {
+        invalidateNext()
         playbackIntentVersion &+= 1
         return playbackIntentVersion
+    }
+
+    private func noteQueueRevision(_ updated: PlaybackQueueSnapshot) {
+        if updated.entries != queue.entries || updated.currentEntryID != queue.currentEntryID
+            || updated.repeatMode != queue.repeatMode || updated.shuffleMode != queue.shuffleMode
+            || updated.shuffleOrder != queue.shuffleOrder {
+            queueRevision &+= 1
+        }
+    }
+
+    private func invalidateNext() {
+        // cancelNext first flushes an already-rendered commit synchronously,
+        // so a control intent cannot discard B's first audible frame as stale.
+        (engine as? any PlaybackTransitionControlling)?.cancelNext()
+        nextPreparationTask?.cancel(); nextPreparationTask = nil
+        nextTicket = nil
+    }
+
+    private func scheduleNextPreparation() {
+        guard !isShutdown, transitionQueueEditCount == 0, nextTicket == nil, snapshotValue.phase == .playing,
+              snapshotValue.effectiveEffects.transition.mode != .disabled,
+              let engine, let transitioning = engine as? any PlaybackTransitionControlling,
+              let sessionID, let currentItemID = snapshotValue.currentItemID else { return }
+        let next = queue.repeatMode == .one ? queue.currentEntry : adjacentOrWrappedPlayableEntry(direction: 1)
+        guard let next, let itemID = next.itemID else { return }
+        let ticket = PlaybackTransitionTicket(sessionID: sessionID, intent: playbackIntentVersion,
+            queueRevision: queueRevision, generation: engine.state.generation,
+            currentItemID: currentItemID, nextEntryID: next.id)
+        nextTicket = ticket
+        nextPreparationTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                guard let track = try await self.loadTrack(itemID) else { throw PlaybackError.resourceUnavailable }
+                try Task.checkCancellation()
+                let source = try await self.sourceResolver.source(for: track.assetID.sourceID)
+                let resource = try await source.resolve(track.assetID.mediaItemID)
+                try Task.checkCancellation()
+                guard self.nextTicket == ticket else { return }
+                let item = PlaybackItem(itemID: itemID, resource: resource,
+                    selection: track.playbackSelection, displaySnapshot: Self.display(for: track))
+                try await transitioning.prepareNext(item, ticket: ticket)
+            } catch {
+                // Failure of a speculative successor leaves the current item
+                // playing and allows the existing EOF path to resolve afresh.
+                if self.nextTicket == ticket {
+                    self.nextTicket = nil; self.nextPreparationTask = nil
+                    transitioning.cancelNext()
+                }
+            }
+        }
+    }
+
+    private func successor(in snapshot: PlaybackQueueSnapshot) -> PlaybackQueueEntry? {
+        if snapshot.repeatMode == .one { return snapshot.currentEntry }
+        let ordered: [PlaybackQueueEntry]
+        if snapshot.shuffleMode == .on, !snapshot.shuffleOrder.isEmpty {
+            let entries = Dictionary(uniqueKeysWithValues: snapshot.entries.map { ($0.id, $0) })
+            ordered = snapshot.shuffleOrder.compactMap { entries[$0] }
+        } else { ordered = snapshot.entries }
+        let start = snapshot.currentEntryID.flatMap { id in ordered.firstIndex { $0.id == id } }.map { $0 + 1 } ?? 0
+        if let next = ordered.dropFirst(start).first(where: { $0.itemID != nil }) { return next }
+        return snapshot.repeatMode == .all ? ordered.first(where: { $0.itemID != nil }) : nil
+    }
+
+    private func invalidateNextIfSuccessorChanges(to updated: PlaybackQueueSnapshot) {
+        let old = successor(in: queue), new = successor(in: updated)
+        if queue.currentEntryID != updated.currentEntryID || old?.id != new?.id || old?.itemID != new?.itemID {
+            invalidateNext()
+        }
+    }
+
+    private func invalidateNextIfTransitionChanges(to effects: AudioEffectConfiguration) {
+        let old = snapshotValue.effectiveEffects
+        if old.transition.mode != effects.transition.mode || old.transition.crossfadeDuration != effects.transition.crossfadeDuration
+            || old.rate != effects.rate { invalidateNext() }
+    }
+
+    private func handleTransitionCommit(_ commit: LogicalPlaybackCommit) {
+        let ticket = commit.ticket
+        guard nextTicket == ticket, ticket.intent == playbackIntentVersion,
+              ticket.sessionID == sessionID,
+              let engine, engine.state.itemID == commit.item.itemID,
+              queue.entries.contains(where: { $0.id == ticket.nextEntryID && $0.itemID == commit.item.itemID }) else {
+            // Handler + stream duplicates are harmless. Stop any other
+            // authoritative handoff rather than continue with a hidden B.
+            if let engine, engine.state.itemID == commit.item.itemID,
+               (snapshotValue.currentItemID != commit.item.itemID || activeGeneration != engine.state.generation) {
+                let rejectedSession = sessionID
+                let outgoingItemID = snapshotValue.currentItemID
+                (engine as? any PlaybackTransitionControlling)?.hardStop()
+                nextPreparationTask?.cancel(); nextPreparationTask = nil; nextTicket = nil
+                sessionID = nil
+                if let rejectedSession, let outgoingItemID, let historyRepository {
+                    enqueueTransitionHistory { [self, clock] in
+                        let now = await clock.now()
+                        await retryHistoryWrite {
+                            try await historyRepository.recordCompleted(PlaybackCompletion(
+                                sessionID: rejectedSession, itemID: outgoingItemID, occurredAt: now, reason: .failed))
+                        }
+                    }
+                }
+                setCurrentDisplay(commit.item.display)
+                activeGeneration = engine.state.generation
+                updateSnapshot(state: engine.state)
+                Task {
+                    await publishSnapshot()
+                    await record(error: .mapped(PlaybackError.engineFailure(code: "transition_commit_rejected"), operation: "playback.transition"))
+                }
+            }
+            return
+        }
+        nextTicket = nil; nextPreparationTask = nil
+        // In-memory identity is committed before repository/system actor hops.
+        // A late A position/EOF can no longer enter this event generation.
+        let oldSession = sessionID
+        if let oldSession { retiringSessions[ticket.id] = (oldSession, ticket.currentItemID) }
+        let newSession = UUID()
+        sessionID = newSession
+        activeGeneration = engine.state.generation
+        if let updated = try? queue.applying(.setCurrent(ticket.nextEntryID)).applying(.setResumePosition(nil)) {
+            noteQueueRevision(updated); queue = updated
+        }
+        setCurrentDisplay(commit.item.display)
+        updateSnapshot(state: engine.state)
+        let historyWrite = enqueueTransitionHistory { [self] in
+            let now = await clock.now()
+            await retryHistoryWrite {
+                try await historyRepository?.recordPlaybackStarted(PlaybackStart(sessionID: newSession,
+                    itemID: commit.item.itemID, startedAt: now))
+            }
+        }
+        scheduleNextPreparation()
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.publishSnapshot()
+            await historyWrite.value
+            guard ticket.intent == self.playbackIntentVersion, self.sessionID == newSession else { return }
+            // Persistence failure cannot roll audible playback back to A.
+            try? await self.withQueueMutation { try await self.saveQueue(self.queue) }
+            self.scheduleNextPreparation()
+        }
+    }
+
+    private func handleTransitionRetirement(_ event: PlaybackTransitionRetirement) {
+        guard let retired = retiringSessions.removeValue(forKey: event.ticket.id), let historyRepository else { return }
+        enqueueTransitionHistory { [self, clock] in
+            let now = await clock.now()
+            await self.retryHistoryWrite {
+                try await historyRepository.recordValidPlayback(ValidPlayback(sessionID: retired.sessionID,
+                    itemID: retired.itemID, occurredAt: now, playedDuration: event.playedDuration))
+            }
+            await self.retryHistoryWrite {
+                try await historyRepository.recordCompleted(PlaybackCompletion(sessionID: retired.sessionID,
+                    itemID: retired.itemID, occurredAt: now, reason: event.reason))
+            }
+        }
+    }
+
+    @discardableResult
+    private func enqueueTransitionHistory(_ operation: @escaping @MainActor () async -> Void) -> Task<Void, Never> {
+        let previous = transitionHistoryTask
+        let task = Task { await previous?.value; await operation() }
+        transitionHistoryTask = task
+        return task
+    }
+
+    private func withTransitionQueueEdit(_ operation: () async throws -> Void) async rethrows {
+        transitionQueueEditCount += 1
+        defer { transitionQueueEditCount -= 1; scheduleNextPreparation() }
+        try await operation()
+    }
+
+    private func retryHistoryWrite(_ operation: () async throws -> Void) async {
+        for attempt in 0..<3 {
+            do { try await operation(); return }
+            catch {
+                guard !Task.isCancelled else { return }
+                if attempt < 2 { try? await Task.sleep(for: .milliseconds(100)) }
+            }
+        }
+        Self.historyLogger.error("Transition history persistence failed after bounded retries")
     }
 
     private func runTransientPlaybackPreflight() async {

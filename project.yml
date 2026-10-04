@@ -15,6 +15,12 @@ configFiles:
   Release: basic_config.xcconfig
 
 packages:
+  MusicFreePluginAudio:
+    path: Packages/MusicFreePluginAudio
+  MusicFreePluginRuntime:
+    path: Packages/MusicFreePluginRuntime
+  MusicFreePluginHostBridge:
+    path: Packages/MusicFreePluginHostBridge
   MusicFreeCore:
     path: Packages/MusicFreeCore
   MusicFreeInfrastructure:
@@ -33,6 +39,10 @@ settings:
     SWIFT_STRICT_CONCURRENCY: complete
     CODE_SIGN_IDENTITY: "iPhone Developer"
     CODE_SIGN_STYLE: Automatic
+
+aggregateTargets:
+  PlaybackTransitions:
+    targets: []
 
 targets:
   MusicFree:
@@ -83,6 +93,8 @@ targets:
           PRODUCT_BUNDLE_IDENTIFIER: win.tools4me.music.debug
 
     dependencies:
+      - package: MusicFreePluginHostBridge
+        product: MusicFreePluginHostBridge
       - package: MusicFreeCore
         product: AppServices
       - package: MusicFreeCore
@@ -150,6 +162,16 @@ targets:
       - target: MusicFree
 
 schemes:
+  PlaybackTransitions:
+    build:
+      targets:
+        PlaybackTransitions: [test]
+    test:
+      config: Debug
+      gatherCoverageData: false
+      targets:
+        - package: MusicFreeCore/PlaybackTransitionTests
+        - package: MusicFreeFFmpegAdapter/MusicFreeFFmpegAdapterTests
   MusicFree:
     build:
       targets:
@@ -164,9 +186,13 @@ schemes:
         - MusicFreeTests
         - MusicFreeUITests
         - package: MusicFreeCore/MusicFreeCoreTests
+        - package: MusicFreeCore/PlaybackTransitionTests
         - package: MusicFreeInfrastructure/MusicFreeInfrastructureTests
         - package: MusicFreeUI/MusicFreeUIFeatureTests
         - package: MusicFreeFFmpegAdapter/MusicFreeFFmpegAdapterTests
+        - package: MusicFreePluginRuntime/MusicFreePluginRuntimeTests
+        - package: MusicFreePluginAudio/MusicFreePluginAudioTests
+        - package: MusicFreePluginHostBridge/MusicFreePluginHostBridgeTests
       testPlans:
         - path: MusicFree.xctestplan
           defaultPlan: true

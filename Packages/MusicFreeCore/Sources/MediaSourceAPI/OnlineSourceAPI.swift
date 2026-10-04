@@ -3,13 +3,16 @@ import MusicDomain
 
 /// Provider kinds that can be configured as an external media source.
 ///
-/// The enum identifies a protocol family only. Every configured account, NAS,
+/// The raw ID identifies a protocol family only. Every configured account, NAS,
 /// or gateway instance still receives its own `MediaSourceID`.
-public enum OnlineProviderKind: String, Codable, CaseIterable, Sendable {
-    case dsAudio
-    case googleDrive
-    case baiduPan
-    case gateway
+public struct OnlineProviderKind: RawRepresentable, Codable, Hashable, CaseIterable, Sendable {
+    public let rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let dsAudio = Self(rawValue: "dsAudio")
+    public static let googleDrive = Self(rawValue: "googleDrive")
+    public static let baiduPan = Self(rawValue: "baiduPan")
+    public static let gateway = Self(rawValue: "gateway")
+    public static let allCases: [Self] = [.dsAudio, .googleDrive, .baiduPan, .gateway]
 
     /// The privacy disclosure version used when a Provider has not yet supplied
     /// a more specific version through its adapter. The version is part of the
@@ -1041,10 +1044,12 @@ public enum PlaybackAccess: Sendable, CustomStringConvertible,
     }
 }
 
-/// A download source can browse and download. Search is an optional refined
-/// capability represented by `SearchableDownloadSource`.
-public protocol DownloadSource: OnlineSource {
+/// Catalog browsing and searching are independent optional capabilities.
+public protocol CatalogBrowsingSource: OnlineSource {
     func browse(_ request: SourceBrowseRequest) async throws -> SourceCatalogPage
+}
+
+public protocol DownloadSource: CatalogBrowsingSource {
 
     func download(
         _ itemID: SourceObjectID,
@@ -1052,13 +1057,14 @@ public protocol DownloadSource: OnlineSource {
     ) async throws -> DownloadReceipt
 }
 
-public protocol SearchableDownloadSource: DownloadSource {
+public protocol CatalogSearchingSource: OnlineSource {
     func search(_ request: SourceSearchRequest) async throws -> SourceCatalogPage
 }
+public protocol SearchableDownloadSource: DownloadSource, CatalogSearchingSource {}
 
-/// A playback source extends download access. A Provider may expose a direct
-/// HTTP URL, an HTTP transcode URL, or require the caller to download first.
-public protocol PlaybackSource: DownloadSource {
+/// Playback access is independent of download support. Providers can expose a
+/// direct HTTP URL, a transcode URL, or ask the host to download separately.
+public protocol PlaybackSource: OnlineSource {
     func playbackAccess(
         for itemID: SourceObjectID,
         purpose: PlaybackPurpose

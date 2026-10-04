@@ -2118,6 +2118,9 @@ func playbackPositionEventsClampOversizedValues() async throws {
     ))
     await settleAppServiceEvents()
 
+    for _ in 0..<100 where nowPlaying.currentSnapshot?.elapsed != .seconds(30) {
+        try await Task.sleep(for: .milliseconds(1))
+    }
     #expect(container.playback.snapshot.position == .seconds(30))
     #expect(try await queue.load().resumePosition == .seconds(30))
     #expect(nowPlaying.currentSnapshot?.elapsed == .seconds(30))

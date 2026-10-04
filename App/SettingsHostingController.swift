@@ -206,6 +206,7 @@ struct UIKitSettingsRootView: View {
         .toolbarBackground(.visible, for: .navigationBar)
         .preferredColorScheme(appearance.colorScheme)
         .environment(\.locale, language.locale)
+        .task { await settingsModel.observeTransitionCapabilities(services.playbackServing.makeSnapshotStream()) }
     }
 
     @ViewBuilder
@@ -295,11 +296,21 @@ struct UIKitSettingsRootView: View {
     }
 
     private var settingsAdditionContent: AnyView {
+        AnyView(Group {
+            if let plugins = services.plugins {
+                Section {
+                    NavigationLink {
+                        PluginSettingsView(plugins: plugins, settings: services.settingsServing)
+                    } label: {
+                        Label("插件", systemImage: "puzzlepiece.extension")
+                    }
+                    .accessibilityIdentifier("settings.plugins.entry")
+                }
+            }
 #if DEBUG && MUSICFREE_DEBUG_SUPPORT && canImport(MusicFreeDebugSupport)
-        AnyView(DebugNetworkCaptureSettingsView())
-#else
-        AnyView(EmptyView())
+            DebugNetworkCaptureSettingsView()
 #endif
+        })
     }
 
     private var appIconOptions: [SettingsAppIconOption] {

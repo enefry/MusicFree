@@ -3,6 +3,8 @@ import AppServices
 import DesignSystem
 import Foundation
 import MediaSourceAPI
+import MusicFreePluginAPI
+import UIKit
 import MusicDomain
 import PlaybackAPI
 import SettingsAPI
@@ -1470,4 +1472,49 @@ func renamingOnlineSourcePreservesConfiguration(provider: OnlineProviderKind) as
     )
     await reopened.start()
     #expect(reopened.snapshot.sources.first?.displayName == "New name")
+}
+
+private actor DescriptorFormPlugins: PluginServing {
+    let descriptor: PluginDescriptor
+    init(_ descriptor: PluginDescriptor) { self.descriptor = descriptor }
+    func apply(_ settings: AppSettings) async {}
+    func snapshots() async -> [PluginSnapshot] { [.init(descriptor: descriptor, preference: .init(pluginID: descriptor.id), state: .disabled)] }
+    func stop() async {}
+}
+@Test @MainActor func descriptorSourceFormSavesTypedFieldsWithoutAppConsent() async throws {
+    let descriptor = PluginDescriptor(id: .init(rawValue: "test.source"), name: "Test Source", kinds: [.onlineSource],
+        sourceConfiguration: .init(fields: [.init(id: "collection", title: "Collection", kind: .text),
+            .init(id: "limit", title: "Limit", kind: .number, minimumNumber: 1, maximumNumber: 10),
+            .init(id: "flag", title: "Flag", kind: .flag)]), onlineProviderID: "test.source")
+    let store = OnlineSourceSceneSettingsStore(settings: .defaults)
+    var saved = false
+    let controller = PluginSourceEditorViewController(descriptor: descriptor, configuration: nil,
+        settings: store, plugins: DescriptorFormPlugins(descriptor)) { saved = true }
+    controller.loadViewIfNeeded()
+    // Wait for the actor read that enables the form.
+    let table = controller.tableView!
+    for _ in 0..<100 {
+        if controller.tableView(table, cellForRowAt: .init(row: 0, section: 1)).isUserInteractionEnabled { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(controller.tableView(table, cellForRowAt: .init(row: 0, section: 1)).isUserInteractionEnabled)
+    let textCell = controller.tableView(table, cellForRowAt: .init(row: 1, section: 0))
+    let numberCell = controller.tableView(table, cellForRowAt: .init(row: 2, section: 0))
+    let text = try #require(textCell.contentView.subviews.compactMap { $0 as? UITextField }.first)
+    let number = try #require(numberCell.contentView.subviews.compactMap { $0 as? UITextField }.first)
+    text.text = "Albums"; number.text = "3"
+    let flagCell = controller.tableView(table, cellForRowAt: .init(row: 3, section: 0))
+    let flag = try #require(flagCell.accessoryView as? UISwitch)
+    flag.isOn = true
+    let consentCell = controller.tableView(table, cellForRowAt: .init(row: 5, section: 0))
+    let consent = try #require(consentCell.accessoryView as? UISwitch)
+    consent.isOn = true
+    controller.tableView(table, didSelectRowAt: .init(row: 0, section: 1))
+    for _ in 0..<100 where !saved { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(saved)
+    let current = try await store.load()
+    #expect(!current.importPreferences.privacyPreferences.isPrivacyPolicyAccepted)
+    let source = try #require(current.importPreferences.onlineSourcePreferences.sources.first)
+    #expect(source.privacyPolicyVersion == descriptor.policyVersion)
+    #expect(current.pluginPreferences.first?.instances.first?.values == ["collection": .text("Albums"), "limit": .number(3), "flag": .flag(true)])
 }

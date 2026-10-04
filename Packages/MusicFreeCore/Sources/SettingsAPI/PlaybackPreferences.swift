@@ -157,17 +157,22 @@ public enum ReplayGainMode: String, Codable, CaseIterable, Equatable, Hashable, 
 /// User intent for gapless and crossfade transitions.
 @available(macOS 13.0, iOS 16.0, *)
 public struct TransitionPreferences: Codable, Equatable, Hashable, Sendable {
-    public static let maximumCrossfadeDuration = Duration.seconds(30)
+    public static let maximumCrossfadeDuration = Duration.seconds(3)
 
     public let gaplessPlaybackEnabled: Bool
     public let crossfadeDuration: Duration
+    public let fadeInDuration: Duration
+    public let fadeOutDuration: Duration
 
     public init(
         gaplessPlaybackEnabled: Bool = true,
-        crossfadeDuration: Duration = .zero
+        crossfadeDuration: Duration = .zero,
+        fadeInDuration: Duration = .milliseconds(80),
+        fadeOutDuration: Duration = .milliseconds(120)
     ) throws {
-        guard crossfadeDuration >= .zero,
-              crossfadeDuration <= Self.maximumCrossfadeDuration
+        guard [crossfadeDuration, fadeInDuration, fadeOutDuration].allSatisfy({
+            $0 >= .zero && $0 <= Self.maximumCrossfadeDuration
+        })
         else {
             throw SettingsError.invalidValue(
                 field: "playback.transition.crossfadeDuration",
@@ -176,22 +181,31 @@ public struct TransitionPreferences: Codable, Equatable, Hashable, Sendable {
         }
         self.init(
             uncheckedGaplessPlaybackEnabled: gaplessPlaybackEnabled,
-            uncheckedCrossfadeDuration: crossfadeDuration
+            uncheckedCrossfadeDuration: crossfadeDuration,
+            fadeInDuration: fadeInDuration,
+            fadeOutDuration: fadeOutDuration
         )
     }
 
     private init(
         uncheckedGaplessPlaybackEnabled gaplessPlaybackEnabled: Bool,
-        uncheckedCrossfadeDuration crossfadeDuration: Duration
+        uncheckedCrossfadeDuration crossfadeDuration: Duration,
+        fadeInDuration: Duration = .milliseconds(80),
+        fadeOutDuration: Duration = .milliseconds(120)
     ) {
         self.gaplessPlaybackEnabled = gaplessPlaybackEnabled
         self.crossfadeDuration = crossfadeDuration
+        self.fadeInDuration = fadeInDuration
+        self.fadeOutDuration = fadeOutDuration
     }
 
     public static let defaults = Self(
         uncheckedGaplessPlaybackEnabled: true,
         uncheckedCrossfadeDuration: .zero
     )
+
+    public static let legacyDefaults = Self(uncheckedGaplessPlaybackEnabled: true,
+        uncheckedCrossfadeDuration: .zero, fadeInDuration: .zero, fadeOutDuration: .zero)
 
     public var isCrossfadeEnabled: Bool {
         crossfadeDuration > .zero
@@ -200,6 +214,8 @@ public struct TransitionPreferences: Codable, Equatable, Hashable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case gaplessPlaybackEnabled
         case crossfadeDuration
+        case fadeInDuration
+        case fadeOutDuration
     }
 
     public init(from decoder: Decoder) throws {
@@ -209,10 +225,12 @@ public struct TransitionPreferences: Codable, Equatable, Hashable, Sendable {
                 Bool.self,
                 forKey: .gaplessPlaybackEnabled
             ) ?? true,
-            crossfadeDuration: try container.decodeIfPresent(
+            crossfadeDuration: min(Self.maximumCrossfadeDuration, max(.zero, (try? container.decodeIfPresent(
                 Duration.self,
                 forKey: .crossfadeDuration
-            ) ?? .zero
+            )) ?? .zero)),
+            fadeInDuration: min(Self.maximumCrossfadeDuration, max(.zero, (try? container.decodeIfPresent(Duration.self, forKey: .fadeInDuration)) ?? .zero)),
+            fadeOutDuration: min(Self.maximumCrossfadeDuration, max(.zero, (try? container.decodeIfPresent(Duration.self, forKey: .fadeOutDuration)) ?? .zero))
         )
     }
 }
@@ -241,6 +259,7 @@ public struct PlaybackPreferences: Codable, Equatable, Hashable, Sendable {
     }
 
     public static let defaults = Self()
+    public static let legacyDefaults = Self(transition: .legacyDefaults)
 
     /// Compatibility name for callers that describe this value as the default rate.
     public var defaultRate: PlaybackRate {
@@ -263,7 +282,7 @@ public struct PlaybackPreferences: Codable, Equatable, Hashable, Sendable {
                 ?? .defaults,
             replayGain: try container.decodeIfPresent(ReplayGainMode.self, forKey: .replayGain) ?? .off,
             transition: try container.decodeIfPresent(TransitionPreferences.self, forKey: .transition)
-                ?? .defaults,
+                ?? .legacyDefaults,
             sleepTimer: try container.decodeIfPresent(SleepTimerPreferences.self, forKey: .sleepTimer)
                 ?? .defaults
         )

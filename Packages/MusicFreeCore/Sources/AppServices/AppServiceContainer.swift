@@ -38,6 +38,7 @@ public final class AppServiceContainer {
     public let libraryConversion: any LibraryConversionServing
     public let metadataEnrichment: any MetadataEnrichmentServing
     public let lyrics: any LyricsServing
+    public let plugins: (any PluginServing)?
     public let playlists: any PlaylistServing
     public let playback: any PlaybackServing
     public let sleepTimer: any SleepTimerServing
@@ -78,6 +79,7 @@ public final class AppServiceContainer {
     private var isStopped = false
 
     public init(dependencies: AppDependencies) throws {
+        plugins = dependencies.plugins
         hasLibraryRepository = dependencies.libraryRepository != nil
         let sourceRegistry = try MediaSourceRegistry(sources: dependencies.mediaSources)
         let onlineSourceService = try OnlineSourceCoordinator(
@@ -247,6 +249,7 @@ public final class AppServiceContainer {
                 let settingsResult = try await self.effectiveSettingsOrDefault()
                 try Task.checkCancellation()
                 let importPreferences = settingsResult.effective.settings.importPreferences
+                await self.plugins?.apply(settingsResult.effective.settings)
                 await self.mediaConversionScheduler?.updateMaximumConcurrency(
                     importPreferences.audioConversion.maximumConcurrency
                 )
@@ -273,6 +276,7 @@ public final class AppServiceContainer {
                     importPreferences.runtimeLyricsProviders
                 )
                 try Task.checkCancellation()
+                self.onlineAuditionCoordinator.applyTransitionSettings(settingsResult.effective.effects.transition)
                 await self.playbackCoordinator.apply(settingsResult.effective)
                 try Task.checkCancellation()
                 try await self.playbackCoordinator.start()
@@ -369,6 +373,7 @@ public final class AppServiceContainer {
             startAttempt?.task.cancel()
             maintenanceAttempt?.task.cancel()
             self.settingsTask?.cancel()
+            await self.plugins?.stop()
             self.settingsTask = nil
             let conversionPlaybackTasks = self.conversionPlaybackTasks
             conversionPlaybackTasks.forEach { $0.cancel() }
@@ -511,11 +516,13 @@ public final class AppServiceContainer {
             guard let self else { return }
             for await effective in stream {
                 guard !Task.isCancelled else { return }
+                self.onlineAuditionCoordinator.applyTransitionSettings(effective.effects.transition)
                 await self.playbackCoordinator.apply(effective)
                 await self.sleepTimerCoordinator.update(
                     preferences: effective.settings.playbackPreferences.sleepTimer
                 )
                 let importPreferences = effective.settings.importPreferences
+                await self.plugins?.apply(effective.settings)
                 await self.mediaConversionScheduler?.updateMaximumConcurrency(
                     importPreferences.audioConversion.maximumConcurrency
                 )
