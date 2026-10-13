@@ -205,6 +205,22 @@ import Testing
         await container.stop()
     }
 
+    @Test func silenceSkippingSurvivesCapabilityClippingAndCancelsPreparedSuccessor() async throws {
+        let (container, engine, _, _, ids) = try await setup()
+        defer { Task { await container.stop() } }
+        try await container.playback.execute(.playItems(itemIDs: ids, shuffle: false))
+        try await wait { engine.prepared.count == 1 }
+        let previous = engine.prepared[0].ticket
+        try await container.playback.execute(.setEffects(.init(transition: .init(mode: .gapless, skipBoundarySilence: true))))
+        try await wait { engine.prepared.count == 2 }
+        #expect(engine.prepared[1].ticket != previous)
+        #expect(engine.base.lastEffects?.transition.skipBoundarySilence == true)
+        try await container.playback.execute(.setEffects(.init(transition: .init(skipBoundarySilence: true))))
+        #expect(container.playback.snapshot.effectiveEffects.transition.mode == .disabled)
+        #expect(engine.base.lastEffects?.transition.skipBoundarySilence == true)
+        await container.stop()
+    }
+
     @Test func restoringRateThroughEffectsRetainsTransitionPreferences() async throws {
         let (container, engine, _, _, ids) = try await setup()
         defer { Task { await container.stop() } }
@@ -316,10 +332,10 @@ private actor SuspendedQueueRepository: PlaybackQueueRepository {
 }
 
 @MainActor private final class TransitionEngine: PlaybackEngine, PlaybackTransitionControlling {
-    let base = FakePlaybackEngine(capabilities: [.seeking, .variableRate, .fade, .gapless, .crossfade])
+    let base = FakePlaybackEngine(capabilities: [.seeking, .variableRate, .fade, .gapless, .crossfade, .boundarySilenceSkipping])
     private var rate: Float = 1
     var capabilities: PlaybackCapabilities {
-        rate == 1 ? base.capabilities : base.capabilities.subtracting([.fade, .gapless, .crossfade])
+        rate == 1 ? base.capabilities : base.capabilities.subtracting([.fade, .gapless, .crossfade, .boundarySilenceSkipping])
     }
     var state: PlaybackState { override ?? base.state }
     private var override: PlaybackState?

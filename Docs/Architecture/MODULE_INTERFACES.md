@@ -344,6 +344,8 @@ public protocol PlaybackEngine: AnyObject {
 
 调用不支持的命令必须返回 `PlaybackError.unsupportedCapability`，但正常 UI 不应产生该调用。
 
+歌曲过渡的 `crossfadeDuration` 上限为 12 秒，独立淡入/淡出上限为 3 秒。`boundarySilenceSkipping` 能力位对应 `TransitionPreferences` / `AudioTransitionConfiguration.skipBoundarySilence`，默认关闭，可独立于 gapless/crossfade 启用。FFmpeg 宿主在本地完整歌曲、1 倍速且 DSP 保持时序时检测首尾静音；进度保留原歌曲时间轴，已渲染时长不包含跳过的开头。
+
 ## 8. `SystemIntegrationAPI`
 
 | 文件 | Public 契约 |

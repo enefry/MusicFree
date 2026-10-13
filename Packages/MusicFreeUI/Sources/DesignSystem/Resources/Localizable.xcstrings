@@ -1,6 +1,211 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "跳过首尾静音" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skip leading and trailing silence"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ignorer les silences au début et à la fin"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stille am Anfang und Ende überspringen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Omitir el silencio inicial y final"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "曲の先頭と末尾の無音をスキップ"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "跳过首尾静音"
+          }
+        }
+      }
+    },
+    "静音跳过" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Silence skipping"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Saut des silences"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stille überspringen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Omitir silencios"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無音スキップ"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "静音跳过"
+          }
+        }
+      }
+    },
+    "跳过本地歌曲首尾的连续静音，保留曲中的停顿。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skip continuous silence at the beginning and end of local tracks while preserving pauses within the music."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ignore les silences continus au début et à la fin des morceaux locaux, en conservant les pauses musicales."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Überspringt durchgehende Stille am Anfang und Ende lokaler Titel und bewahrt Pausen innerhalb der Musik."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Omite el silencio continuo al inicio y al final de las canciones locales y conserva las pausas musicales."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ローカル曲の先頭と末尾に続く無音をスキップし、曲中の間はそのまま再生します。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "跳过本地歌曲首尾的连续静音，保留曲中的停顿。"
+          }
+        }
+      }
+    },
+    "两首歌曲重叠播放的时间，最长 12 秒；选择交叉淡化后可调整。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The time two tracks overlap, up to 12 seconds. Select crossfade to adjust it."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Durée de superposition des morceaux, jusqu’à 12 secondes. Sélectionnez le fondu enchaîné pour la régler."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Überlappungsdauer zweier Titel, bis zu 12 Sekunden. Zum Anpassen Überblenden wählen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tiempo de solapamiento de dos canciones, hasta 12 segundos. Selecciona fundido cruzado para ajustarlo."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "2曲を重ねて再生する時間です。最大12秒。クロスフェードを選択すると調整できます。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "两首歌曲重叠播放的时间，最长 12 秒；选择交叉淡化后可调整。"
+          }
+        }
+      }
+    },
+    "本地单声道和双声道曲目在 1 倍速下支持歌曲过渡和首尾静音跳过；网络播放、CUE 分段等不支持的组合使用普通切歌。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Local mono and stereo tracks support transitions and boundary silence skipping at normal speed. Network playback, CUE segments, and other unsupported combinations use standard track changes."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Les morceaux locaux mono et stéréo prennent en charge les transitions et le saut des silences aux extrémités à vitesse normale. La lecture réseau, les segments CUE et les combinaisons non compatibles utilisent le changement standard."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lokale Mono- und Stereotitel unterstützen bei normaler Geschwindigkeit Übergänge und das Überspringen von Stille am Anfang und Ende. Netzwerk-Wiedergabe, CUE-Segmente und andere nicht unterstützte Kombinationen verwenden normale Titelwechsel."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Las canciones locales mono y estéreo admiten transiciones y omisión del silencio inicial y final a velocidad normal. La reproducción en red, los segmentos CUE y otras combinaciones no compatibles usan cambios normales."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ローカルのモノラルとステレオの曲は、等倍速で曲の切り替えと先頭・末尾の無音スキップに対応します。ネットワーク再生、CUE分割など未対応の組み合わせでは通常の曲切り替えを使用します。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本地单声道和双声道曲目在 1 倍速下支持歌曲过渡和首尾静音跳过；网络播放、CUE 分段等不支持的组合使用普通切歌。"
+          }
+        }
+      }
+    },
     "Online audition playback is unavailable." : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Online audition playback is unavailable."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"在线试听播放不可用。"}},"de":{"stringUnit":{"state":"translated","value":"Die Online-Vorschauwiedergabe ist nicht verfügbar."}},"es":{"stringUnit":{"state":"translated","value":"La reproducción de vista previa en línea no está disponible."}},"fr":{"stringUnit":{"state":"translated","value":"La lecture d’extraits en ligne est indisponible."}},"ja":{"stringUnit":{"state":"translated","value":"オンライン試聴を再生できません。"}}}},
     "This item must be downloaded before playback." : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"This item must be downloaded before playback."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"此项目需要先下载才能播放。"}},"de":{"stringUnit":{"state":"translated","value":"Dieses Element muss vor der Wiedergabe heruntergeladen werden."}},"es":{"stringUnit":{"state":"translated","value":"Este elemento debe descargarse antes de reproducirlo."}},"fr":{"stringUnit":{"state":"translated","value":"Cet élément doit être téléchargé avant la lecture."}},"ja":{"stringUnit":{"state":"translated","value":"この項目は再生前にダウンロードする必要があります。"}}}},
     "The temporary audition access has expired." : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"The temporary audition access has expired."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"临时试听访问权限已过期。"}},"de":{"stringUnit":{"state":"translated","value":"Der temporäre Vorschauzugriff ist abgelaufen."}},"es":{"stringUnit":{"state":"translated","value":"El acceso temporal a la vista previa ha caducado."}},"fr":{"stringUnit":{"state":"translated","value":"L’accès temporaire à l’extrait a expiré."}},"ja":{"stringUnit":{"state":"translated","value":"一時的な試聴アクセスの有効期限が切れました。"}}}},

@@ -1668,7 +1668,8 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
             replayGain: replayGain,
             transition: AudioTransitionConfiguration(mode: transition.mode, crossfadeDuration: transition.crossfadeDuration,
                 fadeInDuration: transitionCapabilities.contains(.fade) ? requested.transition.fadeInDuration : .zero,
-                fadeOutDuration: transitionCapabilities.contains(.fade) ? requested.transition.fadeOutDuration : .zero),
+                fadeOutDuration: transitionCapabilities.contains(.fade) ? requested.transition.fadeOutDuration : .zero,
+                skipBoundarySilence: transitionCapabilities.contains(.boundarySilenceSkipping) && requested.transition.skipBoundarySilence),
             rate: rate
         )
     }
@@ -1865,6 +1866,7 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
     private func invalidateNextIfTransitionChanges(to effects: AudioEffectConfiguration) {
         let old = snapshotValue.effectiveEffects
         if old.transition.mode != effects.transition.mode || old.transition.crossfadeDuration != effects.transition.crossfadeDuration
+            || old.transition.skipBoundarySilence != effects.transition.skipBoundarySilence
             || old.rate != effects.rate { invalidateNext() }
     }
 

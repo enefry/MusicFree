@@ -195,6 +195,7 @@ final class SettingsViewModel {
     }
 
     var transitionCapabilities: PlaybackCapabilities?
+    var supportsBoundarySilenceSkipping: Bool { (transitionCapabilities ?? playbackCapabilities).contains(.boundarySilenceSkipping) }
     var supportsFade: Bool { (transitionCapabilities ?? playbackCapabilities).contains(.fade) }
 
     var supportsGapless: Bool {
@@ -726,7 +727,8 @@ final class SettingsViewModel {
                 gaplessPlaybackEnabled: isEnabled,
                 crossfadeDuration: current.playbackPreferences.transition.crossfadeDuration,
                 fadeInDuration: current.playbackPreferences.transition.fadeInDuration,
-                fadeOutDuration: current.playbackPreferences.transition.fadeOutDuration
+                fadeOutDuration: current.playbackPreferences.transition.fadeOutDuration,
+                skipBoundarySilence: current.playbackPreferences.transition.skipBoundarySilence
             )
             return AppSettings(
                 importPreferences: current.importPreferences,
@@ -742,13 +744,31 @@ final class SettingsViewModel {
         }
     }
 
+    func setSongTransition(gaplessEnabled: Bool, crossfadeDuration: Duration, fadeIn: Duration? = nil, fadeOut: Duration? = nil, skipBoundarySilence: Bool? = nil) {
+        applyEdit { current in
+            let old = current.playbackPreferences
+            let transition = try TransitionPreferences(
+                gaplessPlaybackEnabled: gaplessEnabled,
+                crossfadeDuration: crossfadeDuration,
+                fadeInDuration: fadeIn ?? old.transition.fadeInDuration,
+                fadeOutDuration: fadeOut ?? old.transition.fadeOutDuration,
+                skipBoundarySilence: skipBoundarySilence ?? old.transition.skipBoundarySilence
+            )
+            return AppSettings(importPreferences: current.importPreferences,
+                playbackPreferences: PlaybackPreferences(rate: old.rate, equalizer: old.equalizer,
+                    replayGain: old.replayGain, transition: transition, sleepTimer: old.sleepTimer),
+                storagePreferences: current.storagePreferences)
+        }
+    }
+
     func setCrossfadeDuration(_ duration: Duration) {
         applyEdit { current in
             let transition = try TransitionPreferences(
                 gaplessPlaybackEnabled: current.playbackPreferences.transition.gaplessPlaybackEnabled,
                 crossfadeDuration: duration,
                 fadeInDuration: current.playbackPreferences.transition.fadeInDuration,
-                fadeOutDuration: current.playbackPreferences.transition.fadeOutDuration
+                fadeOutDuration: current.playbackPreferences.transition.fadeOutDuration,
+                skipBoundarySilence: current.playbackPreferences.transition.skipBoundarySilence
             )
             return AppSettings(
                 importPreferences: current.importPreferences,
@@ -771,7 +791,8 @@ final class SettingsViewModel {
                 gaplessPlaybackEnabled: old.transition.gaplessPlaybackEnabled,
                 crossfadeDuration: old.transition.crossfadeDuration,
                 fadeInDuration: isFadeIn ? duration : old.transition.fadeInDuration,
-                fadeOutDuration: isFadeIn ? old.transition.fadeOutDuration : duration
+                fadeOutDuration: isFadeIn ? old.transition.fadeOutDuration : duration,
+                skipBoundarySilence: old.transition.skipBoundarySilence
             )
             return AppSettings(importPreferences: current.importPreferences,
                 playbackPreferences: PlaybackPreferences(rate: old.rate, equalizer: old.equalizer,

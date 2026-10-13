@@ -9,7 +9,7 @@
 typedef struct {
     float *pcm;
     _Atomic uint64_t read, write;
-    _Atomic int64_t total, position;
+    _Atomic int64_t total, position, sourceOffset;
     _Atomic int64_t retiredFrame;
     _Atomic bool eof;
     _Atomic bool idle;
@@ -196,6 +196,8 @@ void mft_render(MFTGraph*g,float**out,uint32_t n){
 }
 int mft_active(MFTGraph*g){return atomic_load_explicit(&g->active,memory_order_acquire);}
 int64_t mft_position(MFTGraph*g,int s){return atomic_load_explicit(&g->slots[s].position,memory_order_acquire);}
+void mft_set_source_offset(MFTGraph*g,int s,int64_t n){atomic_store_explicit(&g->slots[s].sourceOffset,n,memory_order_release);}
+int64_t mft_source_position(MFTGraph*g,int s){return mft_position(g,s)+atomic_load_explicit(&g->slots[s].sourceOffset,memory_order_acquire);}
 int64_t mft_handoff(MFTGraph*g){return atomic_load_explicit(&g->handoff,memory_order_acquire);}
 int64_t mft_frame(MFTGraph*g){return (int64_t)atomic_load_explicit(&g->clock,memory_order_acquire);}
 bool mft_halted(MFTGraph*g){return atomic_load_explicit(&g->halted,memory_order_acquire);}
@@ -203,6 +205,7 @@ bool mft_ended(MFTGraph*g){return atomic_load_explicit(&g->ended,memory_order_ac
 bool mft_idle(MFTGraph*g,int s){return atomic_load_explicit(&g->slots[s].idle,memory_order_acquire);}
 void mft_reset_slot(MFTGraph*g,int s){
     g->tailGain[s]=1;
+    atomic_store_explicit(&g->slots[s].sourceOffset,0,memory_order_release);
     Slot*p=&g->slots[s];atomic_store_explicit(&p->read,0,memory_order_release);atomic_store_explicit(&p->write,0,memory_order_release);
     atomic_store_explicit(&p->position,0,memory_order_release);atomic_store_explicit(&p->total,-1,memory_order_release);atomic_store_explicit(&p->eof,false,memory_order_release);
     atomic_store_explicit(&p->retiredFrame,-1,memory_order_release);

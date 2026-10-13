@@ -228,9 +228,9 @@ struct FFmpegPlaybackTransitionTests {
         #expect(counter.counts.maximumLive <= 2)
     }
 
-    @Test(arguments: [false, true])
-    func compressedEOFSupportsFullThreeSecondWindow(_ crossfade: Bool) async throws {
-        let url = try fixture("transition-compressed.m4a", frequency: 440, duration: 7, sampleRate: 44100, channels: 2,
+    @Test(arguments: [false, true], [3, 12])
+    func compressedEOFSupportsFullTransitionWindow(_ crossfade: Bool, _ window: Int) async throws {
+        let url = try fixture("transition-compressed.m4a", frequency: 440, duration: Double(2 * window + 1), sampleRate: 44100, channels: 2,
                               compressed: true)
         defer { try? FileManager.default.removeItem(at: url) }
         let engine = FFmpegPlaybackEngine()
@@ -238,7 +238,7 @@ struct FFmpegPlaybackTransitionTests {
         let a = item(url, id: "compressed-a"), b = item(url, id: "compressed-b")
         try await engine.prepare(a, startAt: nil)
         try engine.apply(AudioEffectConfiguration(transition: AudioTransitionConfiguration(
-            mode: crossfade ? .crossfade : .gapless, crossfadeDuration: crossfade ? .seconds(3) : nil)))
+            mode: crossfade ? .crossfade : .gapless, crossfadeDuration: crossfade ? .seconds(window) : nil)))
         let format = try #require(AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 2))
         engine.audioEngine.stop()
         try engine.audioEngine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 512)
@@ -251,7 +251,7 @@ struct FFmpegPlaybackTransitionTests {
         try engine.play()
         let buffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 512))
         let output = ContinuousOutputCapture()
-        for _ in 0..<1500 {
+        for _ in 0..<((4 * window + 3) * 100) {
             #expect(try engine.audioEngine.renderOffline(512, to: buffer) == .success)
             output.record(buffer)
             try await Task.sleep(for: .milliseconds(1))
@@ -260,12 +260,12 @@ struct FFmpegPlaybackTransitionTests {
         #expect(engine.state.itemID == b.itemID && engine.state.phase == .stopped)
         #expect(commits.count == 1 && retirements.count == 1)
         let commit = try #require(commits.first), retirement = try #require(retirements.first)
-        // Seven seconds of lossless decoded audio at the common 48 kHz clock.
-        #expect(abs(retirement.renderFrame - 336_000) <= 1)
-        #expect(retirement.renderFrame - commit.renderFrame == (crossfade ? 144_000 : 0))
+        // Decoded EOF must retain the full selected window, including 12 seconds.
+        #expect(abs(retirement.renderFrame - Int64((2 * window + 1) * 48_000)) <= 1)
+        #expect(retirement.renderFrame - commit.renderFrame == (crossfade ? Int64(window * 48_000) : 0))
         #expect(output.result.signalFrames > 450_000)
         #expect(output.result.longestInternalSilence < 0.01)
-        print("compressed EOF crossfade=\(crossfade) commit=\(commit.renderFrame) retirement=\(retirement.renderFrame) longestSilenceMs=\(output.result.longestInternalSilence * 1000)")
+        print("compressed EOF window=\(window) crossfade=\(crossfade) commit=\(commit.renderFrame) retirement=\(retirement.renderFrame) longestSilenceMs=\(output.result.longestInternalSilence * 1000)")
     }
 
     @Test(arguments: ["rate", "range", "format", "remote", "DSP-delay", "missing-file", "empty-file"])

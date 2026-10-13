@@ -157,22 +157,24 @@ public enum ReplayGainMode: String, Codable, CaseIterable, Equatable, Hashable, 
 /// User intent for gapless and crossfade transitions.
 @available(macOS 13.0, iOS 16.0, *)
 public struct TransitionPreferences: Codable, Equatable, Hashable, Sendable {
-    public static let maximumCrossfadeDuration = Duration.seconds(3)
+    public static let maximumCrossfadeDuration = Duration.seconds(12)
+    public static let maximumFadeDuration = Duration.seconds(3)
 
     public let gaplessPlaybackEnabled: Bool
     public let crossfadeDuration: Duration
     public let fadeInDuration: Duration
     public let fadeOutDuration: Duration
+    public let skipBoundarySilence: Bool
 
     public init(
         gaplessPlaybackEnabled: Bool = true,
         crossfadeDuration: Duration = .zero,
         fadeInDuration: Duration = .milliseconds(80),
-        fadeOutDuration: Duration = .milliseconds(120)
+        fadeOutDuration: Duration = .milliseconds(120),
+        skipBoundarySilence: Bool = false
     ) throws {
-        guard [crossfadeDuration, fadeInDuration, fadeOutDuration].allSatisfy({
-            $0 >= .zero && $0 <= Self.maximumCrossfadeDuration
-        })
+        guard crossfadeDuration >= .zero && crossfadeDuration <= Self.maximumCrossfadeDuration,
+              [fadeInDuration, fadeOutDuration].allSatisfy({ $0 >= .zero && $0 <= Self.maximumFadeDuration })
         else {
             throw SettingsError.invalidValue(
                 field: "playback.transition.crossfadeDuration",
@@ -183,7 +185,8 @@ public struct TransitionPreferences: Codable, Equatable, Hashable, Sendable {
             uncheckedGaplessPlaybackEnabled: gaplessPlaybackEnabled,
             uncheckedCrossfadeDuration: crossfadeDuration,
             fadeInDuration: fadeInDuration,
-            fadeOutDuration: fadeOutDuration
+            fadeOutDuration: fadeOutDuration,
+            skipBoundarySilence: skipBoundarySilence
         )
     }
 
@@ -191,12 +194,14 @@ public struct TransitionPreferences: Codable, Equatable, Hashable, Sendable {
         uncheckedGaplessPlaybackEnabled gaplessPlaybackEnabled: Bool,
         uncheckedCrossfadeDuration crossfadeDuration: Duration,
         fadeInDuration: Duration = .milliseconds(80),
-        fadeOutDuration: Duration = .milliseconds(120)
+        fadeOutDuration: Duration = .milliseconds(120),
+        skipBoundarySilence: Bool = false
     ) {
         self.gaplessPlaybackEnabled = gaplessPlaybackEnabled
         self.crossfadeDuration = crossfadeDuration
         self.fadeInDuration = fadeInDuration
         self.fadeOutDuration = fadeOutDuration
+        self.skipBoundarySilence = skipBoundarySilence
     }
 
     public static let defaults = Self(
@@ -216,6 +221,7 @@ public struct TransitionPreferences: Codable, Equatable, Hashable, Sendable {
         case crossfadeDuration
         case fadeInDuration
         case fadeOutDuration
+        case skipBoundarySilence
     }
 
     public init(from decoder: Decoder) throws {
@@ -229,8 +235,9 @@ public struct TransitionPreferences: Codable, Equatable, Hashable, Sendable {
                 Duration.self,
                 forKey: .crossfadeDuration
             )) ?? .zero)),
-            fadeInDuration: min(Self.maximumCrossfadeDuration, max(.zero, (try? container.decodeIfPresent(Duration.self, forKey: .fadeInDuration)) ?? .zero)),
-            fadeOutDuration: min(Self.maximumCrossfadeDuration, max(.zero, (try? container.decodeIfPresent(Duration.self, forKey: .fadeOutDuration)) ?? .zero))
+            fadeInDuration: min(Self.maximumFadeDuration, max(.zero, (try? container.decodeIfPresent(Duration.self, forKey: .fadeInDuration)) ?? .zero)),
+            fadeOutDuration: min(Self.maximumFadeDuration, max(.zero, (try? container.decodeIfPresent(Duration.self, forKey: .fadeOutDuration)) ?? .zero)),
+            skipBoundarySilence: try container.decodeIfPresent(Bool.self, forKey: .skipBoundarySilence) ?? false
         )
     }
 }

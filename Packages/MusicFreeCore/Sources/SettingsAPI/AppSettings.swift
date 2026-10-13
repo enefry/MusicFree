@@ -51,7 +51,8 @@ public struct AppSettings: Codable, Equatable, Hashable, Sendable {
             gaplessPlaybackEnabled: playbackPreferences.transition.gaplessPlaybackEnabled,
             crossfadeDuration: playbackPreferences.transition.crossfadeDuration,
             fadeInDuration: playbackPreferences.transition.fadeInDuration,
-            fadeOutDuration: playbackPreferences.transition.fadeOutDuration
+            fadeOutDuration: playbackPreferences.transition.fadeOutDuration,
+            skipBoundarySilence: playbackPreferences.transition.skipBoundarySilence
         )
         _ = try SleepTimerPreferences(schedules: playbackPreferences.sleepTimer.schedules)
         _ = try StoragePreferences(

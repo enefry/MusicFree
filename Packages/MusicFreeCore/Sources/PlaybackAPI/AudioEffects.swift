@@ -96,16 +96,18 @@ public struct AudioTransitionConfiguration: Codable, Equatable, Hashable, Sendab
   public let crossfadeDuration: Duration?
   public let fadeInDuration: Duration
   public let fadeOutDuration: Duration
+  public let skipBoundarySilence: Bool
 
   public init(
     mode: AudioTransitionMode = .disabled,
     crossfadeDuration: Duration? = nil,
     fadeInDuration: Duration = .zero,
-    fadeOutDuration: Duration = .zero
+    fadeOutDuration: Duration = .zero,
+    skipBoundarySilence: Bool = false
   ) {
     if mode == .crossfade {
       precondition(
-        (crossfadeDuration ?? .zero) > .zero && (crossfadeDuration ?? .zero) <= .seconds(3),
+        (crossfadeDuration ?? .zero) > .zero && (crossfadeDuration ?? .zero) <= .seconds(12),
         "AudioTransitionConfiguration crossfade duration must be positive"
       )
     }
@@ -114,20 +116,22 @@ public struct AudioTransitionConfiguration: Codable, Equatable, Hashable, Sendab
     precondition(fadeOutDuration >= .zero && fadeOutDuration <= .seconds(3))
     self.fadeInDuration = fadeInDuration
     self.fadeOutDuration = fadeOutDuration
+    self.skipBoundarySilence = skipBoundarySilence
     self.crossfadeDuration = mode == .crossfade ? crossfadeDuration : nil
   }
 
   public static let disabled = Self()
 
-  private enum CodingKeys: String, CodingKey { case mode, crossfadeDuration, fadeInDuration, fadeOutDuration }
+  private enum CodingKeys: String, CodingKey { case mode, crossfadeDuration, fadeInDuration, fadeOutDuration, skipBoundarySilence }
   public init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: CodingKeys.self)
     let mode = try c.decode(AudioTransitionMode.self, forKey: .mode)
-    let crossfade = min(.seconds(3), max(.zero, try c.decodeIfPresent(Duration.self, forKey: .crossfadeDuration) ?? .zero))
+    let crossfade = min(.seconds(12), max(.zero, try c.decodeIfPresent(Duration.self, forKey: .crossfadeDuration) ?? .zero))
     self.init(mode: mode == .crossfade && crossfade == .zero ? .disabled : mode,
               crossfadeDuration: crossfade,
               fadeInDuration: min(.seconds(3), max(.zero, try c.decodeIfPresent(Duration.self, forKey: .fadeInDuration) ?? .zero)),
-              fadeOutDuration: min(.seconds(3), max(.zero, try c.decodeIfPresent(Duration.self, forKey: .fadeOutDuration) ?? .zero)))
+              fadeOutDuration: min(.seconds(3), max(.zero, try c.decodeIfPresent(Duration.self, forKey: .fadeOutDuration) ?? .zero)),
+              skipBoundarySilence: try c.decodeIfPresent(Bool.self, forKey: .skipBoundarySilence) ?? false)
   }
 }
 

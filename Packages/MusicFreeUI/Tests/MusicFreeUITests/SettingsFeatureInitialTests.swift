@@ -877,6 +877,31 @@ func settingsFeatureKeepsUnsupportedPreferences() async throws {
 }
 
 @MainActor
+@Suite struct SettingsBoundarySilenceTests {
+    @Test("Silence skipping survives independent transition edits and a 12-second crossfade")
+    func settingsFeaturePreservesSilenceSkipping() async throws {
+        let store = SettingsFeatureTestStore(playbackCapabilities: [.fade, .gapless, .crossfade, .boundarySilenceSkipping])
+        let viewModel = SettingsViewModel(store: store)
+        await viewModel.load()
+        #expect(viewModel.supportsBoundarySilenceSkipping)
+        viewModel.setSongTransition(gaplessEnabled: true, crossfadeDuration: .zero, skipBoundarySilence: true)
+        await viewModel.waitForPendingWork()
+        viewModel.setCrossfadeDuration(.seconds(12))
+        await viewModel.waitForPendingWork()
+        viewModel.setFadeDuration(.seconds(1), isFadeIn: true)
+        await viewModel.waitForPendingWork()
+        viewModel.setGaplessPlaybackEnabled(false)
+        await viewModel.waitForPendingWork()
+        #expect(store.current.playbackPreferences.transition.skipBoundarySilence)
+        #expect(store.current.playbackPreferences.transition.crossfadeDuration == .seconds(12))
+        viewModel.setSongTransition(gaplessEnabled: false, crossfadeDuration: .zero)
+        await viewModel.waitForPendingWork()
+        #expect(store.current.playbackPreferences.transition.skipBoundarySilence)
+    }
+
+}
+
+@MainActor
 @Test("Settings persists fade controls independently from crossfade and gapless")
 func settingsFeatureEditsIndependentTransitionDurations() async throws {
     let store = SettingsFeatureTestStore(playbackCapabilities: [.fade, .gapless, .crossfade])

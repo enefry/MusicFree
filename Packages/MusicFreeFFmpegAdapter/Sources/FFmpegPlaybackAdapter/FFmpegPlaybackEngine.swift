@@ -24,7 +24,7 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
         if configuredRate == 1, decoder.map({ $0.format.channelCount <= 8 }) ?? true {
             result.insert(.fade)
             if (currentItem.map(supportsLocalTransition) ?? true), pcmProcessorFactory == nil || processorPreservesTiming {
-                result.formUnion([.gapless, .crossfade])
+                result.formUnion([.gapless, .crossfade, .boundarySilenceSkipping])
             }
         }
         return result
@@ -592,10 +592,17 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
         if effects.replayGain.mode != .disabled {
             throw PlaybackError.unsupportedCapability(.replayGain)
         }
-        if transitionConfiguration.mode != effects.transition.mode || transitionConfiguration.crossfadeDuration != effects.transition.crossfadeDuration { cancelNext() }
+        let rebuildBoundaries = transitionConfiguration.skipBoundarySilence != effects.transition.skipBoundarySilence
+        let rebuildCapacity = transitionGraph.map { !$0.supportsOverlap(effects.transition.crossfadeDuration ?? .zero) } ?? false
+        if transitionConfiguration.mode != effects.transition.mode || transitionConfiguration.crossfadeDuration != effects.transition.crossfadeDuration || rebuildBoundaries { cancelNext() }
         transitionConfiguration = effects.transition
         transitionGraph?.configureFadeOut(effects.rate == 1 ? effects.transition.fadeOutDuration : .zero)
         try setRate(effects.rate)
+        if (rebuildBoundaries || rebuildCapacity), let decoder, let item = currentItem, configuredRate == 1 {
+            let position = displayPosition()
+            restartFeeder(decoder: decoder, from: position, generation: state.generation, itemID: item.itemID)
+            updateOutput()
+        }
         configuredEqualizer = effects.equalizer
         applyConfiguredEqualizer()
     }
@@ -820,6 +827,9 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
             do { graph = try FFmpegAudioTransitionGraph(decoder: decoder, item: item,
                 start: initialSeek, frameCount: frameCount ?? -1, queue: currentDecodeQueue ?? decodeQueue,
                 processorFactory: pcmProcessorFactory,
+                maximumOverlap: transitionConfiguration.crossfadeDuration ?? .zero,
+                skipBoundarySilence: transitionConfiguration.skipBoundarySilence && supportsLocalTransition(item) &&
+                    (pcmProcessorFactory == nil || processorPreservesTiming),
                 onEnd: { [weak self] in
                     guard let self, epoch == self.feederEpoch, let itemID = self.state.itemID else { return }
                     self.handlePlaybackEnded(epoch: epoch, generation: self.state.generation, itemID: itemID)
@@ -901,7 +911,7 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
         nextPreparationID = nil
         preparedNextTicket = nil
         if let graph = transitionGraph {
-            renderedDurationBase += graph.position
+            renderedDurationBase += graph.playedDuration
             audioEngine.stop()
             graph.cancel()
             audioEngine.disconnectNodeOutput(graph.node)

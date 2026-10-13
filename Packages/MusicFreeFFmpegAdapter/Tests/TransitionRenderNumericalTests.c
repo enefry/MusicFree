@@ -166,6 +166,14 @@ static void lateArmPreservesNaturalTail(void){
     for(int i=1;i<224;i++)assert(pcm[i]<=pcm[i-1]+0.00001);
     assert(mft_active(g)==1);mft_destroy(g);
 }
+static void skippedSourceOffsetDoesNotCountAsPlayback(void){
+    MFTGraph*g=mft_create(1,16);push(g,0,1,3);mft_set_eof(g,0);
+    mft_set_source_offset(g,0,48000);mft_command(g,0,false);
+    float pcm[4],*out[]={pcm};mft_render(g,out,4);
+    assert(mft_position(g,0)==3&&mft_source_position(g,0)==48003&&mft_frame(g)==3);
+    assert(mft_ended(g));mft_reset_slot(g,0);
+    assert(mft_source_position(g,0)==0);mft_destroy(g);
+}
 int main(void){
     int frames[]={0,3840,5760,144000};
     for(int i=0;i<4;i++){fade(frames[i],false);fade(frames[i],true);}
@@ -173,7 +181,8 @@ int main(void){
     disarmPreservesFadeAndClock();disarmDuringOverlapPreservesBothTails();
     decodedEOFRevealsBoundary(0);decodedEOFRevealsBoundary(256);decodedEOFRevealsBoundary(900);
     concurrentCancellationPublishesClaimedHandoff();lateArmPreservesNaturalTail();
+    skippedSourceOffsetDoesNotCountAsPlayback();
     for(int i=0;i<=10000;i++){double t=(double)i/10000;
         assert(mft_mix_gain(t,false)+mft_mix_gain(t,true)<=1.000001);}
-    puts("21 numerical cases passed: 8 envelopes, gapless, crossfade, cancel/resume, starvation/positive handoff, repeated slot reuse, disarm/fade clock, overlap disarm/fade, 3 late-EOF boundaries, 5000 concurrent cancellations, late-arm tail continuity, 10001 correlated mix peaks");
+    puts("22 numerical cases passed: 8 envelopes, gapless, crossfade, cancel/resume, starvation/positive handoff, repeated slot reuse, disarm/fade clock, overlap disarm/fade, 3 late-EOF boundaries, 5000 concurrent cancellations, late-arm tail continuity, skipped source offset, 10001 correlated mix peaks");
 }

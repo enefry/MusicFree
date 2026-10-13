@@ -19,6 +19,9 @@ void mft_command(MFTGraph *g, uint32_t frames, bool pause);
 void mft_render(MFTGraph *g, float **planes, uint32_t frames);
 int mft_active(MFTGraph *g);
 int64_t mft_position(MFTGraph *g, int slot);
+// Original source timeline offset, published by the producer before its PCM.
+void mft_set_source_offset(MFTGraph *g, int slot, int64_t frames);
+int64_t mft_source_position(MFTGraph *g, int slot);
 int64_t mft_handoff(MFTGraph *g);
 int64_t mft_frame(MFTGraph *g);
 bool mft_halted(MFTGraph *g);

@@ -94,13 +94,13 @@ final class FFmpegAudioTransitionGraph {
     final class Storage: @unchecked Sendable {
         let handle: OpaquePointer
         let capacity: UInt32
-        init(format: AVAudioFormat) throws {
-            // Decode beyond the maximum 3-second fade window. The extra two
+        init(format: AVAudioFormat, overlapSeconds: Double) throws {
+            // Decode beyond the selected overlap (up to 12 seconds). The extra two
             // blocks allow EOF discovery before its overlap starts, even when
             // the last decoded block is full. Memory stays bounded per slot.
             guard format.sampleRate.isFinite, format.sampleRate > 0, format.sampleRate <= 384_000,
                   (1...8).contains(format.channelCount) else { throw FFmpegAudioDecoder.DecoderError.unsupportedFormat }
-            capacity = UInt32(3 * format.sampleRate) + 2 * 8192
+            capacity = UInt32(max(3, min(12, overlapSeconds)) * format.sampleRate) + 2 * 8192
             guard let handle = mft_create(format.channelCount, capacity) else {
                 throw PlaybackError.engineFailure(code: "transition_allocation_failed")
             }
@@ -116,20 +116,23 @@ final class FFmpegAudioTransitionGraph {
         let slot: Int32
         let start: Duration?
         let total: Int64
+        let skipBoundarySilence: Bool
         let format: AVAudioFormat
         private var timer: DispatchSourceTimer?
         private var started = false
         private var cancelled = false
         private let processorFactory: FFmpegPCMProcessorFactory?
         private var reader: TransitionPCMReader?
+        private let scanCancellation = FFmpegBoundaryScanCancellation()
         let onError: @Sendable (Error) -> Void
 
         init(storage: Storage, decoder: FFmpegAudioDecoder, slot: Int32,
-             start: Duration?, total: Int64, format: AVAudioFormat, queue: DispatchQueue, processorFactory: FFmpegPCMProcessorFactory?, onError: @escaping @Sendable (Error) -> Void) {
+             start: Duration?, total: Int64, skipBoundarySilence: Bool, format: AVAudioFormat, queue: DispatchQueue, processorFactory: FFmpegPCMProcessorFactory?, onError: @escaping @Sendable (Error) -> Void) {
             self.storage = storage; self.decoder = decoder; self.slot = slot
             self.start = start; self.total = total; self.format = format; self.onError = onError
             self.queue = queue
             self.processorFactory = processorFactory
+            self.skipBoundarySilence = skipBoundarySilence
         }
 
         func begin() {
@@ -142,8 +145,9 @@ final class FFmpegAudioTransitionGraph {
             }
         }
         private func stop() { cancelled = true; timer?.cancel(); timer = nil; reader?.reset(); reader = nil }
-        func cancel() { queue.async { [self] in stop() } }
+        func cancel() { scanCancellation.cancel(); queue.async { [self] in stop() } }
         func cancelAndWait() async {
+            scanCancellation.cancel()
             await withCheckedContinuation { continuation in
                 queue.async { [self] in stop(); continuation.resume() }
             }
@@ -153,8 +157,28 @@ final class FFmpegAudioTransitionGraph {
             do {
                 if !started {
                     started = true
-                    if let start { try decoder.seek(to: start) }
-                    let reader = try TransitionPCMReader(decoder: decoder, format: format, frameCount: total,
+                    var frameCount = total
+                    if skipBoundarySilence {
+                        // Analysis failures fall back to the original song. All
+                        // seek/decode work stays serialized with this producer.
+                        let boundaries = (try? FFmpegSilenceBoundaries.analyze(decoder, isCancelled: {
+                            self.scanCancellation.isCancelled
+                        })) ?? .init()
+                        if scanCancellation.isCancelled { stop(); return }
+                        let origin = start ?? .zero
+                        let rate = decoder.format.sampleRate
+                        let originSeconds = Double(origin.components.seconds) + Double(origin.components.attoseconds) / 1e18
+                        let originFrame = Int64((originSeconds * rate).rounded(.up))
+                        // A seek into the outro remains at the requested point.
+                        // Likewise, middle-of-song silence is never trimmed.
+                        let canTrim = boundaries.endFrame.map { $0 > originFrame } ?? true
+                        let firstFrame = canTrim ? max(originFrame, boundaries.startFrame) : originFrame
+                        try decoder.seek(to: .seconds(Double(firstFrame) / rate))
+                        if canTrim, let end = boundaries.endFrame { frameCount = end - firstFrame }
+                        mft_set_source_offset(storage.handle, slot,
+                            Int64((Double(firstFrame - originFrame) * format.sampleRate / rate).rounded()))
+                    } else if let start { try decoder.seek(to: start) }
+                    let reader = try TransitionPCMReader(decoder: decoder, format: format, frameCount: frameCount,
                                                          processorFactory: processorFactory)
                     self.reader = reader
                     mft_set_total(storage.handle, slot, reader.renderFrameCount)
@@ -199,13 +223,18 @@ final class FFmpegAudioTransitionGraph {
     private let onEnd: () -> Void
     private let onError: (Error) -> Void
     private let processorFactory: FFmpegPCMProcessorFactory?
+    private let skipBoundarySilence: Bool
     var onSecondaryFailure: (() -> Void)?
     var onHalted: (() -> Void)?
     var onStarvationChanged: ((Bool) -> Void)?
     var onRetirement: ((PlaybackTransitionTicket, Int64, Duration, PlaybackCompletionReason) -> Void)?
     var isOverlapping: Bool { mft_overlapping(storage.handle) }
     var activeSlot: Int32 { Int32(mft_active(storage.handle)) }
-    var position: Duration { .seconds(Double(mft_position(storage.handle, activeSlot)) / format.sampleRate) }
+    var position: Duration { .seconds(Double(mft_source_position(storage.handle, activeSlot)) / format.sampleRate) }
+    var playedDuration: Duration { .seconds(Double(mft_position(storage.handle, activeSlot)) / format.sampleRate) }
+    func supportsOverlap(_ duration: Duration) -> Bool {
+        seconds(duration) * format.sampleRate <= Double(storage.capacity - 2 * 8192)
+    }
 
     static func renderFormat(for source: AVAudioFormat) -> AVAudioFormat {
         // Mono and stereo tracks share one bus, including low-rate BVT/WMA.
@@ -217,12 +246,15 @@ final class FFmpegAudioTransitionGraph {
 
     init(decoder: FFmpegAudioDecoder, item: PlaybackItem, start: Duration?, frameCount: Int64, queue: DispatchQueue,
          processorFactory: FFmpegPCMProcessorFactory?,
+         maximumOverlap: Duration = .seconds(3), skipBoundarySilence: Bool = false,
          onEnd: @escaping () -> Void, onError: @escaping (Error) -> Void) throws {
         let format = Self.renderFormat(for: decoder.format)
         self.format = format
         self.onEnd = onEnd; self.onError = onError
         self.processorFactory = processorFactory
-        let storage = try Storage(format: format)
+        self.skipBoundarySilence = skipBoundarySilence
+        let overlapSeconds = Double(maximumOverlap.components.seconds) + Double(maximumOverlap.components.attoseconds) / 1e18
+        let storage = try Storage(format: format, overlapSeconds: overlapSeconds)
         self.storage = storage
         node = Self.makeNode(format: format, storage: storage)
         items[0] = item
@@ -249,7 +281,7 @@ final class FFmpegAudioTransitionGraph {
         let producerID = UUID()
         producerIDs[Int(slot)] = producerID
         let producer = Producer(storage: storage, decoder: decoder, slot: slot, start: start,
-                                total: frameCount, format: format, queue: queue,
+                                total: frameCount, skipBoundarySilence: skipBoundarySilence, format: format, queue: queue,
                                 processorFactory: processorFactory) { [weak self] error in
             Task { @MainActor [weak self] in
                 guard let self, !self.cancelled, self.producerIDs[Int(slot)] == producerID else { return }
@@ -300,7 +332,7 @@ final class FFmpegAudioTransitionGraph {
         let availableA = max(0, Int64(seconds(overlap) * format.sampleRate))
         // The render thread clamps short tracks after decoded totals become
         // available, including totals learned at EOF after arming.
-        mft_arm(storage.handle, slot, UInt32(min(availableA, Int64(3 * format.sampleRate))))
+        mft_arm(storage.handle, slot, UInt32(min(availableA, Int64(12 * format.sampleRate))))
     }
 
     func cancelNext(quiesceRender: () -> Void) {
