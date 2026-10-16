@@ -764,6 +764,18 @@ final class SettingsViewModel {
         }
     }
 
+    func resetEqualizer() {
+        applyEdit { current in
+            let old = current.playbackPreferences
+            let bands = try self.equalizerBands.map { try EqualizerBand(frequencyHz: Int($0.centerFrequencyHz.rounded()), gain: .zero) }
+            let equalizer = try EqualizerPreferences(isEnabled: old.equalizer.isEnabled, preamp: .zero, bands: bands)
+            return AppSettings(importPreferences: current.importPreferences,
+                playbackPreferences: PlaybackPreferences(rate: old.rate, equalizer: equalizer,
+                    replayGain: old.replayGain, transition: old.transition, sleepTimer: old.sleepTimer),
+                storagePreferences: current.storagePreferences)
+        }
+    }
+
     func setCrossfadeDuration(_ duration: Duration) {
         applyEdit { current in
             let transition = try TransitionPreferences(
@@ -1550,6 +1562,8 @@ final class SettingsViewModel {
         }
     }
 
+    func waitForMetadataAuthorization() async { await metadataActionTask?.value }
+
     func startMusicKitMetadataScan() {
         startMetadataScan()
     }
@@ -1956,7 +1970,9 @@ final class SettingsViewModel {
             if localWrite == nil {
                 localWrite = recentlyWrittenSettings.first { validated.settingPluginPreferences($0.pluginPreferences) == $0 }
             }
-            if let localWrite, validated != localWrite {
+            // A service may broadcast the committed write before save() returns.
+            // Recognize an unchanged echo too, so it cannot cancel a newer edit.
+            if let localWrite {
                 recentlyWrittenSettings.remove(localWrite)
                 committedSettings = validated
                 if settings == localWrite { settings = validated }

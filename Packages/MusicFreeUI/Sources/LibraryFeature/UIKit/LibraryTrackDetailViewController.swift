@@ -3,6 +3,7 @@ import DesignSystem
 import LibraryAPI
 import MediaSourceAPI
 import MusicDomain
+import MediaSharing
 import UIKit
 
 /// Native UIKit detail surface for one library track.
@@ -456,9 +457,9 @@ public final class LibraryTrackDetailViewController: UIViewController {
                 self.configureNavigationItems()
             }
             do {
-                let urls = try await mediaShareResolver.urls(for: [track])
+                let preparedShare = try await mediaShareResolver.prepare(for: [track])
                 try Task.checkCancellation()
-                let activity = UIActivityViewController(activityItems: urls, applicationActivities: nil)
+                let activity = MediaShareActivityViewController(share: preparedShare)
                 if let popover = activity.popoverPresentationController {
                     popover.barButtonItem = self.navigationItem.rightBarButtonItem
                 }

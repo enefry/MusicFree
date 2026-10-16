@@ -58,14 +58,19 @@ internal actor ImportCoordinator: ImportServing {
         sessions[request.importID] = ImportSessionSnapshot(importID: request.importID)
         publish(sessions[request.importID]!)
 
-        let conversionPreferences = (try? await settingsRepository?.load())?
-            .importPreferences.audioConversion ?? .defaults
+        let importPreferences = (try? await settingsRepository?.load())?.importPreferences ?? .defaults
+        let conversionPreferences = importPreferences.audioConversion
         await conversionScheduler?.updateMaximumConcurrency(
             conversionPreferences.maximumConcurrency
         )
-        let effectiveRequest = request.audioConversionPolicy == nil
-            ? request.settingAudioConversionPolicy(conversionPreferences.importPolicy)
-            : request
+        // Explicit reporting (online imports use it for result accounting) is
+        // retained. Picker and Documents requests inherit the user's policy.
+        let duplicatePolicy: MediaImportDuplicatePolicy = request.duplicatePolicy == .report
+            || importPreferences.duplicatePolicy == .reportExisting ? .report : .skip
+        let effectiveRequest = MediaImportRequest(importID: request.importID, urls: request.urls,
+            duplicatePolicy: duplicatePolicy, metadataHints: request.metadataHints,
+            allowsFolderFailureConfirmation: request.allowsFolderFailureConfirmation,
+            audioConversionPolicy: request.audioConversionPolicy ?? conversionPreferences.importPolicy)
         let upstream = importer.importMedia(effectiveRequest)
         Self.logger.debug("coordinator connected upstream id=\(request.importID.uuidString)")
         return AsyncThrowingStream { [weak self] continuation in

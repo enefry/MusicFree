@@ -1,4 +1,5 @@
 import AppServices
+import AVFoundation
 import Foundation
 import MediaSourceAPI
 import MusicDomain
@@ -269,6 +270,77 @@ private func makeLongWAV() -> Data {
         append(sample)
     }
     return data
+}
+
+@MainActor
+@Suite(.serialized) struct FFmpegAuditionControlEnvelopeTests {
+    @Test("Network audition controls preserve configured and transport output envelopes",
+          arguments: ["pause", "stop", "close", "next", "select", "start"], [false, true])
+    func networkAuditionEnvelopes(_ control: String, _ supportsRange: Bool) async throws {
+        let server = try LoopbackAudioHTTPServer(audio: makeLongWAV(), supportsRange: supportsRange, contentType: "audio/wav")
+        let url = try server.start(fileName: "fixture.wav")
+        defer { server.stop() }
+        let credential = try DSAudioCredential(account: "fixture", password: "fixture")
+        let sourceID = MediaSourceID("dsaudio.envelope.loopback")
+        let sources = LoopbackDSOnlineSources(transport: DSAudioHTTPTransport(
+            credentialProvider: LoopbackDSCredentialProvider(secretValue: credential.encodedSecret),
+            httpClient: LoopbackDSAPIClient()), configuration: try DSAudioSourceConfiguration(
+                sourceID: sourceID, displayName: "Envelope", endpoint: url.deletingLastPathComponent(), credentialRecordID: "fixture"))
+        let engine = FFmpegPlaybackEngine()
+        defer { engine.dispose() }
+        let coordinator = OnlineAuditionCoordinator(onlineSources: sources, engine: engine)
+        coordinator.applyTransitionSettings(AudioTransitionConfiguration(fadeInDuration: .seconds(1), fadeOutDuration: .seconds(1)))
+        let items = ["a", "b"].map { SourceCatalogItem(id: SourceObjectID(sourceID: sourceID, externalID: $0), kind: .track, displayName: $0, isPlayable: true) }
+        let format = try #require(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2))
+        try engine.audioEngine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 512)
+        try await coordinator.start(sourceID: sourceID, items: items, startingItemID: items[0].id)
+        try await Task.sleep(for: .milliseconds(100))
+        let buffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 512))
+        func capture() async throws -> (early: Double, late: Double) {
+            var energy: [Double] = []
+            for _ in 0..<110 {
+                var sum = 0.0
+                if engine.audioEngine.isRunning {
+                    #expect(try engine.audioEngine.renderOffline(512, to: buffer) == .success)
+                    let data = try #require(buffer.floatChannelData)
+                    for i in 0..<Int(buffer.frameLength) { sum += Double(data[0][i] * data[0][i]) }
+                }
+                energy.append(sum / 512)
+                try await Task.sleep(for: .milliseconds(1))
+            }
+            return (energy[0..<10].reduce(0, +), energy[90..<100].reduce(0, +))
+        }
+        let initial = try await capture()
+        #expect(initial.early < initial.late * 0.1 && initial.late > 0.1)
+        let task = Task {
+            switch control {
+            case "pause": await coordinator.pause()
+            case "stop": await coordinator.stop()
+            case "close": await coordinator.close()
+            case "next": try await coordinator.next()
+            case "start": try await coordinator.start(sourceID: sourceID, items: items, startingItemID: items[1].id)
+            default: try await coordinator.select(itemID: items[1].id)
+            }
+        }
+        try await Task.sleep(for: .milliseconds(20))
+        let outgoing = try await capture()
+        print("AUDITION_ENVELOPE \(control) range=\(supportsRange) start=\(initial) outgoing=\(outgoing)")
+        #expect(outgoing.early > 0.1 && outgoing.late < outgoing.early * 0.1)
+        try await task.value
+        if control == "pause" {
+            try await coordinator.resume()
+        }
+        if !["stop", "close"].contains(control) {
+            try await Task.sleep(for: .milliseconds(50))
+            // The early window spans 107 ms, so an 80 ms resume fade reaches
+            // full gain within it. New tracks retain the one-second fade.
+            let incoming = try await capture()
+            let earlyEnergyLimit = control == "pause" ? 0.8 : 0.1
+            #expect(incoming.early < incoming.late * earlyEnergyLimit && incoming.late > 0.1)
+        }
+        await coordinator.shutdown()
+        #expect(!engine.audioEngine.isRunning)
+    }
 }
 
 @MainActor

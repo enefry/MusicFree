@@ -1,5 +1,7 @@
+@testable import BuiltinPluginSettings
 @testable import SettingsFeature
 import AppServices
+import DesignSystem
 import Foundation
 import LibraryAPI
 import MusicDomain
@@ -7,6 +9,7 @@ import PlaybackAPI
 import SettingsAPI
 import SystemIntegrationAPI
 import Testing
+import UIKit
 import MusicFreePluginAPI
 
 @MainActor
@@ -21,6 +24,14 @@ private final class SettingsFeatureTestStore: SettingsFeatureStore {
     var resetCount = 0
     var nextLoadError: Error?
     var nextSaveError: Error?
+    var suspendNextSave = false
+    private var saveContinuation: CheckedContinuation<Void, Never>?
+    var isSaveSuspended: Bool { saveContinuation != nil }
+
+    func resumeSave() {
+        saveContinuation?.resume()
+        saveContinuation = nil
+    }
     var nextResetError: Error?
     var storageUsageValue = StorageUsageSnapshot()
     var storageUsageCallCount = 0
@@ -54,6 +65,10 @@ private final class SettingsFeatureTestStore: SettingsFeatureStore {
     }
 
     func save(_ settings: AppSettings) async throws {
+        if suspendNextSave {
+            suspendNextSave = false
+            await withCheckedContinuation { saveContinuation = $0 }
+        }
         if let nextSaveError {
             self.nextSaveError = nil
             throw nextSaveError
@@ -194,9 +209,10 @@ private actor SettingsMetadataEnrichmentTestService: MetadataEnrichmentServing {
 
     init(
         authorization: MetadataEnrichmentAuthorizationStatus,
-        requestedAuthorization: MetadataEnrichmentAuthorizationStatus? = nil
+        requestedAuthorization: MetadataEnrichmentAuthorizationStatus? = nil,
+        providerStatuses: [MetadataEnrichmentProviderSnapshot] = []
     ) {
-        self.current = MetadataEnrichmentSnapshot(authorization: authorization)
+        self.current = MetadataEnrichmentSnapshot(authorization: authorization, providerStatuses: providerStatuses)
         self.requestedAuthorization = requestedAuthorization ?? authorization
     }
 
@@ -214,7 +230,8 @@ private actor SettingsMetadataEnrichmentTestService: MetadataEnrichmentServing {
     func requestAuthorization() async -> MetadataEnrichmentAuthorizationStatus {
         current = MetadataEnrichmentSnapshot(
             authorization: requestedAuthorization,
-            scan: current.scan
+            scan: current.scan,
+            providerStatuses: current.providerStatuses
         )
         continuation?.yield(current)
         return requestedAuthorization
@@ -225,7 +242,8 @@ private actor SettingsMetadataEnrichmentTestService: MetadataEnrichmentServing {
         current = MetadataEnrichmentSnapshot(
             isEnabled: enabled && current.authorization == .authorized,
             authorization: current.authorization,
-            scan: current.scan
+            scan: current.scan,
+            providerStatuses: current.providerStatuses
         )
         continuation?.yield(current)
     }
@@ -298,6 +316,24 @@ private actor SettingsLyricsTestService: LyricsServing {
     ) async throws -> TrackLyrics? {
         nil
     }
+}
+
+private actor SettingsPluginVisibilityTestService: SettingsServing, PluginServing {
+    private var current: AppSettings
+    private let values: [PluginSnapshot]
+    init(settings: AppSettings, snapshots: [PluginSnapshot]) {
+        current = settings; values = snapshots
+    }
+    func load() -> AppSettings { current }
+    func update(_ settings: AppSettings) { current = settings }
+    func reset() { current = .defaults }
+    func effective() -> EffectivePlaybackSettings {
+        .init(settings: current, effects: .neutral, playbackCapabilities: [], systemCapabilities: .init())
+    }
+    func makeChangeStream() -> AsyncStream<AppSettings> { AsyncStream { $0.finish() } }
+    func apply(_ settings: AppSettings) { current = settings }
+    func snapshots() -> [PluginSnapshot] { values }
+    func stop() {}
 }
 
 @MainActor
@@ -878,6 +914,49 @@ func settingsFeatureKeepsUnsupportedPreferences() async throws {
 
 @MainActor
 @Suite struct SettingsBoundarySilenceTests {
+    @Test("Smart mode retains its cap and intent across disabling, saving, and reopening")
+    func smartCrossfadePersistsAndDisplaysCap() async throws {
+        let store = SettingsFeatureTestStore(playbackCapabilities: [.fade, .gapless, .crossfade, .boundarySilenceSkipping, .smartCrossfade])
+        let model = SettingsSceneModel(store: store)
+        await model.loadIfNeeded()
+        defer { model.viewModel.stopObservingChanges() }
+        let controller = SettingsViewController(model: model).child(.transitions)
+        controller.loadViewIfNeeded()
+        #expect(controller.rows["settings.playback.smartCrossfade"]?.enabled == false)
+        controller.rows["settings.playback.crossfade"]?.action?()
+        await model.viewModel.waitForPendingWork(); await settleSettingsFeature()
+        guard case .toggle(_, let enable) = controller.rows["settings.playback.smartCrossfade"]?.control else {
+            Issue.record("Missing smart transition control"); return
+        }
+        enable(true)
+        await model.viewModel.waitForPendingWork(); await settleSettingsFeature()
+        model.viewModel.setCrossfadeDuration(.seconds(12))
+        model.viewModel.setFadeDuration(.milliseconds(120), isFadeIn: false)
+        await model.viewModel.waitForPendingWork(); await settleSettingsFeature()
+        #expect(store.current.playbackPreferences.transition.smartCrossfadeEnabled)
+        #expect(!store.current.playbackPreferences.transition.skipBoundarySilence)
+        if case .toggle(let effective, _) = controller.rows["settings.playback.skipBoundarySilence"]?.control {
+            #expect(effective)
+        } else { Issue.record("Missing effective silence state") }
+        #expect(controller.rows["settings.playback.skipBoundarySilence"]?.enabled == false)
+        #expect(controller.rows["settings.playback.crossfadeDuration"]?.title == L("最长过渡时长"))
+        #expect(controller.rows["settings.playback.crossfade"]?.trailingValue == String(format: L("自动 · 最长 %.1f s"), 12.0))
+        model.viewModel.setSongTransition(gaplessEnabled: false, crossfadeDuration: .zero)
+        await model.viewModel.waitForPendingWork(); await settleSettingsFeature()
+        #expect(store.current.playbackPreferences.transition.smartCrossfadeEnabled)
+        #expect(controller.rows["settings.playback.smartCrossfade"]?.enabled == false)
+        #expect(controller.rows["settings.playback.skipBoundarySilence"]?.enabled == true)
+        if case .toggle(let effective, _) = controller.rows["settings.playback.skipBoundarySilence"]?.control { #expect(!effective) }
+        model.viewModel.setSongTransition(gaplessEnabled: false, crossfadeDuration: .seconds(12))
+        await model.viewModel.waitForPendingWork()
+        let reopened = SettingsViewModel(store: store)
+        await reopened.load()
+        defer { reopened.stopObservingChanges() }
+        #expect(reopened.settings.playbackPreferences.transition.smartCrossfadeEnabled)
+        let unsupported = SettingsViewModel(store: SettingsFeatureTestStore())
+        #expect(!unsupported.supportsSmartCrossfade)
+    }
+
     @Test("Silence skipping survives independent transition edits and a 12-second crossfade")
     func settingsFeaturePreservesSilenceSkipping() async throws {
         let store = SettingsFeatureTestStore(playbackCapabilities: [.fade, .gapless, .crossfade, .boundarySilenceSkipping])
@@ -1390,4 +1469,686 @@ private func settleSettingsFeature() async {
     #expect(model.settings.playbackPreferences.rate == .normal)
     #expect(model.settings.pluginPreferences.first?.pluginID == id)
     #expect(model.settings == store.current)
+}
+
+
+@Suite(.serialized)
+@MainActor
+struct NativeSettingsPresentationTests {
+    @Test("Playback rate disclosure preserves its expanded state across saves")
+    func playbackRateDisclosure() async {
+        let store = SettingsFeatureTestStore()
+        let model = SettingsSceneModel(store: store)
+        await model.loadIfNeeded()
+        defer { model.viewModel.stopObservingChanges() }
+        let controller = SettingsViewController(model: model, layout: .detail(.playback))
+        controller.loadViewIfNeeded()
+        #expect(controller.rows["settings.playback.rate"] == nil)
+        controller.rows["settings.playback.rate.expand"]?.action?()
+        #expect(controller.rows["settings.playback.rate"] != nil)
+        model.viewModel.setPlaybackRate(1.5)
+        await model.viewModel.waitForPendingWork()
+        await settleSettingsFeature()
+        #expect(controller.rows["settings.playback.rate.expand"]?.trailingValue == "1.5x")
+        #expect(controller.isPlaybackRateExpanded)
+        controller.rows["settings.playback.rate.expand"]?.action?()
+        #expect(controller.rows["settings.playback.rate"] == nil)
+    }
+
+    @Test("Icon selection moves the trailing checkmark after success and preserves it on failure")
+    func iconTrailingSelection() async {
+        let store = SettingsFeatureTestStore()
+        let model = SettingsSceneModel(store: store)
+        await model.loadIfNeeded()
+        defer { model.viewModel.stopObservingChanges() }
+        let provider = SettingsAppIconTestProvider()
+        let controller = SettingsViewController(model: model, appIconOptions: [
+            .init(id: "default", title: "Default", alternateIconName: nil, previewAssetName: ""),
+            .init(id: "alternate", title: "Alternate", alternateIconName: "alternate", previewAssetName: "")
+        ], appIconProvider: provider).child(.icons)
+        controller.loadViewIfNeeded()
+        #expect(controller.rows["settings.icon.default"]?.isSelected == true)
+        controller.rows["settings.icon.alternate"]?.action?()
+        await settleSettingsFeature()
+        #expect(controller.rows["settings.icon.default"]?.isSelected == false)
+        #expect(controller.rows["settings.icon.alternate"]?.isSelected == true)
+        #expect(controller.rows["settings.icon.alternate"]?.detail == "")
+        #expect(controller.rows["settings.icon.alternate"]?.trailingValue.isEmpty == false)
+        provider.nextError = SettingsFeatureTestError.write
+        controller.rows["settings.icon.default"]?.action?()
+        await settleSettingsFeature()
+        #expect(controller.rows["settings.icon.alternate"]?.isSelected == true)
+    }
+
+    @Test("Root refresh reflects the selected icon and storage opens a dedicated page")
+    func selectedRootIconAndStorageNavigation() async throws {
+        let store = SettingsFeatureTestStore()
+        let model = SettingsSceneModel(store: store)
+        await model.loadIfNeeded()
+        defer { model.viewModel.stopObservingChanges() }
+        let provider = SettingsAppIconTestProvider()
+        let root = SettingsViewController(model: model, appIconOptions: [
+            .init(id: "default", title: "Default", alternateIconName: nil, previewAssetName: ""),
+            .init(id: "alternate", title: "Alternate", alternateIconName: "alternate", previewAssetName: "")
+        ], appIconProvider: provider)
+        let navigation = UINavigationController(rootViewController: root)
+        root.loadViewIfNeeded()
+        #expect(root.rows["settings.appIcon"]?.trailingValue == "Default")
+        provider.alternateIconName = "alternate"
+        root.viewWillAppear(false)
+        #expect(root.rows["settings.appIcon"]?.trailingValue == "Alternate")
+        #expect(root.rows["settings.language"]?.image != nil)
+        #expect(root.rows["settings.appearance"]?.image != nil)
+        #expect(root.rows["settings.playback.rate.expand"]?.image != nil)
+        #expect(root.rows["storage.media"] == nil)
+        root.rows["settings.storage.status"]?.action?()
+        let storage = try #require(navigation.topViewController as? SettingsViewController)
+        storage.loadViewIfNeeded()
+        #expect(storage.tableView.accessibilityIdentifier == "settings.storage.status.form")
+        #expect(storage.rows["settings.storage.maintenance"] != nil)
+        store.storageUsageValue = .init(managedMediaBytes: 42)
+        storage.viewWillAppear(false); await settleSettingsFeature()
+        #expect(model.viewModel.storageUsage?.managedMediaBytes == 42)
+        #expect(storage.rows["storage.media"] != nil)
+        store.storageUsageValue = .init(managedMediaBytes: 84)
+        storage.viewWillAppear(false); await settleSettingsFeature()
+        #expect(model.viewModel.storageUsage?.managedMediaBytes == 84)
+    }
+
+    @Test("Native metadata reordering confines moves to provider rows and persists around hidden providers")
+    func nativeMetadataReordering() async throws {
+        let store = SettingsFeatureTestStore(settings: .init(importPreferences: .init(metadataProviders: [
+            .init(provider: .musicKit), .init(provider: .metadataServer), .init(provider: .musicBrainz), .init(provider: .discogs)
+        ])))
+        let service = SettingsMetadataEnrichmentTestService(authorization: .authorized,
+            providerStatuses: store.current.importPreferences.metadataProviders.map {
+                .init(provider: $0.provider, isRegistered: true, authorization: .authorized)
+            })
+        let model = SettingsSceneModel(store: store, metadataEnrichment: service)
+        await model.loadIfNeeded()
+        defer { model.viewModel.stopObservingChanges() }
+        let controller = SettingsViewController(model: model, metadataServerEnabled: false).child(.metadata)
+        controller.loadViewIfNeeded()
+        let section = try #require(controller.sections.firstIndex { $0.id == "metadata" })
+        let operations = try #require(controller.sections.firstIndex { $0.id == "metadataOperations" })
+        let from = IndexPath(row: 0, section: section)
+        let to = IndexPath(row: 2, section: section)
+        #expect(controller.tableView.isEditing)
+        #expect(controller.tableView.dataSource?.tableView?(controller.tableView, canMoveRowAt: from) == true)
+        #expect(controller.tableView.dataSource?.tableView?(controller.tableView, canMoveRowAt: .init(row: 0, section: operations)) == false)
+        #expect(!controller.rows.keys.contains { $0.hasPrefix("metadata.order.") })
+        #expect(controller.tableView(controller.tableView, targetIndexPathForMoveFromRowAt: from,
+            toProposedIndexPath: .init(row: 0, section: operations)) == to)
+        controller.tableView.dataSource?.tableView?(controller.tableView, moveRowAt: from, to: to)
+        await model.viewModel.waitForPendingWork(); await settleSettingsFeature()
+        #expect(store.current.importPreferences.metadataProviders.map(\.provider) == [.musicBrainz, .metadataServer, .discogs, .musicKit])
+        let diffable = try #require(controller.tableView.dataSource as? UITableViewDiffableDataSource<String, String>)
+        #expect(diffable.snapshot().itemIdentifiers(inSection: "metadata") == controller.sections[section].rows.map(\.id))
+    }
+
+    @Test("Provider pages omit removed plugins and gate hidden plugins while preserving reorder slots",
+          arguments: [nil, false, true] as [Bool?])
+    func nativeProviderVisibility(showHidden: Bool?) async throws {
+        let defaults = UserDefaults.standard
+        let key = PluginSettingsViewController.showHiddenStorageKey
+        let original = defaults.object(forKey: key)
+        defer {
+            if let original { defaults.set(original, forKey: key) }
+            else { defaults.removeObject(forKey: key) }
+        }
+        if let showHidden { defaults.set(showHidden, forKey: key) }
+        else { defaults.removeObject(forKey: key) }
+        let definitions: [(PluginKind, String, Bool, PluginLifecycleState)] = [
+            (.metadata, "musicBrainz", true, .registered),
+            (.metadata, "reference.metadata", true, .compiledOut),
+            (.metadata, "discogs", false, .registered),
+            (.metadata, "musicKit", true, .disabled),
+            (.lyrics, "lrclib", true, .registered),
+            (.lyrics, "reference.lyrics", true, .compiledOut),
+            (.lyrics, "netEase", false, .registered)
+        ]
+        let snapshots = definitions.map { kind, provider, visible, state in
+            let id = PluginID(rawValue: state == .compiledOut ? provider : "test.\(kind.rawValue).\(provider)")
+            return PluginSnapshot(descriptor: .init(id: id, name: provider, kinds: [kind],
+                dataProviderID: state == .compiledOut ? nil : provider),
+                preference: .init(pluginID: id, isVisible: visible, isEnabled: state != .disabled), state: state)
+        }
+        let metadataIDs = ["musicBrainz", "reference.metadata", "discogs", "musicKit", "unregistered"]
+        let lyricsIDs = ["lrclib", "reference.lyrics", "netEase", "unregistered"]
+        let initial = AppSettings(importPreferences: .init(
+            metadataProviders: metadataIDs.map { .init(provider: .init(rawValue: $0), isEnabled: true) },
+            lyricsProviders: lyricsIDs.map { .init(provider: .init(rawValue: $0), isEnabled: true) }),
+            pluginPreferences: snapshots.map(\.preference))
+        let store = SettingsFeatureTestStore(settings: initial)
+        let metadata = SettingsMetadataEnrichmentTestService(authorization: .authorized,
+            providerStatuses: metadataIDs.map {
+                .init(provider: .init(rawValue: $0), isRegistered: !["reference.metadata", "unregistered"].contains($0),
+                      authorization: .authorized)
+            })
+        let lyrics = SettingsLyricsTestService(registeredProviderIDs: [.lrclib, .init(rawValue: "netEase")])
+        let model = SettingsSceneModel(store: store, metadataEnrichment: metadata, lyricsServing: lyrics)
+        await model.loadIfNeeded()
+        defer { model.viewModel.stopObservingChanges() }
+        let plugins = SettingsPluginVisibilityTestService(settings: initial, snapshots: snapshots)
+        let host = PluginSettingsPageHost(registry: .init(), plugins: plugins, settings: plugins)
+        host.start(); await host.model.waitForPendingWork()
+        let root = SettingsViewController(model: model, pluginPages: host)
+        let controller = root.child(.metadata)
+        controller.loadViewIfNeeded()
+        let visibleMetadata = showHidden == true ? ["musicBrainz", "discogs", "musicKit"] : ["musicBrainz", "musicKit"]
+        let visibleLyrics = showHidden == true ? ["lrclib", "netEase"] : ["lrclib"]
+        #expect(controller.visibleMetadataProviders.map { $0.provider.rawValue } == visibleMetadata)
+        #expect(controller.visibleLyricsProviders.map { $0.provider.rawValue } == visibleLyrics)
+        #expect(controller.rows["settings.import.metadataProvider.reference.metadata.enabled"] == nil)
+        #expect(controller.rows["settings.import.lyricsProvider.reference.lyrics.enabled"] == nil)
+        #expect(controller.rows["settings.import.musicKitEnrichment"] != nil) // Disabled capabilities remain configurable.
+        #expect((controller.rows["settings.import.metadataProvider.discogs.enabled"] != nil) == (showHidden == true))
+        #expect((controller.rows["settings.import.lyricsProvider.netEase.enabled"] != nil) == (showHidden == true))
+        let privacy = root.child(.category(.privacy))
+        privacy.loadViewIfNeeded()
+        #expect(privacy.rows["settings.privacy.provider.reference.metadata"] == nil)
+        #expect(privacy.rows["settings.privacy.provider.reference.lyrics"] == nil)
+        #expect((privacy.rows["settings.privacy.provider.discogs"] != nil) == (showHidden == true))
+        #expect((privacy.rows["settings.privacy.provider.netEase"] != nil) == (showHidden == true))
+        let section = try #require(controller.sections.firstIndex { $0.id == "metadata" })
+        controller.reorderMetadata(from: .init(row: 0, section: section),
+            to: .init(row: visibleMetadata.count - 1, section: section))
+        await model.viewModel.waitForPendingWork(); await settleSettingsFeature()
+        let expectedOrder = showHidden == true
+            ? ["discogs", "reference.metadata", "musicKit", "musicBrainz", "unregistered"]
+            : ["musicKit", "reference.metadata", "discogs", "musicBrainz", "unregistered"]
+        #expect(store.current.importPreferences.metadataProviders.map { $0.provider.rawValue } == expectedOrder)
+        #expect(store.current.importPreferences.lyricsProviders == initial.importPreferences.lyricsProviders)
+        #expect(store.current.pluginPreferences == initial.pluginPreferences)
+    }
+
+    @Test("Duplicate menu persists executable reporting and retains unsupported legacy choices until edited")
+    func duplicatePolicyMenuPersists() async throws {
+        let store = SettingsFeatureTestStore(settings: .init(importPreferences: .init(duplicatePolicy: .keepBoth)))
+        let model = SettingsSceneModel(store: store)
+        await model.loadIfNeeded()
+        defer { model.viewModel.stopObservingChanges() }
+        let controller = SettingsViewController(model: model, layout: .detail(.importing))
+        controller.loadViewIfNeeded()
+        #expect(controller.rows["settings.import.duplicatePolicy"]?.image != nil)
+        guard case .menu(let title, let menu) = controller.rows["settings.import.duplicatePolicy"]?.control else {
+            Issue.record("Missing duplicate policy menu"); return
+        }
+        #expect(title == L("保留两份（暂不支持）"))
+        #expect(store.current.importPreferences.duplicatePolicy == .keepBoth)
+        #expect(menu.children.count == 2)
+        // Exercise the same save path as a selected menu action.
+        model.viewModel.setDuplicateImportPolicy(.reportExisting)
+        await model.viewModel.waitForPendingWork(); await settleSettingsFeature()
+        guard case .menu(let updated, _) = controller.rows["settings.import.duplicatePolicy"]?.control else { return }
+        #expect(updated == L("报告重复内容"))
+        #expect(store.current.importPreferences.duplicatePolicy == .reportExisting)
+    }
+
+    @Test("Accent presets persist while custom picker edits remain a draft until completion")
+    func accentPresetAndCustomDraft() async {
+        let saved = UserDefaults.standard.object(forKey: DesignSystem.MusicFreeAccentColorStore.storageKey)
+        let custom = UserDefaults.standard.object(forKey: "musicfree.customAccentColor")
+        defer {
+            UserDefaults.standard.set(saved, forKey: DesignSystem.MusicFreeAccentColorStore.storageKey)
+            UserDefaults.standard.set(custom, forKey: "musicfree.customAccentColor")
+        }
+        DesignSystem.MusicFreeAccentColorStore.reset()
+        let store = SettingsFeatureTestStore()
+        let model = SettingsSceneModel(store: store)
+        await model.loadIfNeeded()
+        defer { model.viewModel.stopObservingChanges() }
+        let controller = SettingsViewController(model: model, setAccentColor: { color in
+            DesignSystem.MusicFreeAccentColorStore.setHexValue(DesignSystem.MusicFreeAccentColorStore.hexString(for: color))
+        }).child(.accentColor)
+        controller.loadViewIfNeeded()
+        controller.rows["settings.accentColor.preset.1"]?.action?()
+        #expect(DesignSystem.MusicFreeAccentColorStore.hexValue == "007AFF")
+        #expect(controller.rows["settings.accentColor.preset.1"]?.isSelected == true)
+        let picker = UIColorPickerViewController()
+        picker.selectedColor = DesignSystem.MusicFreeAccentColorStore.uiColor(forHex: "123456")
+        controller.colorPickerViewControllerDidSelectColor(picker)
+        #expect(DesignSystem.MusicFreeAccentColorStore.hexValue == "007AFF")
+        controller.colorPickerViewControllerDidFinish(picker)
+        #expect(DesignSystem.MusicFreeAccentColorStore.hexValue == "123456")
+        #expect(controller.rows["settings.accentColor.custom"]?.isSelected == true)
+    }
+
+    @Test("Transition styles update atomically and disabling retains the edited crossfade duration")
+    func nativeTransitionStyleAndDuration() async throws {
+        let store = SettingsFeatureTestStore(playbackCapabilities: [.fade, .gapless, .crossfade, .boundarySilenceSkipping])
+        let model = SettingsSceneModel(store: store)
+        await model.loadIfNeeded()
+        defer { model.viewModel.stopObservingChanges() }
+        let root = SettingsViewController(model: model, layout: .detail(.playback))
+        root.loadViewIfNeeded()
+        #expect(root.rows["settings.playback.fadeIn"] == nil)
+        #expect(root.rows["settings.playback.transitions.entry"] != nil)
+        let controller = root.child(.transitions)
+        controller.loadViewIfNeeded()
+        #expect(controller.rows["settings.playback.crossfadeDuration"] != nil)
+        #expect(controller.rows["settings.playback.crossfadeDuration"]?.enabled == false)
+        controller.rows["settings.playback.crossfade"]?.action?()
+        await model.viewModel.waitForPendingWork()
+        await settleSettingsFeature()
+        #expect(!store.current.playbackPreferences.transition.gaplessPlaybackEnabled)
+        #expect(controller.rows["settings.playback.crossfadeDuration"]?.enabled == true)
+        guard case .slider(_, let range, _, _, let save) = controller.rows["settings.playback.crossfadeDuration"]?.control else { Issue.record("Missing crossfade duration"); return }
+        #expect(range.upperBound == 12)
+        guard case .toggle(_, let skipSilence) = controller.rows["settings.playback.skipBoundarySilence"]?.control else {
+            Issue.record("Missing boundary silence toggle"); return
+        }
+        skipSilence(true)
+        await model.viewModel.waitForPendingWork()
+        save(2.25)
+        await model.viewModel.waitForPendingWork()
+        await settleSettingsFeature()
+        guard case .toggle(_, let toggle) = controller.rows["settings.playback.transitions.enabled"]?.control else { Issue.record("Missing transition toggle"); return }
+        toggle(false)
+        await model.viewModel.waitForPendingWork()
+        await settleSettingsFeature()
+        #expect(!store.current.playbackPreferences.transition.isCrossfadeEnabled)
+        #expect(store.current.playbackPreferences.transition.skipBoundarySilence)
+        #expect(controller.rows["settings.playback.crossfadeDuration"] != nil)
+        #expect(controller.rows["settings.playback.crossfadeDuration"]?.enabled == false)
+        #expect(controller.rememberedCrossfadeDuration == .seconds(2.25))
+        toggle(true)
+        await model.viewModel.waitForPendingWork()
+        #expect(store.current.playbackPreferences.transition.crossfadeDuration == .seconds(2.25))
+        let reopened = root.child(.transitions)
+        reopened.loadViewIfNeeded()
+        guard case .slider(let value, _, _, _, _) = reopened.rows["settings.playback.crossfadeDuration"]?.control else {
+            Issue.record("Missing reopened crossfade duration"); return
+        }
+        #expect(value == 2.25)
+        #expect(reopened.rows["settings.playback.crossfadeDuration"]?.enabled == true)
+    }
+
+    @Test("Transition taps accept the latest selection while an earlier save is pending")
+    func transitionTapsDuringSave() async throws {
+        let store = SettingsFeatureTestStore(playbackCapabilities: [.fade, .gapless, .crossfade])
+        // A real settings service broadcasts its commit before update() returns.
+        store.normalize = { $0 }
+        let model = SettingsSceneModel(store: store)
+        await model.loadIfNeeded()
+        defer { store.resumeSave(); model.viewModel.stopObservingChanges() }
+        let controller = SettingsViewController(model: model).child(.transitions)
+        controller.loadViewIfNeeded()
+        func tap(_ id: String) throws {
+            let section = try #require(controller.sections.firstIndex { $0.rows.contains { $0.id == id } })
+            let row = try #require(controller.sections[section].rows.firstIndex { $0.id == id })
+            controller.tableView(controller.tableView, didSelectRowAt: IndexPath(row: row, section: section))
+        }
+        store.suspendNextSave = true
+        try tap("settings.playback.crossfade")
+        for _ in 0..<50 where !store.isSaveSuspended { await Task.yield() }
+        #expect(store.isSaveSuspended)
+        controller.render()
+        #expect(controller.rows["settings.playback.gapless"]?.enabled == true)
+        try tap("settings.playback.gapless")
+        #expect(model.viewModel.settings.playbackPreferences.transition.gaplessPlaybackEnabled)
+        #expect(!model.viewModel.settings.playbackPreferences.transition.isCrossfadeEnabled)
+        store.resumeSave()
+        await model.viewModel.waitForPendingWork()
+        await settleSettingsFeature()
+        #expect(store.current.playbackPreferences.transition.gaplessPlaybackEnabled)
+        #expect(!store.current.playbackPreferences.transition.isCrossfadeEnabled)
+        #expect(store.savedValues.count == 2)
+    }
+
+    @Test("Native settings accept rapid switches, menus and slider edits while saving")
+    func controlsRemainEditableDuringSave() async throws {
+        let store = SettingsFeatureTestStore()
+        store.normalize = { $0 }
+        let model = SettingsSceneModel(store: store)
+        await model.loadIfNeeded()
+        defer { store.resumeSave(); model.viewModel.stopObservingChanges() }
+        let controller = SettingsViewController(model: model).child(.conversion)
+        controller.loadViewIfNeeded()
+        store.suspendNextSave = true
+        guard case .toggle(_, let toggle) = controller.rows["settings.import.audioConversion.enabled"]?.control else {
+            Issue.record("Missing import conversion toggle"); return
+        }
+        toggle(true)
+        for _ in 0..<100 where !store.isSaveSuspended { await Task.yield() }
+        controller.render()
+        #expect(controller.rows["settings.import.audioConversion.enabled"]?.enabled == true)
+        #expect(controller.rows["settings.import.audioConversion.target"]?.enabled == true)
+        #expect(controller.rows["settings.import.audioConversion.concurrency"]?.enabled == true)
+        let slider = controller.slider("test.slider", "Slider", value: 1, range: 0...3, step: 0.5, valueText: "1") { _ in }
+        #expect(slider.enabled)
+        toggle(false)
+        store.resumeSave(); await model.viewModel.waitForPendingWork()
+        #expect(!store.current.importPreferences.audioConversion.automaticallyConvertLosslessImports)
+        #expect(store.savedValues.count == 2)
+    }
+
+    @Test("VoiceOver slider adjustments use the configured step and persist without a touch-up")
+    func sliderAccessibilityPersists() throws {
+        var saved: [Double] = []
+        let cell = SettingsNativeCell(style: .default, reuseIdentifier: nil)
+        let makeRow: (Bool) -> SettingsNativeRow = { enabled in
+            .init(id: "accessible.slider", title: "Rate", enabled: enabled,
+                control: .slider(1, 0.25...3, 0.25, { String($0) }, { saved.append($0) }))
+        }
+        cell.configure(makeRow(true))
+        let slider = try #require(nativeSliders(in: cell).first)
+        slider.accessibilityIncrement()
+        #expect(saved == [1.25])
+        slider.accessibilityDecrement()
+        #expect(saved == [1.25, 1])
+        cell.configure(makeRow(false))
+        slider.accessibilityIncrement()
+        #expect(saved == [1.25, 1])
+    }
+
+    @Test("Vertical equalizer bands preserve identity and commit once after dragging")
+    func verticalBandsPersistWithoutReplacingControl() async throws {
+        let band = EqualizerBandDescriptor(centerFrequencyHz: 1_000, minimumGainDecibels: -12, maximumGainDecibels: 12)
+        let store = SettingsFeatureTestStore(playbackCapabilities: [.equalizer], equalizerDescriptor: .init(bands: [band], minimumPreampDecibels: -12, maximumPreampDecibels: 12))
+        let model = SettingsSceneModel(store: store)
+        await model.loadIfNeeded()
+        defer { model.viewModel.stopObservingChanges() }
+        model.viewModel.setEqualizerEnabled(true)
+        await model.viewModel.waitForPendingWork()
+        let controller = EqualizerPluginSettingsViewController(context: .init(model: model))
+        controller.loadViewIfNeeded()
+        let slider = try #require(nativeSliders(in: controller.equalizerBank).first)
+        let before = store.savedValues.count
+        slider.value = 4.25
+        dispatchRegisteredActions(slider, event: .valueChanged)
+        controller.render()
+        #expect(slider.value == 4.25)
+        #expect(store.savedValues.count == before)
+        dispatchRegisteredActions(slider, event: .touchUpInside)
+        // iOS can send the snapped value once more after the gesture ends.
+        dispatchRegisteredActions(slider, event: .valueChanged)
+        await model.viewModel.waitForPendingWork()
+        await settleSettingsFeature()
+        #expect(store.current.playbackPreferences.equalizer.bands.first?.gain.decibels == 4.5)
+        #expect(store.savedValues.count == before + 1)
+        #expect(nativeSliders(in: controller.equalizerBank).first === slider)
+        controller.rows["settings.playback.equalizer.reset"]?.action?()
+        await model.viewModel.waitForPendingWork()
+        #expect(store.current.playbackPreferences.equalizer.bands.first?.gain == .zero)
+        #expect(store.current.playbackPreferences.equalizer.isEnabled)
+        controller.render()
+        #expect(slider.value == 0)
+    }
+
+    @Test("The plugin equalizer page recovers failed loading and retries a rolled-back save")
+    func equalizerPageFailureRecovery() async throws {
+        let store = SettingsFeatureTestStore(playbackCapabilities: [.equalizer],
+            equalizerDescriptor: .init(bands: [.init(centerFrequencyHz: 1_000, minimumGainDecibels: -12, maximumGainDecibels: 12)]))
+        store.nextLoadError = SettingsError.decoding
+        let model = SettingsSceneModel(store: store)
+        await model.loadIfNeeded()
+        let controller = EqualizerPluginSettingsViewController(context: .init(model: model))
+        controller.loadViewIfNeeded()
+        #expect(controller.rows["settings.equalizer.retryLoad"] != nil)
+        controller.rows["settings.equalizer.retryLoad"]?.action?()
+        for _ in 0..<200 where !model.viewModel.canEditPlayback { await Task.yield() }
+        #expect(model.viewModel.canEditPlayback)
+        store.nextSaveError = SettingsError.writeFailed
+        model.viewModel.setEqualizerEnabled(true)
+        await model.viewModel.waitForPendingWork()
+        controller.render()
+        #expect(!store.current.playbackPreferences.equalizer.isEnabled)
+        #expect(controller.rows["settings.equalizer.retrySave"] != nil)
+        controller.rows["settings.equalizer.retrySave"]?.action?()
+        await model.viewModel.waitForPendingWork()
+        #expect(store.current.playbackPreferences.equalizer.isEnabled)
+        model.viewModel.stopObservingChanges()
+    }
+
+    @Test("Custom equalizer edits retain the complete preset menu and allow selecting a preset during saving")
+    func customEqualizerRetainsPresets() async throws {
+        let band = EqualizerBandDescriptor(centerFrequencyHz: 1_000, minimumGainDecibels: -12, maximumGainDecibels: 12)
+        let names = ["Flat", "Bass Boost", "Treble Boost", "Vocal", "Rock"]
+        let gains: [Float] = [0, 6, -6, 3, 4]
+        let presets = names.enumerated().map { index, name in
+            EqualizerPresetDescriptor(id: UInt32(index), name: name, configuration: .init(bandGains: [
+                .init(centerFrequencyHz: 1_000, gainDecibels: gains[index])]))
+        }
+        let initial = AppSettings(playbackPreferences: .init(equalizer: try .init(isEnabled: true,
+            bands: [try .init(frequencyHz: 1_000, gain: .init(decibels: 2))])))
+        let store = SettingsFeatureTestStore(settings: initial, playbackCapabilities: [.equalizer],
+            equalizerDescriptor: .init(bands: [band], presets: presets))
+        let model = SettingsSceneModel(store: store)
+        await model.loadIfNeeded()
+        defer { store.resumeSave(); model.viewModel.stopObservingChanges() }
+        let controller = EqualizerPluginSettingsViewController(context: .init(model: model))
+        controller.loadViewIfNeeded()
+        func presetMenu() throws -> (String, UIMenu) {
+            guard case .menu(let title, let menu) = controller.rows["settings.playback.equalizer.preset"]?.control else {
+                throw NSError(domain: "Missing preset menu", code: 1)
+            }
+            return (title, menu)
+        }
+        let (title, menu) = try presetMenu()
+        #expect(title == L("自定义"))
+        #expect(menu.children.count == 5)
+        let gridRows = controller.equalizerPresets.arrangedSubviews.compactMap { $0 as? UIStackView }
+        #expect(gridRows.count == 3)
+        #expect(gridRows.allSatisfy { $0.arrangedSubviews.count == 2 })
+        let gridButtons = gridRows.flatMap(\.arrangedSubviews).compactMap { $0 as? UIButton }
+        #expect(gridButtons.count == presets.count)
+        #expect(gridButtons.last?.accessibilityIdentifier == "settings.playback.equalizer.preset.4")
+        #expect(menu.children.compactMap { $0 as? UIAction }.allSatisfy { $0.state == .off })
+        let slider = try #require(nativeSliders(in: controller.equalizerBank).first)
+        store.suspendNextSave = true
+        model.viewModel.setEqualizerGain(5, for: band)
+        for _ in 0..<50 where !store.isSaveSuspended { await Task.yield() }
+        #expect(store.isSaveSuspended)
+        controller.render()
+        #expect(controller.rows["settings.playback.equalizer.preset"]?.enabled == true)
+        let button = try #require(controller.equalizerPresets.arrangedSubviews
+            .flatMap(\.subviews).compactMap { $0 as? UIButton }
+            .first { $0.accessibilityIdentifier == "settings.playback.equalizer.preset.1" })
+        #expect(button.isEnabled)
+        button.sendActions(for: .touchUpInside)
+        store.resumeSave()
+        await model.viewModel.waitForPendingWork()
+        await settleSettingsFeature()
+        #expect(store.current.playbackPreferences.equalizer.bands.first?.gain.decibels == 6)
+        controller.render()
+        #expect(try presetMenu().0 == L("低音增强"))
+        #expect(nativeSliders(in: controller.equalizerBank).first === slider)
+        model.viewModel.setEqualizerGain(2, for: band)
+        await model.viewModel.waitForPendingWork()
+        controller.render()
+        #expect(try presetMenu().0 == L("自定义"))
+        #expect(try presetMenu().1.children.count == 5)
+        model.viewModel.applyEqualizerPreset(id: 4)
+        await model.viewModel.waitForPendingWork()
+        controller.render()
+        #expect(try presetMenu().0 == controller.presetTitle("Rock"))
+        #expect(model.viewModel.selectedEqualizerPresetID == 4)
+        #expect(store.current.playbackPreferences.equalizer.bands.first?.gain.decibels == 4)
+    }
+
+    @Test("Shared native settings surfaces load once and retain the loaded model on return")
+    func sharedModelLoadsOnce() async {
+        let store = SettingsFeatureTestStore()
+        let model = SettingsSceneModel(store: store)
+        async let first: Void = model.loadIfNeeded()
+        async let second: Void = model.loadIfNeeded()
+        _ = await (first, second)
+        await model.loadIfNeeded()
+        #expect(store.loadCount == 1)
+        #expect(model.viewModel.loadState == .loaded)
+        model.viewModel.stopObservingChanges()
+    }
+
+    @Test("Saving and external settings updates preserve native slider identity and scroll position")
+    func updatesPreserveControls() async throws {
+        let store = SettingsFeatureTestStore()
+        let model = SettingsSceneModel(store: store)
+        await model.loadIfNeeded()
+        let controller = SettingsViewController(model: model, layout: .detail(.playback))
+        controller.isPlaybackRateExpanded = true
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = UINavigationController(rootViewController: controller)
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; model.viewModel.stopObservingChanges() }
+        controller.view.layoutIfNeeded()
+        await settleSettingsFeature()
+        let table = controller.tableView!
+        table.layoutIfNeeded()
+        let path = IndexPath(row: 1, section: 0)
+        let cell = try #require(table.cellForRow(at: path))
+        let slider = try #require(nativeSliders(in: cell).first)
+        #expect(cell.accessibilityIdentifier == "settings.playback.rate")
+        #expect(!slider.isHidden)
+        #expect(slider.isEnabled)
+        #expect(!slider.allTargets.isEmpty)
+        let offset = table.contentOffset
+        slider.value = 1.5
+        dispatchRegisteredActions(slider, event: .valueChanged)
+        slider.value = 1.75
+        dispatchRegisteredActions(slider, event: .valueChanged)
+        #expect(store.savedValues.isEmpty)
+        dispatchRegisteredActions(slider, event: .touchUpInside)
+        await model.viewModel.waitForPendingWork()
+        await settleSettingsFeature()
+        #expect(store.savedValues.count == 1)
+        #expect(store.current.playbackPreferences.rate.value == 1.75)
+        #expect(table.cellForRow(at: path) === cell)
+        #expect(nativeSliders(in: cell).first === slider)
+        #expect(table.contentOffset == offset)
+
+        store.publishExternal(.defaults)
+        await settleSettingsFeature()
+        #expect(slider.value == 1)
+        #expect(table.cellForRow(at: path) === cell)
+        #expect(table.contentOffset == offset)
+    }
+
+    @Test("Category changes reuse the native settings controller and pop nested pages")
+    func categorySwitchPreservesController() async {
+        let store = SettingsFeatureTestStore()
+        let model = SettingsSceneModel(store: store)
+        await model.loadIfNeeded()
+        let controller = SettingsViewController(model: model, layout: .detail(.playback))
+        let navigation = UINavigationController(rootViewController: controller)
+        controller.loadViewIfNeeded()
+        let table = controller.tableView
+        navigation.pushViewController(UIViewController(), animated: false)
+        controller.updateNavigationDestination(.storage)
+        #expect(navigation.viewControllers.count == 1)
+        #expect(navigation.topViewController === controller)
+        #expect(controller.tableView === table)
+        #expect(table?.accessibilityIdentifier == "settings.detail.storage")
+        #expect(store.loadCount == 1)
+        model.viewModel.stopObservingChanges()
+    }
+
+    @Test("Nested UIKit equalizer saves once at gesture end and retains the same control")
+    func nestedEqualizerPreservesSliderAndSaves() async throws {
+        let descriptor = EqualizerDescriptor(bands: [.init(centerFrequencyHz: 1_000, minimumGainDecibels: -12, maximumGainDecibels: 12)], minimumPreampDecibels: -12, maximumPreampDecibels: 12)
+        let store = SettingsFeatureTestStore(playbackCapabilities: [.equalizer], equalizerDescriptor: descriptor)
+        let model = SettingsSceneModel(store: store)
+        await model.loadIfNeeded()
+        model.viewModel.setEqualizerEnabled(true)
+        await model.viewModel.waitForPendingWork()
+        let savedCount = store.savedValues.count
+        let controller = EqualizerPluginSettingsViewController(context: .init(model: model))
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = UINavigationController(rootViewController: controller)
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; model.viewModel.stopObservingChanges() }
+        controller.view.layoutIfNeeded()
+        await settleSettingsFeature()
+        let table = controller.tableView!
+        table.layoutIfNeeded()
+        let path = IndexPath(row: 0, section: 1)
+        let cell = try #require(table.cellForRow(at: path))
+        let slider = try #require(nativeSliders(in: cell).first)
+        #expect(slider.accessibilityIdentifier == "settings.playback.equalizer.preamp")
+        slider.value = 2
+        dispatchRegisteredActions(slider, event: .valueChanged)
+        slider.value = 4.5
+        dispatchRegisteredActions(slider, event: .valueChanged)
+        #expect(store.savedValues.count == savedCount)
+        dispatchRegisteredActions(slider, event: .touchUpInside)
+        await model.viewModel.waitForPendingWork()
+        await settleSettingsFeature()
+        #expect(store.savedValues.count == savedCount + 1)
+        #expect(store.current.playbackPreferences.equalizer.preamp.decibels == 4.5)
+        #expect(table.cellForRow(at: path) === cell)
+        #expect(nativeSliders(in: cell).first === slider)
+    }
+
+    @Test("Sleep schedule controls edit persisted values and survive returning to the page")
+    func nativeSleepSchedulePersists() async throws {
+        let store = SettingsFeatureTestStore()
+        let model = SettingsSceneModel(store: store)
+        await model.loadIfNeeded()
+        let controller = SettingsViewController(model: model).child(.sleepTimer)
+        controller.loadViewIfNeeded()
+        controller.rows["settings.sleepTimer.schedule.add"]?.action?()
+        await model.viewModel.waitForPendingWork()
+        await settleSettingsFeature()
+        let schedule = try #require(store.current.playbackPreferences.sleepTimer.schedules.first)
+        let id = "settings.sleepTimer.schedule.\(schedule.id)"
+        guard case .stepper(_, _, let change) = controller.rows[id + ".duration"]?.control else { Issue.record("Missing native schedule duration control"); return }
+        change(35)
+        await model.viewModel.waitForPendingWork()
+        #expect(store.current.playbackPreferences.sleepTimer.schedules.first?.durationMinutes == 35)
+        let reopened = SettingsViewController(model: model).child(.sleepTimer)
+        reopened.loadViewIfNeeded()
+        guard case .stepper(let value, _, _) = reopened.rows[id + ".duration"]?.control else { Issue.record("Missing reopened schedule"); return }
+        #expect(value == 35)
+        #expect(store.loadCount == 1)
+        model.viewModel.stopObservingChanges()
+    }
+
+    @Test("Provider revocation from native details disables both metadata and lyrics")
+    func nativeProviderRevocation() async {
+        let store = SettingsFeatureTestStore()
+        let model = SettingsSceneModel(store: store)
+        await model.loadIfNeeded()
+        model.viewModel.acceptPrivacyPolicy()
+        model.viewModel.acceptProviderPrivacy(for: LyricsProviderID.lrclib.rawValue)
+        await model.viewModel.waitForPendingWork()
+        model.viewModel.setLyricsProviderEnabled(.lrclib, true)
+        await model.viewModel.waitForPendingWork()
+        let descriptor = PrivacyProviderCatalog.descriptor(for: LyricsProviderID.lrclib.rawValue)
+        let controller = SettingsViewController(model: model).child(.providerPrivacy(descriptor))
+        controller.loadViewIfNeeded()
+        controller.rows["settings.privacy.provider.lrclib.revoke"]?.action?()
+        await model.viewModel.waitForPendingWork()
+        #expect(!store.current.importPreferences.privacyPreferences.isProviderPolicyAccepted(LyricsProviderID.lrclib.rawValue))
+        #expect(!store.current.importPreferences.runtimeLyricsProviders.contains { $0.provider == .lrclib && $0.isEnabled })
+        model.viewModel.stopObservingChanges()
+    }
+
+    @Test("Metadata cancellation ignores queued progress and keeps its terminal summary")
+    func nativeMetadataCancellationIgnoresQueuedProgress() {
+        let state = SettingsDetailState()
+        state.scanIntent = .cancelling
+        state.metadata = MetadataEnrichmentSnapshot(scan: .init(status: .cancelled))
+        state.apply(MetadataEnrichmentSnapshot(scan: .init(status: .scanning)))
+        #expect(state.metadata.scan.status == .cancelled)
+        state.apply(MetadataEnrichmentSnapshot(scan: .init(status: .cancelled)))
+        #expect(state.scanIntent == .idle)
+        state.lyricsIntent = .starting
+        state.lyrics = LyricsPreloadSnapshot(status: .downloading)
+        state.apply(LyricsPreloadSnapshot(status: .idle))
+        #expect(state.lyrics.status == .downloading)
+    }
+
+    // SwiftPM UI tests have no UIApplication; invoke the registered target
+    // actions directly. The app UI test covers actual UIKit event dispatch.
+    private func dispatchRegisteredActions(_ control: UIControl, event: UIControl.Event) {
+        for target in control.allTargets {
+            for action in control.actions(forTarget: target, forControlEvent: event) ?? [] {
+                (target as? NSObject)?.perform(NSSelectorFromString(action), with: control)
+            }
+        }
+    }
+
+    private func nativeSliders(in view: UIView) -> [UISlider] {
+        (view as? UISlider).map { [$0] } ?? view.subviews.flatMap { nativeSliders(in: $0) }
+    }
 }

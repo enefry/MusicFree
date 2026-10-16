@@ -11,6 +11,56 @@ import Testing
 import UIKit
 
 @MainActor
+@Test("Collection metadata fits every row beyond the initial estimated height")
+func collectionInformationFitsLongMetadata() throws {
+    let cell = LibraryCollectionInformationCell(frame: CGRect(x: 0, y: 0, width: 350, height: 420))
+    let rows = (0..<12).map {
+        LibraryDetailInfoRow(title: "Field \($0)", value: "Value \($0)", symbol: "info.circle", identifier: "row.\($0)")
+    }
+    cell.informationView.configure([LibraryDetailInfoSection(title: "Metadata", rows: rows)])
+    cell.layoutIfNeeded()
+    let estimate = UICollectionViewLayoutAttributes(forCellWith: IndexPath(item: 0, section: 0))
+    estimate.size = cell.bounds.size
+    let fitted = cell.preferredLayoutAttributesFitting(estimate)
+    #expect(fitted.size.height > 420)
+    cell.frame.size = fitted.size
+    cell.setNeedsLayout()
+    cell.layoutIfNeeded()
+    let lastRow = try #require(cell.informationView.arrangedSubviews.last as? UIStackView)
+        .arrangedSubviews.first { $0.accessibilityIdentifier == "row.11" }
+    let row = try #require(lastRow)
+    let rowFrame = row.convert(row.bounds, to: cell.contentView)
+    #expect(row.bounds.height >= 32)
+    #expect(rowFrame.maxY <= cell.contentView.bounds.height - 24)
+    #expect(!cell.informationView.hasAmbiguousLayout)
+}
+
+@MainActor
+@Test("Collection tracks preserve artwork and menu hit targets after estimated layout", arguments: [false, true])
+func collectionTrackFitsRequiredContent(isAlbum: Bool) throws {
+    let cell = LibraryCollectionDetailTrackCell(frame: CGRect(x: 0, y: 0, width: 350, height: 52))
+    cell.configure(
+        track: makeTrack("Fitting track"), subtitle: "Artist", artworkServing: nil,
+        albumTrackNumber: isAlbum ? "1" : nil,
+        isEditing: false, isSelected: false, menu: UIMenu()
+    )
+    cell.layoutIfNeeded()
+    let estimate = UICollectionViewLayoutAttributes(forCellWith: IndexPath(item: 0, section: 0))
+    estimate.size = cell.bounds.size
+    let fitted = cell.preferredLayoutAttributesFitting(estimate)
+    #expect(fitted.size.height >= (isAlbum ? 60 : 68))
+    cell.frame.size = fitted.size
+    cell.setNeedsLayout()
+    cell.layoutIfNeeded()
+    let stack = try #require(cell.contentView.subviews.first as? UIStackView)
+    let menu = try #require(stack.arrangedSubviews.compactMap { $0 as? UIButton }.first)
+    #expect(abs(menu.bounds.height - 44) < 0.5)
+    let menuFrame = menu.convert(menu.bounds, to: cell.contentView)
+    #expect(menuFrame.minY >= 8)
+    #expect(menuFrame.maxY <= cell.contentView.bounds.height - 8)
+}
+
+@MainActor
 @Test("Album refresh keeps loaded pages until one atomic replacement")
 func albumRefreshPreservesLoadedWindow() async throws {
     let service = FakeLibraryService()
@@ -1295,9 +1345,13 @@ func mediaSharingUsesPhysicalAssetsAndDeduplicatesFiles() async throws {
         ),
     ]
 
-    let urls = try await LibraryMediaShareResolver(sourceResolver: source).urls(for: tracks)
+    let share = try await LibraryMediaShareResolver(sourceResolver: source).prepare(for: tracks)
+    defer { share.cleanup() }
+    let urls = share.urls
 
-    #expect(urls == [firstURL.standardizedFileURL, secondURL.standardizedFileURL])
+    #expect(urls.map(\.lastPathComponent) == ["First segment.flac", "Second file.flac"])
+    #expect(try Data(contentsOf: urls[0]) == Data(contentsOf: firstURL))
+    #expect(try Data(contentsOf: urls[1]) == Data(contentsOf: secondURL))
     #expect(source.sourceLookupCalls == [.local])
     #expect(source.resolveCalls == [
         firstAssetID.mediaItemID,
@@ -1330,21 +1384,21 @@ func mediaSharingRejectsUnavailableFiles() async throws {
     let resolver = LibraryMediaShareResolver(sourceResolver: source)
 
     await #expect(throws: LibraryMediaShareResolver.ShareError.nonLocalTrack("Remote")) {
-        _ = try await resolver.urls(for: [Track(
+        _ = try await resolver.prepare(for: [Track(
             id: MediaItemID(sourceID: .local, externalID: "remote-track"),
             assetID: remoteAssetID,
             title: "Remote"
         )])
     }
     await #expect(throws: LibraryMediaShareResolver.ShareError.unavailableTrack("Unavailable")) {
-        _ = try await resolver.urls(for: [Track(
+        _ = try await resolver.prepare(for: [Track(
             id: MediaItemID(sourceID: .local, externalID: "unavailable-track"),
             assetID: unavailableAssetID,
             title: "Unavailable"
         )])
     }
     await #expect(throws: LibraryMediaShareResolver.ShareError.unreadableTrack("Unreadable")) {
-        _ = try await resolver.urls(for: [Track(
+        _ = try await resolver.prepare(for: [Track(
             id: MediaItemID(sourceID: .local, externalID: "unreadable-track"),
             assetID: unreadableAssetID,
             title: "Unreadable"

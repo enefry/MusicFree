@@ -66,8 +66,8 @@ Package 依赖固定为：
 | `VLCKitPlaybackAdapter` | MusicDomain、MediaSourceAPI、PlaybackAPI、VLCKit |
 | `AppleSystemAdapter` | MusicDomain、PlaybackAPI、SystemIntegrationAPI、AVFAudio、MediaPlayer |
 | `PreferencesPersistenceAdapter` | SettingsAPI、Foundation |
-| `DesignSystem` | SwiftUI |
-| Feature targets | MusicDomain、AppServices、必要的 API target、DesignSystem、SwiftUI |
+| `DesignSystem` | UIKit、Foundation |
+| Feature targets | MusicDomain、AppServices、必要的 API target、DesignSystem、UIKit |
 | `MusicFreeApp` | AppServices、Feature targets、Adapter targets |
 | `MusicTestSupport` | MusicDomain、全部 API target |
 
@@ -346,6 +346,8 @@ public protocol PlaybackEngine: AnyObject {
 
 歌曲过渡的 `crossfadeDuration` 上限为 12 秒，独立淡入/淡出上限为 3 秒。`boundarySilenceSkipping` 能力位对应 `TransitionPreferences` / `AudioTransitionConfiguration.skipBoundarySilence`，默认关闭，可独立于 gapless/crossfade 启用。FFmpeg 宿主在本地完整歌曲、1 倍速且 DSP 保持时序时检测首尾静音；进度保留原歌曲时间轴，已渲染时长不包含跳过的开头。
 
+`smartCrossfade` 能力位对应 `TransitionPreferences` / `AudioTransitionConfiguration.smartCrossfadeEnabled`，默认关闭。仅在 crossfade 模式生效，将 `crossfadeDuration` 作为每对歌曲自动过渡的上限；首尾静音、RMS 响度和能量起音分析在解码队列完成，选定重叠复用双路混音。节拍不可靠时使用响度策略，分析失败时保留固定渐变，歌曲始终保持原速。规则见 [智能交叉渐变](Smart_Crossfade_2026-10-12.md)。
+
 ## 8. `SystemIntegrationAPI`
 
 | 文件 | Public 契约 |
@@ -541,7 +543,9 @@ Adapter 仅向 Composition Root 暴露具体类型及 initializer，行为通过
 | `LibraryFeature` | `LibraryHomeViewController`、`LibraryCollectionsViewController`、`LibraryCollectionDetailViewController`、`LibraryTracksViewController` 及详情/编辑控制器 |
 | `PlayerFeature` | `PlayerMiniPlayerViewController`、`PlayerNowPlayingViewController`、`PlayerQueueViewController`、`PlayerLyricsViewController` |
 | `PlaylistFeature` | `PlaylistListViewController`、`PlaylistDetailViewController` |
-| `SettingsFeature` | `SettingsScene`（Settings SwiftUI 宿主）与 `OnlineSourcesViewController` |
+| `SettingsFeature` | `SettingsViewController`、`PluginSettingsViewController`、`PluginSettingsPageHost` 和可选原生表单基类；`SettingsSceneModel` 复用设置状态和服务，不承担页面呈现 |
+| `BuiltinPluginSettings` | 内置均衡器、元数据授权和原生在线账户页面；提供 `BuiltinPluginSettingsRegistration`，通过独立 UIKit 插件 SDK 注册工厂 |
+| `MusicFreePluginSettingsUIKitAPI` | 稳定入口、位置、页面注册表、工厂和插件作用域设置上下文；不依赖 AppServices/SettingsAPI |
 | `MusicFreeApp` | `MusicFreeApp`、`AppContainer`、路由和 scene composition |
 
 Feature 内部 ViewModel 默认 `@MainActor`，只把用户动作转换为 façade 命令。Feature 不公开自身状态作为其他 Feature 的数据源；跨 Feature 状态由 AppServices 提供，导航由 App target 负责。

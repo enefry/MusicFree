@@ -5,7 +5,7 @@ import MusicDomain
 import UIKit
 
 @MainActor
-final class OnlineSourceDownloadQueueViewController: UIViewController, UITableViewDataSource, UITableViewDelegate {
+public final class OnlineSourceDownloadQueueViewController: UIViewController, UITableViewDataSource, UITableViewDelegate {
     private enum Mode { case overview, completed, detail(SourceObjectID) }
     private enum Row: Hashable { case task(SourceObjectID), file(SourceObjectID), directory(SourceObjectID), completed, more }
     private struct Section { let title: String; let rows: [Row] }
@@ -28,7 +28,7 @@ final class OnlineSourceDownloadQueueViewController: UIViewController, UITableVi
     private var resumeHeight: NSLayoutConstraint!
     private let emptyLabel = UILabel()
 
-    convenience init(model: OnlineSourcesSceneModel) { self.init(model: model, mode: .overview) }
+    public convenience init(model: OnlineSourcesSceneModel) { self.init(model: model, mode: .overview) }
     private init(model: OnlineSourcesSceneModel, mode: Mode) {
         self.model = model
         self.mode = mode
@@ -36,9 +36,9 @@ final class OnlineSourceDownloadQueueViewController: UIViewController, UITableVi
         hidesBottomBarWhenPushed = true
     }
     @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    required public init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    override func viewDidLoad() {
+    public override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = MusicFreeUIColorTokens.backgroundGrouped
         view.accessibilityIdentifier = "onlineSources.downloadQueue.view"
@@ -85,12 +85,12 @@ final class OnlineSourceDownloadQueueViewController: UIViewController, UITableVi
         render()
     }
 
-    override func viewWillAppear(_ animated: Bool) {
+    public override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         observe()
         render()
     }
-    override func viewDidDisappear(_ animated: Bool) {
+    public override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         observationTask?.cancel(); observationTask = nil
         progressTask?.cancel(); progressTask = nil
@@ -273,7 +273,7 @@ final class OnlineSourceDownloadQueueViewController: UIViewController, UITableVi
         tableView.tableHeaderView = stack
     }
 
-    override func viewDidLayoutSubviews() {
+    public override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         guard let header = tableView.tableHeaderView, header.frame.width != tableView.bounds.width else { return }
         header.frame.size.width = tableView.bounds.width
@@ -314,10 +314,10 @@ final class OnlineSourceDownloadQueueViewController: UIViewController, UITableVi
         }
     }
 
-    func numberOfSections(in tableView: UITableView) -> Int { sections.count }
-    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { sections[section].rows.count }
-    func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? { sections[section].title }
-    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+    public func numberOfSections(in tableView: UITableView) -> Int { sections.count }
+    public func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { sections[section].rows.count }
+    public func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? { sections[section].title }
+    public func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: "DownloadQueueCell", for: indexPath) as! DownloadQueueCell
         configure(cell, row: sections[indexPath.section].rows[indexPath.row])
         return cell
@@ -390,7 +390,7 @@ final class OnlineSourceDownloadQueueViewController: UIViewController, UITableVi
         cell.accessibilityValue = [filePhaseTitle(file.phase), cell.percentLabel.text ?? "", cell.bytesLabel.text ?? ""].joined(separator: ", ")
     }
 
-    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+    public func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
         switch sections[indexPath.section].rows[indexPath.row] {
         case .task(let id): showDetail(id)
@@ -399,7 +399,7 @@ final class OnlineSourceDownloadQueueViewController: UIViewController, UITableVi
         default: break
         }
     }
-    func tableView(_ tableView: UITableView, viewForHeaderInSection section: Int) -> UIView? {
+    public func tableView(_ tableView: UITableView, viewForHeaderInSection section: Int) -> UIView? {
         let header = UITableViewHeaderFooterView()
         var content = header.defaultContentConfiguration()
         content.text = sections[section].title
@@ -486,7 +486,7 @@ private final class DownloadQueueCell: UITableViewCell {
         progressView.trackTintColor = MusicFreeUIColorTokens.playerControl
     }
     @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    required public init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     func reset() {
         for label in [titleLabel, statusLabel, pathLabel, bytesLabel, percentLabel] { label.text = nil }
         statusLabel.isHidden = false

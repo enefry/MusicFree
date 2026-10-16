@@ -570,9 +570,14 @@ final class AppContainer: ObservableObject {
         } else {
             artworkWriter = nil
         }
+#if DEBUG
         let referenceMediaURL = cacheRoot.appendingPathComponent("PluginReference/tone.wav")
         // Reference fixture failure must not make existing playback/library unavailable.
         try? PluginReferenceMedia.create(at: referenceMediaURL)
+        let referenceRegistrations = ReferencePluginRegistrationProvider(mediaURL: referenceMediaURL).registrations
+#else
+        let referenceRegistrations: [BuiltInPluginRegistration] = []
+#endif
 #if LYRICS_DISABLED
         let includeLyricsPlugins = false
 #else
@@ -586,9 +591,10 @@ final class AppContainer: ObservableObject {
         let dataPlugins = BuiltinDataPluginRegistrationProvider(includeLyrics: includeLyricsPlugins,
             includeMetadataServer: includeMetadataServerPlugins)
         let pluginRuntime = PluginRuntime(registry: PluginRegistry(
-            ReferencePluginRegistrationProvider(mediaURL: referenceMediaURL).registrations + dataPlugins.registrations
+            referenceRegistrations + dataPlugins.registrations
                 + NativeOnlineSourceRegistrationProvider(factory: onlineSourceFactory).registrations
-                + [PluginHostService.equalizerRegistration],
+                + [PluginHostService.equalizerRegistration, PluginHostService.stereoBalanceRegistration,
+                   PluginHostService.declickRegistration],
             compiledOut: dataPlugins.unavailable),
             credentials: KeychainPluginCredentialStore())
         let formalPluginAudio = PluginAudioHostController(runtime: pluginRuntime,

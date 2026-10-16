@@ -1,7 +1,9 @@
 #!/bin/bash
 
 set -euo pipefail
-
+echo "========================================================================================================================"
+echo "archive_update_build_number.sh begin"
+echo "========================================================================================================================"
 config_path="${SRCROOT}/basic_config.xcconfig"
 
 if [[ ! -f "${config_path}" ]]; then
@@ -40,5 +42,6 @@ new_build_number=$(printf '%s%02d' "${current_date}" "${new_counter}")
 /usr/bin/sed -i '' -E \
     "s/^[[:space:]]*BUILD_VERSION[[:space:]]*=.*/BUILD_VERSION = ${new_build_number}/" \
     "${config_path}"
-
+echo "========================================================================================================================"
 echo "Archive build number: ${previous_build_number} -> ${new_build_number}"
+echo "========================================================================================================================"

@@ -1,4 +1,5 @@
 import Foundation
+import MusicDomain
 import PlaybackAPI
 import MusicFreePluginAPI
 import MusicFreePluginRuntime
@@ -7,6 +8,9 @@ import MusicFreePluginAudio
 /// Applies factories only while output is stopped, and closes existing gates
 /// immediately on configuration/permission change. Queued audio is not rewound.
 @MainActor public final class PluginPCMHostController {
+    private static let logger = MusicLogger(category: "plugin-pcm-graph")
+    private let diagnosticID = UUID().uuidString
+    private var lastDeferredDiagnostic: String?
     private let runtime: PluginRuntime
     private let excluded: Set<PluginID>
     private let install: @MainActor ([PluginDSPFactorySpec]) throws -> Void
@@ -34,7 +38,7 @@ import MusicFreePluginAudio
                 : (try? snapshot.descriptor.resolvedDSPPlacement(snapshot.preference.dspPlacement)) == .perTrack
             return perTrack && snapshot.descriptor.kinds.contains(.dsp)
             && snapshot.preference.isEnabled && snapshot.preference.isLoadAllowed
-            && [.registered, .ready, .running].contains(snapshot.state) }
+            && [.registered, .ready, .running].contains(snapshot.state) }.sorted(by: PluginSnapshot.dspProcessingOrder)
         let preferences = candidates.map { snapshot in var preference = snapshot.preference; preference.isVisible = true; return preference }
         guard preferences != operational else {
             if pending != nil { applyPending() }
@@ -47,7 +51,10 @@ import MusicFreePluginAudio
             guard let factory = runtime.registry.registrations[candidate.id]?.dsp else { continue }
             let permitted = (try? await authorizeDSP(candidate.id)) != nil
             guard request == revision else { return }
-            guard permitted else { continue }
+            guard permitted else {
+                Self.logger.warning("host=\(diagnosticID) event=authorization-bypassed plugin=\(candidate.id.rawValue)")
+                continue
+            }
             specifications.append(.init(pluginID: candidate.id, factory: factory,
                 configuration: .init(values: candidate.preference.configuration,
                     credentialRecordID: candidate.preference.credentialRecordID,
@@ -75,7 +82,16 @@ import MusicFreePluginAudio
             try install(specifications)
             for spec in specifications { spec.gate.setAllowed(true) }
             installed = specifications; pending = nil
-        } catch { /* A running engine defers the new factory until output stops. */ }
+            lastDeferredDiagnostic = nil
+            let ids = installed.map { $0.pluginID.rawValue }.joined(separator: ",")
+            Self.logger.info("host=\(diagnosticID) event=factories-installed active=\(installed.count) plugins=\(ids) gatesAllowed=\(installed.allSatisfy { $0.gate.isAllowed })")
+        } catch {
+            let signature = specifications.map { $0.pluginID.rawValue }.joined(separator: ",") + ":" + String(reflecting: type(of: error))
+            if signature != lastDeferredDiagnostic {
+                lastDeferredDiagnostic = signature
+                Self.logger.warning("host=\(diagnosticID) event=install-deferred pending=\(specifications.count) active=\(installed.count) reason=\(String(reflecting: type(of: error)))")
+            }
+        }
     }
     public var failedPluginIDs: Set<PluginID> { Set((installed + (pending ?? [])).filter { $0.gate.hasFailed }.map(\.pluginID)) }
     /// Close the old route before either host can enable a newly selected route.

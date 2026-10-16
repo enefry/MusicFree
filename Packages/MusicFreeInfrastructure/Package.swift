@@ -67,6 +67,7 @@ let package = Package(
                 "AppleSystemAdapter",
                 "PreferencesPersistenceAdapter",
                 "OnlineSourceAdapter",
+                .product(name: "AppServices", package: "MusicFreeCore"),
                 .product(name: "MusicTestSupport", package: "MusicFreeCore")
             ]
         )

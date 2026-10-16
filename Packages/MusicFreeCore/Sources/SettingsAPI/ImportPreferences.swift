@@ -5,6 +5,7 @@ import MusicDomain
 /// The action taken when an imported item matches an existing library item.
 public enum DuplicateImportPolicy: String, Codable, CaseIterable, Equatable, Hashable, Sendable {
     case skipExisting
+    case reportExisting
     case replaceExisting
     case keepBoth
 }

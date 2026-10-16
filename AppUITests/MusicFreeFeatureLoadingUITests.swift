@@ -2046,6 +2046,35 @@ final class MusicFreeFeatureLoadingUITests: XCTestCase {
     }
 
     @MainActor
+    func testNowPlayingSharesNamedAudioFile() {
+        let app = reviewApp()
+        defer { app.terminate() }
+        app.launch()
+        XCTAssertTrue(tabButton("Library", in: app).waitForExistence(timeout: 15))
+        waitForSeededLibraryTrack(in: app)
+        openLibrarySection("Songs", in: app)
+        let tracks = app.descendants(matching: .any)["library.tracks"].firstMatch
+        let track = tracks.cells.matching(NSPredicate(format: "label == %@", "BVT Tone")).firstMatch
+        XCTAssertTrue(track.waitForExistence(timeout: 10))
+        track.tap()
+        let miniPlayer = app.buttons["player.mini"].firstMatch
+        XCTAssertTrue(miniPlayer.waitForExistence(timeout: 15))
+        miniPlayer.tap()
+        let more = app.buttons["player.nowPlaying.more"].firstMatch
+        XCTAssertTrue(more.waitForExistence(timeout: 10))
+        more.tap()
+        let share = app.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", "Share", "分享")).firstMatch
+        XCTAssertTrue(share.waitForExistence(timeout: 5))
+        XCTAssertTrue(share.isEnabled)
+        share.tap()
+        let saveToFiles = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS[c] %@ OR label CONTAINS %@", "Save to Files", "存储到文件")).firstMatch
+        XCTAssertTrue(saveToFiles.waitForExistence(timeout: 15), "Sharing a song must expose file activities.\n\(app.debugDescription)")
+        attachScreenshot(named: "now-playing-share-named-audio")
+        let audioType = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS[c] %@ OR label CONTAINS[c] %@ OR label CONTAINS[c] %@", ".wav", "WAVE", "Audio Recording")).firstMatch
+        XCTAssertTrue(audioType.waitForExistence(timeout: 5), "The share sheet must preview the original audio format.")
+    }
+
+    @MainActor
     private func reviewApp(resetPlaybackHistory: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = [

@@ -2,6 +2,26 @@
   "schemaVersion": 1,
   "dependencies": [
     {
+      "id": "163-music-lyrics",
+      "name": "163MusicLyrics protocol adaptations",
+      "version": "local cross-platform source snapshot",
+      "license": "Apache-2.0",
+      "kind": "source",
+      "sourceURL": "https://github.com/jitwxs/163MusicLyrics",
+      "licenseURL": "https://github.com/jitwxs/163MusicLyrics/blob/master/LICENSE",
+      "licenseFile": "163MusicLyrics-Apache-2.0.txt"
+    },
+    {
+      "id": "vlc-equalizer-presets",
+      "name": "VideoLAN equalizer preset data",
+      "version": "2004 preset table",
+      "license": "LGPL-2.1-or-later",
+      "kind": "source",
+      "sourceURL": "https://github.com/videolan/vlc/blob/master/modules/audio_filter/equalizer_presets.h",
+      "licenseURL": "https://spdx.org/licenses/LGPL-2.1-or-later.html",
+      "licenseFile": "VLCEqualizerPresets.txt"
+    },
+    {
       "id": "kingfisher",
       "name": "Kingfisher",
       "version": "8.12.0",

@@ -161,3 +161,40 @@ func createPlaylistImmediatelyAddsTracks() async {
 private func libraryPlaylistTrack(_ value: String) -> MediaItemID {
     MediaItemID(sourceID: .local, externalID: value)
 }
+
+#if canImport(UIKit)
+import UIKit
+
+@MainActor
+@Test("New playlist form remains visible below its button and enables submission as the name changes")
+func addToPlaylistCreateFormLayout() async throws {
+    let controller = LibraryAddToPlaylistViewController(
+        itemIDs: [libraryPlaylistTrack("form-track")], playlistServing: LibraryPlaylistServingFake()
+    )
+    controller.loadViewIfNeeded()
+    controller.view.frame = CGRect(x: 0, y: 0, width: 320, height: 600)
+    controller.view.layoutIfNeeded()
+    let table = try #require(controller.view.subviews.compactMap { $0 as? UITableView }.first)
+    let header = try #require(table.tableHeaderView)
+    func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
+    let create = try #require(descendants(header).first { $0.accessibilityIdentifier == "library.addToPlaylist.create" } as? UIButton)
+    for _ in 0..<100 where table.isHidden { try await Task.sleep(for: .milliseconds(10)) }
+    let originalHeight = header.frame.height
+    _ = controller.perform(NSSelectorFromString("toggleCreateForm"))
+    controller.view.layoutIfNeeded()
+    header.layoutIfNeeded()
+    let name = try #require(descendants(header).first { $0.accessibilityIdentifier == "library.addToPlaylist.name" } as? UITextField)
+    let submit = try #require(descendants(header).first { $0.accessibilityIdentifier == "library.addToPlaylist.createAndAdd" } as? UIButton)
+    #expect(header.frame.height > originalHeight)
+    #expect(name.convert(name.bounds, to: header).minY >= create.frame.maxY)
+    #expect(submit.convert(submit.bounds, to: header).maxY <= header.bounds.maxY)
+    #expect(name.bounds.width > 200)
+    #expect(!submit.isEnabled)
+    name.text = "New playlist"
+    _ = controller.perform(NSSelectorFromString("createNameChanged"))
+    #expect(submit.isEnabled)
+    _ = controller.perform(NSSelectorFromString("toggleCreateForm"))
+    controller.view.layoutIfNeeded()
+    #expect(abs(header.frame.height - originalHeight) < 1)
+}
+#endif

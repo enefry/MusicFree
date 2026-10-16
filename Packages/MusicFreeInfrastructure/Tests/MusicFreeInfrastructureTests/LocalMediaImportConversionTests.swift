@@ -1,3 +1,4 @@
+import AppServices
 import Foundation
 import MediaSourceAPI
 import MusicDomain
@@ -8,6 +9,58 @@ import Testing
 
 @Suite("Local media import audio conversion")
 struct LocalMediaImportConversionTests {
+  @Test("A file import finishes conversion in the foreground before any music is played")
+  func foregroundFileImportConvertsWithoutPlayback() async throws {
+    let fixture = try ImportConversionFixture()
+    defer { fixture.remove() }
+    let inputURL = fixture.inputRoot.appendingPathComponent("first-song.flac")
+    let sourceData = Data("supported-lossless-source".utf8)
+    try sourceData.write(to: inputURL)
+    let repository = InMemoryLibraryRepository()
+    let transcoder = RecordingImportTranscoder()
+    let importer = try LocalMediaImporter(
+      configuration: fixture.configuration,
+      probe: ALACRoundTripProbe(),
+      metadataReader: EmptyImportMetadataReader(),
+      libraryRepository: repository,
+      transcoder: transcoder,
+      losslessValidator: AcceptingImportLosslessValidator(),
+      conversionScheduler: MediaConversionScheduler()
+    )
+    let importID = UUID()
+    // Make a blocked scheduler produce a cancelled result instead of hanging the test.
+    let timeout = Task {
+      do {
+        try await Task.sleep(for: .seconds(5))
+        await importer.cancelImport(importID)
+      } catch {}
+    }
+    defer { timeout.cancel() }
+
+    let events = try await collectImportEvents(importer.importMedia(MediaImportRequest(
+      importID: importID,
+      urls: [inputURL],
+      audioConversionPolicy: AudioImportConversionPolicy(target: .alac)
+    )))
+
+    let result = try terminalImportResult(in: events)
+    #expect(result.status == .completed)
+    #expect(result.imported == 1)
+    #expect(result.failed == 0)
+    #expect(await transcoder.callCount == 1)
+    #expect(events.contains { if case .waitingForTranscoding = $0 { true } else { false } })
+    #expect(events.contains { if case .transcoding = $0 { true } else { false } })
+    #expect(events.contains { if case .validatingTranscode = $0 { true } else { false } })
+    let itemID = try #require(persistedImportItemID(in: events))
+    let track = try #require(try await repository.track(id: itemID))
+    let asset = try #require(try await repository.mediaAsset(id: track.assetID))
+    #expect(asset.conversion != nil)
+    let coordinator = try ImportCoordinatorRegistry.shared.coordinator(for: fixture.configuration)
+    let managedURL = try await coordinator.store.mediaURL(forExternalID: asset.id.externalID)
+    #expect(try Data(contentsOf: managedURL) == Data("converted-output".utf8))
+    #expect(try Data(contentsOf: inputURL) == sourceData)
+  }
+
   @Test("Unsupported lossless audio remains importable with its original bytes")
   func unsupportedLosslessAudioIsImportedWithoutConversion() async throws {
     let fixture = try ImportConversionFixture()

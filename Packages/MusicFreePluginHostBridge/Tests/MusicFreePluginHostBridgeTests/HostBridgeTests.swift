@@ -14,11 +14,14 @@ import MusicFreePluginAudio
 private struct EmptyFactory: OnlineSourceFactory {
     func makeSource(for configuration: OnlineSourceConfiguration) throws -> (any OnlineSource)? { nil }
 }
+#if DEBUG
 private func references() -> PluginRuntime {
     .init(registry: PluginRegistry(ReferencePluginRegistrationProvider(mediaURL: URL(fileURLWithPath: "/fixture.wav")).registrations))
 }
+#endif
 private func enabled(_ id: PluginID) -> PluginPreference { .init(pluginID: id, isEnabled: true, isLoadAllowed: true) }
 
+#if DEBUG
 @Test @MainActor func pcmControllerClosesOldGatesAndRetriesAfterOutputStops() async throws {
     let runtime = references()
     let id = ReferencePluginRegistrationProvider.pcmID
@@ -53,6 +56,7 @@ private func enabled(_ id: PluginID) -> PluginPreference { .init(pluginID: id, i
     #expect(installed.isEmpty)
     continuation.finish()
 }
+#endif
 
 @Test func sourceSchemaIsIndependentFromPluginGlobalPreferences() throws {
     let descriptor = PluginDescriptor(id: .init(rawValue: "schema.source"), name: "Source", kinds: [.onlineSource],
@@ -62,6 +66,7 @@ private func enabled(_ id: PluginID) -> PluginPreference { .init(pluginID: id, i
     try descriptor.sourceConfiguration.validate(["account": .text("account-a")], credentialRecordID: nil)
 }
 
+#if DEBUG
 @Test func referenceLyricsRunsThroughHostProviderAndPreservesTranslation() async throws {
     let runtime = references(); let id = ReferencePluginRegistrationProvider.lyricsID
     await runtime.apply(preferences: [enabled(id)], applicationPrivacyAccepted: false)
@@ -73,15 +78,22 @@ private func enabled(_ id: PluginID) -> PluginPreference { .init(pluginID: id, i
     #expect(try JSONDecoder().decode(TrackLyrics.self, from: JSONEncoder().encode(lyrics)) == lyrics)
     #expect(try await adapter.fetchLyrics(for: .init(itemID: .init(sourceID: .init(rawValue: "test"), externalID: "other"), title: "Other", artistName: "Other")) == nil)
 }
-@Test func metadataPatchOnlyReturnsRequestedFields() async throws {
+#endif
+#if DEBUG
+@Test func metadataPatchFiltersUnrequestedValuesAndRetainsMatchingEvidence() async throws {
     let runtime = references(); let id = ReferencePluginRegistrationProvider.metadataID
     await runtime.apply(preferences: [enabled(id)], applicationPrivacyAccepted: false)
     let adapter = PluginMetadataProviderAdapter(pluginID: id, runtime: runtime)
     let query = MetadataEnrichmentQuery(itemID: .init(sourceID: .init(rawValue: "test"), externalID: "test-track"), title: "MusicFree Reference Tone",
         artistName: "MusicFree", durationSeconds: 1, missingFields: [.year])
     let candidate = try #require(try await adapter.search(query).first)
-    #expect(candidate.year == 2026); #expect(candidate.albumName == nil); #expect(candidate.genreName == nil)
+    #expect(candidate.year == 2026)
+    #expect(candidate.artistName == "MusicFree")
+    #expect(candidate.albumName == "Plugin Reference")
+    #expect(candidate.genreName == nil)
 }
+#endif
+#if DEBUG
 @Test func sourceInstancesPreserveStableIdentityAndRevokeIndependently() async throws {
     let runtime = references(); let id = ReferencePluginRegistrationProvider.sourceID
     await runtime.apply(preferences: [enabled(id)], applicationPrivacyAccepted: true)
@@ -102,6 +114,7 @@ private func enabled(_ id: PluginID) -> PluginPreference { .init(pluginID: id, i
         try factory.makeSource(for: .init(sourceID: .init(rawValue: "unknown"), providerKind: .init(rawValue: "unknown"), displayName: "Unknown"))
     }
 }
+#endif
 
 private struct PlaybackOnly: PlaybackSourcePlugin {
     func playbackAccess(objectID: String, context: PluginOperationContext) async throws -> PluginSourceAccess {
@@ -126,6 +139,7 @@ private struct PlaybackOnly: PlaybackSourcePlugin {
         #expect(request.headers["Authorization"] == "ephemeral")
     } else { Issue.record("Expected ephemeral playback request") }
 }
+#if DEBUG
 @Test func referenceDownloadProducesActualDecodableMedia() async throws {
     var projectRoot = URL(fileURLWithPath: #filePath)
     for _ in 0..<5 { projectRoot.deleteLastPathComponent() }
@@ -148,6 +162,7 @@ private struct PlaybackOnly: PlaybackSourcePlugin {
     #expect(file.length == 48000); #expect(file.fileFormat.sampleRate == 48000)
     #expect(receipt.byteCount == 96044)
 }
+#endif
 @Test func oldSettingsDecodeAndUnknownPluginPreferencesRoundTrip() throws {
     let old = try JSONDecoder().decode(AppSettings.self, from: Data("{}".utf8))
     #expect(old.pluginPreferences.isEmpty)
@@ -173,6 +188,7 @@ private struct PlaybackOnly: PlaybackSourcePlugin {
         installed = node; changes += 1
     }
 }
+#if DEBUG
 @Test @MainActor func graphChangeDefersMountWhileOutputRuns() async throws {
     let runtime = references()
     let id = ReferencePluginRegistrationProvider.dspID
@@ -198,6 +214,7 @@ private struct PlaybackOnly: PlaybackSourcePlugin {
     #expect(state.installed !== old)
     continuation.finish()
 }
+#endif
 
 private actor SuspendedAuthorization {
     private var continuation: CheckedContinuation<Void, Never>?
@@ -212,6 +229,7 @@ private actor SuspendedAuthorization {
     }
     func release() { released = true; continuation?.resume(); continuation = nil }
 }
+#if DEBUG
 @Test @MainActor func stalePCMFailureCannotClearNewerInstallation() async throws {
     let runtime = references(), gate = SuspendedAuthorization()
     let id = ReferencePluginRegistrationProvider.pcmID
@@ -232,6 +250,8 @@ private actor SuspendedAuthorization {
     #expect(installed.first?.configuration.values["gain"] == .number(0.25))
     #expect(current.gate.isAllowed)
 }
+#endif
+#if DEBUG
 @Test @MainActor func staleGraphFailureCannotUnloadNewerEffect() async throws {
     let runtime = references(), gate = SuspendedAuthorization(), state = GraphMountState()
     let id = ReferencePluginRegistrationProvider.dspID
@@ -251,6 +271,8 @@ private actor SuspendedAuthorization {
     #expect(state.installed === current)
     #expect(state.changes == 1)
 }
+#endif
+#if DEBUG
 @Test @MainActor func failedPCMStatusDoesNotOverrideRevokedPreference() async throws {
     let runtime = references(), id = ReferencePluginRegistrationProvider.pcmID
     var installed: [PluginDSPFactorySpec] = []
@@ -264,6 +286,8 @@ private actor SuspendedAuthorization {
     let snapshot = await service.snapshots().first { $0.id == id }
     #expect(snapshot?.state == .disabled)
 }
+#endif
+#if DEBUG
 @Test @MainActor func graphFactoryReceivesDescriptorSchemaVersion() async throws {
     let id = ReferencePluginRegistrationProvider.dspID
     let reference = ReferencePluginRegistrationProvider(mediaURL: URL(fileURLWithPath: "/fixture.wav")).registrations
@@ -281,7 +305,9 @@ private actor SuspendedAuthorization {
     await controller.apply()
     #expect(state.installed != nil)
 }
+#endif
 
+#if DEBUG
 @Test @MainActor func revertingPendingGraphChangeRestoresAnalysisWithoutRemount() async throws {
     let runtime = references(), state = GraphMountState()
     let id = ReferencePluginRegistrationProvider.dspID
@@ -319,7 +345,9 @@ private actor SuspendedAuthorization {
     #expect(analysis != nil)
     #expect((analysis?.peak ?? 0) > 0.4)
 }
+#endif
 
+#if DEBUG
 @Test @MainActor func staleRevocationRestoresCurrentPCMWithoutRevivingFailure() async throws {
     let runtime = references(), id = ReferencePluginRegistrationProvider.pcmID
     var installed: [PluginDSPFactorySpec] = []
@@ -344,3 +372,4 @@ private actor SuspendedAuthorization {
     #expect(specification.gate.hasFailed)
     #expect(installations == 1)
 }
+#endif

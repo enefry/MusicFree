@@ -1,4 +1,5 @@
 import AppServices
+import DesignSystem
 import Foundation
 import MediaSourceAPI
 import MusicDomain
@@ -33,16 +34,27 @@ import UIKit
     deinit { task?.cancel() }
     public override func viewDidLoad() {
         super.viewDidLoad()
-        title = configuration == nil ? "添加来源" : "编辑来源"
+        title = L(configuration == nil ? "添加来源" : "编辑来源")
+        tableView.keyboardDismissMode = .onDrag
         view.accessibilityIdentifier = "plugins.source.form"
-        name.placeholder = "名称"; name.text = configuration?.displayName ?? descriptor.name
+        name.placeholder = L("名称"); name.accessibilityLabel = L("名称"); name.text = configuration?.displayName ?? descriptor.name
         name.accessibilityIdentifier = "plugins.source.name"
+        enabled.accessibilityIdentifier = "plugins.source.enabled"
+        consent.accessibilityIdentifier = "plugins.source.consent"
+        enabled.accessibilityLabel = L("启用此来源")
+        consent.accessibilityLabel = L("同意此来源的服务许可")
         enabled.isOn = configuration?.isEnabled ?? false
         consent.isOn = configuration?.privacyPolicyVersion == descriptor.policyVersion
         for field in descriptor.sourceConfiguration.fields {
-            if field.kind == .flag { flags[field.id] = UISwitch() }
+            if field.kind == .flag {
+                let flag = UISwitch()
+                flag.accessibilityIdentifier = "plugins.source.field.\(field.id)"
+                flag.accessibilityLabel = field.title
+                flags[field.id] = flag
+            }
             else {
                 let control = UITextField()
+                control.accessibilityLabel = field.title
                 control.placeholder = field.title; control.isSecureTextEntry = field.kind == .secret
                 control.autocapitalizationType = .none; control.autocorrectionType = .no
                 if field.kind == .number { control.keyboardType = .numbersAndPunctuation }
@@ -54,6 +66,7 @@ import UIKit
             guard let self else { return }
             do {
                 let current = try await settings.load()
+                guard !Task.isCancelled else { return }
                 if let configuration {
                     values = current.pluginPreferences.first { $0.pluginID == descriptor.id }?.instances.first {
                         $0.instanceID == configuration.sourceID.rawValue
@@ -68,7 +81,7 @@ import UIKit
                     }
                 }
                 busy = false; tableView.reloadData()
-            } catch { failure = "无法读取来源配置，请返回后重试。"; tableView.reloadData() }
+            } catch { failure = L("无法读取来源配置，请返回后重试。"); tableView.reloadData() }
         }
     }
     public override func numberOfSections(in tableView: UITableView) -> Int { 2 }
@@ -76,7 +89,7 @@ import UIKit
         section == 0 ? descriptor.sourceConfiguration.fields.count + 3 : (configuration == nil ? 1 : 2)
     }
     public override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
-        section == 1 ? failure : (descriptor.permissions.contains(.network)
+        section == 1 ? failure : L(descriptor.permissions.contains(.network)
             ? "此来源可以访问声明的媒体服务。密码和令牌只保存在系统 Keychain；应用联网许可需单独开启。更新凭据时请重新填写全部必填凭据。"
             : "此来源提供离线参考内容，不发送网络请求。")
     }
@@ -84,7 +97,7 @@ import UIKit
         let cell = UITableViewCell(style: .default, reuseIdentifier: nil)
         cell.isUserInteractionEnabled = !busy
         if indexPath.section == 1 {
-            cell.textLabel?.text = indexPath.row == 0 ? "保存来源" : "删除来源"
+            cell.textLabel?.text = L(indexPath.row == 0 ? "保存来源" : "删除来源")
             cell.textLabel?.textColor = indexPath.row == 0 ? .systemBlue : .systemRed
             cell.accessibilityIdentifier = indexPath.row == 0 ? "plugins.source.save" : "plugins.source.delete"
             return cell
@@ -97,7 +110,7 @@ import UIKit
             if let flag = flags[field.id] { cell.accessoryView = flag }
             else if let control = fields[field.id] { embed(control, in: cell); cell.textLabel?.text = nil }
         } else {
-            cell.textLabel?.text = indexPath.row == fieldCount + 1 ? "启用此来源" : "同意此来源的服务许可"
+            cell.textLabel?.text = L(indexPath.row == fieldCount + 1 ? "启用此来源" : "同意此来源的服务许可")
             cell.accessoryView = indexPath.row == fieldCount + 1 ? enabled : consent
         }
         return cell
@@ -117,15 +130,16 @@ import UIKit
         guard !busy, indexPath.section == 1 else { return }
         if indexPath.row == 0 { task = Task { await save() } }
         else {
-            let alert = UIAlertController(title: "删除来源及其凭据？", message: "已导入媒体会保留。", preferredStyle: .alert)
-            alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-            alert.addAction(UIAlertAction(title: "删除", style: .destructive) { [weak self] _ in
+            let alert = UIAlertController(title: L("删除来源及其凭据？"), message: L("已导入媒体会保留。"), preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: L("取消"), style: .cancel))
+            alert.addAction(UIAlertAction(title: L("删除"), style: .destructive) { [weak self] _ in
                 self?.task = Task { await self?.remove() }
             })
             present(alert, animated: true)
         }
     }
     private func save() async {
+        guard !busy else { return }
         view.endEditing(true); busy = true; failure = nil; tableView.reloadData()
         defer { busy = false; for field in descriptor.sourceConfiguration.fields where field.kind == .secret { fields[field.id]?.text = "" }; tableView.reloadData() }
         let sourceID = configuration?.sourceID ?? MediaSourceID(rawValue: UUID().uuidString)
@@ -169,11 +183,11 @@ import UIKit
             onSaved()
         } catch {
             if !committed, let newRecord { try? await plugins.deleteCredential(recordID: newRecord, pluginID: descriptor.id, instanceID: sourceID.rawValue) }
-            failure = "保存失败，请检查名称、配置范围和凭据。"
+            failure = L("保存失败，请检查名称、配置范围和凭据。")
         }
     }
     private func remove() async {
-        guard let configuration else { return }
+        guard !busy, let configuration else { return }
         busy = true; defer { busy = false; tableView.reloadData() }
         do {
             let current = try await settings.load()
@@ -188,6 +202,6 @@ import UIKit
             try await settings.update(updated); await plugins.apply(updated)
             if let record = configuration.credentialRecordID { try? await plugins.deleteCredential(recordID: record, pluginID: descriptor.id, instanceID: configuration.sourceID.rawValue) }
             onSaved()
-        } catch { failure = "删除失败，请重试。" }
+        } catch { failure = L("删除失败，请重试。") }
     }
 }

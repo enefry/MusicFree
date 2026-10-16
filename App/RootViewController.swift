@@ -10,12 +10,12 @@ import PlaybackAPI
 import PlayerFeature
 import PlaylistFeature
 import SettingsFeature
+import BuiltinPluginSettings
 import UIKit
 
 /// UIKit root shell for all production features.
 ///
-/// Settings is intentionally hosted by SwiftUI below this controller. Every
-/// other route is rendered by native UIKit view controllers.
+/// Native UIKit navigation shell for the application routes.
 @MainActor
 final class RootViewController: UIViewController {
     private static let automaticDocumentsScanDelay: Duration = .seconds(4)
@@ -61,7 +61,7 @@ final class RootViewController: UIViewController {
     private var libraryViewModelServicesID: ObjectIdentifier?
     private var onlineSourcesModel: OnlineSourcesSceneModel?
     private var onlineSourcesModelServicesID: ObjectIdentifier?
-    private var fallbackPlayerController: PlayerNowPlayingViewController?
+    private weak var presentedPlayerController: PlayerNowPlayingViewController?
     private var appliedAppearance: MusicFreeAppearance?
     private var appliedLanguage: MusicFreeLanguage?
     private var appliedAccentColor: String?
@@ -513,7 +513,7 @@ final class RootViewController: UIViewController {
             )
         }
 
-        if let settingsController = compactSettingsHostingController() {
+        if let settingsController = compactSettingsViewController() {
             settingsController.updateNavigationDestination(compactSettingsDestination)
         }
     }
@@ -563,9 +563,9 @@ final class RootViewController: UIViewController {
             as? SettingsCategoriesViewController)?.selectDestination(destination)
     }
 
-    private func compactSettingsHostingController() -> SettingsHostingController? {
-        compactTabBarController?.rootViewController(for: .settings)
-            as? SettingsHostingController
+    private func compactSettingsViewController() -> AppSettingsViewController? {
+        (compactTabBarController?.rootViewController(for: .settings) as? UINavigationController)?
+            .viewControllers.first as? AppSettingsViewController
     }
 
     private func refreshLocalizedNavigationChrome() {
@@ -581,6 +581,9 @@ final class RootViewController: UIViewController {
             columns.contentNavigationController.applyAccentColor()
             columns.detailNavigationController.applyAccentColor()
         }
+        compactSettingsViewController()?.reloadLocalizedContent()
+        (regularRouteColumns[.settings]?.detailNavigationController.viewControllers.first
+            as? AppSettingsViewController)?.reloadLocalizedContent()
         refreshAccentColor(in: view)
     }
 
@@ -657,15 +660,19 @@ final class RootViewController: UIViewController {
         let controller: UIViewController
         switch route {
         case .settings:
-            controller = SettingsHostingController(
+            let settingsController = AppSettingsViewController(
                 container: container,
                 services: services,
                 model: makeSettingsSceneModel(services: services),
+                onlineSourcesModel: sharedOnlineSourcesModel(services: services),
                 initialDestination: initialSettingsDestination,
                 onNavigationChange: { [weak self] destination in
                     self?.updateSelectedSettingsDestination(destination)
                 }
             )
+            let navigationController = RootNavigationController(rootViewController: settingsController)
+            navigationController.navigationBar.prefersLargeTitles = true
+            controller = navigationController
         case .library, .playlists, .onlineSources:
             let navigationController = RootNavigationController(
                 rootViewController: makeFeatureViewController(route: route, services: services)
@@ -806,7 +813,7 @@ final class RootViewController: UIViewController {
             return
         }
         if let settingsController = columns.detailNavigationController
-            .viewControllers.first as? SettingsHostingController {
+            .viewControllers.first as? AppSettingsViewController {
             settingsController.updateNavigationDestination(selectedSettingsDestination)
         } else {
             columns.detailNavigationController.setViewControllers(
@@ -852,13 +859,6 @@ final class RootViewController: UIViewController {
             ),
             accessibilityIdentifier: "app.detailColumn"
         )
-        if route == .settings {
-            // Settings owns a SwiftUI NavigationStack. The outer UIKit
-            // navigation controller is only a split-view column container;
-            // showing both navigation bars duplicates the title on iPad and
-            // iOS on macOS.
-            detailNavigationController.setNavigationBarHidden(true, animated: false)
-        }
         let columns = RegularRouteColumns(
             contentNavigationController: contentNavigationController,
             detailNavigationController: detailNavigationController
@@ -940,7 +940,7 @@ final class RootViewController: UIViewController {
             guard let self else { return }
             self.updateSelectedSettingsDestination(destination)
             if let settingsController = self.regularRouteColumns[.settings]?
-                .detailNavigationController.viewControllers.first as? SettingsHostingController {
+                .detailNavigationController.viewControllers.first as? AppSettingsViewController {
                 settingsController.updateNavigationDestination(destination)
                 self.regularSettingsDestination = destination
             } else {
@@ -1118,10 +1118,11 @@ final class RootViewController: UIViewController {
         destination: SettingsDestination,
         services: AppServiceContainer
     ) -> UIViewController {
-        SettingsHostingController(
+        AppSettingsViewController(
             container: container,
             services: services,
             model: makeSettingsSceneModel(services: services),
+            onlineSourcesModel: sharedOnlineSourcesModel(services: services),
             layout: .detail(destination)
         )
     }
@@ -1153,10 +1154,11 @@ final class RootViewController: UIViewController {
     ) -> UIViewController {
         switch route {
         case .settings:
-            return SettingsHostingController(
+            return AppSettingsViewController(
                 container: container,
                 services: services,
-                model: makeSettingsSceneModel(services: services)
+                model: makeSettingsSceneModel(services: services),
+                onlineSourcesModel: sharedOnlineSourcesModel(services: services)
             )
         case .library:
             return makeLibraryHomeViewController(services: services)
@@ -1201,20 +1203,16 @@ final class RootViewController: UIViewController {
     private func makeOnlineSourcesViewController(
         services: AppServiceContainer
     ) -> UIViewController {
+        OnlineSourcesViewController(model: sharedOnlineSourcesModel(services: services), plugins: services.plugins)
+    }
+
+    private func sharedOnlineSourcesModel(services: AppServiceContainer) -> OnlineSourcesSceneModel {
         let servicesID = ObjectIdentifier(services)
         if onlineSourcesModelServicesID != servicesID {
             onlineSourcesModel = makeOnlineSourcesModel(services: services)
             onlineSourcesModelServicesID = servicesID
         }
-        guard let onlineSourcesModel else {
-            return MigrationPlaceholderViewController(
-                title: AppRouter.Route.onlineSources.title,
-                message: L("在线源正在准备中。"),
-                systemImage: AppRouter.Route.onlineSources.systemImage,
-                accessibilityIdentifier: "onlineSources.migrationPlaceholder"
-            )
-        }
-        return OnlineSourcesViewController(model: onlineSourcesModel, plugins: services.plugins)
+        return onlineSourcesModel!
     }
 
     private func makeOnlineSourcesModel(
@@ -1990,13 +1988,15 @@ final class RootViewController: UIViewController {
     }
 
     private func presentPlayer(using services: AppServiceContainer) {
-        // Covers both an in-flight modal attempt and an installed fallback
-        // child. A second request must not orphan the first child by replacing
-        // the only removal reference.
-        guard fallbackPlayerController == nil else { return }
+        // UIKit retains the controller throughout presentation and dismissal.
+        // Keep a weak reference so repeated taps cannot create another sheet,
+        // while a rejected or dismissed presentation permits a later retry.
+        guard presentedPlayerController == nil else { return }
 
         let presenter = topMostPresenter()
-        guard presenter.presentedViewController == nil else {
+        guard presenter.presentedViewController == nil,
+              presenter.viewIfLoaded?.window != nil,
+              !presenter.isBeingDismissed else {
             return
         }
 
@@ -2005,6 +2005,7 @@ final class RootViewController: UIViewController {
             audioServing: services.playbackAudioServing,
             artworkServing: services.artworkServing,
             library: services.libraryServing,
+            mediaSourceResolver: services.mediaSourceResolver,
             lyricsServing: services.lyrics,
             onShowQueue: { [weak self] in
                 guard let self, let presenter = self.activePlayerPresenter() else { return }
@@ -2048,7 +2049,7 @@ final class RootViewController: UIViewController {
             }
         )
         playerController.modalPresentationStyle = .pageSheet
-        fallbackPlayerController = playerController
+        presentedPlayerController = playerController
 
         if let sheet = playerController.sheetPresentationController {
             sheet.detents = [.large()]
@@ -2057,51 +2058,10 @@ final class RootViewController: UIViewController {
             sheet.prefersScrollingExpandsWhenScrolledToEdge = true
         }
 
+        // A nil presentingViewController on the next run-loop turn does not
+        // mean UIKit rejected the request: presentation may still be deferred.
+        // Never reparent a controller that has been handed to `present`.
         presenter.present(playerController, animated: true)
-
-        // A scene can be visible while UIKit still rejects a presentation
-        // during an in-flight root transition (notably on simulator BVTs).
-        // Keep the migration slice deterministic by installing the same
-        // controller as a child only when the modal request did not attach.
-        DispatchQueue.main.async { [weak self] in
-            guard let self, let playerController = self.fallbackPlayerController else {
-                return
-            }
-            guard playerController.presentingViewController == nil else {
-                self.fallbackPlayerController = nil
-                return
-            }
-            self.installFallbackPlayer(playerController)
-        }
-    }
-
-    private func installFallbackPlayer(_ playerController: PlayerNowPlayingViewController) {
-        guard fallbackPlayerController === playerController else { return }
-
-        playerController.setFallbackCloseHandler { [weak self, weak playerController] in
-            guard let self, let playerController else { return }
-            self.removeFallbackPlayer(playerController)
-        }
-        addChild(playerController)
-        playerController.view.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(playerController.view)
-        NSLayoutConstraint.activate([
-            playerController.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            playerController.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            playerController.view.topAnchor.constraint(equalTo: view.topAnchor),
-            playerController.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-        ])
-        playerController.didMove(toParent: self)
-        fallbackPlayerController = playerController
-    }
-
-    private func removeFallbackPlayer(_ playerController: PlayerNowPlayingViewController) {
-        guard fallbackPlayerController === playerController else { return }
-
-        playerController.willMove(toParent: nil)
-        playerController.view.removeFromSuperview()
-        playerController.removeFromParent()
-        fallbackPlayerController = nil
     }
 
     private func topMostPresenter() -> UIViewController {
@@ -2113,17 +2073,8 @@ final class RootViewController: UIViewController {
         return presenter
     }
 
-    /// Returns the active player surface for actions that present a secondary
-    /// sheet. Normally the player is a modal descendant of the root. If UIKit
-    /// rejected that presentation and the player was installed as a fallback
-    /// child, the child itself must remain the presenter; using only the root's
-    /// presentedViewController would make queue/details/lyrics actions no-op.
+    /// Returns the active modal surface for secondary player sheets.
     private func activePlayerPresenter() -> UIViewController? {
-        if let fallbackPlayerController,
-           fallbackPlayerController.parent === self {
-            return fallbackPlayerController
-        }
-
         let presenter = topMostPresenter()
         return presenter === self ? nil : presenter
     }
@@ -2194,6 +2145,7 @@ final class RootViewController: UIViewController {
             audioServing: services.playbackAudioServing,
             artworkServing: services.artworkServing,
             library: services.libraryServing,
+            mediaSourceResolver: services.mediaSourceResolver,
             onShowLyrics: { [weak self, weak presenter] in
                 guard let self else { return }
                 let presented = self.topMostPresenter()
@@ -2291,7 +2243,7 @@ final class RootViewController: UIViewController {
 }
 
 /// UIKit-owned surface container. It owns Mini Player placement, safe-area
-/// ownership and presentation independently of the Settings SwiftUI host.
+/// ownership and presentation independently of the Settings navigation stack.
 @MainActor
 private final class RootSurfaceContainerViewController: UIViewController {
     private let contentViewController: UIViewController
@@ -2342,7 +2294,7 @@ private final class RootSurfaceContainerViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = UIColor(MusicFreeColorTokens.backgroundPrimary)
+        view.backgroundColor = MusicFreeUIColorTokens.backgroundPrimary
 
         addChild(contentViewController)
         contentViewController.view.translatesAutoresizingMaskIntoConstraints = false
@@ -3630,7 +3582,7 @@ private final class MigrationPlaceholderViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = UIColor(MusicFreeColorTokens.backgroundPrimary)
+        view.backgroundColor = MusicFreeUIColorTokens.backgroundPrimary
 
         let imageView = UIImageView(image: UIImage(systemName: systemImage))
         imageView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(
@@ -3699,7 +3651,7 @@ private final class StartupViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = UIColor(MusicFreeColorTokens.backgroundPrimary)
+        view.backgroundColor = MusicFreeUIColorTokens.backgroundPrimary
 
         let imageView = UIImageView(image: UIImage(systemName: state.systemImage))
         imageView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(

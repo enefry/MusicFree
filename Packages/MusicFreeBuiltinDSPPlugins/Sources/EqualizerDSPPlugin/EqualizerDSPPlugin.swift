@@ -11,7 +11,7 @@ public enum EqualizerDSPPlugin {
         .init(id: id, name: "Equalizer", kinds: [.dsp], configuration: .init(fields:
             [.init(id: "preamp", title: "Preamp (dB)", kind: .number, minimumNumber: -12, maximumNumber: 12)]
                 + frequencies.map { .init(id: String($0), title: "\($0) Hz (dB)", kind: .number, minimumNumber: -12, maximumNumber: 12) }),
-            dspPlacements: .init(supported: [.perTrack, .postMix], defaultPlacement: .postMix))
+            dspPlacements: .init(supported: [.perTrack, .postMix], defaultPlacement: .postMix), defaultDSPPriority: 300)
     }
     public static func makeProcessor(_ configuration: PluginInstanceConfiguration) throws -> any PluginDSPProcessor {
         try EqualizerPCMProcessor(configuration: configuration)

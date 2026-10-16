@@ -5,6 +5,7 @@ import Kingfisher
 import MediaSourceAPI
 import MusicDomain
 import UIKit
+import ImageIO
 
 /// Kingfisher-backed artwork pipeline for PlaylistFeature surfaces.
 /// Playlist artwork is persisted in the local library, so only the decoded
@@ -244,5 +245,22 @@ final class PlaylistArtworkBinding {
             self.view?.isLoading = false
             self.task = nil
         }
+    }
+}
+
+
+/// Decode outside the main actor and store a bounded, orientation-correct image.
+enum PlaylistArtworkPreparation {
+    static func prepare(_ data: Data) async -> Data? {
+        await Task.detached(priority: .userInitiated) {
+            guard !Task.isCancelled,
+                  let source = CGImageSourceCreateWithData(data as CFData, nil),
+                  let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceCreateThumbnailWithTransform: true,
+                    kCGImageSourceThumbnailMaxPixelSize: 1_024
+                  ] as CFDictionary), !Task.isCancelled else { return nil as Data? }
+            return UIImage(cgImage: image).jpegData(compressionQuality: 0.9)
+        }.value
     }
 }

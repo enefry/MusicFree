@@ -108,12 +108,11 @@ public final class AppServiceContainer {
             formalPlayback: playbackService
         )
         playbackService.setTransientPlaybackPreflight { [weak onlineAuditionService] in
-            guard let onlineAuditionService,
-                  onlineAuditionService.snapshot.hasRetainedSession
+            guard let onlineAuditionService
             else {
                 return
             }
-            await onlineAuditionService.close()
+            await onlineAuditionService.closeImmediately()
         }
         let artworkPruner: (@Sendable () async throws -> Void)?
         if let storageMaintenance = dependencies.storageMaintenance {
@@ -175,7 +174,11 @@ public final class AppServiceContainer {
         self.importCoordinator = importService
         self.libraryConversionCoordinator = libraryConversionService
         self.mediaConversionScheduler = dependencies.mediaConversionScheduler
-        self.playlistCoordinator = PlaylistCoordinator(repository: dependencies.playlistRepository)
+        self.playlistCoordinator = PlaylistCoordinator(
+            repository: dependencies.playlistRepository,
+            libraryRepository: dependencies.libraryRepository,
+            artworkWriter: dependencies.artworkWriter
+        )
         self.settingsCoordinator = SettingsCoordinator(
             repository: dependencies.settingsRepository,
             plugins: dependencies.plugins,

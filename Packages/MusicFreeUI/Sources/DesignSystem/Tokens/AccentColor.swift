@@ -1,9 +1,8 @@
 import Foundation
-import SwiftUI
 import UIKit
 
 /// Persists the app-wide accent color in a format that can be shared by
-/// SwiftUI, UIKit, and the application shell without coupling the feature
+/// UIKit and the application shell without coupling the feature
 /// packages to an app-owned settings model.
 public enum MusicFreeAccentColorStore {
     public static let storageKey = "musicfree.accentColor"
@@ -11,10 +10,6 @@ public enum MusicFreeAccentColorStore {
 
     public static var hexValue: String {
         normalizedHex(UserDefaults.standard.string(forKey: storageKey) ?? defaultHex)
-    }
-
-    public static var color: Color {
-        color(forHex: hexValue)
     }
 
     /// A dynamic UIColor whose provider reads the current persisted value.
@@ -32,14 +27,6 @@ public enum MusicFreeAccentColorStore {
         UIColor { _ in
             onAccentUIColor(forHex: hexValue)
         }
-    }
-
-    public static func color(forHex hex: String) -> Color {
-        Color(uiColor: uiColor(forHex: hex))
-    }
-
-    public static func onAccentColor(forHex hex: String) -> Color {
-        Color(uiColor: onAccentUIColor(forHex: hex))
     }
 
     public static func uiColor(forHex hex: String) -> UIColor {

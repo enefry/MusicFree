@@ -866,6 +866,13 @@ public protocol PlaylistServing: Sendable {
     func update(_ mutation: PlaylistMutation) async throws -> Playlist
     func apply(_ mutation: PlaylistEntriesMutation) async throws
     func delete(_ playlistID: PlaylistID) async throws
+    func setArtwork(_ data: Data?, for playlistID: PlaylistID) async throws -> Playlist
+}
+
+public extension PlaylistServing {
+    func setArtwork(_ data: Data?, for playlistID: PlaylistID) async throws -> Playlist {
+        throw AppServiceError.missingDependency("playlistArtworkWriter")
+    }
 }
 
 public protocol SettingsServing: Sendable {

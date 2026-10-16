@@ -77,6 +77,10 @@ enum AppBVTFixtureSeeder {
             )
         }
 
+        if arguments.contains("--bvt-seed-data-plugin-actions") {
+            seedDataPluginActions()
+        }
+
         let shouldSeedAudio = arguments.contains(launchArgument)
         if arguments.contains("--bvt-download-page-light") {
             UserDefaults.standard.set(MusicFreeAppearance.light.rawValue, forKey: AppUserInterfacePreferences.appearanceStorageKey)
@@ -262,6 +266,27 @@ enum AppBVTFixtureSeeder {
 
     static func makeOnlineSourceFactory() -> any OnlineSourceFactory {
         BVTOnlineSourceFactory()
+    }
+
+    /// Explicit UI-test configuration: only offline providers can make requests.
+    private static func seedDataPluginActions() {
+        guard let defaults = UserDefaults(suiteName: PreferencesConfiguration.defaultSuiteName) else { return }
+        let metadataID = "reference.metadata"
+        let lyricsID = "reference.lyrics"
+        let settings = AppSettings(
+            importPreferences: .init(
+                metadataProviders: ImportPreferences.defaultMetadataProviders + [.init(provider: .init(rawValue: metadataID), isEnabled: true)],
+                lyricsProviders: ImportPreferences.defaultLyricsProviders + [.init(provider: .init(rawValue: lyricsID), isEnabled: true)],
+                privacyPreferences: .defaults.acceptingPrivacyPolicy()
+                    .acceptingProviderPolicy(metadataID).acceptingProviderPolicy(lyricsID)
+            ),
+            pluginPreferences: [metadataID, lyricsID].map {
+                .init(pluginID: .init(rawValue: $0), isEnabled: true, isLoadAllowed: true)
+            }
+        )
+        if let data = try? JSONEncoder().encode(settings) {
+            defaults.set(data, forKey: PreferencesConfiguration.defaultKey)
+        }
     }
 
     private static func seedOnlineSources(reset: Bool) {

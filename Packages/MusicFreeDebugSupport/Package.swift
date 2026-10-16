@@ -28,7 +28,6 @@ let package = Package(
                 .product(name: "DesignSystem", package: "MusicFreeUI"),
                 .product(name: "Pulse", package: "Pulse"),
                 .product(name: "PulseProxy", package: "Pulse"),
-                .product(name: "PulseUI", package: "Pulse"),
                 .product(name: "LookInsideServer", package: "LookInside-Release")
             ],
             path: "Sources/MusicFreeDebugSupport"

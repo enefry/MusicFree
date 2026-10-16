@@ -71,7 +71,7 @@ internal actor LyricsCoordinator: LyricsServing {
         guard let currentTrack = try await library.track(id: query.itemID) else {
             return nil
         }
-        if !forceRefresh, let localLyrics = currentTrack.lyrics {
+        if !forceRefresh, let localLyrics = currentTrack.lyrics, !localLyrics.isEmpty {
             return localLyrics
         }
         guard !enabledProviders().isEmpty else { return nil }
@@ -186,7 +186,7 @@ internal actor LyricsCoordinator: LyricsServing {
         let startedAt = Date()
         do {
             guard !enabledProviders().isEmpty else { throw CancellationError() }
-            let tracks = try await loadLocalTracks()
+            let tracks = try await loadLocalTracks().filter { $0.lyrics?.isEmpty != false }
             guard !enabledProviders().isEmpty else { throw CancellationError() }
             preload = LyricsPreloadSnapshot(
                 status: .downloading,
@@ -195,12 +195,9 @@ internal actor LyricsCoordinator: LyricsServing {
             publishPreload()
             Self.logger.info("preload library loaded tracks=\(tracks.count)")
 
-            guard tracks.contains(where: { $0.lyrics == nil }) else {
+            guard !tracks.isEmpty else {
                 preload = LyricsPreloadSnapshot(
-                    status: .completed,
-                    total: tracks.count,
-                    processed: tracks.count,
-                    cached: tracks.count
+                    status: .completed
                 )
                 return finishPreload(startedAt: startedAt)
             }
@@ -226,7 +223,7 @@ internal actor LyricsCoordinator: LyricsServing {
                 )
                 publishPreload()
 
-                if track.lyrics != nil {
+                if try await library.track(id: track.id)?.lyrics?.isEmpty == false {
                     cached += 1
                 } else {
                     do {

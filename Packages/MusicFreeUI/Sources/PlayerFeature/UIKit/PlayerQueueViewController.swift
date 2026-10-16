@@ -3,6 +3,8 @@ import AppServices
 import Combine
 import DesignSystem
 import LibraryAPI
+import MediaSharing
+import MediaSourceAPI
 import MusicDomain
 import PlaybackAPI
 import UIKit
@@ -29,6 +31,7 @@ public final class PlayerQueueViewController: UIViewController {
     private let serving: any PlaybackServing
     private let artworkServing: (any ArtworkServing)?
     private let library: (any LibraryServing)?
+    private let mediaSharePresenter: MediaSharePresenter?
     private let viewModel: PlayerViewModel
     private let historyLoader: NowPlayingHistoryLoader
     private let editor = QueueEditor()
@@ -76,6 +79,7 @@ public final class PlayerQueueViewController: UIViewController {
         audioServing: (any PlaybackAudioServing)? = nil,
         artworkServing: (any ArtworkServing)? = nil,
         library: (any LibraryServing)? = nil,
+        mediaSourceResolver: (any MediaSourceResolving)? = nil,
         onShowLyrics: (() -> Void)? = nil,
         onShowAlbum: ((AlbumID) -> Void)? = nil,
         onShowArtist: ((ArtistID) -> Void)? = nil,
@@ -84,6 +88,9 @@ public final class PlayerQueueViewController: UIViewController {
         self.serving = serving
         self.artworkServing = artworkServing
         self.library = library
+        mediaSharePresenter = mediaSourceResolver.map {
+            MediaSharePresenter(sourceResolver: $0, library: library)
+        }
         self.onShowLyrics = onShowLyrics
         self.onShowAlbum = onShowAlbum
         self.onShowArtist = onShowArtist
@@ -141,6 +148,7 @@ public final class PlayerQueueViewController: UIViewController {
 
     public override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
+        mediaSharePresenter?.cancel()
         onDismiss?()
         trackTask?.cancel()
         trackTask = nil
@@ -1127,27 +1135,14 @@ extension PlayerQueueViewController: UITableViewDataSource, UITableViewDelegate 
         enqueue: (() -> Void)? = nil,
         destructiveAction: UIAction? = nil
     ) -> UIMenu {
-        let shareText = [title, subtitle].compactMap { $0 }.joined(separator: " - ")
         let share = UIAction(
             title: L("分享"),
             image: UIImage(systemName: "square.and.arrow.up"),
-            identifier: UIAction.Identifier("player.nowPlaying.actions.share")
+            identifier: UIAction.Identifier("player.nowPlaying.actions.share"),
+            attributes: mediaSharePresenter == nil || track == nil ? [.disabled] : []
         ) { [weak self] _ in
-            guard let self else { return }
-            let controller = UIActivityViewController(
-                activityItems: [shareText],
-                applicationActivities: nil
-            )
-            if let popover = controller.popoverPresentationController {
-                popover.sourceView = self.view
-                popover.sourceRect = CGRect(
-                    x: self.view.bounds.midX,
-                    y: self.view.bounds.midY,
-                    width: 1,
-                    height: 1
-                )
-            }
-            self.present(controller, animated: true)
+            guard let self, let track else { return }
+            self.mediaSharePresenter?.present(itemID: track.id, track: track, from: self)
         }
         var actions: [UIMenuElement] = []
         if let play {

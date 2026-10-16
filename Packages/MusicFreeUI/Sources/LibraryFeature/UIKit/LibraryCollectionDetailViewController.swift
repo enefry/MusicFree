@@ -4,6 +4,7 @@ import DesignSystem
 import LibraryAPI
 import MediaSourceAPI
 import MusicDomain
+import MediaSharing
 import UIKit
 
 /// Native UIKit detail surface for a library collection.
@@ -866,9 +867,9 @@ public final class LibraryCollectionDetailViewController: UIViewController {
                     for: self.collectionQueueTarget,
                     from: self.library
                 )
-                let urls = try await mediaShareResolver.urls(for: tracks)
+                let preparedShare = try await mediaShareResolver.prepare(for: tracks)
                 try Task.checkCancellation()
-                let share = UIActivityViewController(activityItems: urls, applicationActivities: nil)
+                let share = MediaShareActivityViewController(share: preparedShare)
                 if let popover = share.popoverPresentationController {
                     popover.sourceView = self.view
                     popover.sourceRect = CGRect(
@@ -1335,16 +1336,34 @@ final class LibraryCollectionInformationCell: UICollectionViewCell {
         super.init(frame: frame)
         informationView.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(informationView)
+        // The collection view first lays out the cell at its estimated height.
+        // Let that temporary height yield to the metadata's required rows.
+        let bottom = informationView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -24)
+        bottom.priority = .defaultHigh
         NSLayoutConstraint.activate([
             informationView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             informationView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             informationView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16),
-            informationView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -24)
+            bottom
         ])
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func preferredLayoutAttributesFitting(
+        _ layoutAttributes: UICollectionViewLayoutAttributes
+    ) -> UICollectionViewLayoutAttributes {
+        let attributes = layoutAttributes.copy() as! UICollectionViewLayoutAttributes
+        guard attributes.size.width > 0 else { return attributes }
+        let size = informationView.systemLayoutSizeFitting(
+            CGSize(width: attributes.size.width, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        )
+        attributes.size.height = ceil(size.height + 16 + 24)
+        return attributes
+    }
 }
 
 extension LibraryCollectionDetailViewController: UICollectionViewDelegate {
@@ -1610,9 +1629,9 @@ extension LibraryCollectionDetailViewController: UICollectionViewDelegate {
             guard let self else { return }
             defer { self.shareTask = nil }
             do {
-                let urls = try await mediaShareResolver.urls(for: [track])
+                let preparedShare = try await mediaShareResolver.prepare(for: [track])
                 try Task.checkCancellation()
-                let share = UIActivityViewController(activityItems: urls, applicationActivities: nil)
+                let share = MediaShareActivityViewController(share: preparedShare)
                 if let popover = share.popoverPresentationController {
                     popover.sourceView = self.view
                     popover.sourceRect = CGRect(
@@ -1893,7 +1912,7 @@ private final class LibraryCollectionDetailHeaderCell: UICollectionViewCell {
 }
 
 @MainActor
-private final class LibraryCollectionDetailTrackCell: UICollectionViewCell {
+final class LibraryCollectionDetailTrackCell: UICollectionViewCell {
     static let reuseIdentifier = "LibraryCollectionDetailTrackCell"
     static let artworkPixelDimension = 160
 
@@ -1951,6 +1970,11 @@ private final class LibraryCollectionDetailTrackCell: UICollectionViewCell {
         rowStack.addArrangedSubview(moreButton)
         rowStack.addArrangedSubview(selectionIndicator)
         contentView.addSubview(rowStack)
+        let bottom = rowStack.bottomAnchor.constraint(
+            equalTo: contentView.bottomAnchor,
+            constant: -MusicFreeSpacingTokens.small
+        )
+        bottom.priority = .defaultHigh
         NSLayoutConstraint.activate([
             numberLabel.widthAnchor.constraint(equalToConstant: 40),
             artworkView.widthAnchor.constraint(equalToConstant: 52),
@@ -1960,13 +1984,27 @@ private final class LibraryCollectionDetailTrackCell: UICollectionViewCell {
             rowStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             rowStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             rowStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: MusicFreeSpacingTokens.small),
-            rowStack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -MusicFreeSpacingTokens.small),
+            bottom,
         ])
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    override func preferredLayoutAttributesFitting(
+        _ layoutAttributes: UICollectionViewLayoutAttributes
+    ) -> UICollectionViewLayoutAttributes {
+        let attributes = layoutAttributes.copy() as! UICollectionViewLayoutAttributes
+        guard attributes.size.width > 0 else { return attributes }
+        let size = rowStack.systemLayoutSizeFitting(
+            CGSize(width: attributes.size.width, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        )
+        attributes.size.height = ceil(size.height + 2 * MusicFreeSpacingTokens.small)
+        return attributes
     }
 
     override func prepareForReuse() {

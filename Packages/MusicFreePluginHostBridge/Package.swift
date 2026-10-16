@@ -4,7 +4,8 @@ let package = Package(
     name: "MusicFreePluginHostBridge", platforms: [.iOS(.v17), .macOS(.v13)],
     products: [.library(name: "MusicFreePluginHostBridge", targets: ["MusicFreePluginHostBridge"])],
     dependencies: [.package(path: "../MusicFreeCore"), .package(path: "../MusicFreePluginRuntime"),
-        .package(path: "../MusicFreePluginAPI"), .package(path: "../MusicFreePluginAudio"), .package(path: "../MusicFreeBuiltinDataPlugins"), .package(path: "../MusicFreeBuiltinDSPPlugins")],
+        .package(path: "../MusicFreePluginAPI"), .package(path: "../MusicFreePluginAudio"), .package(path: "../MusicFreeBuiltinDataPlugins"), .package(path: "../MusicFreeBuiltinDSPPlugins"),
+        .package(path: "../../thirdpart/ExtendsPlugins/MusicFreeChineseMusicPlugins")],
     targets: [
         .target(name: "MusicFreePluginHostBridge", dependencies: [
             .product(name: "AppServices", package: "MusicFreeCore"),
@@ -24,7 +25,15 @@ let package = Package(
             .product(name: "MusicBrainzMetadataPlugin", package: "MusicFreeBuiltinDataPlugins"),
             .product(name: "MetadataServerMetadataPlugin", package: "MusicFreeBuiltinDataPlugins"),
             .product(name: "DiscogsMetadataPlugin", package: "MusicFreeBuiltinDataPlugins"),
-            .product(name: "EqualizerDSPPlugin", package: "MusicFreeBuiltinDSPPlugins")]),
-        .testTarget(name: "MusicFreePluginHostBridgeTests", dependencies: ["MusicFreePluginHostBridge"])
+            .product(name: "NetEaseLyricsPlugin", package: "MusicFreeChineseMusicPlugins"),
+            .product(name: "NetEaseMetadataPlugin", package: "MusicFreeChineseMusicPlugins"),
+            .product(name: "QQMusicLyricsPlugin", package: "MusicFreeChineseMusicPlugins"),
+            .product(name: "QQMusicMetadataPlugin", package: "MusicFreeChineseMusicPlugins"),
+            .product(name: "ChineseMusicCatalogSupport", package: "MusicFreeChineseMusicPlugins"),
+            .product(name: "EqualizerDSPPlugin", package: "MusicFreeBuiltinDSPPlugins"),
+            .product(name: "StereoBalanceDSPPlugin", package: "MusicFreeBuiltinDSPPlugins"),
+            .product(name: "DeclickDSPPlugin", package: "MusicFreeBuiltinDSPPlugins")]),
+        .testTarget(name: "MusicFreePluginHostBridgeTests", dependencies: ["MusicFreePluginHostBridge",
+            .product(name: "MusicTestSupport", package: "MusicFreeCore")])
     ], swiftLanguageModes: [.v6]
 )

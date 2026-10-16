@@ -126,6 +126,8 @@ targets:
       - package: MusicFreeUI
         product: SettingsFeature
       - package: MusicFreeUI
+        product: BuiltinPluginSettings
+      - package: MusicFreeUI
         product: DesignSystem
       # - package: MusicFreeDebugSupport
       #   product: MusicFreeDebugSupport

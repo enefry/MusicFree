@@ -1,6 +1,8 @@
 import Foundation
 import Testing
+import AppServices
 import MusicDomain
+import MusicTestSupport
 import LibraryAPI
 import SettingsAPI
 import MusicFreePluginAPI
@@ -11,7 +13,11 @@ import MusicFreePluginHostBridge
     let provider = BuiltinDataPluginRegistrationProvider(bundle: Bundle(for: BundleAnchor.self),
         includeLyrics: false, includeMetadataServer: false)
     let registry = PluginRegistry(provider.registrations, compiledOut: provider.unavailable)
-    #expect(registry.descriptors.count == 6)
+    #expect(registry.descriptors.count == 10)
+    #expect(registry.registrations.keys.contains(.init(rawValue: "builtin.metadata.netEase")))
+    #expect(registry.registrations.keys.contains(.init(rawValue: "builtin.metadata.qqMusic")))
+    #expect(registry.unavailable[.init(rawValue: "builtin.lyrics.netEase")] == .compiledOut)
+    #expect(registry.unavailable[.init(rawValue: "builtin.lyrics.qqMusic")] == .compiledOut)
     #expect(registry.unavailable.values.allSatisfy { $0 == .compiledOut })
     let runtime = PluginRuntime(registry: registry)
     let snapshots = await runtime.snapshots()
@@ -19,6 +25,12 @@ import MusicFreePluginHostBridge
     #expect(snapshots.first { $0.id.rawValue == "builtin.metadata.musicKit" }?.state == .disabled)
 }
 private final class BundleAnchor: NSObject {}
+
+#if !DEBUG
+@Test @MainActor func releaseAudioFactoriesContainOnlyProductionEffects() {
+    #expect(Set(PluginHostService.audioFactories.keys) == [PluginHostService.equalizerRegistration.descriptor.id])
+}
+#endif
 
 private actor AuthorizationFixture: MetadataPlugin {
     private var authorization = PluginMetadataAuthorizationStatus.notDetermined
@@ -61,7 +73,192 @@ private struct CatalogFixture: MetadataPlugin {
     #expect(result.first?.catalogID == "good")
     #expect(result.first?.year == 2024)
     #expect(result.first?.genreName == nil)
-    #expect(result.first?.albumName == nil)
+    #expect(result.first?.artistName == "Example Artist")
+    #expect(result.first?.albumName == "Catalog Album")
+}
+
+private actor DeferredArtworkFixture: MetadataPlugin {
+    let error: PluginDataError?
+    let byteCount: Int
+    private(set) var artworkRequests: [String] = []
+
+    init(error: PluginDataError? = nil, byteCount: Int = 4) {
+        self.error = error
+        self.byteCount = byteCount
+    }
+
+    func candidates(for query: PluginTrackQuery, fields: Set<PluginMetadataField>, context: PluginOperationContext) async throws -> [PluginMetadataCandidate] {
+        [.init(id: "catalog", track: query, patch: .init(numbers: [.year: 2024]), artworkReference: "cover")]
+    }
+
+    func artwork(reference: String, context: PluginOperationContext) async throws -> Data? {
+        artworkRequests.append(reference)
+        if let error { throw error }
+        return Data(repeating: 1, count: byteCount)
+    }
+}
+
+@Test func metadataArtworkFailureIsDeferredUntilAfterSearch() async throws {
+    let fixture = DeferredArtworkFixture(error: .requestFailed(code: "artwork_http_404", httpStatus: 404))
+    let (runtime, id) = await metadataRuntime(plugin: fixture)
+    let adapter = PluginMetadataProviderAdapter(pluginID: id, runtime: runtime)
+    let candidate = try #require(try await adapter.search(.init(
+        itemID: .init(sourceID: .local, externalID: "song"), title: "Song", artistName: "Artist",
+        missingFields: [.year, .artwork])).first)
+    #expect(candidate.year == 2024)
+    #expect(candidate.artworkData == nil)
+    #expect(await fixture.artworkRequests.isEmpty)
+    await #expect(throws: MetadataEnrichmentError.requestFailed(code: "artwork_http_404", httpStatus: 404)) {
+        try await adapter.artworkData(for: candidate)
+    }
+    #expect(await fixture.artworkRequests == ["cover"])
+}
+
+@Test(arguments: [4, 20 * 1024 * 1024, 20 * 1024 * 1024 + 1])
+func metadataDeferredArtworkKeepsPayloadBound(byteCount: Int) async throws {
+    let fixture = DeferredArtworkFixture(byteCount: byteCount)
+    let (runtime, id) = await metadataRuntime(plugin: fixture)
+    let adapter = PluginMetadataProviderAdapter(pluginID: id, runtime: runtime)
+    let candidate = try #require(try await adapter.search(.init(
+        itemID: .init(sourceID: .local, externalID: "song"), title: "Song", missingFields: [.artwork])).first)
+    if byteCount <= 20 * 1024 * 1024 {
+        #expect(try await adapter.artworkData(for: candidate)?.count == byteCount)
+    } else {
+        await #expect(throws: MetadataEnrichmentError.requestFailed(code: "plugin_invalid_response", httpStatus: nil)) {
+            try await adapter.artworkData(for: candidate)
+        }
+    }
+}
+
+@Test func metadataDeferredArtworkRechecksRuntimePermissionAndCancellation() async throws {
+    let fixture = DeferredArtworkFixture()
+    let (runtime, id) = await metadataRuntime(plugin: fixture)
+    let adapter = PluginMetadataProviderAdapter(pluginID: id, runtime: runtime)
+    let candidate = try #require(try await adapter.search(.init(
+        itemID: .init(sourceID: .local, externalID: "song"), title: "Song", missingFields: [.artwork])).first)
+    let (stream, continuation) = AsyncStream<Void>.makeStream()
+    let task = Task {
+        for await _ in stream {}
+        return try await adapter.artworkData(for: candidate)
+    }
+    task.cancel()
+    continuation.finish()
+    await #expect(throws: CancellationError.self) { try await task.value }
+    await runtime.apply(preferences: [], applicationPrivacyAccepted: true)
+    await #expect(throws: MetadataEnrichmentError.unavailable) { try await adapter.artworkData(for: candidate) }
+    #expect(await fixture.artworkRequests.isEmpty)
+}
+
+@Test func metadataRequestedFieldsWithoutPatchRemainUnchanged() async throws {
+    let (runtime, id) = await metadataRuntime(plugin: DeferredArtworkFixture())
+    let adapter = PluginMetadataProviderAdapter(pluginID: id, runtime: runtime)
+    let candidate = try #require(try await adapter.search(.init(
+        itemID: .init(sourceID: .local, externalID: "song"), title: "Song", artistName: "Artist", albumName: "Album",
+        missingFields: [.artist, .album, .year])).first)
+    #expect(candidate.artistName == nil)
+    #expect(candidate.albumName == nil)
+    #expect(candidate.year == 2024)
+    #expect(try await adapter.artworkData(for: candidate) == nil)
+}
+
+private struct ArtworkReferenceFixture: MetadataPlugin {
+    func candidates(for query: PluginTrackQuery, fields: Set<PluginMetadataField>, context: PluginOperationContext) async throws -> [PluginMetadataCandidate] {
+        [.init(id: "shared-id", track: query, patch: .init(), artworkReference: query.title)]
+    }
+    func artwork(reference: String, context: PluginOperationContext) async throws -> Data? { Data(reference.utf8) }
+}
+
+@Test func metadataDeferredArtworkKeepsReferencesForOverlappingSearches() async throws {
+    let (runtime, id) = await metadataRuntime(plugin: ArtworkReferenceFixture())
+    let adapter = PluginMetadataProviderAdapter(pluginID: id, runtime: runtime)
+    let first = try #require(try await adapter.search(.init(
+        itemID: .init(sourceID: .local, externalID: "first"), title: "First Song", missingFields: [.artwork])).first)
+    let second = try #require(try await adapter.search(.init(
+        itemID: .init(sourceID: .local, externalID: "second"), title: "Second Song", missingFields: [.artwork])).first)
+    #expect(try await adapter.artworkData(for: first) == Data("First Song".utf8))
+    #expect(try await adapter.artworkData(for: second) == Data("Second Song".utf8))
+}
+
+private actor EnrichmentRecordsFixture: MetadataEnrichmentRecordRepository {
+    private var values: [MediaItemID: MetadataEnrichmentRecord] = [:]
+    func record(for itemID: MediaItemID) async throws -> MetadataEnrichmentRecord? { values[itemID] }
+    func records() async throws -> [MetadataEnrichmentRecord] { Array(values.values) }
+    func save(_ record: MetadataEnrichmentRecord) async throws { values[record.itemID] = record }
+    func remove(itemID: MediaItemID) async throws { values[itemID] = nil }
+}
+
+@MainActor
+private func enrich(
+    itemID: MediaItemID,
+    repository: InMemoryLibraryRepository,
+    adapter: PluginMetadataProviderAdapter
+) async throws -> MetadataEnrichmentRecord {
+    let records = EnrichmentRecordsFixture()
+    let container = try AppServiceContainer(dependencies: AppDependencies(
+        libraryRepository: repository, metadataEnrichmentProvider: adapter, metadataEnrichmentRecordRepository: records))
+    await container.metadataEnrichmentServing.setPrivacyPreferences(
+        .defaults.acceptingPrivacyPolicy().acceptingProviderPolicy(adapter.provider.rawValue))
+    await container.metadataEnrichmentServing.setProviderPreferences([.init(provider: adapter.provider, isEnabled: true)])
+    await container.metadataEnrichmentServing.setEnabled(true)
+    await container.metadataEnrichmentServing.enqueue(itemID: itemID)
+    var completed: MetadataEnrichmentRecord?
+    for _ in 0..<200 {
+        if let record = try await records.record(for: itemID), record.status == .matched {
+            completed = record
+            break
+        }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    await container.metadataEnrichmentServing.setEnabled(false)
+    return try #require(completed)
+}
+
+@Test @MainActor func metadataArtworkFailureStillCommitsYearThroughCoordinator() async throws {
+    let itemID = MediaItemID(sourceID: .local, externalID: "artwork-failure")
+    let repository = InMemoryLibraryRepository(tracks: [Track(id: itemID, title: "Song")])
+    let fixture = DeferredArtworkFixture(error: .requestFailed(code: "artwork_http_404", httpStatus: 404))
+    let (runtime, id) = await metadataRuntime(plugin: fixture)
+    let adapter = PluginMetadataProviderAdapter(pluginID: id, runtime: runtime)
+    let record = try await enrich(itemID: itemID, repository: repository, adapter: adapter)
+    let updated = try #require(try await repository.track(id: itemID))
+    #expect(updated.year == 2024)
+    #expect(updated.artwork == nil)
+    #expect(record.updatedFields == [.year])
+    #expect(record.lastErrorCode == "artwork_http_404")
+    #expect(await fixture.artworkRequests == ["cover"])
+}
+
+private struct TransliteratedCatalogFixture: MetadataPlugin {
+    func candidates(for query: PluginTrackQuery, fields: Set<PluginMetadataField>, context: PluginOperationContext) async throws -> [PluginMetadataCandidate] {
+        [.init(id: "transliterated", track: .init(title: "ni hao", artist: "Artist", album: "Catalog Album"),
+            patch: .init(text: [.artist: "Unrequested Artist", .album: "Unrequested Album", .genre: "Rock"], numbers: [.year: 2024]))]
+    }
+}
+
+@Test @MainActor func metadataMatchingEvidenceSurvivesCoordinatorAndPreservesExistingTags() async throws {
+    let itemID = MediaItemID(sourceID: .local, externalID: "transliterated")
+    let artistID = ArtistID("artist"), albumID = AlbumID("album"), genreID = GenreID("genre")
+    let repository = InMemoryLibraryRepository(
+        tracks: [Track(id: itemID, title: "你好", albumID: albumID, artistIDs: [artistID], genreIDs: [genreID])],
+        albums: [Album(id: albumID, title: "Local Album", artistIDs: [artistID], trackCount: 1)],
+        artists: [Artist(id: artistID, name: "Artist")], genres: [Genre(id: genreID, name: "Jazz")])
+    let (runtime, id) = await metadataRuntime(plugin: TransliteratedCatalogFixture())
+    let adapter = PluginMetadataProviderAdapter(pluginID: id, runtime: runtime)
+    let query = MetadataEnrichmentQuery(itemID: itemID, title: "你好", artistName: "Artist", albumName: "Local Album", missingFields: [.year])
+    let candidates = try await adapter.search(query)
+    let candidate = try #require(candidates.first)
+    #expect(candidate.artistName == "Artist")
+    #expect(candidate.albumName == "Catalog Album")
+    #expect(candidate.genreName == nil)
+    #expect(MetadataEnrichmentMatcher.match(query: query, candidates: candidates) == .matched(candidate))
+    let record = try await enrich(itemID: itemID, repository: repository, adapter: adapter)
+    let updated = try #require(try await repository.track(id: itemID))
+    #expect(updated.year == 2024)
+    #expect(updated.title == "你好")
+    #expect(updated.artistIDs == [artistID])
+    #expect(updated.albumID == albumID)
+    #expect(updated.genreIDs == [genreID])
+    #expect(record.updatedFields == [.year])
 }
 
 private struct FailureFixture: LyricsPlugin, MetadataPlugin {

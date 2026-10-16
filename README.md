@@ -3,7 +3,7 @@
 MusicFree is the project and bundle name for the iPhone/iPad local player shown
 to users as `MyMusic`. It targets iOS/iPadOS 26+ and uses four local Swift
 Packages so the domain/API layer, Apple infrastructure, the FFmpeg audio
-adapter, and SwiftUI features remain independently testable.
+adapter, and UIKit features remain independently testable.
 
 The current release remains local-first. Files/Finder import, library browsing,
 playlists, lyrics, metadata editing, background audio, Now Playing, queue

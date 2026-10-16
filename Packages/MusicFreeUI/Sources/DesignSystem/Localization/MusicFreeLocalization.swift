@@ -1,5 +1,4 @@
 import Foundation
-import SwiftUI
 
 /// The app-owned language preference. English is intentionally independent of
 /// the device language so a fresh install always starts in English.

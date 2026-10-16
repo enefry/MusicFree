@@ -334,7 +334,7 @@ struct LyricsCoordinatorTests {
         #expect(await provider.callCount == 1)
     }
 
-    @Test("Lyrics preload skips cached tracks and persists missing lyrics")
+    @Test("Lyrics preload counts only missing tracks and remembers downloads across coordinators")
     func preloadsMissingLyrics() async throws {
         let cachedID = MediaItemID(sourceID: .local, externalID: "lyrics-preload-cached")
         let missingID = MediaItemID(sourceID: .local, externalID: "lyrics-preload-missing")
@@ -384,21 +384,61 @@ struct LyricsCoordinatorTests {
         let final = await coordinator.preloadSnapshot()
 
         #expect(final.status == .completed)
-        #expect(final.total == 2)
-        #expect(final.processed == 2)
-        #expect(final.cached == 1)
+        #expect(final.total == 1)
+        #expect(final.processed == 1)
+        #expect(final.cached == 0)
         #expect(final.downloaded == 1)
         #expect(final.noLyrics == 0)
         #expect(final.failed == 0)
         #expect(await provider.callCount == 1)
         #expect(try await repository.track(id: cachedID)?.lyrics == cachedLyrics)
         #expect(try await repository.track(id: missingID)?.lyrics == downloadedLyrics)
+
+        let restarted = LyricsCoordinator(providers: [provider], library: library)
+        await restarted.setPrivacyPreferences(acceptedPrivacy(for: [.lrclib]))
+        await restarted.setProviderPreferences([
+            LyricsProviderPreference(provider: .lrclib, isEnabled: true)
+        ])
+        await restarted.startPreload()
+        await restarted.waitForPreload()
+        #expect(await restarted.preloadSnapshot() == LyricsPreloadSnapshot(status: .completed))
+        #expect(await provider.callCount == 1)
+    }
+
+    @Test("Lyrics preload retries unmatched songs and empty local lyrics")
+    func retriesMissingLyrics() async throws {
+        let itemID = MediaItemID(sourceID: .local, externalID: "lyrics-preload-retry")
+        let repository = InMemoryLibraryRepository(tracks: [
+            Track(id: itemID, title: "Missing Song", lyrics: TrackLyrics(rawText: ""))
+        ])
+        let library = LibraryCoordinator(
+            repository: repository, remover: nil, queueRepository: nil, historyRepository: nil
+        )
+        let provider = TestLyricsProvider(provider: .lrclib, result: nil)
+        let coordinator = LyricsCoordinator(providers: [provider], library: library)
+        await coordinator.setPrivacyPreferences(acceptedPrivacy(for: [.lrclib]))
+        await coordinator.setProviderPreferences([
+            LyricsProviderPreference(provider: .lrclib, isEnabled: true)
+        ])
+
+        await coordinator.startPreload()
+        await coordinator.waitForPreload()
+        #expect((await coordinator.preloadSnapshot()).noLyrics == 1)
+        #expect(await provider.callCount == 1)
+
+        let lyrics = TrackLyrics(rawText: "Found line")
+        await provider.setResult(lyrics)
+        await coordinator.startPreload()
+        await coordinator.waitForPreload()
+        #expect((await coordinator.preloadSnapshot()).downloaded == 1)
+        #expect(await provider.callCount == 2)
+        #expect(try await repository.track(id: itemID)?.lyrics == lyrics)
     }
 }
 
 private actor TestLyricsProvider: LyricsProviding {
     let provider: LyricsProviderID
-    let result: TrackLyrics?
+    private var result: TrackLyrics?
     private(set) var callCount = 0
 
     init(provider: LyricsProviderID, result: TrackLyrics?) {
@@ -409,5 +449,9 @@ private actor TestLyricsProvider: LyricsProviding {
     func fetchLyrics(for _: LyricsQuery) async throws -> TrackLyrics? {
         callCount += 1
         return result
+    }
+
+    func setResult(_ result: TrackLyrics?) {
+        self.result = result
     }
 }

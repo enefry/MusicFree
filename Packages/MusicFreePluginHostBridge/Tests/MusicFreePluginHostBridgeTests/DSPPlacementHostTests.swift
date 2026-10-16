@@ -1,3 +1,4 @@
+#if DEBUG
 import AVFAudio
 import Foundation
 import Testing
@@ -105,3 +106,5 @@ import MusicFreePluginHostBridge
     #expect(specs.first?.gate === current.gate)
     #expect(current.gate.isAllowed)
 }
+
+#endif

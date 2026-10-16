@@ -6,7 +6,7 @@ import MusicDomain
 import MediaSourceAPI
 import MusicFreePluginAPI
 import MusicFreePluginRuntime
-import MusicFreePluginHostBridge
+@testable import MusicFreePluginHostBridge
 
 private let migrationLyricsID = PluginID(rawValue: "builtin.lyrics.lrclib")
 private struct MigrationLyrics: LyricsPlugin {
@@ -62,6 +62,7 @@ private func migrationService() -> PluginHostService {
     #expect(updated.pluginPreferences.first { $0.pluginID == migrationLyricsID }?.grantedPermissions.isEmpty == true)
     #expect(try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(updated)) == updated)
 }
+#if DEBUG
 @Test @MainActor func equalizerMigrationSupportsChainAndLiveParameters() async throws {
     let references = ReferencePluginRegistrationProvider(mediaURL: URL(fileURLWithPath: "/unused")).registrations
     let runtime = PluginRuntime(registry: PluginRegistry(references + [PluginHostService.equalizerRegistration]))
@@ -90,6 +91,7 @@ private func migrationService() -> PluginHostService {
     await service.apply(migrated.settingPluginPreferences(next))
     #expect(node.bypass); #expect(nodes.count == 1)
 }
+#endif
 
 private actor NativeCalls {
     var creations = 0; var browse: SourceBrowseRequest?; var code: String?
@@ -168,4 +170,31 @@ private struct NativeFixture: SearchableDownloadSource, PlaybackSource, OneTimeC
     #expect(restored.pluginPreferences.first { $0.pluginID == id } == invalid)
     await service.apply(restored)
     #expect(await service.snapshots().first { $0.id == id }?.state == .failed)
+}
+
+@Test func builtinDefaultsMatchLegacyIntentWithoutAcceptingPrivacy() throws {
+    let metadata = ImportPreferences.defaultMetadataProviders.map { preference in
+        PluginDescriptor(id: .init(rawValue: "builtin.metadata." + preference.provider.rawValue),
+            name: preference.provider.rawValue, kinds: [.metadata], permissions: [.network], dataProviderID: preference.provider.rawValue)
+    }
+    let lyrics = ImportPreferences.defaultLyricsProviders.map { preference in
+        PluginDescriptor(id: .init(rawValue: "builtin.lyrics." + preference.provider.rawValue),
+            name: preference.provider.rawValue, kinds: [.lyrics], permissions: [.network], dataProviderID: preference.provider.rawValue)
+    }
+    let descriptors = metadata + lyrics + [PluginHostService.equalizerRegistration.descriptor]
+    let migrated = try BuiltinPluginSettingsAdapter.adapt(.defaults, previous: nil, descriptors: descriptors)
+    #expect(migrated.pluginPreferences.count == descriptors.count)
+    #expect(migrated.pluginPreferences.allSatisfy { !$0.isEnabled && $0.isLoadAllowed })
+    #expect(migrated.pluginPreferences.allSatisfy { $0.grantedPermissions.isEmpty && $0.acceptedPolicyVersion == nil })
+    #expect(!migrated.importPreferences.privacyPreferences.isPrivacyPolicyAccepted)
+    #expect(!migrated.importPreferences.onlineSourcePreferences.isEnabled)
+    let legacy = AppSettings(importPreferences: .defaults.settingMetadataProvider(.musicBrainz, enabled: true))
+    let enabled = try BuiltinPluginSettingsAdapter.adapt(legacy, previous: nil, descriptors: descriptors)
+    #expect(enabled.pluginPreferences.first { $0.pluginID.rawValue == "builtin.metadata.musicBrainz" }?.isEnabled == true)
+    #expect(enabled.pluginPreferences.first { $0.pluginID.rawValue == "builtin.metadata.musicBrainz" }?.grantedPermissions.isEmpty == true)
+    var revoked = enabled.pluginPreferences
+    let index = try #require(revoked.firstIndex { $0.pluginID.rawValue == "builtin.metadata.musicBrainz" })
+    revoked[index].isEnabled = false
+    let restored = try BuiltinPluginSettingsAdapter.adapt(legacy.settingPluginPreferences(revoked), previous: nil, descriptors: descriptors)
+    #expect(!restored.importPreferences.isMetadataProviderEnabled(.musicBrainz))
 }

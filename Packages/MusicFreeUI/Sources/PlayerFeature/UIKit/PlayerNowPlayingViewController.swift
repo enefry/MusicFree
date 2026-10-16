@@ -5,6 +5,7 @@ import CoreImage
 import CoreImage.CIFilterBuiltins
 import DesignSystem
 import LibraryAPI
+import MediaSharing
 import MediaSourceAPI
 import MusicDomain
 import PlaybackAPI
@@ -307,6 +308,7 @@ public final class PlayerNowPlayingViewController: UIViewController {
     private let audioServing: (any PlaybackAudioServing)?
     private let artworkServing: (any ArtworkServing)?
     private let library: (any LibraryServing)?
+    private let mediaSharePresenter: MediaSharePresenter?
     private let lyricsServing: (any LyricsServing)?
     private let onShowQueue: (() -> Void)?
     private let onShowLyrics: (() -> Void)?
@@ -451,6 +453,7 @@ public final class PlayerNowPlayingViewController: UIViewController {
         audioServing: (any PlaybackAudioServing)? = nil,
         artworkServing: (any ArtworkServing)? = nil,
         library: (any LibraryServing)? = nil,
+        mediaSourceResolver: (any MediaSourceResolving)? = nil,
         lyricsServing: (any LyricsServing)? = nil,
         onShowQueue: (() -> Void)? = nil,
         onShowLyrics: (() -> Void)? = nil,
@@ -463,6 +466,9 @@ public final class PlayerNowPlayingViewController: UIViewController {
         self.audioServing = audioServing
         self.artworkServing = artworkServing
         self.library = library
+        mediaSharePresenter = mediaSourceResolver.map {
+            MediaSharePresenter(sourceResolver: $0, library: library)
+        }
         self.lyricsServing = lyricsServing
         self.onShowQueue = onShowQueue
         self.onShowLyrics = onShowLyrics
@@ -580,6 +586,7 @@ public final class PlayerNowPlayingViewController: UIViewController {
 
     override public func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        mediaSharePresenter?.cancel()
         artworkTask?.cancel()
         artworkTask = nil
     }
@@ -1578,7 +1585,8 @@ public final class PlayerNowPlayingViewController: UIViewController {
         ])
 
         progressStack.axis = .vertical
-        progressStack.spacing = MusicFreeSpacingTokens.xSmall
+        // 20-point slider + 8-point gap + 24-point time row = 52 points.
+        progressStack.spacing = MusicFreeSpacingTokens.small
         progressStack.translatesAutoresizingMaskIntoConstraints = false
         progressStack.addArrangedSubview(progressSlider)
         progressStack.addArrangedSubview(timeStack)
@@ -2735,26 +2743,14 @@ public final class PlayerNowPlayingViewController: UIViewController {
         enqueue: (() -> Void)? = nil,
         destructiveAction: UIAction? = nil
     ) -> UIMenu {
-        let shareText = [title, subtitle].compactMap { $0 }.joined(separator: " - ")
         let share = UIAction(
             title: L("分享"),
             image: UIImage(systemName: "square.and.arrow.up"),
-            identifier: UIAction.Identifier("player.nowPlaying.actions.share")
+            identifier: UIAction.Identifier("player.nowPlaying.actions.share"),
+            attributes: mediaSharePresenter == nil || track == nil ? [.disabled] : []
         ) { [weak self] _ in
-            let activity = UIActivityViewController(
-                activityItems: [shareText],
-                applicationActivities: nil
-            )
-            if let popover = activity.popoverPresentationController {
-                popover.sourceView = self?.view
-                popover.sourceRect = CGRect(
-                    x: self?.view.bounds.midX ?? 0,
-                    y: self?.view.bounds.midY ?? 0,
-                    width: 1,
-                    height: 1
-                )
-            }
-            self?.present(activity, animated: true)
+            guard let self, let track else { return }
+            self.mediaSharePresenter?.present(itemID: track.id, track: track, from: self)
         }
         var actions: [UIMenuElement] = []
         if let play {
@@ -2854,9 +2850,13 @@ public final class PlayerNowPlayingViewController: UIViewController {
         let share = UIAction(
             title: L("分享"),
             image: UIImage(systemName: "square.and.arrow.up"),
-            identifier: UIAction.Identifier("player.nowPlaying.actions.share")
+            identifier: UIAction.Identifier("player.nowPlaying.actions.share"),
+            attributes: mediaSharePresenter == nil || library == nil ? [.disabled] : []
         ) { [weak self] _ in
-            DispatchQueue.main.async { self?.shareCurrentTrack() }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.mediaSharePresenter?.present(itemID: itemID, from: self, sourceView: self.moreButton)
+            }
         }
 
         var actions: [UIMenuElement] = [
@@ -2944,18 +2944,6 @@ public final class PlayerNowPlayingViewController: UIViewController {
         return UIMenu(children: groups)
     }
 
-    private func shareCurrentTrack() {
-        let activity = UIActivityViewController(
-            activityItems: [shareText],
-            applicationActivities: nil
-        )
-        if let popover = activity.popoverPresentationController {
-            popover.sourceView = moreButton
-            popover.sourceRect = moreButton.bounds
-        }
-        present(activity, animated: true)
-    }
-
     private func requestDeleteCurrentTrack(itemID: MediaItemID) {
         guard let library, presentedViewController == nil else { return }
         let alert = UIAlertController(
@@ -2981,12 +2969,6 @@ public final class PlayerNowPlayingViewController: UIViewController {
             }
         })
         present(alert, animated: true)
-    }
-
-    private var shareText: String {
-        let title = viewModel.currentTitle ?? L("正在播放")
-        guard let artist = viewModel.currentArtist, !artist.isEmpty else { return title }
-        return "\(title) - \(artist)"
     }
 }
 

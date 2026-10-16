@@ -3,7 +3,8 @@ import PackageDescription
 let plugins = ["LRCLIBLyricsPlugin", "MetadataServerLyricsPlugin", "MusicKitMetadataPlugin", "MusicBrainzMetadataPlugin", "MetadataServerMetadataPlugin", "DiscogsMetadataPlugin"]
 let package = Package(
     name: "MusicFreeBuiltinDataPlugins", platforms: [.iOS(.v17), .macOS(.v13)],
-    products: plugins.map { .library(name: $0, targets: [$0]) },
+    products: plugins.map { .library(name: $0, targets: [$0]) }
+        + [.library(name: "DataPluginSupport", targets: ["DataPluginSupport"])],
     dependencies: [.package(path: "../MusicFreePluginAPI")],
     targets: [
         .target(name: "DataPluginSupport", dependencies: [.product(name: "MusicFreePluginAPI", package: "MusicFreePluginAPI")])

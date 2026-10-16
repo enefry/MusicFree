@@ -17,6 +17,7 @@ public final class LibraryAddToPlaylistViewController: UIViewController,
     private let tableView = UITableView(frame: .zero, style: .insetGrouped)
     private let searchController = UISearchController(searchResultsController: nil)
     private let createButton = UIButton(type: .system)
+    private let createHeaderStack = UIStackView()
     private let createContainer = UIView()
     private let createNameField = UITextField()
     private let createAndAddButton = UIButton(type: .system)
@@ -104,6 +105,11 @@ public final class LibraryAddToPlaylistViewController: UIViewController,
         ])
     }
 
+    public override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        updateCreateFormLayout()
+    }
+
     private func configureCreateForm() {
         createContainer.backgroundColor = MusicFreeUIColorTokens.backgroundSecondary
         createContainer.layer.cornerRadius = 10
@@ -115,6 +121,7 @@ public final class LibraryAddToPlaylistViewController: UIViewController,
         createNameField.clearButtonMode = .whileEditing
         createNameField.returnKeyType = .done
         createNameField.delegate = self
+        createNameField.addTarget(self, action: #selector(createNameChanged), for: .editingChanged)
         createNameField.accessibilityIdentifier = "library.addToPlaylist.name"
 
         var buttonConfiguration = UIButton.Configuration.filled()
@@ -123,12 +130,14 @@ public final class LibraryAddToPlaylistViewController: UIViewController,
         buttonConfiguration.baseForegroundColor = MusicFreeUIColorTokens.onAccent
         buttonConfiguration.title = L("创建并添加")
         createAndAddButton.configuration = buttonConfiguration
+        createAndAddButton.isEnabled = false
         createAndAddButton.addTarget(self, action: #selector(createAndAdd), for: .touchUpInside)
         createAndAddButton.accessibilityIdentifier = "library.addToPlaylist.createAndAdd"
 
         let formStack = UIStackView(arrangedSubviews: [createNameField, createAndAddButton])
-        formStack.axis = .horizontal
-        formStack.alignment = .center
+        formStack.axis = .vertical
+        formStack.distribution = .fill
+        formStack.alignment = .fill
         formStack.spacing = MusicFreeSpacingTokens.small
         formStack.translatesAutoresizingMaskIntoConstraints = false
         createContainer.addSubview(formStack)
@@ -150,15 +159,20 @@ public final class LibraryAddToPlaylistViewController: UIViewController,
         createButton.accessibilityIdentifier = "library.addToPlaylist.create"
         createButton.translatesAutoresizingMaskIntoConstraints = false
 
-        let header = UIView(frame: CGRect(x: 0, y: 0, width: 1, height: 60))
-        header.addSubview(createButton)
-        NSLayoutConstraint.activate([
-            createButton.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: MusicFreeSpacingTokens.contentInset),
-            createButton.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -MusicFreeSpacingTokens.contentInset),
-            createButton.topAnchor.constraint(equalTo: header.topAnchor, constant: MusicFreeSpacingTokens.small),
-            createButton.bottomAnchor.constraint(equalTo: header.bottomAnchor, constant: -MusicFreeSpacingTokens.small)
-        ])
-        tableView.tableHeaderView = header
+        createHeaderStack.axis = .vertical
+        createHeaderStack.spacing = MusicFreeSpacingTokens.small
+        createHeaderStack.isLayoutMarginsRelativeArrangement = true
+        createHeaderStack.directionalLayoutMargins = NSDirectionalEdgeInsets(
+            top: MusicFreeSpacingTokens.small,
+            leading: MusicFreeSpacingTokens.contentInset,
+            bottom: MusicFreeSpacingTokens.small,
+            trailing: MusicFreeSpacingTokens.contentInset
+        )
+        createHeaderStack.addArrangedSubview(createButton)
+        createHeaderStack.addArrangedSubview(createContainer)
+        createContainer.isHidden = true
+        createButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
+        tableView.tableHeaderView = createHeaderStack
     }
 
     private func installLoadingView() {
@@ -191,25 +205,23 @@ public final class LibraryAddToPlaylistViewController: UIViewController,
     }
 
     private func updateCreateFormLayout() {
-        let header = tableView.tableHeaderView
-        let height: CGFloat = isCreateFormVisible ? 122 : 60
-        if isCreateFormVisible {
-            if createContainer.superview == nil {
-                header?.addSubview(createContainer)
-                NSLayoutConstraint.activate([
-                    createContainer.leadingAnchor.constraint(equalTo: header!.leadingAnchor, constant: MusicFreeSpacingTokens.contentInset),
-                    createContainer.trailingAnchor.constraint(equalTo: header!.trailingAnchor, constant: -MusicFreeSpacingTokens.contentInset),
-                    createContainer.topAnchor.constraint(equalTo: createButton.bottomAnchor, constant: MusicFreeSpacingTokens.xSmall),
-                    createContainer.bottomAnchor.constraint(equalTo: header!.bottomAnchor, constant: -MusicFreeSpacingTokens.small)
-                ])
-            }
-            createContainer.isHidden = false
-        } else {
-            createContainer.isHidden = true
-            createContainer.removeFromSuperview()
-        }
-        header?.frame.size.height = height
-        tableView.tableHeaderView = header
+        createContainer.isHidden = !isCreateFormVisible
+        let width = tableView.bounds.width
+        guard width > 0 else { return }
+        let size = createHeaderStack.systemLayoutSizeFitting(
+            CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        )
+        guard abs(createHeaderStack.frame.height - size.height) > 0.5
+                || abs(createHeaderStack.frame.width - width) > 0.5 else { return }
+        createHeaderStack.frame = CGRect(x: 0, y: 0, width: width, height: size.height)
+        tableView.tableHeaderView = createHeaderStack
+    }
+
+    @objc private func createNameChanged() {
+        viewModel.newPlaylistName = createNameField.text ?? ""
+        createAndAddButton.isEnabled = viewModel.canCreatePlaylist
     }
 
     private var filteredPlaylists: [Playlist] {
@@ -242,6 +254,8 @@ public final class LibraryAddToPlaylistViewController: UIViewController,
         isCreateFormVisible.toggle()
         updateCreateFormLayout()
         if isCreateFormVisible {
+            createHeaderStack.layoutIfNeeded()
+            tableView.scrollRectToVisible(createHeaderStack.frame, animated: false)
             createNameField.becomeFirstResponder()
         } else {
             createNameField.resignFirstResponder()

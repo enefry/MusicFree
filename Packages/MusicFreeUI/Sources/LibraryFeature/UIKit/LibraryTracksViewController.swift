@@ -4,6 +4,7 @@ import DesignSystem
 import LibraryAPI
 import MediaSourceAPI
 import MusicDomain
+import MediaSharing
 import UIKit
 
 /// A diffable-safe identity for a track row.
@@ -1108,9 +1109,9 @@ extension LibraryTracksViewController: UICollectionViewDelegate {
             guard let self else { return }
             defer { self.shareTask = nil }
             do {
-                let urls = try await mediaShareResolver.urls(for: [track])
+                let preparedShare = try await mediaShareResolver.prepare(for: [track])
                 try Task.checkCancellation()
-                let share = UIActivityViewController(activityItems: urls, applicationActivities: nil)
+                let share = MediaShareActivityViewController(share: preparedShare)
                 if let popover = share.popoverPresentationController {
                     popover.sourceView = self.view
                     popover.sourceRect = CGRect(

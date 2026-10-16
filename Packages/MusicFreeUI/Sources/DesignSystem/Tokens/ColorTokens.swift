@@ -1,4 +1,4 @@
-import SwiftUI
+import UIKit
 
 public enum MusicFreeAppearance: String, CaseIterable, Identifiable, Sendable {
     case system
@@ -23,33 +23,11 @@ public enum MusicFreeAppearance: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    public var colorScheme: ColorScheme? {
+    public var userInterfaceStyle: UIUserInterfaceStyle {
         switch self {
-        case .system: return nil
-        case .light: return .light
-        case .dark: return .dark
+        case .system: .unspecified
+        case .light: .light
+        case .dark: .dark
         }
     }
-}
-
-public enum MusicFreeColorTokens {
-    public static let backgroundPrimary = Color(.systemBackground)
-    public static let backgroundSecondary = Color(.secondarySystemBackground)
-    public static let backgroundGrouped = Color(.systemGroupedBackground)
-    public static let surfaceElevated = Color(.tertiarySystemBackground)
-    public static let playerSurface = Color(.secondarySystemBackground)
-    public static let playerControl = Color(.systemGray5)
-
-    public static let foregroundPrimary = Color(.label)
-    public static let foregroundSecondary = Color(.secondaryLabel)
-    public static let foregroundTertiary = Color(.tertiaryLabel)
-    public static let separator = Color(.separator)
-
-    public static var accent: Color { MusicFreeAccentColorStore.color }
-    public static var accentSoft: Color { MusicFreeAccentColorStore.color.opacity(0.14) }
-    public static var onAccent: Color { MusicFreeAccentColorStore.onAccentColor(forHex: MusicFreeAccentColorStore.hexValue) }
-    public static let positive = Color(.systemGreen)
-    public static let warning = Color(.systemOrange)
-    public static let destructive = Color(.systemRed)
-    public static let disabled = Color(.tertiaryLabel)
 }

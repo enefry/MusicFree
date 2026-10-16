@@ -1,84 +1,462 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-    "分析首尾静音、响度和节拍；拍速接近时自动对拍，过渡后平滑恢复原速。" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Analyzes edge silence, levels and beats. Matches similar tempos, then smoothly restores the original speed after the transition."
+    "处理优先级（高级）": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Processing Priority (Advanced)"
           }
         },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "分析首尾静音、响度和节拍；拍速接近时自动对拍，过渡后平滑恢复原速。"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Analyse les silences, le volume et le rythme. Aligne les tempos proches, puis rétablit progressivement la vitesse originale après la transition."
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Analysiert Stille, Lautstärke und Beats. Gleicht ähnliche Tempi an und kehrt nach dem Übergang sanft zur Originalgeschwindigkeit zurück."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Analiza silencios, volumen y ritmo. Sincroniza tempos similares y recupera suavemente la velocidad original tras la transición."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "曲の前後の無音、音量、拍を分析します。テンポが近い曲の拍を合わせ、切り替え後に元の速度へ滑らかに戻します。"
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "处理优先级（高级）"
           }
         }
       }
     },
-    "智能交叉渐变" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Smart crossfade"
+    "处理优先级": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Processing Priority"
           }
         },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "智能交叉渐变"
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "处理优先级"
+          }
+        }
+      }
+    },
+    "同一处理位置内，数值越小越先执行；相同时按插件 ID 排序。修改在暂停或停止后生效。请输入 0–1000 的整数。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Within the same placement, lower numbers run first; ties are ordered by plugin ID. Changes apply after pausing or stopping. Enter an integer from 0 to 1000."
           }
         },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Fondu intelligent"
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "同一处理位置内，数值越小越先执行；相同时按插件 ID 排序。修改在暂停或停止后生效。请输入 0–1000 的整数。"
+          }
+        }
+      }
+    },
+    "声道均衡": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stereo Balance"
           }
         },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Intelligente Überblendung"
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "声道均衡"
+          }
+        }
+      }
+    },
+    "自动调整": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatic Adjustment"
           }
         },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Transición inteligente"
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自动调整"
+          }
+        }
+      }
+    },
+    "最大均衡强度": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Maximum Balance Strength"
           }
         },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "スマートクロスフェード"
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最大均衡强度"
+          }
+        }
+      }
+    },
+    "均衡强度": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Balance Strength"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "均衡强度"
+          }
+        }
+      }
+    },
+    "快捷强度": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quick Strength"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "快捷强度"
+          }
+        }
+      }
+    },
+    "恢复默认参数": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reset Parameters"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "恢复默认参数"
+          }
+        }
+      }
+    },
+    "仅在左右声道差异明显时调整，强度不会超过设置值。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Adjusts only when the left and right channels differ significantly, up to the selected strength."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "仅在左右声道差异明显时调整，强度不会超过设置值。"
+          }
+        }
+      }
+    },
+    "持续混合左右声道，数值越大，声场越集中。100% 为单声道。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Continuously blends the channels. Higher values narrow the soundstage. 100% is mono."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "持续混合左右声道，数值越大，声场越集中。100% 为单声道。"
+          }
+        }
+      }
+    },
+    "0% 保留原声；100% 允许最大调整到单声道，并非始终输出单声道。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "0% preserves the original channels. 100% allows adjustment up to mono; it does not always produce mono."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "0% 保留原声；100% 允许最大调整到单声道，并非始终输出单声道。"
+          }
+        }
+      }
+    },
+    "0% 保留原声，100% 为单声道。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "0% preserves the original channels. 100% is mono."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "0% 保留原声，100% 为单声道。"
+          }
+        }
+      }
+    },
+    "播放中修改后，请暂停再继续播放，使新设置生效。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "After changing settings during playback, pause and resume to apply them."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "播放中修改后，请暂停再继续播放，使新设置生效。"
+          }
+        }
+      }
+    },
+    "参数尚未保存，请重试。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parameters have not been saved. Please retry."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "参数尚未保存，请重试。"
+          }
+        }
+      }
+    },
+    "歌曲信息不可用": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Song information unavailable"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "歌曲信息不可用"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Informations du titre indisponibles"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Titelinformationen nicht verfügbar"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Información de la canción no disponible"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "曲の情報を取得できません"
+          }
+        }
+      }
+    },
+    "编辑封面": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Edit Artwork"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "编辑封面"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modifier la pochette"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cover bearbeiten"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Editar portada"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アートワークを編集"
+          }
+        }
+      }
+    },
+    "选择照片": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose Photo"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择照片"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choisir une photo"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Foto auswählen"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Elegir foto"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写真を選択"
+          }
+        }
+      }
+    },
+    "自动使用歌曲封面": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use Song Artwork Automatically"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自动使用歌曲封面"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Utiliser automatiquement la pochette d’un titre"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Songcover automatisch verwenden"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Usar la portada de una canción automáticamente"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "曲のアートワークを自動使用"
+          }
+        }
+      }
+    },
+    "无法更新封面": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unable to Update Artwork"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法更新封面"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible de modifier la pochette"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cover konnte nicht aktualisiert werden"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo actualizar la portada"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アートワークを更新できません"
           }
         }
       }
@@ -120,6 +498,47 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "スマートモードでは曲の前後の無音を自動的にスキップします。"
+          }
+        }
+      }
+    },
+    "智能交叉渐变" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Smart crossfade"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "智能交叉渐变"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fondu intelligent"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Intelligente Überblendung"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transición inteligente"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "スマートクロスフェード"
           }
         }
       }
@@ -206,6 +625,47 @@
         }
       }
     },
+    "分析首尾静音、响度和节拍；拍速接近时自动对拍，过渡后平滑恢复原速。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Analyzes edge silence, levels and beats. Matches similar tempos, then smoothly restores the original speed after the transition."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "分析首尾静音、响度和节拍；拍速接近时自动对拍，过渡后平滑恢复原速。"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Analyse les silences, le volume et le rythme. Aligne les tempos proches, puis rétablit progressivement la vitesse originale après la transition."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Analysiert Stille, Lautstärke und Beats. Gleicht ähnliche Tempi an und kehrt nach dem Übergang sanft zur Originalgeschwindigkeit zurück."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Analiza silencios, volumen y ritmo. Sincroniza tempos similares y recupera suavemente la velocidad original tras la transición."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "曲の前後の無音、音量、拍を分析します。テンポが近い曲の拍を合わせ、切り替え後に元の速度へ滑らかに戻します。"
+          }
+        }
+      }
+    },
     "自动过渡不超过此时长；节拍不可靠时按响度选择，分析失败时使用固定渐变。" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -247,47 +707,6 @@
         }
       }
     },
-    "跳过首尾静音" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Skip leading and trailing silence"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ignorer les silences au début et à la fin"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Stille am Anfang und Ende überspringen"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Omitir el silencio inicial y final"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "曲の先頭と末尾の無音をスキップ"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "跳过首尾静音"
-          }
-        }
-      }
-    },
     "静音跳过" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -325,6 +744,47 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "静音跳过"
+          }
+        }
+      }
+    },
+    "跳过首尾静音" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skip leading and trailing silence"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ignorer les silences au début et à la fin"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stille am Anfang und Ende überspringen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Omitir el silencio inicial y final"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "曲の先頭と末尾の無音をスキップ"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "跳过首尾静音"
           }
         }
       }
@@ -448,6 +908,1451 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "本地单声道和双声道曲目在 1 倍速下支持歌曲过渡和首尾静音跳过；网络播放、CUE 分段等不支持的组合使用普通切歌。"
+          }
+        }
+      }
+    },
+    "扫描与授权" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scanning and authorization"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "扫描与授权"
+          }
+        }
+      }
+    },
+    "存储" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Storage"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "存储"
+          }
+        }
+      }
+    },
+    "报告重复内容" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Report duplicate content"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "报告重复内容"
+          }
+        }
+      }
+    },
+    "替换已有内容（暂不支持）" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Replace existing content (unavailable)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "替换已有内容（暂不支持）"
+          }
+        }
+      }
+    },
+    "保留两份（暂不支持）" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep both copies (unavailable)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保留两份（暂不支持）"
+          }
+        }
+      }
+    },
+    "跳过已有内容，或在导入结果中报告重复文件。替换和保留两份的历史设置会保留，但当前导入器暂不支持。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skip existing content or report duplicates in import results. Previously saved replace and keep-both preferences are retained, but are unavailable in the current importer."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "跳过已有内容，或在导入结果中报告重复文件。替换和保留两份的历史设置会保留，但当前导入器暂不支持。"
+          }
+        }
+      }
+    },
+    "联网许可由每个账户单独管理；应用级同意和全局撤回位于隐私与联网服务。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Each account manages its own network consent. App consent and global revocation are in Privacy and online services."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "联网许可由每个账户单独管理；应用级同意和全局撤回位于隐私与联网服务。"
+          }
+        }
+      }
+    },
+    "插件管理启用、加载和配置；隐私与联网服务集中管理联网同意和撤回。启用插件不会自动同意联网，隐藏入口不会停止已启用的能力。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Plugins manages enablement, loading and configuration. Privacy and online services manages consent and revocation. Enabling a plugin does not grant network consent, and hiding an entry does not stop enabled capabilities."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "插件管理启用、加载和配置；隐私与联网服务集中管理联网同意和撤回。启用插件不会自动同意联网，隐藏入口不会停止已启用的能力。"
+          }
+        }
+      }
+    },
+    "Google Drive OAuth 配置缺失，当前无法添加或重新授权账户。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Google Drive OAuth is not configured. Accounts cannot be added or reauthorized in this build."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Google Drive OAuth 配置缺失，当前无法添加或重新授权账户。"
+          }
+        }
+      }
+    },
+    "服务与授权" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Service and authorization"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "服务与授权"
+          }
+        }
+      }
+    },
+    "编辑来源" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Edit source"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "编辑来源"
+          }
+        }
+      }
+    },
+    "保存来源" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Save source"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保存来源"
+          }
+        }
+      }
+    },
+    "删除来源" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete source"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "删除来源"
+          }
+        }
+      }
+    },
+    "同意此来源的服务许可" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Accept this source’s service policy"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "同意此来源的服务许可"
+          }
+        }
+      }
+    },
+    "删除来源及其凭据？" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete this source and its credentials?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "删除来源及其凭据？"
+          }
+        }
+      }
+    },
+    "已导入媒体会保留。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Imported media will be kept."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已导入媒体会保留。"
+          }
+        }
+      }
+    },
+    "保存失败，请检查名称、配置范围和凭据。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Could not save. Check the name, configuration ranges and credentials."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保存失败，请检查名称、配置范围和凭据。"
+          }
+        }
+      }
+    },
+    "删除失败，请重试。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Could not delete. Try again."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "删除失败，请重试。"
+          }
+        }
+      }
+    },
+    "此来源可以访问声明的媒体服务。密码和令牌只保存在系统 Keychain；应用联网许可需单独开启。更新凭据时请重新填写全部必填凭据。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This source can access its declared media service. Passwords and tokens are stored in Keychain. Application network permission is separate. Fill in all required credentials when replacing them."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此来源可以访问声明的媒体服务。密码和令牌只保存在系统 Keychain；应用联网许可需单独开启。更新凭据时请重新填写全部必填凭据。"
+          }
+        }
+      }
+    },
+    "此来源提供离线参考内容，不发送网络请求。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This source provides offline reference content without network requests."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此来源提供离线参考内容，不发送网络请求。"
+          }
+        }
+      }
+    },
+    "无法读取插件设置，请重试。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Could not load plugin settings. Try again."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法读取插件设置，请重试。"
+          }
+        }
+      }
+    },
+    "低音增强" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bass Boost"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "低音增强"
+          }
+        }
+      }
+    },
+    "高音增强" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Treble Boost"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "高音增强"
+          }
+        }
+      }
+    },
+    "人声" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vocal"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "人声"
+          }
+        }
+      }
+    },
+    "0 秒为关闭，最长 3 秒。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Set to 0 to disable. Maximum 3 seconds."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "0 秒为关闭，最长 3 秒。"
+          }
+        }
+      }
+    },
+    "上下拖动调节，松手保存。双击频段恢复为 0 dB。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Drag vertically to adjust; release to save. Double-tap a band to reset it to 0 dB."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上下拖动调节，松手保存。双击频段恢复为 0 dB。"
+          }
+        }
+      }
+    },
+    "不支持的位置" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unsupported placement"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不支持的位置"
+          }
+        }
+      }
+    },
+    "交叉淡化" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Crossfade"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "交叉淡化"
+          }
+        }
+      }
+    },
+    "交叉淡化时长" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Crossfade duration"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "交叉淡化时长"
+          }
+        }
+      }
+    },
+    "两首歌曲重叠播放的时间，最长 3 秒；选择交叉淡化后可调整。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "How long two songs overlap, up to 3 seconds. Select Crossfade to adjust."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "两首歌曲重叠播放的时间，最长 3 秒；选择交叉淡化后可调整。"
+          }
+        }
+      }
+    },
+    "同时设置淡入和淡出" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Set fade-in and fade-out together"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "同时设置淡入和淡出"
+          }
+        }
+      }
+    },
+    "快速设置" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Quick settings"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "快速设置"
+          }
+        }
+      }
+    },
+    "将上一首的结尾与下一首的开头混合过渡。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Blend the end of one song with the beginning of the next."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "将上一首的结尾与下一首的开头混合过渡。"
+          }
+        }
+      }
+    },
+    "直接衔接上一首的结尾与下一首的开头。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connect the end of one song directly to the beginning of the next."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "直接衔接上一首的结尾与下一首的开头。"
+          }
+        }
+      }
+    },
+    "本地单声道和双声道曲目在 1 倍速下支持无缝播放与交叉淡化。文件自带静音会保留；网络播放、CUE 分段等不支持的组合使用普通切歌。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gapless playback and crossfade support local mono and stereo tracks at 1× speed. Silence in the file is retained. Network playback, CUE segments and other unsupported combinations use normal track changes."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本地单声道和双声道曲目在 1 倍速下支持无缝播放与交叉淡化。文件自带静音会保留；网络播放、CUE 分段等不支持的组合使用普通切歌。"
+          }
+        }
+      }
+    },
+    "歌曲过渡" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Song transitions"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "歌曲过渡"
+          }
+        }
+      }
+    },
+    "淡入" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fade-in"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "淡入"
+          }
+        }
+      }
+    },
+    "淡出" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fade-out"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "淡出"
+          }
+        }
+      }
+    },
+    "自动切歌" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Automatic track changes"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自动切歌"
+          }
+        }
+      }
+    },
+    "过渡风格" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transition style"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "过渡风格"
+          }
+        }
+      }
+    },
+    "恢复平直" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reset to flat"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "恢复平直"
+          }
+        }
+      }
+    },
+    "频段" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bands"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "频段"
+          }
+        }
+      }
+    },
+    "默认" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Default"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "默认"
+          }
+        }
+      }
+    },
+    "选择颜色" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose color"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择颜色"
+          }
+        }
+      }
+    },
+    "蓝色" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Blue"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "蓝色"
+          }
+        }
+      }
+    },
+    "绿色" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Green"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "绿色"
+          }
+        }
+      }
+    },
+    "紫色" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Purple"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "紫色"
+          }
+        }
+      }
+    },
+    "黄色" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yellow"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "黄色"
+          }
+        }
+      }
+    },
+    "音效" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Audio effects"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "音效"
+          }
+        }
+      }
+    },
+    "选择插件管理启用、许可和配置。隐藏入口不会停止已经启用的能力。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Select a plugin to manage its capabilities, consent and configuration. Hiding its entry does not stop enabled capabilities."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择插件管理启用、许可和配置。隐藏入口不会停止已经启用的能力。"
+          }
+        }
+      }
+    },
+    "管理隐藏插件" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Manage hidden plugins"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "管理隐藏插件"
+          }
+        }
+      }
+    },
+    "已隐藏" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hidden"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已隐藏"
+          }
+        }
+      }
+    },
+    "插件" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Plugins"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "插件"
+          }
+        }
+      }
+    },
+    "配置" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Configuration"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "配置"
+          }
+        }
+      }
+    },
+    "服务许可" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Service consent"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "服务许可"
+          }
+        }
+      }
+    },
+    "撤销许可" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Revoke consent"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "撤销许可"
+          }
+        }
+      }
+    },
+    "处理位置" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Processing placement"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "处理位置"
+          }
+        }
+      }
+    },
+    "每轨混音前" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Before mixing each track"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "每轨混音前"
+          }
+        }
+      }
+    },
+    "总线混音后" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "After mixing the output"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "总线混音后"
+          }
+        }
+      }
+    },
+    "每轨分别处理后混音；总线处理混音后的声音。更改位置在暂停或停止后生效，每个播放会话使用独立实例。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Per-track processing runs before mixing; output processing runs after mixing. Placement changes take effect when paused or stopped. Each playback session uses a separate instance."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "每轨分别处理后混音；总线处理混音后的声音。更改位置在暂停或停止后生效，每个播放会话使用独立实例。"
+          }
+        }
+      }
+    },
+    "音频峰值" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Audio peak"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "音频峰值"
+          }
+        }
+      }
+    },
+    "音频 RMS" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Audio RMS"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "音频 RMS"
+          }
+        }
+      }
+    },
+    "账户与来源" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Accounts and sources"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "账户与来源"
+          }
+        }
+      }
+    },
+    "添加来源" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add source"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添加来源"
+          }
+        }
+      }
+    },
+    "保存配置" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Save configuration"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保存配置"
+          }
+        }
+      }
+    },
+    "配置无效，请检查必填项及数值范围。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Invalid configuration. Check required fields and value ranges."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "配置无效，请检查必填项及数值范围。"
+          }
+        }
+      }
+    },
+    "插件设置保存失败。请检查配置后重试。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Could not save plugin settings. Check the configuration and try again."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "插件设置保存失败。请检查配置后重试。"
+          }
+        }
+      }
+    },
+    "无法读取来源配置，请返回后重试。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Could not read source configuration. Go back and try again."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法读取来源配置，请返回后重试。"
+          }
+        }
+      }
+    },
+    "同意并授权" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agree and authorize"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "同意并授权"
+          }
+        }
+      }
+    },
+    "此服务可发送歌曲查询和来源访问请求；凭据由系统 Keychain 保存。已经发送的请求无法撤回。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This service can send song queries and source access requests. Credentials are stored in the system Keychain. Requests already sent cannot be recalled."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此服务可发送歌曲查询和来源访问请求；凭据由系统 Keychain 保存。已经发送的请求无法撤回。"
+          }
+        }
+      }
+    },
+    "此参考服务使用离线数据。宿主的歌词和歌曲信息同意记录将保留用于服务运行。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This reference service uses offline data. Lyrics and metadata consent records are retained for service operation."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此参考服务使用离线数据。宿主的歌词和歌曲信息同意记录将保留用于服务运行。"
+          }
+        }
+      }
+    },
+    "仅用于此插件注册并经你授权的来源功能。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Used only for sources registered by this plugin and authorized by you."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "仅用于此插件注册并经你授权的来源功能。"
+          }
+        }
+      }
+    },
+    "插件声明的来源目录与临时媒体访问数据。凭据只保存在系统 Keychain。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Source catalogs and temporary media access data declared by the plugin. Credentials are stored only in the system Keychain."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "插件声明的来源目录与临时媒体访问数据。凭据只保存在系统 Keychain。"
+          }
+        }
+      }
+    },
+    "尚未允许加载" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Loading not allowed"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚未允许加载"
+          }
+        }
+      }
+    },
+    "需要许可" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Consent required"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "需要许可"
+          }
+        }
+      }
+    },
+    "已注册，按需加载" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Registered, loaded on demand"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已注册，按需加载"
+          }
+        }
+      }
+    },
+    "当前构建未包含" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not included in this build"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当前构建未包含"
+          }
+        }
+      }
+    },
+    "版本不兼容，配置已保留" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Incompatible version; configuration retained"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "版本不兼容，配置已保留"
+          }
+        }
+      }
+    },
+    "注册不可用" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Registration unavailable"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "注册不可用"
+          }
+        }
+      }
+    },
+    "已卸载" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unloaded"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已卸载"
+          }
+        }
+      }
+    },
+    "显示入口" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show entry"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示入口"
+          }
+        }
+      }
+    },
+    "启用能力" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enable capabilities"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "启用能力"
+          }
+        }
+      }
+    },
+    "允许加载" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Allow loading"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "允许加载"
+          }
+        }
+      }
+    },
+    "服务许可保存失败。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Could not save service consent."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "服务许可保存失败。"
+          }
+        }
+      }
+    },
+    "服务许可撤销失败。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Could not revoke service consent."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "服务许可撤销失败。"
           }
         }
       }
@@ -589,7 +2494,7 @@
     "开启后记录 URLSession 网络请求；默认关闭，仅 Debug 构建可用。" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Records URLSession network requests when enabled. Off by default and available only in Debug builds."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"开启后记录 URLSession 网络请求；默认关闭，仅 Debug 构建可用。"}},"de":{"stringUnit":{"state":"translated","value":"Zeichnet URLSession-Netzwerkanfragen auf, wenn aktiviert. Standardmäßig deaktiviert und nur in Debug-Builds verfügbar."}},"es":{"stringUnit":{"state":"translated","value":"Registra las solicitudes de red de URLSession al activarse. Desactivado por defecto y disponible solo en compilaciones Debug."}},"fr":{"stringUnit":{"state":"translated","value":"Enregistre les requêtes réseau URLSession lorsque la capture est activée. Désactivée par défaut et disponible uniquement dans les versions Debug."}},"ja":{"stringUnit":{"state":"translated","value":"有効にするとURLSessionのネットワークリクエストを記録します。デフォルトでは無効で、Debugビルドでのみ利用できます。"}}}},
     "The shared Documents directory could not be scanned." : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"The shared Documents directory could not be scanned."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"无法扫描共享 Documents 目录。"}},"de":{"stringUnit":{"state":"translated","value":"Der freigegebene Documents-Ordner konnte nicht durchsucht werden."}},"es":{"stringUnit":{"state":"translated","value":"No se pudo explorar la carpeta Documents compartida."}},"fr":{"stringUnit":{"state":"translated","value":"Impossible de parcourir le dossier Documents partagé."}},"ja":{"stringUnit":{"state":"translated","value":"共有のDocumentsフォルダをスキャンできませんでした。"}}}},
     "The Documents import ended without a result." : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"The Documents import ended without a result."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"Documents 导入结束，但未返回结果。"}},"de":{"stringUnit":{"state":"translated","value":"Der Documents-Import wurde ohne Ergebnis beendet."}},"es":{"stringUnit":{"state":"translated","value":"La importación de Documents terminó sin un resultado."}},"fr":{"stringUnit":{"state":"translated","value":"L’importation de Documents s’est terminée sans résultat."}},"ja":{"stringUnit":{"state":"translated","value":"Documentsの読み込みが結果を返さずに終了しました。"}}}},
-    "仅在音乐播放中转码；暂停、停止或缓冲时，转码也会暂停并保留进度，继续播放后自动恢复。播放中，前台按设置并发转码，后台仅运行一个转码任务。" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Conversion runs only while music is playing. Pausing, stopping, or buffering also pauses conversion with progress preserved; conversion resumes when playback continues. While playing, foreground conversions use your concurrency setting, and only one conversion runs in the background."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"仅在音乐播放中转码；暂停、停止或缓冲时，转码也会暂停并保留进度，继续播放后自动恢复。播放中，前台按设置并发转码，后台仅运行一个转码任务。"}},"zh-Hant":{"stringUnit":{"state":"translated","value":"僅在音樂播放中轉碼；暫停、停止或緩衝時，轉碼也會暫停並保留進度，繼續播放後自動恢復。播放中，前景依設定並行轉碼，背景僅執行一個轉碼任務。"}},"de":{"stringUnit":{"state":"translated","value":"Die Konvertierung läuft nur während der Musikwiedergabe. Beim Pausieren, Stoppen oder Puffern wird auch die Konvertierung angehalten und der Fortschritt gespeichert. Sie wird mit der Wiedergabe fortgesetzt. Im Vordergrund gilt die eingestellte Anzahl gleichzeitiger Konvertierungen; im Hintergrund läuft nur eine."}},"es":{"stringUnit":{"state":"translated","value":"La conversión solo se ejecuta mientras se reproduce música. Al pausar, detener o almacenar en búfer, la conversión también se pausa y conserva el progreso; se reanuda al continuar la reproducción. En primer plano se usa el número de conversiones simultáneas configurado; en segundo plano solo se ejecuta una."}},"fr":{"stringUnit":{"state":"translated","value":"La conversion s’exécute uniquement pendant la lecture de musique. Une pause, un arrêt ou une mise en mémoire tampon suspend aussi la conversion en conservant sa progression ; elle reprend avec la lecture. Au premier plan, le nombre de conversions simultanées suit votre réglage ; en arrière-plan, une seule conversion s’exécute."}},"ja":{"stringUnit":{"state":"translated","value":"変換は音楽の再生中にのみ実行されます。一時停止、停止、バッファリング中は変換も一時停止し、進捗を保持します。再生を続けると自動的に再開します。再生中、フォアグラウンドでは設定した数の変換を同時に実行し、バックグラウンドでは1件のみ実行します。"}}}},
+    "前台按设置并发转码；后台仅在音乐播放中运行一个转码任务，暂停、停止或缓冲时会暂停并保留进度，继续播放后自动恢复。" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"In the foreground, conversions use your concurrency setting. In the background, one conversion runs while music is playing; pausing, stopping, or buffering pauses conversion with progress preserved, and conversion resumes when playback continues."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"前台按设置并发转码；后台仅在音乐播放中运行一个转码任务，暂停、停止或缓冲时会暂停并保留进度，继续播放后自动恢复。"}},"zh-Hant":{"stringUnit":{"state":"translated","value":"前景依設定並行轉碼；背景僅在音樂播放中執行一個轉碼任務，暫停、停止或緩衝時會暫停並保留進度，繼續播放後自動恢復。"}},"de":{"stringUnit":{"state":"translated","value":"Im Vordergrund gilt die eingestellte Anzahl gleichzeitiger Konvertierungen. Im Hintergrund läuft eine Konvertierung während der Musikwiedergabe. Beim Pausieren, Stoppen oder Puffern wird sie angehalten und der Fortschritt gespeichert; sie wird mit der Wiedergabe fortgesetzt."}},"es":{"stringUnit":{"state":"translated","value":"En primer plano se usa el número de conversiones simultáneas configurado. En segundo plano se ejecuta una conversión mientras se reproduce música; al pausar, detener o almacenar en búfer, se pausa conservando el progreso y se reanuda al continuar la reproducción."}},"fr":{"stringUnit":{"state":"translated","value":"Au premier plan, le nombre de conversions simultanées suit votre réglage. En arrière-plan, une seule conversion s’exécute pendant la lecture de musique ; une pause, un arrêt ou une mise en mémoire tampon la suspend en conservant sa progression. Elle reprend avec la lecture."}},"ja":{"stringUnit":{"state":"translated","value":"フォアグラウンドでは設定した数の変換を同時に実行します。バックグラウンドでは音楽の再生中に1件の変換を実行し、一時停止、停止、バッファリング中は進捗を保持して変換を一時停止します。再生を続けると自動的に再開します。"}}}},
     "转为简体" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Convert to Simplified"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"转为简体"}},"zh-Hant":{"stringUnit":{"state":"translated","value":"轉為簡體"}},"de":{"stringUnit":{"state":"translated","value":"In vereinfachtes Chinesisch umwandeln"}},"es":{"stringUnit":{"state":"translated","value":"Convertir a chino simplificado"}},"fr":{"stringUnit":{"state":"translated","value":"Convertir en chinois simplifié"}},"ja":{"stringUnit":{"state":"translated","value":"簡体字に変換"}}}},
     "转为繁体" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Convert to Traditional"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"转为繁体"}},"zh-Hant":{"stringUnit":{"state":"translated","value":"轉為繁體"}},"de":{"stringUnit":{"state":"translated","value":"In traditionelles Chinesisch umwandeln"}},"es":{"stringUnit":{"state":"translated","value":"Convertir a chino tradicional"}},"fr":{"stringUnit":{"state":"translated","value":"Convertir en chinois traditionnel"}},"ja":{"stringUnit":{"state":"translated","value":"繁体字に変換"}}}},
     "无可转换的歌词" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"No lyrics to convert"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"无可转换的歌词"}},"zh-Hant":{"stringUnit":{"state":"translated","value":"沒有可轉換的歌詞"}},"de":{"stringUnit":{"state":"translated","value":"Keine Liedtexte zum Umwandeln"}},"es":{"stringUnit":{"state":"translated","value":"No hay letras para convertir"}},"fr":{"stringUnit":{"state":"translated","value":"Aucune parole à convertir"}},"ja":{"stringUnit":{"state":"translated","value":"変換できる歌詞がありません"}}}},
@@ -20163,6 +22068,47 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "按专辑浏览"
+          }
+        }
+      }
+    },
+    "只重试尚未匹配或未完成的歌曲，已成功匹配的歌曲会跳过。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nur Titel ohne Treffer oder mit unvollständigen Ergebnissen werden erneut versucht. Erfolgreich zugeordnete Titel werden übersprungen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Retry only unmatched or unfinished songs. Successfully matched songs are skipped."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Solo se reintentan las canciones sin coincidencia o sin completar. Se omiten las canciones ya identificadas."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Seuls les titres sans correspondance ou incomplets sont réessayés. Les titres déjà identifiés sont ignorés."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未一致または未完了の曲のみ再試行します。一致済みの曲はスキップします。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "只重试尚未匹配或未完成的歌曲，已成功匹配的歌曲会跳过。"
           }
         }
       }
@@ -44444,6 +46390,227 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "默认播放速度"
+          }
+        }
+      }
+    },
+    "Cookie 配置" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cookie Settings"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cookie 配置"
+          }
+        }
+      }
+    },
+    "设置 Cookie" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Set Cookie"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "设置 Cookie"
+          }
+        }
+      }
+    },
+    "清除 Cookie" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Clear Cookie"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "清除 Cookie"
+          }
+        }
+      }
+    },
+    "匿名查询" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anonymous Access"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "匿名查询"
+          }
+        }
+      }
+    },
+    "已配置 Cookie" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cookie Configured"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已配置 Cookie"
+          }
+        }
+      }
+    },
+    "可先匿名查询。服务要求登录时，可填写自己的 Cookie；凭据仅存于系统钥匙串。歌词和元数据插件分别配置。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You can try anonymous access first. If the service requires sign-in, enter your own cookie. Credentials are stored only in Keychain. Configure lyrics and metadata plugins separately."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "可先匿名查询。服务要求登录时，可填写自己的 Cookie；凭据仅存于系统钥匙串。歌词和元数据插件分别配置。"
+          }
+        }
+      }
+    },
+    "请输入该音乐服务的登录 Cookie。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enter your sign-in cookie for this music service."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请输入该音乐服务的登录 Cookie。"
+          }
+        }
+      }
+    },
+    "无法保存配置" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unable to Save Settings"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法保存配置"
+          }
+        }
+      }
+    },
+    "请检查 Cookie，并确认已允许插件访问凭据。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Check the cookie and confirm that the plugin has permission to access credentials."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请检查 Cookie，并确认已允许插件访问凭据。"
+          }
+        }
+      }
+    },
+    "歌曲名称、艺人，以及可选的专辑、时长和登录 Cookie。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Song title, artist, and optional album, duration, and sign-in cookie."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "歌曲名称、艺人，以及可选的专辑、时长和登录 Cookie。"
+          }
+        }
+      }
+    },
+    "查询歌词、歌曲元数据和专辑封面。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Look up lyrics, song metadata, and album artwork."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查询歌词、歌曲元数据和专辑封面。"
+          }
+        }
+      }
+    },
+    "网易云音乐" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "NetEase Cloud Music"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "网易云音乐"
+          }
+        }
+      }
+    },
+    "QQ 音乐" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "QQ Music"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "QQ 音乐"
           }
         }
       }

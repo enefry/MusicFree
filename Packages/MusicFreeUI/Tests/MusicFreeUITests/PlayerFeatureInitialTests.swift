@@ -255,6 +255,33 @@ func nowPlayingFallbackCloseAction() {
 }
 
 @MainActor
+@Test("Now Playing progress fits its slider and time labels in both layouts")
+func nowPlayingProgressPreservesTimeRowHeight() throws {
+  let serving = RecordingPlaybackServing(snapshot: makePlayerSnapshot())
+  let controller = PlayerNowPlayingViewController(serving: serving)
+  let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+  window.rootViewController = controller
+  window.makeKeyAndVisible()
+  defer { window.isHidden = true; window.rootViewController = nil }
+  for sizeClass in [UIUserInterfaceSizeClass.regular, .compact] {
+    controller.traitOverrides.verticalSizeClass = sizeClass
+    controller.view.setNeedsLayout()
+    controller.view.layoutIfNeeded()
+    let progress = try #require(findView(
+      withAccessibilityIdentifier: "player.nowPlaying.progress.container", in: controller.view
+    ) as? UIStackView)
+    let slider = try #require(progress.arrangedSubviews.first as? UISlider)
+    let timeRow = try #require(progress.arrangedSubviews.last as? UIStackView)
+    // Auto Layout constrains the alignment rect; UISlider's visible bounds
+    // can differ by a point on newer system versions.
+    #expect(abs(slider.alignmentRect(forFrame: slider.frame).height - 20) < 0.5)
+    #expect(abs(timeRow.bounds.height - 24) < 0.5)
+    #expect(abs(progress.bounds.height - timeRow.frame.maxY) < 0.5)
+    #expect(!progress.hasAmbiguousLayout)
+  }
+}
+
+@MainActor
 @Test("Now Playing queue virtualizes large lists with UITableView reuse")
 func nowPlayingQueueVirtualizesLargeLists() {
   let serving = RecordingPlaybackServing(

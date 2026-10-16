@@ -4,6 +4,7 @@ import MusicFreePluginDSPAPI
 import MusicFreePluginRuntime
 import MusicFreePluginAudio
 
+#if DEBUG
 public struct ReferencePluginRegistrationProvider: BuiltInPluginRegistrationProvider {
     public static let lyricsID = PluginID(rawValue: "reference.lyrics")
     public static let metadataID = PluginID(rawValue: "reference.metadata")
@@ -82,3 +83,4 @@ public enum PluginReferenceMedia {
         try data.write(to: url, options: .atomic)
     }
 }
+#endif

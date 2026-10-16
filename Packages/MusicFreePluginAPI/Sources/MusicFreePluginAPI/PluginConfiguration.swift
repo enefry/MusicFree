@@ -112,18 +112,21 @@ public struct PluginPreference: Codable, Hashable, Sendable, Identifiable {
     public var credentialRecordID: String?
     public var instances: [PluginInstanceConfiguration]
     public var dspPlacement: PluginDSPPlacement?
+    /// Nil follows the descriptor default. Independent of processor parameters.
+    public var dspPriority: Int?
     public var id: PluginID { pluginID }
     public init(pluginID: PluginID, isVisible: Bool = true, isEnabled: Bool = false,
                 isLoadAllowed: Bool = false, configuration: [String: PluginConfigurationValue] = [:],
                 schemaVersion: Int = 1, grantedPermissions: Set<PluginPermission> = [],
                 acceptedPolicyVersion: String? = nil, credentialRecordID: String? = nil,
-                instances: [PluginInstanceConfiguration] = [], dspPlacement: PluginDSPPlacement? = nil) {
+                instances: [PluginInstanceConfiguration] = [], dspPlacement: PluginDSPPlacement? = nil, dspPriority: Int? = nil) {
         self.pluginID = pluginID; self.isVisible = isVisible; self.isEnabled = isEnabled
         self.isLoadAllowed = isLoadAllowed; self.configuration = configuration; self.schemaVersion = schemaVersion
         self.grantedPermissions = grantedPermissions; self.acceptedPolicyVersion = acceptedPolicyVersion
         self.credentialRecordID = credentialRecordID
         self.instances = instances
         self.dspPlacement = dspPlacement
+        self.dspPriority = dspPriority
     }
 }
 

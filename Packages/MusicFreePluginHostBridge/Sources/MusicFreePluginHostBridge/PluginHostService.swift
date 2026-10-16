@@ -6,9 +6,12 @@ import LibraryAPI
 import MusicFreePluginAPI
 import MusicFreePluginRuntime
 import EqualizerDSPPlugin
+import StereoBalanceDSPPlugin
+import DeclickDSPPlugin
 import MusicFreePluginAppleAudioAPI
 
 public struct PluginHostService: PluginServing {
+    private static let logger = MusicLogger(category: "plugin-equalizer")
     public let runtime: PluginRuntime
     private let audio: [PluginAudioHostController]
     private let pcm: [PluginPCMHostController]
@@ -22,6 +25,12 @@ public struct PluginHostService: PluginServing {
     }
     public static var equalizerRegistration: BuiltInPluginRegistration {
         .init(descriptor: EqualizerDSPPlugin.descriptor, dsp: EqualizerDSPPlugin.makeProcessor)
+    }
+    public static var stereoBalanceRegistration: BuiltInPluginRegistration {
+        .init(descriptor: StereoBalanceDSPPlugin.descriptor, dsp: StereoBalanceDSPPlugin.makeProcessor)
+    }
+    public static var declickRegistration: BuiltInPluginRegistration {
+        .init(descriptor: DeclickDSPPlugin.descriptor, dsp: DeclickDSPPlugin.makeProcessor)
     }
     @MainActor public static var audioFactories: [PluginID: AppleAudioDSPPluginFactory] {
         PluginAudioHostController.referenceFactories.merging([EqualizerDSPPlugin.id: EqualizerDSPPlugin.makeAppleEffect]) { _, builtin in builtin }
@@ -41,6 +50,15 @@ public struct PluginHostService: PluginServing {
             applicationPrivacyAccepted: settings.importPreferences.privacyPreferences.isPrivacyPolicyAccepted,
             allowedSourceInstances: allowed)
         await applyDSP(settings.pluginPreferences)
+        if let equalizer = await snapshots().first(where: { $0.id == EqualizerDSPPlugin.id }) {
+            let preference = equalizer.preference
+            let keys = ["preamp"] + EqualizerDSPPlugin.frequencies.map(String.init)
+            let values = keys.compactMap { key -> String? in
+                guard case .number(let value) = preference.configuration[key] else { return nil }
+                return "\(key):\(value)"
+            }.joined(separator: ",")
+            Self.logger.info("event=apply state=\(equalizer.state) enabled=\(preference.isEnabled) loadAllowed=\(preference.isLoadAllowed) placement=\(String(describing: preference.dspPlacement)) audioHosts=\(audio.count) pcmHosts=\(pcm.count) values=\(values)")
+        }
     }
     @MainActor private func applyDSP(_ preferences: [PluginPreference]) async {
         for controller in audio { controller.revokeChangedPreferences(preferences) }

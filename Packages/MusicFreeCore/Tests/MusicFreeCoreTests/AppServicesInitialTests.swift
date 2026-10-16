@@ -9,6 +9,34 @@ import SettingsAPI
 import SystemIntegrationAPI
 import Testing
 
+@Test("Import coordinator applies executable duplicate preferences while preserving explicit report requests")
+func appServicesImportDuplicatePreferences() async throws {
+    let importer = FakeMediaImporter()
+    let repository = TestSettingsRepository(value: .init(importPreferences: .init(duplicatePolicy: .reportExisting)))
+    let coordinator = ImportCoordinator(importer: importer, settingsRepository: repository)
+    let url = URL(fileURLWithPath: "/private/import/same.mp3")
+    func start(_ policy: MediaImportDuplicatePolicy) async throws {
+        let stream = try await coordinator.start(.init(importID: UUID(), urls: [url], duplicatePolicy: policy,
+            allowsFolderFailureConfirmation: true))
+        for try await _ in stream {}
+    }
+    // An unscripted fake ends with an error; its recorded request is the boundary under test.
+    _ = try? await start(.skip)
+    #expect(importer.requests.last?.duplicatePolicy == .report)
+    #expect(importer.requests.last?.allowsFolderFailureConfirmation == true)
+    try await repository.save(.init(importPreferences: .init(duplicatePolicy: .skipExisting)))
+    _ = try? await start(.skip)
+    #expect(importer.requests.last?.duplicatePolicy == .skip)
+    _ = try? await start(.report)
+    #expect(importer.requests.last?.duplicatePolicy == .report)
+    // Reserved legacy choices are preserved on disk and retain executable skip semantics.
+    try await repository.save(.init(importPreferences: .init(duplicatePolicy: .keepBoth)))
+    _ = try? await start(.skip)
+    #expect(importer.requests.last?.duplicatePolicy == .skip)
+    #expect(try await repository.load().importPreferences.duplicatePolicy == .keepBoth)
+    #expect(importer.requests.count == 4)
+}
+
 @Test("AppServiceError descriptions include the stable diagnostic code")
 func appServiceErrorDescriptionIncludesDiagnosticCode() {
     let error = AppServiceError.missingDependency("settingsRepository")
@@ -1720,7 +1748,7 @@ func appServicesNaturalCompletionStartsNextTrackFromTheBeginning() async throws 
         itemID: firstID,
         reason: .ended
     ))
-    await waitForPreparedItemCount(2, on: engine)
+    await waitForPreparedItemCount(2, on: engine, in: container)
 
     #expect(engine.prepareCalls.map(\.item.itemID) == [firstID, secondID])
     guard engine.prepareCalls.count >= 2 else { return }
@@ -1816,7 +1844,7 @@ func appServicesCompletionSkipsUnavailableQueueEntries() async throws {
         reason: .ended
     ))
 
-    await waitForPreparedItemCount(2, on: engine)
+    await waitForPreparedItemCount(2, on: engine, in: container)
 
     #expect(engine.prepareCalls.map(\.item.itemID) == [firstID, secondID])
     #expect(container.playback.snapshot.currentItemID == secondID)
@@ -1873,7 +1901,7 @@ func appServicesSingleRepeatRestartsFromTheBeginning() async throws {
         reason: .ended
     ))
 
-    await waitForPreparedItemCount(2, on: engine)
+    await waitForPreparedItemCount(2, on: engine, in: container)
     for _ in 0..<2_000 where container.playback.snapshot.phase != .playing {
         try? await Task.sleep(for: .milliseconds(1))
     }
@@ -3424,10 +3452,13 @@ private func settleAppServiceEvents() async {
 @MainActor
 private func waitForPreparedItemCount(
     _ expectedCount: Int,
-    on engine: FakePlaybackEngine
+    on engine: FakePlaybackEngine,
+    in container: AppServiceContainer
 ) async {
     for _ in 0..<2_000 {
-        if engine.prepareCalls.count >= expectedCount {
+        if engine.prepareCalls.count >= expectedCount,
+           container.playback.snapshot.phase == .playing,
+           container.playback.snapshot.currentItemID == engine.state.itemID {
             return
         }
         try? await Task.sleep(for: .milliseconds(1))
@@ -4489,5 +4520,77 @@ private final class TestPlaybackEngine: PlaybackEngine {
 
     func dispose() {
         disposeCount += 1
+    }
+}
+
+private actor PlaylistArtworkTestRepository: PlaylistRepository {
+    private var value = Playlist(id: PlaylistID("artwork-playlist"), name: "Artwork")
+    let library: any LibraryRepository
+    let failUpdate: Bool
+    init(library: any LibraryRepository, failUpdate: Bool = false) {
+        self.library = library
+        self.failUpdate = failUpdate
+    }
+    func playlists(page: LibraryPageRequest) async throws -> LibraryPage<Playlist> { LibraryPage(elements: [value]) }
+    func entries(in playlistID: PlaylistID) async throws -> [PlaylistEntry] { [] }
+    func create(_ draft: PlaylistDraft) async throws -> Playlist { value }
+    func update(_ mutation: PlaylistMutation) async throws -> Playlist {
+        if failUpdate { throw LibraryError.constraint(.danglingReference) }
+        guard case .setArtwork(let id) = mutation.change else { return value }
+        if let id { #expect(try await library.artwork(id: id) != nil) }
+        value = Playlist(id: value.id, name: value.name, artwork: id.map { ArtworkReference(id: $0) })
+        return value
+    }
+    func apply(_ mutation: PlaylistEntriesMutation) async throws {}
+    func delete(_ playlistID: PlaylistID) async throws {}
+}
+
+private actor PlaylistArtworkTestReceipt {
+    var completions: [Bool] = []
+    func finish(_ committed: Bool) { completions.append(committed) }
+}
+
+@Suite("Playlist artwork persistence")
+struct PlaylistArtworkCoordinatorTests {
+    @Test("Custom cover is persisted before attachment; clearing it restores automatic mode")
+    func replaceAndClear() async throws {
+        let library = TestLibraryRepository(tracks: [])
+        let repository = PlaylistArtworkTestRepository(library: library)
+        let receipt = PlaylistArtworkTestReceipt()
+        let coordinator = PlaylistCoordinator(repository: repository, libraryRepository: library,
+            artworkWriter: { _, _ in ArtworkWriteReceipt(wasCreated: true) { await receipt.finish($0) } })
+        let updated = try await coordinator.setArtwork(Data([1, 2, 3]), for: PlaylistID("artwork-playlist"))
+        let id = try #require(updated.artworkID)
+        #expect(try await library.artwork(id: id) != nil)
+        #expect(await receipt.completions == [true])
+        let cleared = try await coordinator.setArtwork(nil, for: updated.id)
+        #expect(cleared.artworkID == nil)
+        #expect(await receipt.completions == [true])
+    }
+
+    @Test("Failed artwork record writes roll back the file reservation")
+    func rollback() async throws {
+        let library = TestLibraryRepository(tracks: [], applyError: .constraint(.danglingReference))
+        let receipt = PlaylistArtworkTestReceipt()
+        let coordinator = PlaylistCoordinator(repository: PlaylistArtworkTestRepository(library: library),
+            libraryRepository: library,
+            artworkWriter: { _, _ in ArtworkWriteReceipt(wasCreated: true) { await receipt.finish($0) } })
+        await #expect(throws: AppServiceError.self) {
+            try await coordinator.setArtwork(Data([1]), for: PlaylistID("artwork-playlist"))
+        }
+        #expect(await receipt.completions == [false])
+    }
+
+    @Test("An attachment failure preserves the already persisted artwork file")
+    func failedAttachmentRetainsPersistedFile() async throws {
+        let library = TestLibraryRepository(tracks: [])
+        let receipt = PlaylistArtworkTestReceipt()
+        let coordinator = PlaylistCoordinator(repository: PlaylistArtworkTestRepository(library: library, failUpdate: true),
+            libraryRepository: library,
+            artworkWriter: { _, _ in ArtworkWriteReceipt(wasCreated: true) { await receipt.finish($0) } })
+        await #expect(throws: AppServiceError.self) {
+            try await coordinator.setArtwork(Data([1]), for: PlaylistID("artwork-playlist"))
+        }
+        #expect(await receipt.completions == [true])
     }
 }

@@ -8,7 +8,7 @@ violations=0
 check_exclusive_import() {
     module=$1
     allowed_path=$2
-    matches=$(rg -n --glob '*.swift' "^[[:space:]]*import[[:space:]]+${module}([[:space:]]|$)" "$project_root/App" "$project_root/Packages" || true)
+    matches=$(rg -n --glob '*.swift' "^[[:space:]]*import[[:space:]]+${module}([[:space:]]|$)" "$project_root/App" "$project_root/Packages" "$project_root/thirdpart/ExtendsPlugins" || true)
     invalid=$(printf '%s\n' "$matches" | rg -v "$allowed_path" || true)
 
     if [ -n "$invalid" ]; then
@@ -23,7 +23,7 @@ check_exclusive_import "MediaPlayer" "/Packages/MusicFreeInfrastructure/Sources/
 
 vlc_references=$(rg -n --glob '*.swift' --glob 'Package.swift' \
     '^[[:space:]]*import[[:space:]]+VLCKit([[:space:]]|$)|MusicFreeVLCKit|VLCKitPlaybackAdapter' \
-    "$project_root/App" "$project_root/Packages" || true)
+    "$project_root/App" "$project_root/Packages" "$project_root/thirdpart/ExtendsPlugins" || true)
 vlc_project_references=$(rg -n 'VLCKit|MusicFreeVLCKit' "$project_root/project.yml" || true)
 if [ -n "$vlc_references$vlc_project_references" ]; then
     printf 'App sources and project configuration must not depend on VLCKit:\n%s\n%s\n' \
@@ -31,18 +31,16 @@ if [ -n "$vlc_references$vlc_project_references" ]; then
     violations=1
 fi
 
-# The app target has a single intentional SwiftUI boundary: SettingsHosting-
-# Controller.swift. Any other SwiftUI import or hosting API in App is a
-# production rollback/root path and must fail the architecture check.
-app_swiftui_imports=$(rg -n --glob '*.swift' \
-    '^[[:space:]]*import[[:space:]]+SwiftUI([[:space:]]|$)|UIHostingController|UIHostingConfiguration' \
-    "$project_root/App" | rg -v '/SettingsHostingController\.swift:' || true)
-if [ -n "$app_swiftui_imports" ]; then
-    printf 'App target may only host SwiftUI from SettingsHostingController.swift:\n%s\n' "$app_swiftui_imports" >&2
+# Every first-party UI surface is native UIKit, including Debug support.
+swiftui_references=$(rg -n --glob '*.swift' \
+    '^[[:space:]]*(public[[:space:]]+)?import[[:space:]]+SwiftUI([[:space:]]|$)|UIHostingController|UIHostingConfiguration|UIViewControllerRepresentable|UIViewRepresentable' \
+    "$project_root/App" "$project_root/Packages" "$project_root/thirdpart/ExtendsPlugins" || true)
+if [ -n "$swiftui_references" ]; then
+    printf 'App and package sources must use UIKit without SwiftUI hosting:\n%s\n' "$swiftui_references" >&2
     violations=1
 fi
 
-test_support_imports=$(rg -n --glob '*.swift' '^[[:space:]]*import[[:space:]]+MusicTestSupport([[:space:]]|$)' "$project_root/App" "$project_root/Packages" | rg '/Sources/' || true)
+test_support_imports=$(rg -n --glob '*.swift' '^[[:space:]]*import[[:space:]]+MusicTestSupport([[:space:]]|$)' "$project_root/App" "$project_root/Packages" "$project_root/thirdpart/ExtendsPlugins" | rg '/Sources/' || true)
 if [ -n "$test_support_imports" ]; then
     printf 'Product sources must not import MusicTestSupport:\n%s\n' "$test_support_imports" >&2
     violations=1
@@ -54,49 +52,26 @@ if [ -n "$feature_adapter_imports" ]; then
     violations=1
 fi
 
-# The production UIKit route is intentionally strict: Settings is the only
-# feature allowed to retain a SwiftUI hosting boundary. Legacy SwiftUI view
-# files may remain in their feature targets for model/test compatibility, but
-# no UIKit controller or app root may instantiate or import SwiftUI.
-uikit_swiftui_imports=""
-for uikit_surface_path in \
-    "$project_root/App/RootViewController.swift" \
-    "$project_root/App/MusicFreeApp.swift" \
-    "$project_root/App/SceneDelegate.swift" \
-    "$project_root/Packages/MusicFreeUI/Sources/LibraryFeature/UIKit" \
-    "$project_root/Packages/MusicFreeUI/Sources/PlaylistFeature/UIKit" \
-    "$project_root/Packages/MusicFreeUI/Sources/PlayerFeature/UIKit" \
-    "$project_root/Packages/MusicFreeUI/Sources/SettingsFeature/UIKit"
-do
-    matches=$(rg -n --glob '*.swift' '^[[:space:]]*import[[:space:]]+SwiftUI([[:space:]]|$)|UIHostingController|UIHostingConfiguration' "$uikit_surface_path" || true)
-    if [ -n "$matches" ]; then
-        uikit_swiftui_imports="$uikit_swiftui_imports\n$matches"
-    fi
-done
-if [ -n "$uikit_swiftui_imports" ]; then
-    printf 'UIKit production surfaces must not embed SwiftUI:\n%s\n' "$uikit_swiftui_imports" >&2
-    violations=1
-fi
-
 legacy_root_references=$(rg -n --glob '*.swift' --glob '*.yml' --glob '*.pbxproj' \
     --glob '!AppTests/**' --glob '!AppUITests/**' \
     'RootScene|useLegacySwiftUIRoot|use-legacy-swiftui-root|OnlineSourcesHostingController' \
-    "$project_root/App" "$project_root/Packages" "$project_root/project.yml" "$project_root/MusicFree.xcodeproj/project.pbxproj" || true)
+    "$project_root/App" "$project_root/Packages" "$project_root/thirdpart/ExtendsPlugins" "$project_root/project.yml" "$project_root/MusicFree.xcodeproj/project.pbxproj" || true)
 if [ -n "$legacy_root_references" ]; then
     printf 'Production sources must not expose a SwiftUI rollback path:\n%s\n' "$legacy_root_references" >&2
     violations=1
 fi
 
-amperfy_references=$(rg -ni --glob '*.swift' --glob 'Package.swift' 'amperfy' "$project_root/App" "$project_root/Packages" || true)
+amperfy_references=$(rg -ni --glob '*.swift' --glob 'Package.swift' 'amperfy' "$project_root/App" "$project_root/Packages" "$project_root/thirdpart/ExtendsPlugins" || true)
 if [ -n "$amperfy_references" ]; then
     printf 'MusicFree source must not reference Amperfy:\n%s\n' "$amperfy_references" >&2
     violations=1
 fi
 
-# Built-in data plugins must be independently reusable through the SDK.
+# Built-in and extension data plugins must be independently reusable through the SDK.
 data_plugin_business_imports=$(rg -n --glob '*.swift' \
     '^[[:space:]]*import[[:space:]]+(MusicDomain|LibraryAPI|MediaSourceAPI|AppServices|SettingsAPI|LocalMediaAdapter|MusicFreePluginRuntime|MusicFreePluginHostBridge|UIKit|SwiftUI|AVFAudio)([[:space:]]|$)' \
-    "$project_root/Packages/MusicFreeBuiltinDataPlugins/Sources" || true)
+    "$project_root/Packages/MusicFreeBuiltinDataPlugins/Sources" \
+    "$project_root/thirdpart/ExtendsPlugins/MusicFreeChineseMusicPlugins/Sources" || true)
 if [ -n "$data_plugin_business_imports" ]; then
     printf 'Data plugins must depend only on the plugin SDK and system libraries:\n%s\n' "$data_plugin_business_imports" >&2
     violations=1
@@ -111,12 +86,19 @@ for target in MusicFreePluginAPI/Sources/MusicFreePluginAPI MusicFreePluginAPI/S
         violations=1
     fi
  done
+# UIKit companion SDK depends only on the neutral API, never host business modules.
+settings_sdk_imports=$(rg -n --glob '*.swift' '^[[:space:]]*import[[:space:]]+' \
+    "$project_root/Packages/MusicFreePluginAPI/Sources/MusicFreePluginSettingsUIKitAPI" | rg -v 'import (Foundation|UIKit|MusicFreePluginAPI)([[:space:]]|$)' || true)
+if [ -n "$settings_sdk_imports" ]; then
+    printf 'Plugin UIKit settings SDK must not depend on host business modules:\n%s\n' "$settings_sdk_imports" >&2
+    violations=1
+fi
 # Check manifests too, so an unused business dependency cannot slip through.
 if ! python3 - "$project_root" <<'PY_ARCH'
 import json, subprocess, sys
 from pathlib import Path
 root = Path(sys.argv[1])
-allowed = {'MusicFreePluginAPI': {'MusicFreePluginAPI': set(), 'MusicFreePluginDSPAPI': {'MusicFreePluginAPI'}, 'MusicFreePluginAppleAudioAPI': {'MusicFreePluginDSPAPI'}},
+allowed = {'MusicFreePluginAPI': {'MusicFreePluginAPI': set(), 'MusicFreePluginDSPAPI': {'MusicFreePluginAPI'}, 'MusicFreePluginAppleAudioAPI': {'MusicFreePluginDSPAPI'}, 'MusicFreePluginSettingsUIKitAPI': {'MusicFreePluginAPI'}},
            'MusicFreePluginRuntime': {'MusicFreePluginRuntime': {'MusicFreePluginAPI', 'MusicFreePluginDSPAPI'}}}
 for package, targets in allowed.items():
     manifest = json.loads(subprocess.check_output(['swift', 'package', '--package-path', str(root/'Packages'/package), 'dump-package']))

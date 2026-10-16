@@ -140,6 +140,129 @@ private final class MetadataRefreshProgressRecorder: @unchecked Sendable {
     }
 }
 
+private func runMetadataScan(
+    _ service: any MetadataEnrichmentServing
+) async throws -> MetadataEnrichmentScanSnapshot {
+    await service.startScan()
+    let snapshots = await service.makeSnapshotStream()
+    for await snapshot in snapshots {
+        switch snapshot.scan.status {
+        case .completed, .failed, .cancelled:
+            return snapshot.scan
+        case .idle, .scanning:
+            continue
+        }
+    }
+    throw MetadataEnrichmentError.unavailable
+}
+
+@MainActor
+private func enabledMetadataContainer(
+    repository: any LibraryRepository,
+    provider: any MetadataEnrichmentProviding,
+    records: any MetadataEnrichmentRecordRepository
+) async throws -> AppServiceContainer {
+    let container = try AppServiceContainer(dependencies: AppDependencies(
+        libraryRepository: repository,
+        metadataEnrichmentProvider: provider,
+        metadataEnrichmentRecordRepository: records
+    ))
+    await container.metadataEnrichmentServing.setPrivacyPreferences(
+        acceptedPrivacy(for: [provider.provider])
+    )
+    await container.metadataEnrichmentServing.setProviderPreferences([
+        MetadataProviderPreference(provider: provider.provider, isEnabled: true)
+    ])
+    await container.metadataEnrichmentServing.setEnabled(true)
+    return container
+}
+
+@MainActor
+@Test("Bulk metadata scans remember successful matches and include new tracks", .timeLimit(.minutes(1)))
+func metadataEnrichmentScanSkipsCompletedAcrossContainers() async throws {
+    let itemID = MediaItemID(sourceID: .local, externalID: "rescan-completed")
+    let artwork = ArtworkReference(
+        id: ArtworkID("rescan-local-artwork"), variants: [.original], preferredVariant: .original
+    )
+    let track = Track(id: itemID, title: "Rescan Song", artwork: artwork)
+    let repository = InMemoryLibraryRepository(tracks: [track])
+    let provider = TestMetadataProvider(candidate: MetadataEnrichmentCandidate(
+        catalogID: "rescan-match", title: "Rescan Song", artistName: "Artist", albumName: "Album"
+    ))
+    let records = TestMetadataRecordRepository()
+    let first = try await enabledMetadataContainer(repository: repository, provider: provider, records: records)
+    let firstScan = try await runMetadataScan(first.metadataEnrichmentServing)
+    #expect(firstScan.status == .completed)
+    #expect(firstScan.total == 1)
+    #expect(firstScan.matched == 1)
+    let matchedTrack = try #require(try await repository.track(id: itemID))
+    #expect(matchedTrack.artistIDs.count == 1)
+    let completedRecord = try #require(try await records.record(for: itemID))
+    #expect(completedRecord.lastErrorCode == nil)
+
+    // Supplements change metadata and missing fields, hence the fingerprint.
+    // Completion must survive that change and a newly created coordinator.
+    let restarted = try await enabledMetadataContainer(repository: repository, provider: provider, records: records)
+    #expect(try await runMetadataScan(restarted.metadataEnrichmentServing)
+        == MetadataEnrichmentScanSnapshot(status: .completed))
+    #expect(await provider.searchCount == 1)
+    #expect(try await records.record(for: itemID) == completedRecord)
+
+    let newID = MediaItemID(sourceID: .local, externalID: "rescan-new-track")
+    let expandedRepository = InMemoryLibraryRepository(tracks: [
+        matchedTrack, Track(id: newID, title: "Rescan Song", artwork: artwork)
+    ])
+    let expanded = try await enabledMetadataContainer(repository: expandedRepository, provider: provider, records: records)
+    let nextScan = try await runMetadataScan(expanded.metadataEnrichmentServing)
+    #expect(nextScan.status == .completed)
+    #expect(nextScan.total == 1)
+    #expect(nextScan.matched == 1)
+    #expect(await provider.queries.map(\.itemID) == [itemID, newID])
+
+    let refreshed = try await restarted.metadataEnrichmentServing.refresh(itemIDs: [itemID])
+    #expect(refreshed.matched == 1)
+    #expect(await provider.searchCount == 3)
+}
+
+@MainActor
+@Test("A successful fallback match skips earlier providers on rescan", .timeLimit(.minutes(1)))
+func metadataEnrichmentScanSkipsSuccessfulFallback() async throws {
+    let itemID = MediaItemID(sourceID: .local, externalID: "rescan-fallback")
+    let repository = InMemoryLibraryRepository(tracks: [Track(id: itemID, title: "Fallback Song")])
+    let provider = TestMetadataProvider(searchResults: [[]])
+    let records = TestMetadataRecordRepository()
+    try await records.save(MetadataEnrichmentRecord(
+        itemID: itemID, provider: .musicKit, queryFingerprint: "old-query", status: .noMatch
+    ))
+    try await records.save(MetadataEnrichmentRecord(
+        itemID: itemID, provider: .metadataServer, queryFingerprint: "old-query", status: .matched
+    ))
+    let container = try await enabledMetadataContainer(repository: repository, provider: provider, records: records)
+    #expect(try await runMetadataScan(container.metadataEnrichmentServing)
+        == MetadataEnrichmentScanSnapshot(status: .completed))
+    #expect(await provider.searchCount == 0)
+}
+
+@MainActor
+@Test("Bulk scans retry incomplete records, including artwork failures", .timeLimit(.minutes(1)),
+    arguments: [MetadataEnrichmentRecordStatus.noMatch, .ambiguous, .failed, .cancelled, .matched])
+func metadataEnrichmentScanRetriesIncompleteRecords(status: MetadataEnrichmentRecordStatus) async throws {
+    let itemID = MediaItemID(sourceID: .local, externalID: "rescan-incomplete")
+    let repository = InMemoryLibraryRepository(tracks: [Track(id: itemID, title: "Incomplete Song")])
+    let provider = TestMetadataProvider(searchResults: [[]])
+    let records = TestMetadataRecordRepository()
+    try await records.save(MetadataEnrichmentRecord(
+        itemID: itemID, queryFingerprint: "old-query", status: status,
+        lastErrorCode: status == .matched ? "artwork_unavailable" : nil
+    ))
+    let container = try await enabledMetadataContainer(repository: repository, provider: provider, records: records)
+    let scan = try await runMetadataScan(container.metadataEnrichmentServing)
+    #expect(scan.status == .completed)
+    #expect(scan.total == 1)
+    #expect(scan.noMatch == 1)
+    #expect(await provider.searchCount == 1)
+}
+
 @MainActor
 @Test("App dependencies reject duplicate metadata provider IDs")
 func appDependenciesRejectDuplicateMetadataProviders() {

@@ -72,27 +72,7 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
                 maximumGainDecibels: 12
             )
         }
-        let profiles: [(UInt32, String, [Float])] = [
-            (0, "Flat", [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
-            (1, "Bass Boost", [6, 5, 4, 2, 0, 0, 0, 0, 0, 0]),
-            (2, "Treble Boost", [0, 0, 0, 0, 0, 0, 2, 4, 5, 6]),
-            (3, "Vocal", [-2, -1, 0, 1, 2, 3, 3, 2, 0, -1])
-        ]
-        let presets = profiles.map { id, name, gains in
-            EqualizerPresetDescriptor(
-                id: id,
-                name: name,
-                configuration: EqualizerConfiguration(
-                    bandGains: zip(bands, gains).map { band, gain in
-                        EqualizerBandGain(
-                            centerFrequencyHz: band.centerFrequencyHz,
-                            gainDecibels: gain
-                        )
-                    }
-                )
-            )
-        }
-        return EqualizerDescriptor(bands: bands, presets: presets)
+        return EqualizerDescriptor(bands: bands, presets: FFmpegEqualizerPresets.make(bands: bands))
     }()
     public private(set) var state: PlaybackState = .idle
     public private(set) var volume: Float = 1

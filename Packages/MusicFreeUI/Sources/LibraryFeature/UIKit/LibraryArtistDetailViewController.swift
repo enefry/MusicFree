@@ -3,6 +3,7 @@ import DesignSystem
 import LibraryAPI
 import MediaSourceAPI
 import MusicDomain
+import MediaSharing
 import UIKit
 
 /// UIKit artist detail surface matching the reference artist-first layout:
@@ -892,9 +893,9 @@ public final class LibraryArtistDetailViewController: UIViewController {
                     for: target,
                     from: self.library
                 )
-                let urls = try await mediaShareResolver.urls(for: tracks)
+                let preparedShare = try await mediaShareResolver.prepare(for: tracks)
                 try Task.checkCancellation()
-                let share = UIActivityViewController(activityItems: urls, applicationActivities: nil)
+                let share = MediaShareActivityViewController(share: preparedShare)
                 if let popover = share.popoverPresentationController {
                     popover.sourceView = self.view
                     popover.sourceRect = CGRect(
@@ -926,9 +927,9 @@ public final class LibraryArtistDetailViewController: UIViewController {
                 self.updateNavigationItem()
             }
             do {
-                let urls = try await mediaShareResolver.urls(for: [track])
+                let preparedShare = try await mediaShareResolver.prepare(for: [track])
                 try Task.checkCancellation()
-                let share = UIActivityViewController(activityItems: urls, applicationActivities: nil)
+                let share = MediaShareActivityViewController(share: preparedShare)
                 if let popover = share.popoverPresentationController {
                     popover.sourceView = self.view
                     popover.sourceRect = CGRect(

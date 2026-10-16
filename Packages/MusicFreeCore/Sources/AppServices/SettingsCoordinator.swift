@@ -1,10 +1,12 @@
 import Foundation
+import MusicDomain
 import PlaybackAPI
 import SettingsAPI
 import SystemIntegrationAPI
 
 @available(macOS 13.0, iOS 16.0, *)
 internal actor SettingsCoordinator: SettingsServing {
+    private static let effectsLogger = MusicLogger(category: "playback-effects-settings")
     private enum Mutation: Sendable {
         case save(AppSettings)
         case reset
@@ -61,7 +63,10 @@ internal actor SettingsCoordinator: SettingsServing {
         }
     }
 
-    private func cacheLoaded(_ settings: AppSettings) { cachedSettings = settings }
+    private func cacheLoaded(_ settings: AppSettings) {
+        cachedSettings = settings
+        logEffects(settings, event: "load")
+    }
 
     func update(_ settings: AppSettings) async throws {
         guard let repository else {
@@ -203,6 +208,17 @@ internal actor SettingsCoordinator: SettingsServing {
         cachedSettings = settings
         publish(settings)
         publishEffective(for: settings)
+        logEffects(settings, event: "commit")
+    }
+
+    private func logEffects(_ settings: AppSettings, event: String) {
+        func milliseconds(_ duration: Duration) -> Double {
+            Double(duration.components.seconds) * 1_000 + Double(duration.components.attoseconds) / 1e15
+        }
+        let requested = settings.playbackPreferences
+        let effective = makeEffective(for: settings).effects
+        let bands = requested.equalizer.bands.map { "\($0.frequencyHz):\($0.gain.decibels)" }.joined(separator: ",")
+        Self.effectsLogger.info("event=\(event) capabilities=\(playbackCapabilities.rawValue) rate=\(requested.rate.value) effectiveRate=\(effective.rate) eqEnabled=\(requested.equalizer.isEnabled) eqEffective=\(effective.equalizer != nil) preamp=\(requested.equalizer.preamp.decibels) bands=\(bands) gapless=\(requested.transition.gaplessPlaybackEnabled) crossfade=\(requested.transition.isCrossfadeEnabled) mode=\(effective.transition.mode.rawValue) fadeInMs=\(milliseconds(requested.transition.fadeInDuration)) fadeOutMs=\(milliseconds(requested.transition.fadeOutDuration)) overlapMs=\(milliseconds(requested.transition.crossfadeDuration)) effectiveFadeInMs=\(milliseconds(effective.transition.fadeInDuration)) effectiveFadeOutMs=\(milliseconds(effective.transition.fadeOutDuration))")
     }
 
     private func makeEffective(for settings: AppSettings) -> EffectivePlaybackSettings {

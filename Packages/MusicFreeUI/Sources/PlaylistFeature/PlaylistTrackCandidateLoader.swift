@@ -91,6 +91,32 @@ final class PlaylistTrackCandidateLoader {
         }
     }
 
+    /// Resolves playlist rows directly; browsing the complete library is reserved
+    /// for the add-tracks picker. Publish names and artists together.
+    func load(trackIDs: [MediaItemID]) async {
+        guard let library, !isLoading else { return }
+        isLoading = true
+        defer { isLoading = false }
+        var next = candidates
+        var knownIDs = Set(next.map(\.id))
+        var artistNames: [ArtistID: String] = [:]
+        var resolvedArtists = Set<ArtistID>()
+        for id in trackIDs where knownIDs.insert(id).inserted {
+            guard !Task.isCancelled else { return }
+            guard let track = try? await library.track(id: id) else { continue }
+            for artistID in track.artistIDs where resolvedArtists.insert(artistID).inserted {
+                guard !Task.isCancelled else { return }
+                if let artist = try? await library.artist(id: artistID) {
+                    artistNames[artistID] = artist.name
+                }
+            }
+            next.append(Self.candidate(for: track, artistNames: artistNames))
+        }
+        guard !Task.isCancelled else { return }
+        candidates = next
+        loadState = candidates.isEmpty ? .empty : .loaded
+    }
+
     /// Refreshes only candidates whose underlying library tracks changed.
     /// This is intentionally separate from `load()`: metadata scans should
     /// not force every playlist detail row to be rebuilt.
@@ -112,6 +138,9 @@ final class PlaylistTrackCandidateLoader {
             if let index = nextCandidates.firstIndex(where: { $0.id == trackID }) {
                 guard nextCandidates[index] != next else { continue }
                 nextCandidates[index] = next
+                changedIDs.insert(trackID)
+            } else {
+                nextCandidates.append(next)
                 changedIDs.insert(trackID)
             }
         }

@@ -597,10 +597,8 @@ public final class LibraryViewModel: ObservableObject {
         let request = MediaImportRequest(
             importID: UUID(),
             urls: urls,
-            // The local content-addressed importer currently has one
-            // executable first-version policy: skip an existing hash. The
-            // settings enum reserves replacement/duplicate-copy semantics
-            // until the library model can represent them safely.
+            // The application coordinator resolves skip/report from the
+            // persisted import preference before forwarding to the importer.
             duplicatePolicy: .skip,
             allowsFolderFailureConfirmation: true
         )

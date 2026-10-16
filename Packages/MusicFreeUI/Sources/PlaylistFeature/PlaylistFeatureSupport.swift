@@ -149,6 +149,13 @@ public protocol PlaylistFeatureStore: AnyObject {
     func updatePlaylist(_ mutation: PlaylistMutation) async throws -> Playlist
     func applyEntries(_ mutation: PlaylistEntriesMutation) async throws
     func deletePlaylist(_ playlistID: PlaylistID) async throws
+    func setArtwork(_ data: Data?, for playlistID: PlaylistID) async throws -> Playlist
+}
+
+public extension PlaylistFeatureStore {
+    func setArtwork(_ data: Data?, for playlistID: PlaylistID) async throws -> Playlist {
+        throw PlaylistFeatureError.serviceUnavailable
+    }
 }
 
 public enum PlaylistPlaybackIntent: String, CaseIterable, Equatable, Sendable {
@@ -309,6 +316,10 @@ final class AppServicesPlaylistStore: PlaylistFeatureStore {
 
     func deletePlaylist(_ playlistID: PlaylistID) async throws {
         try await serving.delete(playlistID)
+    }
+
+    func setArtwork(_ data: Data?, for playlistID: PlaylistID) async throws -> Playlist {
+        try await serving.setArtwork(data, for: playlistID)
     }
 }
 

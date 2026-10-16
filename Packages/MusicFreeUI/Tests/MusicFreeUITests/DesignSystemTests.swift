@@ -63,12 +63,12 @@ func stringCatalogResolvesSupportedLanguages() {
     )
 }
 
-@Test("Appearance options expose system, light, and dark schemes")
-func appearanceOptionsMapToColorSchemes() {
+@Test("Appearance options expose native system, light, and dark styles")
+func appearanceOptionsMapToInterfaceStyles() {
     #expect(MusicFreeAppearance.allCases == [.system, .light, .dark])
-    #expect(MusicFreeAppearance.system.colorScheme == nil)
-    #expect(MusicFreeAppearance.light.colorScheme == .light)
-    #expect(MusicFreeAppearance.dark.colorScheme == .dark)
+    #expect(MusicFreeAppearance.system.userInterfaceStyle == .unspecified)
+    #expect(MusicFreeAppearance.light.userInterfaceStyle == .light)
+    #expect(MusicFreeAppearance.dark.userInterfaceStyle == .dark)
     #expect(MusicFreeAppearance.system.title == "System")
     #expect(MusicFreeAppearance.light.title == "Light")
     #expect(MusicFreeAppearance.dark.title == "Dark")
@@ -81,11 +81,11 @@ func semanticTokensAndLayoutMetricsAreAvailable() {
     #expect(MusicFreeSpacingTokens.contentInset == MusicFreeSpacingTokens.large)
     #expect(MusicFreeSpacingTokens.controlGap == MusicFreeSpacingTokens.small)
 
-    _ = MusicFreeColorTokens.backgroundPrimary
-    _ = MusicFreeColorTokens.foregroundSecondary
-    _ = MusicFreeColorTokens.accent
-    _ = MusicFreeTypographyTokens.body
-    _ = MusicFreeTypographyTokens.rowTitle
+    _ = MusicFreeUIColorTokens.backgroundPrimary
+    _ = MusicFreeUIColorTokens.foregroundSecondary
+    _ = MusicFreeUIColorTokens.accent
+    _ = MusicFreeUIFontTokens.body
+    _ = MusicFreeUIFontTokens.rowTitle
 }
 
 @Test("UIKit adapters keep semantic colors, typography, and layout metrics aligned")
@@ -96,7 +96,7 @@ func uikitTokenAdaptersStayAligned() {
 
     #expect(resolvedBackground.cgColor.numberOfComponents > 0)
     #expect(resolvedAccent.cgColor.numberOfComponents > 0)
-    #expect(MusicFreeUIFontTokens.rowTitle.pointSize > 0)
+    #expect(MusicFreeUIFontTokens.body.pointSize > 0)
     #expect(MusicFreeUIFontTokens.controlLabel.pointSize > 0)
     #expect(MusicFreeSpacingTokens.contentInsets.leading == MusicFreeSpacingTokens.contentInset)
     #expect(MusicFreeSpacingTokens.rowInsets.top == MusicFreeSpacingTokens.small)

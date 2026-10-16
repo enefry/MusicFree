@@ -1,12 +1,55 @@
 import Foundation
 import LibraryAPI
 import MusicDomain
+import MediaSourceAPI
 
 internal actor PlaylistCoordinator: PlaylistServing {
     private let repository: (any PlaylistRepository)?
+    private let libraryRepository: (any LibraryRepository)?
+    private let artworkWriter: (@Sendable (Data, ArtworkID) async throws -> ArtworkWriteReceipt)?
 
-    init(repository: (any PlaylistRepository)?) {
+    init(
+        repository: (any PlaylistRepository)?,
+        libraryRepository: (any LibraryRepository)? = nil,
+        artworkWriter: (@Sendable (Data, ArtworkID) async throws -> ArtworkWriteReceipt)? = nil
+    ) {
         self.repository = repository
+        self.libraryRepository = libraryRepository
+        self.artworkWriter = artworkWriter
+    }
+
+    func setArtwork(_ data: Data?, for playlistID: PlaylistID) async throws -> Playlist {
+        guard let data else {
+            return try await update(PlaylistMutation(playlistID: playlistID, change: .setArtwork(nil)))
+        }
+        guard !data.isEmpty, data.count <= ArtworkDataLimits.maximumByteCount else {
+            throw AppServiceError.invalidRequest(operation: "playlist.artwork")
+        }
+        guard let libraryRepository, let artworkWriter, repository != nil else {
+            throw AppServiceError.missingDependency("playlistArtworkWriter")
+        }
+        let artworkID = ArtworkID("sha256-\(MusicContentIdentity.sha256Hex(data))")
+        var receipt: ArtworkWriteReceipt?
+        var artworkIsPersisted = false
+        do {
+            receipt = try await artworkWriter(data, artworkID)
+            try Task.checkCancellation()
+            try await libraryRepository.apply(LibraryTransaction(
+                idempotencyKey: "playlist-artwork.\(UUID().uuidString)",
+                mutations: [.upsert(.artwork(ArtworkReference(id: artworkID, variants: [.original])))]
+            ))
+            artworkIsPersisted = true
+            let playlist = try await update(PlaylistMutation(
+                playlistID: playlistID, change: .setArtwork(artworkID)
+            ))
+            await receipt?.finish(committed: true)
+            return playlist
+        } catch {
+            // Once the artwork record exists, retain its file even if attaching
+            // it fails. The normal artwork pruner can reclaim unused records.
+            await receipt?.finish(committed: artworkIsPersisted)
+            throw AppServiceError.mapped(error, operation: "playlist.artwork")
+        }
     }
 
     func playlists(page: LibraryPageRequest) async throws -> LibraryPage<Playlist> {

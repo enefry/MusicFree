@@ -411,9 +411,9 @@ func onlineDownloadQueueSequentialSinglesIncludeSharedArtwork() async throws {
     let importer = QueueImmediateImporter()
     let queue = OnlineDownloadQueue(onlineSources: source, importer: importer)
     let firstTask = try #require(queue.startDownload(sourceID: sourceID, itemID: first, displayName: "First.m4a", supportingParentID: folderID))
-    try await waitForQueue { queue.snapshot.downloads[first]?.isSuccessful == true }
+    try await waitForQueue { queue.snapshot.imports[firstTask]?.phase == .completed }
     let secondTask = try #require(queue.startDownload(sourceID: sourceID, itemID: second, displayName: "Second.m4a", supportingParentID: folderID))
-    try await waitForQueue { queue.snapshot.downloads[second]?.isSuccessful == true }
+    try await waitForQueue { queue.snapshot.imports[secondTask]?.phase == .completed }
     let requests = await importer.requests
     #expect(requests.count == 2)
     #expect(requests.allSatisfy { $0.urls.map(\.lastPathComponent).contains("cover.jpg") })

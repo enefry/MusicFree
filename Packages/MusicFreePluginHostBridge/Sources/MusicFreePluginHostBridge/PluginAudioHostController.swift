@@ -1,4 +1,5 @@
 import Foundation
+import MusicDomain
 import AVFAudio
 import MusicFreePluginAPI
 import MusicFreePluginAppleAudioAPI
@@ -7,6 +8,9 @@ import MusicFreePluginAudio
 
 /// Each playback/audition graph owns an ordered chain of independent effects.
 @MainActor public final class PluginAudioHostController {
+    private static let logger = MusicLogger(category: "plugin-audio-graph")
+    private let diagnosticID = UUID().uuidString
+    private var lastDeferredDiagnostic: String?
     private struct Entry {
         let id: PluginID
         var preference: PluginPreference
@@ -58,7 +62,7 @@ import MusicFreePluginAudio
                 : (try? snapshot.descriptor.resolvedDSPPlacement(snapshot.preference.dspPlacement)) == .postMix
             return postMix && snapshot.descriptor.kinds.contains(.dsp) && snapshot.preference.isEnabled && snapshot.preference.isLoadAllowed
                 && [.registered, .ready, .running].contains(snapshot.state)
-        }
+        }.sorted(by: PluginSnapshot.dspProcessingOrder)
         failedPluginIDs = []
         var next: [Entry] = []
         for candidate in candidates {
@@ -88,6 +92,7 @@ import MusicFreePluginAudio
             } catch {
                 guard request == requestGeneration else { return }
                 failedPluginIDs.insert(candidate.id)
+                Self.logger.warning("host=\(diagnosticID) event=effect-bypassed plugin=\(candidate.id.rawValue) reason=\(String(reflecting: type(of: error)))")
             }
         }
         guard request == requestGeneration else { return }
@@ -116,6 +121,7 @@ import MusicFreePluginAudio
             active = next; pending = nil
             for entry in active { entry.effect.setBypassed(false) }
             installAnalysisTapIfNeeded()
+            logAppliedGraph(event: "parameters-applied")
             return
         }
         // Remove taps before the engine detaches any node. A running engine
@@ -127,7 +133,26 @@ import MusicFreePluginAudio
             active = next; pending = nil; graphGeneration &+= 1
             for entry in active { entry.effect.setBypassed(false) }
             installAnalysisTapIfNeeded()
-        } catch { /* Playback snapshots retry after pause/stop. */ }
+            logAppliedGraph(event: "nodes-installed")
+        } catch {
+            // Playback snapshots retry after pause/stop; log only a changed
+            // pending topology so position updates cannot flood the file.
+            let signature = next.map { $0.id.rawValue }.joined(separator: ",") + ":" + String(reflecting: type(of: error))
+            if signature != lastDeferredDiagnostic {
+                lastDeferredDiagnostic = signature
+                Self.logger.warning("host=\(diagnosticID) event=install-deferred pending=\(next.count) active=\(active.count) reason=\(String(reflecting: type(of: error)))")
+            }
+        }
+    }
+    private func logAppliedGraph(event: String) {
+        lastDeferredDiagnostic = nil
+        let ids = active.map { $0.id.rawValue }.joined(separator: ",")
+        Self.logger.info("host=\(diagnosticID) event=\(event) active=\(active.count) plugins=\(ids)")
+        for entry in active {
+            guard let equalizer = entry.effect.node as? AVAudioUnitEQ else { continue }
+            let bands = equalizer.bands.map { "\(Int($0.frequency)):\($0.gain)" }.joined(separator: ",")
+            Self.logger.info("host=\(diagnosticID) event=equalizer-applied plugin=\(entry.id.rawValue) attached=\(equalizer.engine != nil) bypass=\(equalizer.bypass) preamp=\(equalizer.globalGain) bands=\(bands)")
+        }
     }
     private func installAnalysisTapIfNeeded() {
         guard tappedNode == nil, let effect = active.last?.effect, effect.node.engine != nil else { return }
@@ -168,11 +193,15 @@ import MusicFreePluginAudio
         }
     }
     public static var referenceFactories: [PluginID: AppleAudioDSPPluginFactory] {
+#if DEBUG
         [ReferencePluginRegistrationProvider.dspID: { configuration in
             let gain: Double
             if case .number(let value) = configuration.values["gain"] { gain = value } else { gain = 1 }
             guard gain.isFinite, (0...4).contains(gain) else { throw PluginError.invalidConfiguration }
             return ReferenceAppleGainEffect(gainDecibels: gain > 0 ? Float(20 * log10(gain)) : -96)
         }]
+#else
+        [:]
+#endif
     }
 }

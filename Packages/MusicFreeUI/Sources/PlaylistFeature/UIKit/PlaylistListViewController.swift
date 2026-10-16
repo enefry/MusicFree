@@ -36,6 +36,7 @@ public final class PlaylistListViewController: UIViewController {
     private var mutationTask: Task<Void, Never>?
     private var libraryChangeTask: Task<Void, Never>?
     private var pendingExternalReload = false
+    private var coverRevision: UInt64 = 0
     private var renderedPlaylistSignatures: [PlaylistID: String] = [:]
 
     public init(
@@ -128,12 +129,17 @@ public final class PlaylistListViewController: UIViewController {
             let stream = await libraryServing.makeChangeStream()
             for await change in stream {
                 guard let self, !Task.isCancelled else { return }
-                guard change.categories.contains(.playlists) else { continue }
+                guard !change.categories.isDisjoint(with: [.playlists, .playlistEntries, .tracks, .artwork, .deletions]) else { continue }
+                self.coverRevision &+= 1
                 if self.viewModel.isMutating {
                     self.pendingExternalReload = true
                     continue
                 }
-                await self.reloadFromExternalChange()
+                if change.categories.contains(.playlists) {
+                    await self.reloadFromExternalChange()
+                } else {
+                    self.render()
+                }
             }
         }
     }
@@ -196,6 +202,7 @@ public final class PlaylistListViewController: UIViewController {
             rowCell.configure(
                 playlist: playlist,
                 artworkServing: self.artworkServing,
+                store: self.store, libraryServing: self.libraryServing, revision: self.coverRevision,
                 onActivate: { [weak self] in
                     self?.onSelectPlaylist?(playlist)
                 },
@@ -306,7 +313,8 @@ public final class PlaylistListViewController: UIViewController {
             playlist.id.rawValue,
             playlist.name,
             playlist.sortName ?? "",
-            playlist.artworkID?.rawValue ?? ""
+            playlist.artworkID?.rawValue ?? "",
+            String(coverRevision)
         ].joined(separator: "\u{001F}")
     }
 
@@ -514,7 +522,7 @@ private final class PlaylistRowCell: UITableViewCell, UIContextMenuInteractionDe
         showsArtwork: true,
         placeholderSystemImage: "music.note.list"
     )
-    private lazy var artworkBinding = PlaylistArtworkBinding(view: rowView.artworkSurface)
+    private lazy var artworkBinding = PlaylistCoverBinding(view: rowView.artworkSurface)
 //    private let activationButton = UIButton(type: .system)
     private var onActivate: (() -> Void)?
     private var onContextMenu: (() -> UIMenu?)?
@@ -570,6 +578,9 @@ private final class PlaylistRowCell: UITableViewCell, UIContextMenuInteractionDe
     func configure(
         playlist: Playlist,
         artworkServing: (any ArtworkServing)?,
+        store: any PlaylistFeatureStore,
+        libraryServing: (any LibraryServing)?,
+        revision: UInt64,
         onActivate: @escaping () -> Void,
         onContextMenu: @escaping () -> UIMenu?
     ) {
@@ -579,10 +590,8 @@ private final class PlaylistRowCell: UITableViewCell, UIContextMenuInteractionDe
         rowView.subtitleText = L("歌单")
         rowView.titleAccessibilityIdentifier = playlist.name
         artworkBinding.configure(
-            artworkID: playlist.artworkID,
-            sourceID: MediaSourceID.local,
-            maximumPixelDimension: 160,
-            serving: artworkServing
+            playlist: playlist, dimension: 160, revision: revision,
+            store: store, library: libraryServing, artwork: artworkServing
         )
 //        activationButton.setTitle(playlist.name, for: .normal)
 //        activationButton.accessibilityLabel = playlist.name

@@ -97,8 +97,8 @@ actor AppDocumentsScanner {
         let request = MediaImportRequest(
             importID: UUID(),
             urls: [documentsURL],
-            // Documents uses the same content-addressed first-version import
-            // policy as the picker: existing hashes are skipped.
+            // The application coordinator applies the persisted duplicate
+            // policy, using the same import boundary as the picker.
             duplicatePolicy: .skip
         )
         let stream = try await importer.start(request)

@@ -27,8 +27,7 @@ private func prepareAutomaticImportPlaceholder() {
 
 /// UIKit application entry point for the MusicFree application.
 ///
-/// UIKit owns the application root. Settings is the only feature that may
-/// still use SwiftUI, and it is hosted below the UIKit shell.
+/// UIKit owns the application root and every feature surface.
 @main
 @MainActor
 final class MusicFreeAppDelegate: UIResponder, UIApplicationDelegate {

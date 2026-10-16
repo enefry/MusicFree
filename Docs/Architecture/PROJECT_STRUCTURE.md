@@ -13,14 +13,16 @@ MusicFree/
 │   ├── MusicFreeCore/                # 领域模型、公开协议和 AppServices
 │   ├── MusicFreeInfrastructure/     # 本地媒体、持久化和 Apple 系统适配器
 │   ├── MusicFreeVLCKitAdapter/      # VLCKit 播放引擎适配器
-│   └── MusicFreeUI/                 # DesignSystem 和 SwiftUI 功能模块
+│   └── MusicFreeUI/                 # DesignSystem 和 UIKit 功能模块
 ├── AppTests/                         # App 级单元/集成测试
 ├── AppUITests/                       # 真实 App 入口 UI/BVT 测试
 ├── Scripts/                          # 架构检查、BVT 和归档版本脚本
 ├── Docs/                             # 工程、产品、问题、测试和发布文档
 ├── Design/                           # 图标、App Store 素材和参考设计
 ├── ThirdPartyNotices/                # 随 App 打包的第三方许可证和归属材料
-├── thirdpart/                        # 本地参考/构建源码，不属于 MusicFree target
+├── thirdpart/                        # 参考源码、本地依赖与扩展插件
+│   └── ExtendsPlugins/
+│       └── MusicFreeChineseMusicPlugins/ # QQ 音乐与网易云歌词/歌曲信息 SwiftPM 插件
 ├── dist/                             # 本地 Archive/IPA/导出结果，不是源码输入
 ├── project.yml                       # XcodeGen 工程与 target 定义
 └── basic_config.xcconfig             # 版本、构建号和应用配置
@@ -55,13 +57,14 @@ App ──> UI + Infrastructure + VLCKit Adapter + Core API
 | `MusicFreeCore` | `MusicDomain`, `MediaSourceAPI`, `LibraryAPI`, `PlaybackAPI`, `SystemIntegrationAPI`, `SettingsAPI`, `AppServices`, `MusicTestSupport` | 稳定契约、领域状态和跨功能协调 |
 | `MusicFreeInfrastructure` | `LocalMediaAdapter`, `LibraryPersistenceAdapter`, `AppleSystemAdapter`, `PreferencesPersistenceAdapter` | 外部系统和存储实现 |
 | `MusicFreeVLCKitAdapter` | `VLCKitPlaybackAdapter` | 音频探测、播放、能力和诊断 |
-| `MusicFreeUI` | `DesignSystem`, `LibraryFeature`, `PlayerFeature`, `PlaylistFeature`, `SettingsFeature` | UI 组件、页面和用户操作 |
+| `MusicFreeChineseMusicPlugins`（`thirdpart/ExtendsPlugins/`） | `NetEaseLyricsPlugin`, `NetEaseMetadataPlugin`, `QQMusicLyricsPlugin`, `QQMusicMetadataPlugin`, `ChineseMusicCatalogSupport` | QQ 音乐与网易云扩展插件，由 HostBridge 引用，复用 SDK 和 DataPluginSupport |
+| `MusicFreeUI` | `DesignSystem`, `LibraryFeature`, `PlayerFeature`, `PlaylistFeature`, `SettingsFeature`, `BuiltinPluginSettings` | UI 组件、页面和用户操作 |
 
 ## 4. App 运行链路
 
 1. `MusicFreeAppDelegate` 创建 `AppContainer`，组装持久化、媒体、系统和播放实现。
 2. `AppLifecycleCoordinator`、`AppDocumentsScanner` 和启动状态处理启动恢复、Documents 补扫及启动错误。
-3. `MusicFreeSceneDelegate` 创建 `RootViewController`；它通过 `AppRouter` 展示 UIKit 的 Library、Player、Playlist、Online Sources，以及唯一保留 SwiftUI 宿主的 Settings。
+3. `MusicFreeSceneDelegate` 创建 `RootViewController`；它通过 `AppRouter` 展示 UIKit 的 Library、Player、Playlist、Online Sources 和 Settings。设置根页、全部子页、插件管理以及可选 Debug 网络抓包均使用原生 UIKit 控制器。
 4. UI 通过 `AppServices` 发起导入、查询、编辑、播放、队列、存储维护和设置变更。
 5. `AppServices` 调用 Infrastructure / VLCKit Adapter，并把状态快照回传给 UI。
 
@@ -71,4 +74,4 @@ App ──> UI + Infrastructure + VLCKit Adapter + Core API
 - App UI/BVT 验证从真实 App 入口出发的导航、持久化和关键交互。
 - AirPlay、蓝牙、长时间播放、媒体格式和 MusicKit 授权必须在真实设备/真实服务上单独验收。
 - 任何文档不得把编译成功或 Simulator 测试通过写成完整发布通过。
-- `Scripts/check_architecture.sh` 目前按仓库范围扫描 Swift 源码；若 checkout 含有 `thirdpart/` 参考源码，它可能报告 vendor 内的导入为违规。该结果需要先区分“应用源码架构问题”和“扫描范围问题”。
+- `Scripts/check_architecture.sh` 扫描 `App/`、`Packages/` 和 `thirdpart/ExtendsPlugins/`，禁止 SwiftUI 导入和 Hosting/Representable 桥接；`thirdpart/` 中其余参考源码不在扫描范围内。

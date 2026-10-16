@@ -394,6 +394,13 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
             }
             var request = try LibraryPageRequest(limit: LibraryPageRequest.maximumLimit)
             var tracks: [Track] = []
+            // A successful match is durable even when supplementation changes
+            // the query fingerprint. Bulk scans only retry unfinished items;
+            // an explicit track/album refresh can still replace a prior match.
+            let records = try await recordRepository?.records() ?? []
+            let completedItemIDs = Set(records.lazy.filter {
+                $0.status == .matched && $0.lastErrorCode == nil
+            }.map(\.itemID))
 
             var pageIndex = 0
             while true {
@@ -402,7 +409,9 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
                     matching: TrackQuery(sourceID: .local),
                     page: request
                 )
-                tracks.append(contentsOf: page.elements)
+                tracks.append(contentsOf: page.elements.filter {
+                    !completedItemIDs.contains($0.id)
+                })
                 Self.logger.debug(
                     "library page loaded page=\(pageIndex) count=\(page.elements.count) total=\(tracks.count) hasNext=\(page.hasNextPage)"
                 )
@@ -421,7 +430,7 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
             )
             publish()
             Self.logger.info(
-                "library pagination completed tracks=\(tracks.count)"
+                "library pagination completed pendingTracks=\(tracks.count) completedRecords=\(completedItemIDs.count)"
             )
 
             for (index, track) in tracks.enumerated() {
@@ -443,8 +452,8 @@ internal actor MetadataEnrichmentCoordinator: MetadataEnrichmentServing {
                 )
                 publish()
 
-                // A user-triggered scan is an explicit request to retry prior
-                // no-match and ambiguous decisions after catalog or matcher changes.
+                // Retry no-match, ambiguous, failed and interrupted items,
+                // including matches whose artwork download did not complete.
                 let outcome = await process(itemID: track.id, forceRecheck: true)
                 let outcomeCode = Self.itemOutcomeCode(outcome)
                 Self.logger.info(

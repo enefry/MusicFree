@@ -151,6 +151,30 @@ private func toneAmplitude(_ samples: [Float], sampleRate: Double, frequency: Do
     }
 
     @MainActor
+    @Test func restoredEqualizerPresetsAreValidAndReachTheAudioUnit() throws {
+        let engine = FFmpegPlaybackEngine()
+        defer { engine.dispose() }
+        let descriptor = try #require(engine.equalizerDescriptor)
+        let names = Set(descriptor.presets.map(\.name))
+        #expect(descriptor.presets.count == 21)
+        #expect(Set(["Classical", "Rock", "Pop", "Dance", "Headphones", "Soft rock", "Techno"]).isSubset(of: names))
+        let bass = try #require(descriptor.presets.first { $0.id == 1 })
+        #expect(bass.configuration.preampDecibels == 0)
+        #expect(bass.configuration.bandGains.map(\.gainDecibels) == [6, 5, 4, 2, 0, 0, 0, 0, 0, 0])
+        for preset in descriptor.presets {
+            _ = try preset.configuration.validated(against: descriptor)
+            #expect(preset.configuration.bandGains.allSatisfy { (-12...12).contains($0.gainDecibels) })
+            try engine.apply(.init(equalizer: preset.configuration))
+            #expect(!engine.equalizerUnit.bypass)
+            #expect(engine.equalizerUnit.globalGain == preset.configuration.preampDecibels)
+            #expect(engine.equalizerUnit.bands.map(\.gain) == preset.configuration.bandGains.map(\.gainDecibels))
+        }
+        #expect(descriptor.presets.filter { $0.id >= 100 }.allSatisfy {
+            $0.configuration.preampDecibels + max(0, $0.configuration.bandGains.map(\.gainDecibels).max() ?? 0) == 0
+        })
+    }
+
+    @MainActor
     @Test func equalizerAppliesAndRejectsInvalidEffectsWithoutChangingOutput() throws {
         let engine = FFmpegPlaybackEngine()
         defer { engine.dispose() }

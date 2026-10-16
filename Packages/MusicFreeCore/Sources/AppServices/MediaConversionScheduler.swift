@@ -38,8 +38,10 @@ public actor MediaConversionScheduler: MediaConversionScheduling {
     }
 
     private var effectiveMaximumConcurrency: Int {
-        guard isPlaybackPlaying else { return 0 }
-        return isInBackground ? 1 : maximumConcurrency
+        // Foreground imports must work before the library has anything to play.
+        // In the background, conversion relies on active audio playback.
+        if isInBackground { return isPlaybackPlaying ? 1 : 0 }
+        return maximumConcurrency
     }
 
     public func schedule(

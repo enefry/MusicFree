@@ -4,6 +4,7 @@ import DesignSystem
 import LibraryAPI
 import MediaSourceAPI
 import MusicDomain
+import MediaSharing
 import UIKit
 
 /// Library-wide local search results grouped like the system Music app:
@@ -479,9 +480,9 @@ final class LibrarySearchResultsViewController: UIViewController {
                     for: .album(album.id),
                     from: self.viewModel.library
                 )
-                let urls = try await mediaShareResolver.urls(for: tracks)
+                let preparedShare = try await mediaShareResolver.prepare(for: tracks)
                 try Task.checkCancellation()
-                let share = UIActivityViewController(activityItems: urls, applicationActivities: nil)
+                let share = MediaShareActivityViewController(share: preparedShare)
                 if let popover = share.popoverPresentationController {
                     popover.sourceView = self.view
                     popover.sourceRect = CGRect(
@@ -578,9 +579,9 @@ final class LibrarySearchResultsViewController: UIViewController {
             guard let self else { return }
             defer { self.shareTask = nil }
             do {
-                let urls = try await mediaShareResolver.urls(for: [track])
+                let preparedShare = try await mediaShareResolver.prepare(for: [track])
                 try Task.checkCancellation()
-                let share = UIActivityViewController(activityItems: urls, applicationActivities: nil)
+                let share = MediaShareActivityViewController(share: preparedShare)
                 if let popover = share.popoverPresentationController {
                     popover.sourceView = self.view
                     popover.sourceRect = CGRect(

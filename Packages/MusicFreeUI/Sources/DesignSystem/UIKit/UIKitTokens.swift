@@ -1,6 +1,6 @@
 import UIKit
 
-/// UIKit counterparts for the semantic SwiftUI colors in `MusicFreeColorTokens`.
+/// Semantic UIKit colors shared by all feature surfaces.
 ///
 /// The values intentionally use UIKit's dynamic system colors instead of
 /// resolved RGB values so light/dark mode and accessibility contrast continue
@@ -40,7 +40,7 @@ public enum MusicFreeUIColorTokens {
     public static let disabled = UIColor.tertiaryLabel
 }
 
-/// Dynamic UIKit fonts corresponding to the SwiftUI typography tokens.
+/// Dynamic UIKit fonts shared by all feature surfaces.
 public enum MusicFreeUIFontTokens {
     public static var screenTitle: UIFont { preferred(.title1, weight: .semibold) }
     public static var sectionTitle: UIFont { UIFont.preferredFont(forTextStyle: .headline) }

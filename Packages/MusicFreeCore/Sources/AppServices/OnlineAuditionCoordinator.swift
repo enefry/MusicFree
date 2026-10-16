@@ -135,7 +135,7 @@ public final class OnlineAuditionCoordinator: OnlineAuditionServing {
             guard self.sessionID == sessionID,
                   self.currentOperationID == operationID
             else { return }
-            self.stopEngine(force: hadExistingSession)
+            self.stopEngine(force: hadExistingSession, soft: true)
         }
         try requireCurrent(operationID, sessionID: sessionID)
 
@@ -278,7 +278,7 @@ public final class OnlineAuditionCoordinator: OnlineAuditionServing {
             guard self.sessionID == sessionID,
                   self.currentOperationID == operationID
             else { return }
-            self.stopEngine()
+            self.stopEngine(soft: true)
             self.publishCurrent(phase: .stopped, position: .zero)
         }
     }
@@ -286,6 +286,15 @@ public final class OnlineAuditionCoordinator: OnlineAuditionServing {
     /// Explicit close clears the temporary queue and removes the global
     /// audition entry. It never resumes formal playback.
     public func close() async {
+        await close(soft: true)
+    }
+
+    /// Session takeover and teardown must silence output immediately.
+    func closeImmediately() async {
+        await close(soft: false)
+    }
+
+    private func close(soft: Bool) async {
         currentOperationID = nil
         self.sessionID = nil
         activeGeneration = nil
@@ -294,7 +303,7 @@ public final class OnlineAuditionCoordinator: OnlineAuditionServing {
         isInterrupted = false
         await withEngineMutation {
             guard self.sessionID == nil else { return }
-            self.stopEngine()
+            self.stopEngine(soft: soft)
             self.queue.removeAll()
             self.currentIndex = nil
             self.sourceDisplayName = nil
@@ -311,7 +320,15 @@ public final class OnlineAuditionCoordinator: OnlineAuditionServing {
             pendingNaturalEndGeneration = nil
             hasStartedActiveGeneration = false
             let sessionID = self.sessionID
-            guard let sessionID, snapshot.phase != .idle else { return }
+            guard let sessionID, snapshot.phase != .idle else {
+                // User close clears the session before its bounded fade has
+                // finished. An interruption must still silence that output.
+                await withEngineMutation {
+                    guard self.sessionID == nil else { return }
+                    self.stopEngine()
+                }
+                return
+            }
             await withEngineMutation {
                 guard self.sessionID == sessionID else { return }
                 let phase = self.snapshot.phase
@@ -339,14 +356,14 @@ public final class OnlineAuditionCoordinator: OnlineAuditionServing {
                 await handleAudioSessionEvent(.interruption(.began))
             }
         case .mediaServicesReset:
-            if snapshot.isActive {
+            if snapshot.isActive || engine?.state.itemID != nil {
                 await handleAudioSessionEvent(.interruption(.began))
             }
         }
     }
 
     public func shutdown() async {
-        await close()
+        await closeImmediately()
         eventTask?.cancel()
         eventTask = nil
         formalPlaybackTask?.cancel()
@@ -384,7 +401,7 @@ public final class OnlineAuditionCoordinator: OnlineAuditionServing {
             guard self.sessionID == sessionID,
                   self.currentOperationID == operationID
             else { return }
-            self.stopEngine()
+            self.stopEngine(soft: true)
         }
         try requireCurrent(operationID, sessionID: sessionID)
         try await resolveAndPlay(
@@ -419,7 +436,7 @@ public final class OnlineAuditionCoordinator: OnlineAuditionServing {
             guard self.sessionID == sessionID,
                   self.currentOperationID == operationID
             else { return }
-            self.stopEngine()
+            self.stopEngine(soft: true)
         }
         try requireCurrent(operationID, sessionID: sessionID)
         try await resolveAndPlay(
@@ -490,6 +507,12 @@ public final class OnlineAuditionCoordinator: OnlineAuditionServing {
                 throw OnlineAuditionError.downloadRequired
             }
 
+            // Wait outside the engine mutation lock so an interruption or
+            // formal playback takeover can still stop this fade immediately.
+            if let transitioning = engine as? any PlaybackTransitionControlling {
+                await transitioning.waitForSoftStop()
+            }
+            try requireCurrent(operationID, sessionID: sessionID)
             try await withEngineMutation {
                 try self.requireCurrent(operationID, sessionID: sessionID)
                 self.stopEngine()
@@ -598,7 +621,7 @@ public final class OnlineAuditionCoordinator: OnlineAuditionServing {
                 guard self.snapshot.hasRetainedSession else { continue }
                 switch formalSnapshot.phase {
                 case .preparing, .buffering, .playing:
-                    await self.close()
+                    await self.closeImmediately()
                 case .idle, .paused, .stopped, .failed:
                     break
                 }
@@ -820,7 +843,7 @@ public final class OnlineAuditionCoordinator: OnlineAuditionServing {
         continuations.values.forEach { $0.yield(value) }
     }
 
-    private func stopEngine(force: Bool = false) {
+    private func stopEngine(force: Bool = false, soft: Bool = false) {
         activeGeneration = nil
         pendingNaturalEndGeneration = nil
         hasStartedActiveGeneration = false
@@ -829,7 +852,8 @@ public final class OnlineAuditionCoordinator: OnlineAuditionServing {
                 || engine.state.itemID != nil
                 || [.preparing, .buffering, .playing, .paused].contains(engine.state.phase)
         else { return }
-        if let hardControl = engine as? any PlaybackTransitionControlling { hardControl.hardStop() }
+        if soft { engine.stop() }
+        else if let hardControl = engine as? any PlaybackTransitionControlling { hardControl.hardStop() }
         else { engine.stop() }
     }
 

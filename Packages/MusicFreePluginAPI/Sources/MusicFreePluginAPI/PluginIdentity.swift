@@ -38,17 +38,20 @@ public struct PluginDescriptor: Codable, Hashable, Sendable, Identifiable {
     public let onlineProviderID: String?
     public let onlineCapabilities: Set<PluginOnlineCapability>
     public let dspPlacements: PluginDSPPlacementOptions?
+    /// Lower values run first within a placement. Missing values resolve to 500.
+    public let defaultDSPPriority: Int?
     public init(id: PluginID, name: String, version: String = "1.0.0",
                 apiVersion: PluginAPIVersion = .current, kinds: Set<PluginKind>,
                 permissions: Set<PluginPermission> = [], policyVersion: String = "1",
                 configuration: PluginConfigurationSchema = .init(), sourceConfiguration: PluginConfigurationSchema = .init(), onlineProviderID: String? = nil,
-                onlineCapabilities: Set<PluginOnlineCapability> = [], dataProviderID: String? = nil, dspPlacements: PluginDSPPlacementOptions? = nil) {
+                onlineCapabilities: Set<PluginOnlineCapability> = [], dataProviderID: String? = nil, dspPlacements: PluginDSPPlacementOptions? = nil, defaultDSPPriority: Int? = nil) {
         self.id = id; self.name = name; self.version = version; self.apiVersion = apiVersion
         self.kinds = kinds; self.permissions = permissions; self.policyVersion = policyVersion
         self.configuration = configuration; self.onlineProviderID = onlineProviderID
         self.sourceConfiguration = sourceConfiguration
         self.onlineCapabilities = onlineCapabilities
         self.dspPlacements = dspPlacements
+        self.defaultDSPPriority = defaultDSPPriority
         self.dataProviderID = dataProviderID
     }
 }
@@ -72,5 +75,17 @@ public struct PluginSnapshot: Sendable, Identifiable {
     public init(descriptor: PluginDescriptor, preference: PluginPreference, state: PluginLifecycleState, diagnostic: String? = nil) {
         self.descriptor = descriptor; self.preference = preference; self.state = state
         self.diagnostic = diagnostic
+    }
+}
+
+public extension PluginSnapshot {
+    var effectiveDSPPriority: Int { preference.dspPriority ?? descriptor.defaultDSPPriority ?? 500 }
+
+    /// Compare only snapshots belonging to the same processing placement.
+    static func dspProcessingOrder(_ lhs: Self, _ rhs: Self) -> Bool {
+        if lhs.effectiveDSPPriority != rhs.effectiveDSPPriority {
+            return lhs.effectiveDSPPriority < rhs.effectiveDSPPriority
+        }
+        return lhs.id < rhs.id
     }
 }

@@ -1,5 +1,7 @@
 # MusicFree UIKit 迁移规划
 
+> 历史方案：其中保留 SwiftUI Settings 的边界已由 2026-10-04 的全 UIKit 迁移替代。当前实现与验证见 [UIKit_Only_App_2026-10-04.md](UIKit_Only_App_2026-10-04.md)。
+
 日期：2026-08-29
 分支：`codex/uikit-planning-development`
 基线分支：`feature/1.2.0_dev`

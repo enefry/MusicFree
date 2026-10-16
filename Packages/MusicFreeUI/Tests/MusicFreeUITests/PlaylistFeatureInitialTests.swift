@@ -522,3 +522,35 @@ func playlistPlaybackIntentMapping() async {
         PlaylistPlaybackCommand(playlistID: playlistID, itemIDs: [first, second], intent: .enqueue)
     ])
 }
+
+#if canImport(UIKit)
+import UIKit
+
+@MainActor
+@Test("Finishing playlist editing restores the native table and row controls", arguments: [false, true])
+func playlistUIKitFinishesEditing(reorder: Bool) async throws {
+    let playlist = Playlist(id: PlaylistID("editing-ui"), name: "Editing")
+    let store = PlaylistFeatureTestStore(playlists: [playlist], entries: [playlist.id: [testTrack("one"), testTrack("two")]])
+    let controller = PlaylistDetailViewController(playlist: playlist, store: store, playback: PlaylistFeatureTestPlayback())
+    controller.loadViewIfNeeded()
+    let table = try #require(controller.view.subviews.compactMap { $0 as? UITableView }.first)
+    for _ in 0..<100 where table.numberOfRows(inSection: 0) != 2 {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(table.numberOfRows(inSection: 0) == 2)
+    let button = try #require(controller.navigationItem.rightBarButtonItems?.first)
+    let action = try #require(button.action)
+    _ = controller.perform(action)
+    #expect(table.isEditing)
+    if reorder {
+        controller.tableView(table, moveRowAt: IndexPath(row: 0, section: 0), to: IndexPath(row: 1, section: 0))
+    }
+    _ = controller.perform(action)
+    for _ in 0..<100 where table.isEditing { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(!table.isEditing)
+    let cell = controller.tableView(table, cellForRowAt: IndexPath(row: 0, section: 0))
+    #expect(cell.accessibilityValue != "未选择")
+    #expect(table.dataSource?.tableView?(table, canMoveRowAt: IndexPath(row: 0, section: 0)) == false)
+    #expect(store.entryMutations.count == (reorder ? 1 : 0))
+}
+#endif

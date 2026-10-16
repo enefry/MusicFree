@@ -6,7 +6,6 @@ import Testing
 @Suite(.timeLimit(.minutes(1))) struct MediaConversionSchedulerTests {
     @Test func limitsConcurrentOperations() async throws {
         let scheduler = MediaConversionScheduler(maximumConcurrency: .two)
-        await scheduler.updatePlaybackIsPlaying(true)
         let probe = ConversionConcurrencyProbe()
 
         try await withThrowingTaskGroup(of: MediaTranscodeResult.self) { group in
@@ -28,7 +27,6 @@ import Testing
 
     @Test func loweringLimitLetsRunningOperationsFinishBeforeStartingMore() async throws {
         let scheduler = MediaConversionScheduler(maximumConcurrency: .three)
-        await scheduler.updatePlaybackIsPlaying(true)
         let probe = ConversionConcurrencyProbe()
         let releaseFirstWave = AsyncGate()
 
@@ -58,7 +56,6 @@ import Testing
 
     @Test func cancellingAWaitingOperationDoesNotConsumeCapacity() async throws {
         let scheduler = MediaConversionScheduler(maximumConcurrency: .one)
-        await scheduler.updatePlaybackIsPlaying(true)
         let probe = ConversionConcurrencyProbe()
         let releaseRunning = AsyncGate()
 
@@ -241,8 +238,9 @@ import Testing
         _ = try await first.value
     }
 
-    @Test func idlePlaybackBlocksAdmissionDespiteLifecycleAndSettingsChanges() async throws {
+    @Test func idlePlaybackBlocksOnlyBackgroundAdmission() async throws {
         let scheduler = MediaConversionScheduler(maximumConcurrency: .one)
+        await scheduler.updateApplicationInBackground(true)
         let started = ConversionConcurrencyProbe()
         let release = AsyncGate()
         let tasks = (0..<2).map { index in
@@ -257,17 +255,17 @@ import Testing
 
         await scheduler.updateApplicationInBackground(true)
         await scheduler.updateMaximumConcurrency(.two)
-        await scheduler.updateApplicationInBackground(false)
+        await scheduler.updatePlaybackIsPlaying(false)
         try await Task.sleep(for: .milliseconds(40))
         #expect(await started.activeCount == 0)
 
-        await scheduler.updatePlaybackIsPlaying(true)
+        await scheduler.updateApplicationInBackground(false)
         await started.waitUntilActive(2)
         await release.open()
         for task in tasks { _ = try await task.value }
     }
 
-    @Test func playbackPauseSuspendsAllWorkersAndResumeRespectsBackgroundLimit() async throws {
+    @Test func backgroundPlaybackPauseSuspendsWorkersAndForegroundResumesWithoutPlayback() async throws {
         let scheduler = MediaConversionScheduler(maximumConcurrency: .two)
         await scheduler.updatePlaybackIsPlaying(true)
         let started = ConversionConcurrencyProbe()
@@ -288,9 +286,9 @@ import Testing
         }
         await started.waitUntilActive(2)
 
+        await scheduler.updateApplicationInBackground(true)
         await scheduler.updatePlaybackIsPlaying(false)
         await checkpointTrigger.open()
-        await scheduler.updateApplicationInBackground(true)
         try await Task.sleep(for: .milliseconds(40))
         #expect(await passedCheckpoint.activeCount == 0)
 
@@ -299,6 +297,7 @@ import Testing
         try await Task.sleep(for: .milliseconds(40))
         #expect(await passedCheckpoint.activeCount == 1)
 
+        await scheduler.updatePlaybackIsPlaying(false)
         await scheduler.updateApplicationInBackground(false)
         await passedCheckpoint.waitUntilActive(2)
         #expect(await started.activeCount == 2)
@@ -306,7 +305,7 @@ import Testing
         for task in tasks { _ = try await task.value }
     }
 
-    @Test func cancellingPlaybackPausedWorkerAndWaiterDoesNotLeakCapacity() async throws {
+    @Test func cancellingBackgroundPlaybackPausedWorkerAndWaiterDoesNotLeakCapacity() async throws {
         let scheduler = MediaConversionScheduler(maximumConcurrency: .one)
         await scheduler.updatePlaybackIsPlaying(true)
         let started = ConversionConcurrencyProbe()
@@ -321,6 +320,7 @@ import Testing
             }
         }
         await started.waitUntilActive(1)
+        await scheduler.updateApplicationInBackground(true)
         await scheduler.updatePlaybackIsPlaying(false)
         await checkpointTrigger.open()
         let waiting = Task {
@@ -336,6 +336,26 @@ import Testing
         await #expect(throws: CancellationError.self) { _ = try await waiting.value }
 
         await scheduler.updatePlaybackIsPlaying(true)
+        #expect(try await scheduler.schedule { Self.result(2) }.processedFrames == 2)
+    }
+
+    @Test func foregroundPlaybackPauseDoesNotSuspendConversion() async throws {
+        let scheduler = MediaConversionScheduler(maximumConcurrency: .one)
+        await scheduler.updatePlaybackIsPlaying(true)
+        let started = AsyncGate()
+        let checkpointTrigger = AsyncGate()
+        let running = Task {
+            try await scheduler.schedule {
+                await started.open()
+                await checkpointTrigger.wait()
+                try await MediaConversionExecution.waitUntilRunnable()
+                return Self.result(1)
+            }
+        }
+        await started.wait()
+        await scheduler.updatePlaybackIsPlaying(false)
+        await checkpointTrigger.open()
+        #expect(try await running.value.processedFrames == 1)
         #expect(try await scheduler.schedule { Self.result(2) }.processedFrames == 2)
     }
 

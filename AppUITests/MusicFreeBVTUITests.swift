@@ -40,6 +40,389 @@ final class MusicFreeBVTUITests: XCTestCase {
     }
 
     @MainActor
+    func testNativeIconPresentationAndVerticalEqualizerGesture() {
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        app.launchArguments = ["--bvt-seed-audio", "--bvt-reset-user-interface-preferences"]
+        app.launch()
+        tapTab("Settings", in: app)
+        XCTAssertTrue(app.tables["settings.form"].waitForExistence(timeout: 20))
+        app.cells["settings.appIcon"].tap()
+        let icon = app.cells["settings.icon.music"].firstMatch
+        XCTAssertTrue(icon.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.cells["settings.icon.default"].isSelected || icon.isSelected || app.cells["settings.icon.circle"].isSelected || app.cells["settings.icon.circle2"].isSelected)
+        attachScreenshot(named: "polished-app-icons")
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        let equalizer = app.cells["settings.playback.equalizer.entry"].firstMatch
+        XCTAssertTrue(scrollToElement(equalizer, in: app))
+        equalizer.tap()
+        let enabled = app.switches["settings.playback.equalizer"].firstMatch
+        XCTAssertTrue(enabled.waitForExistence(timeout: 5))
+        if enabled.value as? String == "0" { enabled.tap() }
+        let band = app.sliders["settings.playback.equalizer.band.1000"].firstMatch
+        XCTAssertTrue(scrollToElement(band, in: app, maximumSwipes: 15))
+        band.doubleTap()
+        let zero = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == '+0.0 dB'"), object: band)
+        XCTAssertEqual(XCTWaiter.wait(for: [zero], timeout: 5), .completed)
+        attachScreenshot(named: "equalizer-before-vertical-gesture")
+        let start = band.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5))
+        let end = band.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.2))
+        start.press(forDuration: 0.1, thenDragTo: end)
+        let changed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value != '+0.0 dB'"), object: band)
+        XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 5), .completed)
+        XCTAssertTrue(app.sliders["settings.playback.equalizer.band.16000"].isHittable)
+        attachScreenshot(named: "polished-equalizer-all-bands")
+        band.doubleTap()
+    }
+
+    @MainActor
+    func testCustomEqualizerKeepsPresetSelectionAvailable() {
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        app.launchArguments = ["--bvt-seed-audio", "--bvt-reset-user-interface-preferences"]
+        app.launch()
+        tapTab("Settings", in: app)
+        XCTAssertTrue(app.tables["settings.form"].waitForExistence(timeout: 20))
+        let entry = app.cells["settings.playback.equalizer.entry"].firstMatch
+        XCTAssertTrue(scrollToElement(entry, in: app))
+        entry.tap()
+        let enabled = app.switches["settings.playback.equalizer"].firstMatch
+        XCTAssertTrue(enabled.waitForExistence(timeout: 5))
+        if enabled.value as? String == "0" { enabled.tap() }
+        let flat = app.buttons["settings.playback.equalizer.preset.0"].firstMatch
+        XCTAssertTrue(scrollToElement(flat, in: app))
+        flat.tap()
+        let selection = app.buttons["settings.playback.equalizer.preset"].firstMatch
+        let flatMode = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == 'Flat'"), object: selection)
+        XCTAssertEqual(XCTWaiter.wait(for: [flatMode], timeout: 5), .completed)
+        let band = app.sliders["settings.playback.equalizer.band.1000"].firstMatch
+        XCTAssertTrue(scrollToElement(band, in: app))
+        attachScreenshot(named: "equalizer-before-vertical-gesture")
+        let start = band.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5))
+        let end = band.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.3))
+        start.press(forDuration: 0.1, thenDragTo: end)
+        XCTAssertTrue(scrollToElement(selection, in: app))
+        let customMode = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == 'Custom'"), object: selection)
+        XCTAssertEqual(XCTWaiter.wait(for: [customMode], timeout: 5), .completed)
+        XCTAssertTrue(app.buttons["settings.playback.equalizer.preset.1"].isEnabled)
+        attachScreenshot(named: "equalizer-custom-with-presets")
+        selection.tap()
+        let classical = app.buttons["Classical"].firstMatch
+        XCTAssertTrue(classical.waitForExistence(timeout: 5))
+        classical.tap()
+        let restoredMode = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == 'Classical'"), object: selection)
+        XCTAssertEqual(XCTWaiter.wait(for: [restoredMode], timeout: 5), .completed)
+        XCTAssertTrue(scrollToElement(band, in: app, maximumSwipes: 15))
+        let restoredGain = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == '+0.0 dB'"), object: band)
+        XCTAssertEqual(XCTWaiter.wait(for: [restoredGain], timeout: 5), .completed)
+        attachScreenshot(named: "equalizer-restored-preset")
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(scrollToElement(entry, in: app))
+        entry.tap()
+        XCTAssertTrue(selection.waitForExistence(timeout: 5))
+        XCTAssertEqual(selection.value as? String, "Classical")
+        XCTAssertTrue(scrollToElement(band, in: app, maximumSwipes: 15))
+        XCTAssertEqual(band.value as? String, "+0.0 dB")
+    }
+
+    @MainActor
+    func testNativeMetadataReorderDuplicateMenuAndStoragePage() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        app.launchArguments = ["--bvt-reset-user-interface-preferences"]
+        app.launch()
+        tapTab("Settings", in: app)
+        XCTAssertTrue(app.tables["settings.form"].waitForExistence(timeout: 20))
+        let duplicate = app.buttons["settings.import.duplicatePolicy"].firstMatch
+        XCTAssertTrue(scrollToElement(duplicate, in: app)); duplicate.tap()
+        app.buttons["Report duplicate content"].firstMatch.tap()
+        XCTAssertEqual(duplicate.value as? String, "Report duplicate content")
+        let metadata = app.cells["settings.import.metadataEnrichment.entry"].firstMatch
+        XCTAssertTrue(scrollToElement(metadata, in: app)); metadata.tap()
+        XCTAssertTrue(app.tables["settings.import.metadataEnrichment"].waitForExistence(timeout: 10))
+        let consent = app.buttons["settings.privacyDisclosure.accept"].firstMatch
+        if consent.waitForExistence(timeout: 3) { consent.tap() }
+        let first = app.cells["settings.import.musicKitEnrichment"].firstMatch
+        let last = app.cells["settings.import.metadataProvider.discogs.enabled"].firstMatch
+        XCTAssertTrue(scrollToElement(first, in: app)); XCTAssertTrue(last.isHittable)
+        let previouslyAbove = first.frame.midY < last.frame.midY
+        first.coordinate(withNormalizedOffset: .init(dx: 0.96, dy: 0.5)).press(forDuration: 0.8,
+            thenDragTo: last.coordinate(withNormalizedOffset: .init(dx: 0.96, dy: previouslyAbove ? 0.9 : 0.1)))
+        let reordered = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            (first.frame.midY < last.frame.midY) != previouslyAbove
+        }, object: first)
+        XCTAssertEqual(XCTWaiter.wait(for: [reordered], timeout: 5), .completed)
+        attachScreenshot(named: "native-metadata-order")
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        let storage = app.cells["settings.storage.status"].firstMatch
+        XCTAssertTrue(scrollToElement(storage, in: app)); storage.tap()
+        XCTAssertTrue(app.tables["settings.storage.status.form"].waitForExistence(timeout: 10))
+        attachScreenshot(named: "storage-status-child-page")
+        let hierarchy = XCTAttachment(string: app.debugDescription)
+        hierarchy.name = "Storage status hierarchy"; hierarchy.lifetime = .keepAlways; add(hierarchy)
+        XCTAssertTrue(app.descendants(matching: .any)["storage.media"].exists || app.descendants(matching: .any)["storage.unavailable"].exists)
+        XCTAssertTrue(app.cells["settings.storage.maintenance"].exists)
+        app.terminate(); app.launch(); tapTab("Settings", in: app)
+        XCTAssertTrue(scrollToElement(duplicate, in: app))
+        XCTAssertEqual(duplicate.value as? String, "Report duplicate content")
+        XCTAssertTrue(scrollToElement(metadata, in: app)); metadata.tap()
+        XCTAssertTrue(first.waitForExistence(timeout: 10))
+        XCTAssertEqual(first.frame.midY < last.frame.midY, !previouslyAbove)
+    }
+
+    @MainActor
+    func testNativeMetadataScanAndLyricsPreloadReceiveTapsWhileReordering() {
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        app.launchArguments = ["--bvt-seed-audio", "--bvt-seed-data-plugin-actions", "--bvt-reset-user-interface-preferences"]
+        app.launch()
+        tapTab("Settings", in: app)
+        XCTAssertTrue(app.tables["settings.form"].waitForExistence(timeout: 20))
+        let entry = app.cells["settings.import.metadataEnrichment.entry"].firstMatch
+        XCTAssertTrue(scrollToElement(entry, in: app)); entry.tap()
+        XCTAssertTrue(app.tables["settings.import.metadataEnrichment"].waitForExistence(timeout: 10))
+        let consent = app.buttons["settings.privacyDisclosure.accept"].firstMatch
+        if consent.waitForExistence(timeout: 3) { consent.tap() }
+
+        let providerIDs = [
+            "settings.import.musicKitEnrichment",
+            "settings.import.metadataProvider.musicBrainz.enabled",
+            "settings.import.metadataProvider.discogs.enabled",
+            "settings.import.metadataProvider.reference.metadata.enabled",
+            "settings.import.lyricsProvider.lrclib.enabled",
+            "settings.import.lyricsProvider.reference.lyrics.enabled",
+        ]
+        var originalValues: [(String, String)] = []
+        func setProvider(_ id: String, to value: String) {
+            let toggle = app.switches[id].firstMatch
+            XCTAssertTrue(scrollToElement(toggle, in: app))
+            if toggle.value as? String != value {
+                toggle.tap()
+                if value == "1", consent.waitForExistence(timeout: 2) { consent.tap() }
+                let saved = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", value), object: toggle)
+                XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 10), .completed)
+            }
+        }
+        for id in providerIDs {
+            let toggle = app.switches[id].firstMatch
+            XCTAssertTrue(scrollToElement(toggle, in: app), "Provider switches must remain visible while reordering.")
+            originalValues.append((id, toggle.value as? String ?? "0"))
+            // Use only offline fixtures so this test never depends on a remote service.
+            if id.contains("reference.") { setProvider(id, to: "0") }
+            setProvider(id, to: id.contains("reference.") ? "1" : "0")
+        }
+
+        let scan = app.cells["settings.import.musicKitScan"].firstMatch
+        let scanSummary = app.staticTexts["metadata.summary"].firstMatch
+        XCTAssertTrue(scrollToElement(scan, in: app))
+        XCTAssertFalse(scanSummary.exists)
+        scan.tap()
+        XCTAssertTrue(scanSummary.waitForExistence(timeout: 10), "A tap must start and finish the metadata scan.")
+        XCTAssertFalse(app.staticTexts["metadata.failure"].exists)
+        attachScreenshot(named: "metadata-scan-completed-with-reorder-controls")
+
+        let preload = app.cells["settings.import.lyricsPreload"].firstMatch
+        let lyricsSummary = app.staticTexts["lyrics.summary"].firstMatch
+        XCTAssertTrue(scrollToElement(preload, in: app))
+        XCTAssertFalse(lyricsSummary.exists)
+        preload.tap()
+        XCTAssertTrue(lyricsSummary.waitForExistence(timeout: 10), "A tap must start and finish lyrics preloading.")
+        XCTAssertFalse(app.staticTexts["lyrics.failure"].exists)
+        attachScreenshot(named: "lyrics-preload-completed-with-provider-switches")
+        for (id, value) in originalValues { setProvider(id, to: value) }
+    }
+
+    @MainActor
+    func testNativeTransitionStylesCanSwitchBothWays() {
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        app.launchArguments = ["--bvt-seed-audio", "--bvt-reset-user-interface-preferences"]
+        app.launch()
+        tapTab("Settings", in: app)
+        XCTAssertTrue(app.tables["settings.form"].waitForExistence(timeout: 20))
+        let entry = app.cells["settings.playback.transitions.entry"].firstMatch
+        XCTAssertTrue(scrollToElement(entry, in: app))
+        entry.tap()
+        XCTAssertTrue(app.tables["settings.playback.transitions.form"].waitForExistence(timeout: 5))
+        let enabled = app.switches["settings.playback.transitions.enabled"].firstMatch
+        XCTAssertTrue(scrollToElement(enabled, in: app))
+        if enabled.value as? String == "0" { enabled.tap() }
+        let gapless = app.cells["settings.playback.gapless"].firstMatch
+        let crossfade = app.cells["settings.playback.crossfade"].firstMatch
+        for style in [crossfade, gapless, crossfade, gapless] {
+            XCTAssertTrue(scrollToElement(style, in: app))
+            style.tap()
+            let selected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "selected == true"), object: style)
+            XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 5), .completed)
+            XCTAssertFalse(style === crossfade ? gapless.isSelected : crossfade.isSelected)
+        }
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(scrollToElement(entry, in: app))
+        entry.tap()
+        XCTAssertTrue(gapless.waitForExistence(timeout: 5))
+        XCTAssertTrue(gapless.isSelected)
+        XCTAssertFalse(crossfade.isSelected)
+    }
+
+    @MainActor
+    func testPolishedSettingsSelectionTransitionAndPluginDetails() {
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        app.launchArguments = ["--bvt-seed-audio", "--bvt-reset-user-interface-preferences"]
+        app.launch()
+        tapTab("Settings", in: app)
+        let root = app.tables["settings.form"].firstMatch
+        XCTAssertTrue(root.waitForExistence(timeout: 20))
+        let rateEntry = app.cells["settings.playback.rate.expand"].firstMatch
+        XCTAssertTrue(scrollToElement(rateEntry, in: app))
+        XCTAssertFalse(app.sliders["settings.playback.rate"].exists)
+        rateEntry.tap()
+        XCTAssertTrue(app.sliders["settings.playback.rate"].waitForExistence(timeout: 5))
+        rateEntry.tap()
+        XCTAssertTrue(app.sliders["settings.playback.rate"].waitForNonExistence(timeout: 5))
+
+        let accentEntry = app.cells["settings.accentColor"].firstMatch
+        XCTAssertTrue(scrollToElement(accentEntry, in: app))
+        accentEntry.tap()
+        XCTAssertTrue(app.tables["settings.accentColor.form"].waitForExistence(timeout: 5))
+        let blue = app.cells["settings.accentColor.preset.1"].firstMatch
+        blue.tap()
+        XCTAssertTrue(blue.isSelected)
+        app.cells["settings.accentColor.custom"].tap()
+        XCTAssertTrue(app.buttons["close"].waitForExistence(timeout: 5))
+        app.buttons["close"].tap()
+        attachScreenshot(named: "polished-accent-color")
+        app.cells["settings.accentColor.preset.0"].tap()
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+
+        let transitions = app.cells["settings.playback.transitions.entry"].firstMatch
+        XCTAssertTrue(scrollToElement(transitions, in: app))
+        transitions.tap()
+        XCTAssertTrue(app.tables["settings.playback.transitions.form"].waitForExistence(timeout: 5))
+        let enabled = app.switches["settings.playback.transitions.enabled"].firstMatch
+        if enabled.value as? String == "0" { enabled.tap() }
+        let crossfade = app.cells["settings.playback.crossfade"].firstMatch
+        XCTAssertTrue(scrollToElement(crossfade, in: app))
+        crossfade.tap()
+        let duration = app.sliders["settings.playback.crossfadeDuration"].firstMatch
+        XCTAssertTrue(scrollToElement(duration, in: app))
+        duration.adjust(toNormalizedSliderPosition: 0.6)
+        attachScreenshot(named: "polished-song-transitions")
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+
+        let equalizer = app.cells["settings.playback.equalizer.entry"].firstMatch
+        XCTAssertTrue(scrollToElement(equalizer, in: app))
+        equalizer.tap()
+        let equalizerEnabled = app.switches["settings.playback.equalizer"].firstMatch
+        XCTAssertTrue(equalizerEnabled.waitForExistence(timeout: 5))
+        if equalizerEnabled.value as? String == "0" { equalizerEnabled.tap() }
+        let band = app.sliders["settings.playback.equalizer.band.1000"].firstMatch
+        XCTAssertTrue(band.waitForExistence(timeout: 5))
+        let bank = app.cells["settings.playback.equalizer.bands"].firstMatch
+        XCTAssertTrue(bank.waitForExistence(timeout: 5))
+        attachScreenshot(named: "polished-equalizer")
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+
+        let pluginEntry = app.cells["settings.plugins.entry"].firstMatch
+        XCTAssertTrue(scrollToElement(pluginEntry, in: app, maximumSwipes: 15))
+        pluginEntry.tap()
+        let plugin = app.cells["plugins.builtin.dsp.equalizer.entry"].firstMatch
+        XCTAssertTrue(plugin.waitForExistence(timeout: 10))
+        attachScreenshot(named: "polished-plugin-overview")
+        plugin.tap()
+        let detail = app.tables["settings.plugins.detail.builtin.dsp.equalizer"].firstMatch
+        XCTAssertTrue(detail.waitForExistence(timeout: 5))
+        let toggle = app.switches["plugins.builtin.dsp.equalizer.enabled"].firstMatch
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        let initialValue = toggle.value as? String
+        toggle.tap()
+        XCTAssertEqual(toggle.value as? String, initialValue == "1" ? "0" : "1")
+        toggle.tap()
+        XCTAssertEqual(toggle.value as? String, initialValue)
+        attachScreenshot(named: "polished-plugin-detail")
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(plugin.waitForExistence(timeout: 5))
+    }
+
+    @MainActor
+    func testNativeSettingsControlsAndPersistence() {
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        app.launchArguments = ["--bvt-seed-audio", "--bvt-reset-user-interface-preferences"]
+        app.launch()
+        tapTab("Settings", in: app)
+        let table = app.tables["settings.form"].firstMatch
+        XCTAssertTrue(table.waitForExistence(timeout: 20))
+        app.cells["settings.playback.rate.expand"].tap()
+        let rate = app.sliders["settings.playback.rate"].firstMatch
+        XCTAssertTrue(rate.waitForExistence(timeout: 10))
+        XCTAssertTrue(rate.isEnabled)
+        rate.adjust(toNormalizedSliderPosition: 0.4)
+        XCTAssertTrue(table.exists)
+        let expectedPruning = changeStoragePreference(in: app)
+        app.terminate()
+        app.launch()
+        assertStoragePreferencePersisted(expectedPruning, in: app)
+    }
+
+    @MainActor
+    func testNativeSettingsDetailPagesUseUIKitNavigation() {
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        app.launchArguments = ["--bvt-seed-audio", "--bvt-reset-user-interface-preferences"]
+        app.launch()
+        tapTab("Settings", in: app)
+        let root = app.tables["settings.form"].firstMatch
+        XCTAssertTrue(root.waitForExistence(timeout: 20))
+
+        func open(_ identifier: String, tableIdentifier: String) {
+            let entry = app.cells[identifier].firstMatch
+            XCTAssertTrue(scrollToElement(entry, in: app, maximumSwipes: 12), identifier)
+            entry.tap()
+            XCTAssertTrue(app.tables[tableIdentifier].waitForExistence(timeout: 10), tableIdentifier)
+            if tableIdentifier == "settings.import.metadataEnrichment" || tableIdentifier == "settings.import.onlineSourceAvailability" {
+                let consent = app.buttons["settings.privacyDisclosure.accept"].firstMatch
+                if consent.waitForExistence(timeout: 3) {
+                    consent.tap()
+                    XCTAssertTrue(consent.waitForNonExistence(timeout: 5))
+                }
+            }
+            XCTAssertEqual(app.navigationBars.count, 1, "Nested pages must share the UIKit navigation bar")
+        }
+        func back() {
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            XCTAssertTrue(root.waitForExistence(timeout: 10))
+        }
+        open("settings.playback.equalizer.entry", tableIdentifier: "settings.playback.equalizer.form")
+        XCTAssertTrue(app.switches["settings.playback.equalizer"].exists)
+        back()
+        open("settings.playback.sleepTimer.entry", tableIdentifier: "settings.sleepTimer.form")
+        XCTAssertTrue(app.steppers["settings.sleepTimer.oneTime.duration"].exists || app.cells["settings.sleepTimer.active"].exists)
+        back()
+        open("settings.import.audioConversion.entry", tableIdentifier: "settings.import.audioConversion.form")
+        XCTAssertTrue(app.switches["settings.import.audioConversion.enabled"].exists)
+        back()
+        open("settings.import.metadataEnrichment.entry", tableIdentifier: "settings.import.metadataEnrichment")
+        XCTAssertTrue(app.tables["settings.import.metadataEnrichment"].exists)
+        back()
+        open("settings.import.onlineSourceAvailability.entry", tableIdentifier: "settings.import.onlineSourceAvailability")
+        XCTAssertTrue(app.switches["settings.import.onlineSources.toggle"].exists)
+        back()
+        open("settings.about", tableIdentifier: "settings.about.form")
+        back()
+        open("settings.diagnostics", tableIdentifier: "settings.diagnostics.form")
+        XCTAssertTrue(app.switches["settings.diagnostics.fileLogging"].waitForExistence(timeout: 10))
+        back()
+        open("settings.plugins.entry", tableIdentifier: "settings.plugins")
+        let hidden = app.switches["plugins.showHidden"].firstMatch
+        for _ in 0..<15 { if hidden.exists && hidden.isHittable { break }; app.tables["settings.plugins"].swipeUp() }
+        XCTAssertTrue(hidden.exists)
+        back()
+        attachScreenshot(named: "native-settings-detail-navigation")
+    }
+
+    @MainActor
     func testUIKitShellLibrarySongsSlicePlaysSeededTrack() {
         let app = XCUIApplication()
         defer { app.terminate() }
@@ -721,9 +1104,9 @@ final class MusicFreeBVTUITests: XCTestCase {
         )
         XCTAssertFalse(app.tabBars.firstMatch.exists)
 
-        let favoritesSection = app.buttons["library.section.favorites"].firstMatch
-        let albumsSection = app.buttons["library.section.albums"].firstMatch
-        let tracksSection = app.buttons["library.section.tracks"].firstMatch
+        let favoritesSection = app.descendants(matching: .any)["library.home.section.favorites"].firstMatch
+        let albumsSection = app.descendants(matching: .any)["library.home.section.albums"].firstMatch
+        let tracksSection = app.descendants(matching: .any)["library.home.section.tracks"].firstMatch
         XCTAssertTrue(favoritesSection.waitForExistence(timeout: 5))
         XCTAssertTrue(albumsSection.waitForExistence(timeout: 5))
         XCTAssertTrue(tracksSection.waitForExistence(timeout: 5))
@@ -770,6 +1153,39 @@ final class MusicFreeBVTUITests: XCTestCase {
         XCTAssertTrue(
             detail.buttons["settings.language"].firstMatch.waitForExistence(timeout: 10)
         )
+    }
+
+    @MainActor
+    func testRegularWidthNativeSettingsSwitchesCategoriesAndNestedPages() throws {
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        app.launchArguments = ["--bvt-seed-audio", "--bvt-reset-user-interface-preferences"]
+        app.launch()
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 15))
+        guard app.windows.firstMatch.frame.width >= 700 else { throw XCTSkip("Requires an iPad in regular width") }
+        let route = app.descendants(matching: .any)["app.route.settings"].firstMatch
+        XCTAssertTrue(route.waitForExistence(timeout: 15))
+        route.tap()
+        let categories = app.tables["settings.categories"].firstMatch
+        XCTAssertTrue(categories.waitForExistence(timeout: 10))
+        categories.cells["settings.category.playback"].tap()
+        XCTAssertTrue(app.tables["settings.detail.playback"].waitForExistence(timeout: 10))
+        app.cells["settings.playback.equalizer.entry"].tap()
+        XCTAssertTrue(app.tables["settings.playback.equalizer.form"].waitForExistence(timeout: 10))
+        categories.cells["settings.category.importing"].tap()
+        XCTAssertTrue(app.tables["settings.detail.importing"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.tables["settings.playback.equalizer.form"].exists)
+        app.cells["settings.import.audioConversion.entry"].tap()
+        XCTAssertTrue(app.tables["settings.import.audioConversion.form"].waitForExistence(timeout: 10))
+        categories.cells["settings.category.privacy"].tap()
+        XCTAssertTrue(app.tables["settings.detail.privacy"].waitForExistence(timeout: 10))
+        categories.cells["settings.category.about"].tap()
+        XCTAssertTrue(app.tables["settings.detail.about"].waitForExistence(timeout: 10))
+        app.cells["settings.diagnostics"].tap()
+        XCTAssertTrue(app.switches["settings.diagnostics.fileLogging"].waitForExistence(timeout: 10))
+        categories.cells["settings.category.general"].tap()
+        XCTAssertTrue(app.buttons["settings.language"].waitForExistence(timeout: 10))
+        attachScreenshot(named: "native-settings-ipad-category-navigation")
     }
 
     @MainActor
@@ -1720,18 +2136,16 @@ final class MusicFreeBVTUITests: XCTestCase {
         XCTAssertTrue(scrollToElement(privacyEntry, in: app, maximumSwipes: 16))
         privacyEntry.tap()
 
-        let applicationRevoke = app.buttons[
+        let applicationRevoke = app.descendants(matching: .any)[
             "settings.privacy.application.revoke"
         ].firstMatch
         XCTAssertTrue(scrollToAnyElement(applicationRevoke, in: app, maximumSwipes: 16))
         applicationRevoke.tap()
-        let applicationRevokeConfirm = app.buttons[
-            "settings.privacy.application.revoke.confirm"
-        ].firstMatch
+        let applicationRevokeConfirm = app.alerts.buttons["Revoke and disable all online sources"].firstMatch
         XCTAssertTrue(applicationRevokeConfirm.waitForExistence(timeout: 5))
         applicationRevokeConfirm.tap()
         XCTAssertTrue(
-            app.buttons["settings.privacy.application.accept"].firstMatch
+            app.descendants(matching: .any)["settings.privacy.application.accept"].firstMatch
                 .waitForExistence(timeout: 15)
         )
         let revokedOnlineSourcesTab = app.tabBars.buttons["Online Sources"].firstMatch
@@ -2286,6 +2700,12 @@ final class MusicFreeBVTUITests: XCTestCase {
         tapTab("Settings", in: app)
         waitForSettingsForm(in: app)
 
+        let storageStatus = app.cells["settings.storage.status"].firstMatch
+        if storageStatus.exists {
+            XCTAssertTrue(scrollToElement(storageStatus, in: app))
+            storageStatus.tap()
+            XCTAssertTrue(app.tables["settings.storage.status.form"].waitForExistence(timeout: 10))
+        }
         let storageMaintenance = app.descendants(matching: .any)[
             "settings.storage.maintenance"
         ].firstMatch
@@ -2441,6 +2861,12 @@ final class MusicFreeBVTUITests: XCTestCase {
     ) {
         tapTab("Settings", in: app)
         waitForSettingsForm(in: app)
+        let storageStatus = app.cells["settings.storage.status"].firstMatch
+        if storageStatus.exists {
+            XCTAssertTrue(scrollToElement(storageStatus, in: app))
+            storageStatus.tap()
+            XCTAssertTrue(app.tables["settings.storage.status.form"].waitForExistence(timeout: 10))
+        }
         let storageMaintenance = app.descendants(matching: .any)[
             "settings.storage.maintenance"
         ].firstMatch
@@ -2494,6 +2920,7 @@ final class MusicFreeBVTUITests: XCTestCase {
         let fallbackButton = app.descendants(matching: .any)["app.tabBar"]
             .firstMatch.buttons[title].firstMatch
 
+        if !nativeButton.exists && !fallbackButton.exists { _ = nativeButton.waitForExistence(timeout: 10) }
         if nativeButton.exists, nativeButton.isHittable {
             nativeButton.tap()
             return
@@ -2520,7 +2947,7 @@ final class MusicFreeBVTUITests: XCTestCase {
             }
         }
 
-        let settingsForm = app.collectionViews["settings.form"].firstMatch
+        let settingsForm = app.tables["settings.form"].firstMatch
         if settingsForm.exists {
             for _ in 0..<8 {
                 settingsForm.swipeDown()
@@ -2550,6 +2977,11 @@ final class MusicFreeBVTUITests: XCTestCase {
             }
         }
 
+        attachScreenshot(named: "missing-tab-" + title)
+        let hierarchy = XCTAttachment(string: app.debugDescription)
+        hierarchy.name = "Missing tab hierarchy"
+        hierarchy.lifetime = .keepAlways
+        add(hierarchy)
         XCTFail(
             "Tab \(title) did not become hittable "
                 + "(nativeExists: \(nativeButton.exists), "
@@ -2697,15 +3129,13 @@ final class MusicFreeBVTUITests: XCTestCase {
         let privacyEntry = app.descendants(matching: .any)[
             "settings.privacy"
         ].firstMatch
-        if privacyEntry.waitForExistence(timeout: 2) {
-            return
-        }
+        let privacyAccept = app.descendants(matching: .any)["settings.privacy.application.accept"].firstMatch
+        let privacyRevoke = app.descendants(matching: .any)["settings.privacy.application.revoke"].firstMatch
+        if privacyAccept.exists || privacyRevoke.exists { return }
 
         waitForSettingsForm(in: app)
         XCTAssertTrue(scrollToElement(privacyEntry, in: app, maximumSwipes: 16))
         privacyEntry.tap()
-        let privacyAccept = app.buttons["settings.privacy.application.accept"].firstMatch
-        let privacyRevoke = app.buttons["settings.privacy.application.revoke"].firstMatch
         XCTAssertTrue(
             waitForEither(privacyAccept, privacyRevoke, timeout: 15),
             "Privacy settings must remain reachable for agreement management."
@@ -2727,7 +3157,7 @@ final class MusicFreeBVTUITests: XCTestCase {
         )
         privacyRow.tap()
 
-        let revoke = app.buttons[
+        let revoke = app.descendants(matching: .any)[
             "settings.privacy.onlineSource.\(sourceID).revoke"
         ].firstMatch
         XCTAssertTrue(
@@ -3203,11 +3633,24 @@ final class MusicFreeBVTUITests: XCTestCase {
 
         let scrollContainer = settingsScrollContainer(in: app)
         for _ in 0..<maximumSwipes {
-            scrollContainer.swipeUp()
+            // Native tables extend under navigation/tab accessory chrome. Start
+            // in the visible side margin, clear of sliders and the Mini Player.
+            let above = element.exists && element.frame.minY < app.navigationBars.firstMatch.frame.maxY + 8
+            let start = scrollContainer.coordinate(withNormalizedOffset: CGVector(dx: 0.03, dy: above ? 0.25 : 0.65))
+            let end = scrollContainer.coordinate(withNormalizedOffset: CGVector(dx: 0.03, dy: above ? 0.65 : 0.25))
+            start.press(forDuration: 0.05, thenDragTo: end)
             if element.waitForExistence(timeout: 1) && isFullyVisibleAboveTabBar(element, in: app) {
                 return true
             }
         }
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Settings scroll failure"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        let hierarchy = XCTAttachment(string: app.debugDescription)
+        hierarchy.name = "Settings scroll hierarchy"
+        hierarchy.lifetime = .keepAlways
+        add(hierarchy)
         return false
     }
 
@@ -3220,7 +3663,11 @@ final class MusicFreeBVTUITests: XCTestCase {
         guard element.exists, element.isHittable, tabBar.exists else {
             return false
         }
-        return !element.frame.isEmpty && element.frame.maxY <= tabBar.frame.minY
+        let navigation = app.navigationBars.firstMatch
+        let top = navigation.exists ? navigation.frame.maxY + 8 : app.frame.minY
+        let miniPlayer = app.buttons["player.mini"].firstMatch
+        let bottom = miniPlayer.exists ? min(tabBar.frame.minY, miniPlayer.frame.minY) : tabBar.frame.minY
+        return !element.frame.isEmpty && element.frame.minY >= top && element.frame.maxY <= bottom
     }
 
     @MainActor
@@ -3233,8 +3680,8 @@ final class MusicFreeBVTUITests: XCTestCase {
 
     @MainActor
     private func settingsScrollContainer(in app: XCUIApplication) -> XCUIElement {
-        let settingsForm = app.collectionViews["settings.form"].firstMatch
-        return settingsForm.waitForExistence(timeout: 2) ? settingsForm : app
+        let settingsTable = app.tables.firstMatch
+        return settingsTable.exists ? settingsTable : app
     }
 
     @MainActor
@@ -3372,4 +3819,65 @@ final class MusicFreeBVTUITests: XCTestCase {
         add(attachment)
     }
 
+}
+
+extension MusicFreeBVTUITests {
+    @MainActor
+    func testAlbumPlaylistCreationAndEditingRestoration() {
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        app.launchArguments = ["--bvt-seed-audio", "--bvt-seed-layout-library", "--bvt-reset-user-interface-preferences"]
+        app.launch()
+        let albums = app.descendants(matching: .any)["library.home.section.albums"].firstMatch
+        XCTAssertTrue(albums.waitForExistence(timeout: 20))
+        albums.tap()
+        let album = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "library.album.open.")
+        ).firstMatch
+        XCTAssertTrue(album.waitForExistence(timeout: 20))
+        album.tap()
+        let menu = app.buttons["library.collection.menu"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 10))
+        menu.tap()
+        app.buttons["Add to playlist"].tap()
+        let create = app.buttons["library.addToPlaylist.create"]
+        XCTAssertTrue(create.waitForExistence(timeout: 10))
+        create.tap()
+        let name = app.textFields["library.addToPlaylist.name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        XCTAssertTrue(name.isHittable)
+        name.tap()
+        let playlistName = "Playlist UI \(Int(Date().timeIntervalSince1970))"
+        name.typeText(playlistName)
+        let submit = app.buttons["library.addToPlaylist.createAndAdd"]
+        XCTAssertTrue(submit.isEnabled)
+        XCTAssertTrue(submit.isHittable)
+        XCTAssertGreaterThan(name.frame.minY, create.frame.maxY)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        attachScreenshot(named: "playlist-create-with-keyboard")
+        submit.tap()
+        XCTAssertTrue(name.waitForNonExistence(timeout: 10))
+        tapTab("Playlists", in: app)
+        let row = app.cells.containing(.staticText, identifier: playlistName).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.tap()
+        let edit = app.buttons["playlists.edit"]
+        XCTAssertTrue(edit.waitForExistence(timeout: 10))
+        let song = app.cells.matching(NSPredicate(format: "identifier BEGINSWITH %@", "playlists.track.")).firstMatch
+        XCTAssertTrue(song.waitForExistence(timeout: 10))
+        let originalValue = song.value as? String
+        edit.tap()
+        XCTAssertNotEqual(song.value as? String, originalValue)
+        edit.tap()
+        let restored = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", originalValue ?? ""), object: song)
+        XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 5), .completed)
+        attachScreenshot(named: "playlist-finished-editing")
+        let artwork = app.buttons["playlists.detail.editArtwork"]
+        XCTAssertTrue(artwork.isHittable)
+        artwork.tap()
+        XCTAssertTrue(app.buttons["Choose Photo"].waitForExistence(timeout: 5))
+        app.buttons["Use Song Artwork Automatically"].tap()
+        XCTAssertTrue(artwork.waitForExistence(timeout: 5))
+        attachScreenshot(named: "playlist-automatic-artwork")
+    }
 }

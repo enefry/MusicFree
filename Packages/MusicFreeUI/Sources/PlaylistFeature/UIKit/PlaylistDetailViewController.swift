@@ -3,6 +3,8 @@ import DesignSystem
 import LibraryAPI
 import MusicDomain
 import UIKit
+import PhotosUI
+import MediaSourceAPI
 
 /// UIKit detail surface for one playlist. The feature view model remains the
 /// authority for ordering, CRUD and playback commands; this controller owns
@@ -15,8 +17,14 @@ public final class PlaylistDetailViewController: UIViewController {
     public let libraryServing: (any LibraryServing)?
     public let artworkServing: (any ArtworkServing)?
 
+    private var coverRevision: UInt64 = 0
+    private var artworkTask: Task<Void, Never>?
+    private var artworkVersion = UUID()
+    private var isSavingArtwork = false
     private let viewModel: PlaylistDetailViewModel
     private let candidateLoader: PlaylistTrackCandidateLoader
+    private let entryMetadataLoader: PlaylistTrackCandidateLoader
+    private var isLoadingEntryMetadata = true
     private let tableView = UITableView(frame: .zero, style: .insetGrouped)
     private let headerView: PlaylistDetailHeaderView
     private var statusView: UIView?
@@ -47,6 +55,7 @@ public final class PlaylistDetailViewController: UIViewController {
             playback: playback
         )
         candidateLoader = PlaylistTrackCandidateLoader(library: libraryServing)
+        entryMetadataLoader = PlaylistTrackCandidateLoader(library: libraryServing)
         headerView = PlaylistDetailHeaderView(playlist: playlist)
         super.init(nibName: nil, bundle: nil)
         title = playlist.name
@@ -89,8 +98,9 @@ public final class PlaylistDetailViewController: UIViewController {
             guard let self else { return }
             await viewModel.load()
             guard !Task.isCancelled else { return }
+            await loadEntryMetadata()
+            guard !Task.isCancelled else { return }
             render()
-            await loadCandidatesIfNeeded()
             observeLibraryChanges()
         }
     }
@@ -110,6 +120,7 @@ public final class PlaylistDetailViewController: UIViewController {
     public override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         observeLibraryChanges()
+        if loadTask?.isCancelled == true { reload() }
     }
 
     public override func contentScrollView(
@@ -119,6 +130,7 @@ public final class PlaylistDetailViewController: UIViewController {
     }
 
     deinit {
+        artworkTask?.cancel()
         loadTask?.cancel()
         candidateTask?.cancel()
         mutationTask?.cancel()
@@ -136,14 +148,18 @@ public final class PlaylistDetailViewController: UIViewController {
                     && (playlistIDs.isEmpty || playlistIDs.contains(self.viewModel.playlistID))
                 let relevantEntryChange = change.categories.contains(.playlistEntries)
                     && (playlistIDs.isEmpty || playlistIDs.contains(self.viewModel.playlistID))
+                if !change.categories.isDisjoint(with: [.tracks, .artwork, .playlistEntries, .deletions]) {
+                    self.coverRevision &+= 1
+                }
                 let metadataCategories: Set<LibraryChangeCategory> = [
                     .tracks, .artwork, .deletions
                 ]
                 let visibleTrackIDs = Set(self.viewModel.itemIDs)
                 let relevantMetadataIDs = change.affectedIDs.trackIDs
                     .intersection(visibleTrackIDs)
-                let relevantMetadataChange = !relevantMetadataIDs.isEmpty
-                    && !change.categories.isDisjoint(with: metadataCategories)
+                let relevantMetadataChange = change.categories.contains(.artwork)
+                    || (!relevantMetadataIDs.isEmpty
+                        && !change.categories.isDisjoint(with: metadataCategories))
                 guard relevantPlaylistChange || relevantEntryChange || relevantMetadataChange else {
                     continue
                 }
@@ -152,8 +168,9 @@ public final class PlaylistDetailViewController: UIViewController {
                     continue
                 }
                 if relevantMetadataChange && !relevantPlaylistChange && !relevantEntryChange {
-                    let changedIDs = await self.candidateLoader.refresh(trackIDs: relevantMetadataIDs)
+                    let changedIDs = await self.entryMetadataLoader.refresh(trackIDs: relevantMetadataIDs)
                     self.reloadCandidateRows(changedIDs)
+                    self.render()
                 } else {
                     await self.reloadFromExternalChange(change)
                 }
@@ -186,6 +203,8 @@ public final class PlaylistDetailViewController: UIViewController {
 
         if change?.categories.contains(.playlistEntries) == true || change == nil {
             await viewModel.load()
+            guard !Task.isCancelled else { return }
+            await loadEntryMetadata()
         }
         guard !Task.isCancelled else { return }
         render()
@@ -228,6 +247,7 @@ public final class PlaylistDetailViewController: UIViewController {
     }
 
     private func configureHeader() {
+        headerView.onEditArtwork = { [weak self] in self?.presentArtworkActions() }
         headerView.onPlayAll = { [weak self] in self?.sendPlayback(.playAll) }
         headerView.onShuffle = { [weak self] in self?.sendPlayback(.shuffle) }
         headerView.accessibilityIdentifier = "playlists.detail.header"
@@ -265,11 +285,19 @@ public final class PlaylistDetailViewController: UIViewController {
             playlist: viewModel.playlist,
             entryCount: viewModel.entries.count,
             isEnabled: !viewModel.entries.isEmpty && !viewModel.isSendingCommand,
-            artworkServing: artworkServing
+            artworkServing: artworkServing,
+            store: store,
+            libraryServing: libraryServing,
+            trackIDs: viewModel.itemIDs,
+            revision: coverRevision,
+            canEditArtwork: !viewModel.isEditing && !viewModel.isMutating && !isSavingArtwork
         )
         navigationItem.title = viewModel.playlist.name
 
-        if viewModel.entries.isEmpty {
+        if isLoadingEntryMetadata && !viewModel.entries.isEmpty && renderedEntryIDs.isEmpty {
+            tableView.isHidden = true
+            installStatusView(MusicFreeUIKitLoadingStateView(label: L("加载歌曲")))
+        } else if viewModel.entries.isEmpty {
             switch viewModel.loadState {
             case .failed(let message):
                 tableView.isHidden = true
@@ -348,7 +376,7 @@ public final class PlaylistDetailViewController: UIViewController {
     }
 
     private func candidateSignature(for entry: PlaylistEntry) -> String {
-        let candidate = candidateLoader.candidates.first { $0.id == entry.trackID }
+        let candidate = entryMetadataLoader.candidates.first { $0.id == entry.trackID }
         return [
             entry.trackID.externalID,
             candidate?.title ?? "",
@@ -445,28 +473,24 @@ public final class PlaylistDetailViewController: UIViewController {
     }
 
     private func reload() {
-        loadTask?.cancel()
+        let previousLoad = loadTask
+        previousLoad?.cancel()
         loadTask = Task { @MainActor [weak self] in
+            await previousLoad?.value
+            guard !Task.isCancelled else { return }
             guard let self else { return }
             await viewModel.load()
+            guard !Task.isCancelled else { return }
+            await loadEntryMetadata()
             guard !Task.isCancelled else { return }
             render()
         }
     }
 
-    private func loadCandidatesIfNeeded() async {
-        guard libraryServing != nil,
-              candidateLoader.loadState == .idle,
-              !candidateLoader.isLoading
-        else { return }
-        candidateTask?.cancel()
-        candidateTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            await candidateLoader.load()
-            guard !Task.isCancelled else { return }
-            render()
-        }
-        await candidateTask?.value
+    private func loadEntryMetadata() async {
+        await entryMetadataLoader.load(trackIDs: viewModel.itemIDs)
+        guard !Task.isCancelled else { return }
+        isLoadingEntryMetadata = false
     }
 
     @objc private func refreshTriggered() {
@@ -499,6 +523,7 @@ public final class PlaylistDetailViewController: UIViewController {
             onSubmit: { [weak self] selectedIDs in
                 guard let self else { return false }
                 let result = await viewModel.addTracks(selectedIDs)
+                await loadEntryMetadata()
                 render()
                 return result
             }
@@ -518,7 +543,8 @@ public final class PlaylistDetailViewController: UIViewController {
     private var canPresentAddFlow: Bool {
         !viewModel.isLoading
             && !viewModel.isMutating
-            && (candidateLoader.loadState == .loaded || candidateLoader.loadState == .empty)
+            && libraryServing != nil
+            && !candidateLoader.isLoading
     }
 
     @objc private func editTriggered() {
@@ -542,11 +568,63 @@ public final class PlaylistDetailViewController: UIViewController {
     }
 
     private func updateEditingAppearance() {
+        if tableView.isEditing != viewModel.isEditing {
+            tableView.setEditing(viewModel.isEditing, animated: true)
+            renderedEntryIDs.removeAll(keepingCapacity: true)
+            tableView.reloadData()
+        }
         guard let editButton = navigationItem.rightBarButtonItems?.first else { return }
         editButton.image = UIImage(systemName: viewModel.isEditing ? "checkmark" : "pencil")
         editButton.accessibilityLabel = L(viewModel.isEditing ? "完成编辑" : "编辑歌单")
         let addButton = navigationItem.rightBarButtonItems?.last
         addButton?.isEnabled = !viewModel.isEditing && !viewModel.isMutating
+    }
+
+    private func presentArtworkActions() {
+        guard !isSavingArtwork, !viewModel.isEditing, !viewModel.isMutating else { return }
+        let alert = UIAlertController(title: L("编辑封面"), message: nil, preferredStyle: .actionSheet)
+        alert.addAction(UIAlertAction(title: L("选择照片"), style: .default) { [weak self] _ in
+            guard let self else { return }
+            var configuration = PHPickerConfiguration()
+            configuration.filter = .images
+            configuration.selectionLimit = 1
+            let picker = PHPickerViewController(configuration: configuration)
+            picker.delegate = self
+            self.present(picker, animated: true)
+        })
+        alert.addAction(UIAlertAction(title: L("自动使用歌曲封面"), style: .default) { [weak self] _ in
+            self?.saveArtwork(nil)
+        })
+        alert.addAction(UIAlertAction(title: L("取消"), style: .cancel))
+        alert.popoverPresentationController?.sourceView = headerView
+        alert.popoverPresentationController?.sourceRect = CGRect(x: headerView.bounds.midX, y: 128, width: 1, height: 1)
+        present(alert, animated: true)
+    }
+
+    private func saveArtwork(_ data: Data?) {
+        guard !isSavingArtwork else { return }
+        artworkVersion = UUID()
+        isSavingArtwork = true
+        render()
+        artworkTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { isSavingArtwork = false; render() }
+            do {
+                let updated = try await store.setArtwork(data, for: viewModel.playlistID)
+                guard !Task.isCancelled else { return }
+                viewModel.updatePlaylist(updated)
+                coverRevision &+= 1
+            } catch {
+                guard !Task.isCancelled else { return }
+                presentArtworkError()
+            }
+        }
+    }
+
+    private func presentArtworkError() {
+        let alert = UIAlertController(title: L("无法更新封面"), message: L("操作未完成，请重试。"), preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: L("好"), style: .default))
+        present(alert, animated: true)
     }
 
     private func sendPlayback(_ intent: PlaylistPlaybackIntent) {
@@ -604,7 +682,7 @@ public final class PlaylistDetailViewController: UIViewController {
         entry: PlaylistEntry,
         candidate: PlaylistTrackCandidate?
     ) -> UIMenu {
-        let title = candidate?.title ?? entry.trackID.externalID
+        let title = candidate?.title ?? L("歌曲信息不可用")
         let subtitle = candidate?.subtitle
         let shareText = [title, subtitle].compactMap { $0 }.joined(separator: " - ")
         let share = UIAction(
@@ -722,10 +800,10 @@ extension PlaylistDetailViewController: UITableViewDataSource, UITableViewDelega
               indexPath.row < viewModel.orderedEntries.count
         else { return cell }
         let entry = viewModel.orderedEntries[indexPath.row]
-        let candidate = candidateLoader.candidates.first { $0.id == entry.trackID }
+        let candidate = entryMetadataLoader.candidates.first { $0.id == entry.trackID }
         entryCell.configure(
             position: indexPath.row,
-            title: candidate?.title ?? entry.trackID.externalID,
+            title: candidate?.title ?? L("歌曲信息不可用"),
             subtitle: candidate?.subtitle,
             isEditing: viewModel.isEditing,
             isSelected: viewModel.selectedTrackIDs.contains(entry.trackID),
@@ -756,7 +834,7 @@ extension PlaylistDetailViewController: UITableViewDataSource, UITableViewDelega
               indexPath.row < viewModel.orderedEntries.count
         else { return nil }
         let entry = viewModel.orderedEntries[indexPath.row]
-        let candidate = candidateLoader.candidates.first { $0.id == entry.trackID }
+        let candidate = entryMetadataLoader.candidates.first { $0.id == entry.trackID }
         let configuration = UIContextMenuConfiguration(
             identifier: NSString(string: "\(viewModel.playlist.id.rawValue)-\(entry.trackID.externalID)"),
             previewProvider: nil
@@ -781,7 +859,8 @@ extension PlaylistDetailViewController: UITableViewDataSource, UITableViewDelega
     ) {
         viewModel.move(
             from: IndexSet(integer: sourceIndexPath.row),
-            to: destinationIndexPath.row
+            to: destinationIndexPath.row > sourceIndexPath.row
+                ? destinationIndexPath.row + 1 : destinationIndexPath.row
         )
         tableView.reloadData()
     }
@@ -807,13 +886,15 @@ extension PlaylistDetailViewController: UITableViewDataSource, UITableViewDelega
 private final class PlaylistDetailHeaderView: UIView {
     var onPlayAll: (() -> Void)?
     var onShuffle: (() -> Void)?
+    var onEditArtwork: (() -> Void)?
+    private let artworkButton = UIButton(type: .system)
 
     private let artworkView = MusicFreeUIKitArtworkView(
         accessibilityLabel: L("歌单封面"),
         placeholderSystemImage: "music.note.list",
         placeholderTitle: nil
     )
-    private lazy var artworkBinding = PlaylistArtworkBinding(view: artworkView)
+    private lazy var artworkBinding = PlaylistCoverBinding(view: artworkView)
     private let titleLabel = UILabel()
     private let countLabel = UILabel()
     private let playButton = MusicFreeUIKitPillActionButton(
@@ -843,15 +924,19 @@ private final class PlaylistDetailHeaderView: UIView {
         playlist: Playlist,
         entryCount: Int,
         isEnabled: Bool,
-        artworkServing: (any ArtworkServing)?
+        artworkServing: (any ArtworkServing)?,
+        store: any PlaylistFeatureStore,
+        libraryServing: (any LibraryServing)?,
+        trackIDs: [MediaItemID],
+        revision: UInt64,
+        canEditArtwork: Bool
     ) {
+        artworkButton.isEnabled = canEditArtwork
         titleLabel.text = playlist.name
         artworkView.placeholderTitle = playlist.name
         artworkBinding.configure(
-            artworkID: playlist.artworkID,
-            sourceID: MediaSourceID.local,
-            maximumPixelDimension: 320,
-            serving: artworkServing
+            playlist: playlist, trackIDs: trackIDs, dimension: 320,
+            revision: revision, store: store, library: libraryServing, artwork: artworkServing
         )
         // Match the SwiftUI surface's localized key so the English visual
         // review exposes “0 tracks” (and Chinese still resolves through the
@@ -884,6 +969,11 @@ private final class PlaylistDetailHeaderView: UIView {
         artworkView.heightAnchor.constraint(equalTo: artworkView.widthAnchor).isActive = true
         artworkView.accessibilityIdentifier = "playlists.detail.artwork"
 
+        artworkButton.setTitle(L("编辑封面"), for: .normal)
+        artworkButton.accessibilityIdentifier = "playlists.detail.editArtwork"
+        artworkButton.addAction(UIAction { [weak self] _ in self?.onEditArtwork?() }, for: .touchUpInside)
+        artworkButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
+
         titleLabel.font = MusicFreeUIFontTokens.screenTitle
         titleLabel.textColor = MusicFreeUIColorTokens.foregroundPrimary
         titleLabel.textAlignment = .center
@@ -914,6 +1004,7 @@ private final class PlaylistDetailHeaderView: UIView {
         )
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(artworkView)
+        stack.addArrangedSubview(artworkButton)
         stack.addArrangedSubview(titleLabel)
         stack.addArrangedSubview(countLabel)
         stack.addArrangedSubview(actions)
@@ -1015,5 +1106,37 @@ private final class PlaylistEntryCell: UITableViewCell {
         accessibilityValue = isEditing
             ? (isSelected ? L("已选择") : L("未选择"))
             : L("第 %d 首歌曲", position + 1)
+    }
+}
+
+
+extension PlaylistDetailViewController: PHPickerViewControllerDelegate {
+    public func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+        let provider = results.first?.itemProvider
+        picker.dismiss(animated: true) { [weak self] in
+            guard let self, let provider else { return }
+            self.artworkVersion = UUID()
+            let version = self.artworkVersion
+            provider.loadDataRepresentation(forTypeIdentifier: "public.image") { [weak self] data, _ in
+                Task { @MainActor [weak self] in
+                    guard let self, self.artworkVersion == version, self.viewIfLoaded?.window != nil else { return }
+                    guard let data, !data.isEmpty, data.count <= ArtworkDataLimits.maximumByteCount else {
+                        self.presentArtworkError()
+                        return
+                    }
+                    self.artworkTask?.cancel()
+                    self.artworkTask = Task { @MainActor [weak self] in
+                        let prepared = await PlaylistArtworkPreparation.prepare(data)
+                        guard let self, !Task.isCancelled, self.artworkVersion == version,
+                              self.viewIfLoaded?.window != nil else { return }
+                        guard let prepared else {
+                            self.presentArtworkError()
+                            return
+                        }
+                        self.saveArtwork(prepared)
+                    }
+                }
+            }
+        }
     }
 }

@@ -2,6 +2,7 @@ import Foundation
 import FFmpegPlaybackAdapter
 import AppServices
 import LibraryAPI
+import LibraryPersistenceAdapter
 import LocalMediaAdapter
 import MediaSourceAPI
 import MusicDomain
@@ -23,6 +24,80 @@ private enum CompositionFactoryTestError: Error, Sendable {
 }
 
 struct MacLocalImportDiagnosticTests {
+    @Test(
+        "A real lossless file imports without playback using the production probe, encoder and database",
+        .enabled(if: ProcessInfo.processInfo.environment["MUSICFREE_RUN_USER_MUSIC_DIAGNOSTICS"] == "1"),
+        arguments: [AudioConversionTarget.alac, .defaultAAC]
+    )
+    func importsRealFileWithoutPlayback(_ target: AudioConversionTarget) async throws {
+        let sourcePath = try #require(ProcessInfo.processInfo.environment["MUSICFREE_USER_MUSIC_PATH"])
+        let sourceURL = URL(fileURLWithPath: sourcePath)
+        let originalBytes = try Data(contentsOf: sourceURL)
+        let sourceProbe = try await FFmpegMediaProbe().probe(.localFile(sourceURL))
+        let sourceTrack = try #require(sourceProbe.decodableAudioTracks.first)
+        try #require(sourceTrack.isLossless)
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent(".noindex/tmp/real-file-import-tests", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let configuration = try LocalMediaConfiguration(
+            managedRoot: root.appendingPathComponent("managed", isDirectory: true),
+            stagingRoot: root.appendingPathComponent("staging", isDirectory: true),
+            quarantineRoot: root.appendingPathComponent("quarantine", isDirectory: true)
+        )
+        let database = try LibraryPersistenceStore()
+        let repository = SwiftDataLibraryRepository(store: database)
+        let transcoder = AppleAudioMediaTranscoder()
+        let importer = try LocalMediaImporter(
+            configuration: configuration,
+            probe: FFmpegMediaProbe(),
+            metadataReader: FFmpegMetadataReader(),
+            libraryRepository: repository,
+            transcoder: transcoder,
+            losslessValidator: transcoder,
+            conversionScheduler: MediaConversionScheduler()
+        )
+        let importID = UUID()
+        let timeout = Task {
+            do {
+                try await Task.sleep(for: .seconds(120))
+                await importer.cancelImport(importID)
+            } catch {}
+        }
+        defer { timeout.cancel() }
+        var events: [MediaImportEvent] = []
+        for try await event in importer.importMedia(MediaImportRequest(
+            importID: importID, urls: [sourceURL],
+            audioConversionPolicy: AudioImportConversionPolicy(target: target)
+        )) {
+            events.append(event)
+        }
+        let result = try #require(events.compactMap { event -> MediaImportResult? in
+            if case .completed(_, let result) = event { result } else { nil }
+        }.last)
+        #expect(result.imported == 1)
+        #expect(result.failed == 0)
+        let itemID = try #require(events.compactMap { event -> MediaItemID? in
+            if case .persisting(_, let itemID) = event { itemID } else { nil }
+        }.last)
+        let track = try #require(try await repository.track(id: itemID))
+        let asset = try #require(try await repository.mediaAsset(id: track.assetID))
+        let shouldConvert = !(target == .alac && sourceTrack.codec == "alac")
+        #expect(events.contains { if case .waitingForTranscoding = $0 { true } else { false } } == shouldConvert)
+        #expect((asset.conversion != nil) == shouldConvert)
+        let files = try #require(FileManager.default.enumerator(
+            at: configuration.managedRoot, includingPropertiesForKeys: nil
+        )?.allObjects as? [URL])
+        let outputURL = try #require(files.first { $0.pathExtension == "m4a" })
+        let outputProbe = try await FFmpegMediaProbe().probe(.localFile(outputURL))
+        #expect(outputProbe.decodableAudioTracks.first?.codec == (target == .alac ? "alac" : "aac"))
+        #expect(try Data(contentsOf: sourceURL) == originalBytes)
+        if !shouldConvert { #expect(try Data(contentsOf: outputURL) == originalBytes) }
+        print("REAL_FILE_IMPORT target=\(target) imported=\(result.imported) title=\(track.title) inputCodec=\(sourceTrack.codec ?? "unknown") outputBytes=\((try outputURL.resourceValues(forKeys: [.fileSizeKey])).fileSize ?? 0)")
+        await database.close()
+    }
+
     @Test(
         "Mac Designed for iPad runs the real local importer on the Music folder",
         .enabled(if: ProcessInfo.processInfo.environment["MUSICFREE_RUN_USER_MUSIC_DIAGNOSTICS"] == "1")
@@ -1183,7 +1258,7 @@ func releaseInfoProviderLoadsBundledLicenseMaterial() async throws {
     #expect(dependency.checksum == "checksum-456")
 }
 
-@Test("Release manifest exposes the linked FFmpeg license and no VLC components")
+@Test("Release manifest exposes FFmpeg and preset-data licenses without a VLC playback framework")
 func releaseManifestIncludesFFmpegAudioLicense() async throws {
     let sourceRoot = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent()
@@ -1211,14 +1286,19 @@ func releaseManifestIncludesFFmpegAudioLicense() async throws {
         await AppReleaseInfoProvider(bundle: bundle).releaseInfo()
     )
     let expectedLicenseFiles: Set<String> = [
+        "163MusicLyrics-Apache-2.0.txt",
         "Kingfisher-MIT.txt",
         "CocoaLumberjack-BSD-3-Clause.txt",
-        "FFmpegAudio/COPYING.LGPLv2.1"
+        "FFmpegAudio/COPYING.LGPLv2.1",
+        "VLCEqualizerPresets.txt"
     ]
 
     #expect(releaseInfo.dependencies.count == expectedLicenseFiles.count)
     #expect(Set(releaseInfo.dependencies.compactMap(\.licenseFile)) == expectedLicenseFiles)
     #expect(!releaseInfo.dependencies.contains { $0.name.localizedCaseInsensitiveContains("vlc") })
+    let presetData = try #require(releaseInfo.dependencies.first { $0.id == "vlc-equalizer-presets" })
+    #expect(presetData.kind == .source)
+    #expect(presetData.licenseText?.contains("Laurent Aimar") == true)
     let ffmpeg = try #require(releaseInfo.dependencies.first { $0.id == "ffmpeg-audio" })
     #expect(ffmpeg.buildMaterialsURL?.absoluteString ==
         "https://github.com/enefry/FFmpegAudioKit/releases/download/0.0.4/FFmpegAudio.xcframework.zip")

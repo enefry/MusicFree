@@ -475,7 +475,7 @@ func onlineAuditionAdvancesAfterNaturalEnd() async throws {
         )
     )
 
-    for _ in 0..<2_000 where coordinator.snapshot.itemID != second.id {
+    for _ in 0..<2_000 where coordinator.snapshot.itemID != second.id || coordinator.snapshot.phase != .playing {
         try? await Task.sleep(for: .milliseconds(1))
     }
 

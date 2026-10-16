@@ -13,7 +13,8 @@ let package = Package(
         .library(name: "LibraryFeature", targets: ["LibraryFeature"]),
         .library(name: "PlayerFeature", targets: ["PlayerFeature"]),
         .library(name: "PlaylistFeature", targets: ["PlaylistFeature"]),
-        .library(name: "SettingsFeature", targets: ["SettingsFeature"])
+        .library(name: "SettingsFeature", targets: ["SettingsFeature"]),
+        .library(name: "BuiltinPluginSettings", targets: ["BuiltinPluginSettings"])
     ],
     dependencies: [
         .package(path: "../MusicFreeCore"),
@@ -28,10 +29,21 @@ let package = Package(
             ]
         ),
         .target(
+            name: "MediaSharing",
+            dependencies: [
+                "DesignSystem",
+                .product(name: "AppServices", package: "MusicFreeCore"),
+                .product(name: "MusicDomain", package: "MusicFreeCore"),
+                .product(name: "LibraryAPI", package: "MusicFreeCore"),
+                .product(name: "MediaSourceAPI", package: "MusicFreeCore")
+            ]
+        ),
+        .target(
             name: "LibraryFeature",
             dependencies: [
                 .product(name: "Kingfisher", package: "Kingfisher"),
                 "DesignSystem",
+                "MediaSharing",
                 .product(name: "MusicDomain", package: "MusicFreeCore"),
                 .product(name: "LibraryAPI", package: "MusicFreeCore"),
                 .product(name: "MediaSourceAPI", package: "MusicFreeCore"),
@@ -43,6 +55,7 @@ let package = Package(
             dependencies: [
                 .product(name: "Kingfisher", package: "Kingfisher"),
                 "DesignSystem",
+                "MediaSharing",
                 .product(name: "MusicDomain", package: "MusicFreeCore"),
                 .product(name: "LibraryAPI", package: "MusicFreeCore"),
                 .product(name: "MediaSourceAPI", package: "MusicFreeCore"),
@@ -64,6 +77,7 @@ let package = Package(
             name: "SettingsFeature",
             dependencies: [
                 .product(name: "MusicFreePluginAPI", package: "MusicFreePluginAPI"),
+                .product(name: "MusicFreePluginSettingsUIKitAPI", package: "MusicFreePluginAPI"),
                 "DesignSystem",
                 .product(name: "BuildInfo", package: "MusicFreeCore"),
                 .product(name: "MusicDomain", package: "MusicFreeCore"),
@@ -77,14 +91,31 @@ let package = Package(
                 .process("Resources")
             ]
         ),
+        .target(
+            name: "BuiltinPluginSettings",
+            dependencies: [
+                "SettingsFeature", "DesignSystem",
+                .product(name: "MusicFreePluginAPI", package: "MusicFreePluginAPI"),
+                .product(name: "MusicFreePluginSettingsUIKitAPI", package: "MusicFreePluginAPI"),
+                .product(name: "AppServices", package: "MusicFreeCore"),
+                .product(name: "MediaSourceAPI", package: "MusicFreeCore"),
+                .product(name: "MusicDomain", package: "MusicFreeCore"),
+                .product(name: "SettingsAPI", package: "MusicFreeCore"),
+                .product(name: "PlaybackAPI", package: "MusicFreeCore")
+            ],
+            resources: [.process("Resources")]
+        ),
         .testTarget(
             name: "MusicFreeUIFeatureTests",
             dependencies: [
                 "DesignSystem",
                 "LibraryFeature",
                 "PlayerFeature",
+                "MediaSharing",
                 "PlaylistFeature",
                 "SettingsFeature",
+                "BuiltinPluginSettings",
+                .product(name: "MusicFreePluginSettingsUIKitAPI", package: "MusicFreePluginAPI"),
                 .product(name: "AppServices", package: "MusicFreeCore"),
                 .product(name: "LibraryAPI", package: "MusicFreeCore"),
                 .product(name: "MediaSourceAPI", package: "MusicFreeCore"),

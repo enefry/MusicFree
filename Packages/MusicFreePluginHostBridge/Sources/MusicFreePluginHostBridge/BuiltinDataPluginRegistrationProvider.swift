@@ -7,6 +7,11 @@ import MusicKitMetadataPlugin
 import MusicBrainzMetadataPlugin
 import MetadataServerMetadataPlugin
 import DiscogsMetadataPlugin
+import ChineseMusicCatalogSupport
+import NetEaseLyricsPlugin
+import NetEaseMetadataPlugin
+import QQMusicLyricsPlugin
+import QQMusicMetadataPlugin
 
 /// Register factories only. Clients and sessions are created after runtime permission checks.
 public struct BuiltinDataPluginRegistrationProvider: BuiltInPluginRegistrationProvider {
@@ -19,6 +24,24 @@ public struct BuiltinDataPluginRegistrationProvider: BuiltInPluginRegistrationPr
                 metadataAuthorization: .init(status: MusicKitMetadataPlugin.systemAuthorizationStatus, request: MusicKitMetadataPlugin.requestSystemAuthorization))
         ]
         var unavailable: [PluginDescriptor] = []
+        entries += [
+            .init(descriptor: NetEaseMetadataPlugin.descriptor,
+                metadata: { context in NetEaseMetadataPlugin(configuration: try await ChineseMusicConfiguration.from(context)) },
+                metadataAuthorization: .init(status: { .authorized })),
+            .init(descriptor: QQMusicMetadataPlugin.descriptor,
+                metadata: { context in QQMusicMetadataPlugin(configuration: try await ChineseMusicConfiguration.from(context)) },
+                metadataAuthorization: .init(status: { .authorized }))
+        ]
+        if includeLyrics {
+            entries += [
+                .init(descriptor: NetEaseLyricsPlugin.descriptor,
+                    lyrics: { context in NetEaseLyricsPlugin(configuration: try await ChineseMusicConfiguration.from(context)) }),
+                .init(descriptor: QQMusicLyricsPlugin.descriptor,
+                    lyrics: { context in QQMusicLyricsPlugin(configuration: try await ChineseMusicConfiguration.from(context)) })
+            ]
+        } else {
+            unavailable += [NetEaseLyricsPlugin.descriptor, QQMusicLyricsPlugin.descriptor]
+        }
         if let config = MusicBrainzAPIConfiguration.from(bundle: bundle) {
             entries.append(.init(descriptor: MusicBrainzMetadataPlugin.descriptor,
                 metadata: { _ in MusicBrainzMetadataPlugin(configuration: config) }, metadataAuthorization: .init(status: { .authorized })))

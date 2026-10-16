@@ -1,3 +1,4 @@
+import BuiltinPluginSettings
 @testable import SettingsFeature
 import AppServices
 import DesignSystem
@@ -1517,4 +1518,30 @@ private actor DescriptorFormPlugins: PluginServing {
     let source = try #require(current.importPreferences.onlineSourcePreferences.sources.first)
     #expect(source.privacyPolicyVersion == descriptor.policyVersion)
     #expect(current.pluginPreferences.first?.instances.first?.values == ["collection": .text("Albums"), "limit": .number(3), "flag": .flag(true)])
+}
+
+@MainActor
+@Test("Native source settings filter accounts and retain provider-specific login menus")
+func nativePluginAccountsAreScoped() async throws {
+    let sourceID = MediaSourceID(rawValue: "ds.settings")
+    let otherID = MediaSourceID(rawValue: "drive.settings")
+    let serving = OnlineSourceSceneService(snapshot: .init(sources: [
+        .init(sourceID: sourceID, providerKind: .dsAudio, displayName: "DS Account", privacyPolicyVersion: "1.2.0", isRegistered: true, isPrivacyAccepted: true, isEnabled: true, isRuntimeEnabled: true),
+        .init(sourceID: otherID, providerKind: .googleDrive, displayName: "Drive Account", privacyPolicyVersion: "1.2.0", isRegistered: true, isPrivacyAccepted: true, isEnabled: true, isRuntimeEnabled: true)
+    ]))
+    let settings = OnlineSourceSceneSettingsStore(settings: .defaults)
+    let model = OnlineSourcesSceneModel(serving: serving, auditionServing: OnlineSourceSceneAuditionService(),
+        settingsServing: settings, isGoogleDriveOAuthConfigured: true)
+    await model.start()
+    let controller = OnlineSourcesViewController(model: model, providerKind: .dsAudio)
+    controller.loadViewIfNeeded()
+    #expect(controller.tableView(UITableView(), numberOfRowsInSection: 0) == 0)
+    #expect(controller.tableView(UITableView(), numberOfRowsInSection: 1) == 1)
+    let menu = try #require(controller.navigationItem.rightBarButtonItem?.menu)
+    #expect(menu.children.count == 1)
+    #expect(menu.children.first?.title == "DS Audio")
+    let drive = OnlineSourcesViewController(model: model, providerKind: .googleDrive)
+    drive.loadViewIfNeeded()
+    #expect(drive.tableView(UITableView(), numberOfRowsInSection: 1) == 1)
+    #expect(drive.navigationItem.rightBarButtonItem?.menu?.children.count == 1)
 }
