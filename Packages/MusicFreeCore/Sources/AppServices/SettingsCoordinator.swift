@@ -267,7 +267,8 @@ internal actor SettingsCoordinator: SettingsServing {
             crossfadeDuration: transition.crossfadeDuration,
             fadeInDuration: playbackCapabilities.contains(.fade) ? preferences.transition.fadeInDuration : .zero,
             fadeOutDuration: playbackCapabilities.contains(.fade) ? preferences.transition.fadeOutDuration : .zero,
-            skipBoundarySilence: playbackCapabilities.contains(.boundarySilenceSkipping) && preferences.transition.skipBoundarySilence
+            skipBoundarySilence: playbackCapabilities.contains(.boundarySilenceSkipping) && preferences.transition.skipBoundarySilence,
+            smartCrossfadeEnabled: playbackCapabilities.contains(.smartCrossfade) && preferences.transition.smartCrossfadeEnabled
         )
         let effects = AudioEffectConfiguration(
             equalizer: equalizer,

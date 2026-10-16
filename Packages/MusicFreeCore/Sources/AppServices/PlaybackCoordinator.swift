@@ -38,6 +38,7 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
     private var transitionHistoryTask: Task<Void, Never>?
     private var transitionQueueEditCount = 0
     private static let historyLogger = MusicLogger(subsystem: "com.musicfree.app", category: "playback-transition-history")
+    private static let transitionLogger = MusicLogger(subsystem: "com.musicfree.app", category: "playback-transition")
     private var isMutatingQueue = false
     private var queueMutationWaiters: [CheckedContinuation<Void, Never>] = []
     private var isPreparingEngine = false
@@ -573,6 +574,7 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
                     try await activateAudioSession(intent: intent)
                 }
                 try requireCurrentIntent(intent)
+                publishSuccessorExpectation()
                 try engine.play()
                 updateSnapshot(state: engine.state)
                 await publishSnapshot()
@@ -637,6 +639,7 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
             try requireCurrentIntent(intent)
             acceptsEngineEvents = true
             try engine.apply(snapshotValue.effectiveEffects)
+            publishSuccessorExpectation()
             try engine.play()
         } catch {
             try requireCurrentIntent(intent)
@@ -737,6 +740,7 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
             throw SupersededPlaybackIntent()
         }
 
+        publishSuccessorExpectation()
         try await engine.seek(to: targetPosition)
         try requireCurrentIntent(intent)
         guard engine.state.itemID == itemID,
@@ -1086,7 +1090,7 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
         ))
         await publishSnapshot()
         try requireCurrentIntent(intent)
-        if engine.state.itemID != nil, engine.state.itemID != itemID {
+        if engine.state.itemID != nil {
             engine.stop()
         }
 
@@ -1669,7 +1673,8 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
             transition: AudioTransitionConfiguration(mode: transition.mode, crossfadeDuration: transition.crossfadeDuration,
                 fadeInDuration: transitionCapabilities.contains(.fade) ? requested.transition.fadeInDuration : .zero,
                 fadeOutDuration: transitionCapabilities.contains(.fade) ? requested.transition.fadeOutDuration : .zero,
-                skipBoundarySilence: transitionCapabilities.contains(.boundarySilenceSkipping) && requested.transition.skipBoundarySilence),
+                skipBoundarySilence: transitionCapabilities.contains(.boundarySilenceSkipping) && requested.transition.skipBoundarySilence,
+                smartCrossfadeEnabled: transitionCapabilities.contains(.smartCrossfade) && requested.transition.smartCrossfadeEnabled),
             rate: rate
         )
     }
@@ -1811,12 +1816,21 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
     }
 
     private func scheduleNextPreparation() {
-        guard !isShutdown, transitionQueueEditCount == 0, nextTicket == nil, snapshotValue.phase == .playing,
+        guard nextTicket == nil else { return }
+        let transitioning = engine as? any PlaybackTransitionControlling
+        guard !isShutdown, transitionQueueEditCount == 0, snapshotValue.phase == .playing,
               snapshotValue.effectiveEffects.transition.mode != .disabled,
-              let engine, let transitioning = engine as? any PlaybackTransitionControlling,
-              let sessionID, let currentItemID = snapshotValue.currentItemID else { return }
+              let engine, let transitioning,
+              let sessionID, let currentItemID = snapshotValue.currentItemID else {
+            transitioning?.setAutomaticSuccessorExpected(false)
+            return
+        }
         let next = queue.repeatMode == .one ? queue.currentEntry : adjacentOrWrappedPlayableEntry(direction: 1)
-        guard let next, let itemID = next.itemID else { return }
+        guard let next, let itemID = next.itemID else {
+            transitioning.setAutomaticSuccessorExpected(false)
+            return
+        }
+        transitioning.setAutomaticSuccessorExpected(true)
         let ticket = PlaybackTransitionTicket(sessionID: sessionID, intent: playbackIntentVersion,
             queueRevision: queueRevision, generation: engine.state.generation,
             currentItemID: currentItemID, nextEntryID: next.id)
@@ -1837,11 +1851,19 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
                 // Failure of a speculative successor leaves the current item
                 // playing and allows the existing EOF path to resolve afresh.
                 if self.nextTicket == ticket {
+                    let failure = AppServiceError.mapped(error, operation: "playback.prepareNext")
+                    Self.transitionLogger.info("next preparation fallback: \(failure.diagnosticCode)")
                     self.nextTicket = nil; self.nextPreparationTask = nil
                     transitioning.cancelNext()
                 }
             }
         }
+    }
+
+    private func publishSuccessorExpectation() {
+        (engine as? any PlaybackTransitionControlling)?.setAutomaticSuccessorExpected(
+            snapshotValue.effectiveEffects.transition.mode != .disabled && successor(in: queue) != nil
+        )
     }
 
     private func successor(in snapshot: PlaybackQueueSnapshot) -> PlaybackQueueEntry? {
@@ -1867,6 +1889,7 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
         let old = snapshotValue.effectiveEffects
         if old.transition.mode != effects.transition.mode || old.transition.crossfadeDuration != effects.transition.crossfadeDuration
             || old.transition.skipBoundarySilence != effects.transition.skipBoundarySilence
+            || old.transition.smartCrossfadeEnabled != effects.transition.smartCrossfadeEnabled
             || old.rate != effects.rate { invalidateNext() }
     }
 

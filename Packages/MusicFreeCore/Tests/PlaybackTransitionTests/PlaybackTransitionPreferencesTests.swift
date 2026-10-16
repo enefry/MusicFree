@@ -13,14 +13,16 @@ import Testing
         #expect(value.crossfadeDuration == .seconds(min(12, seconds)))
         #expect(!value.gaplessPlaybackEnabled)
         #expect(!value.skipBoundarySilence)
+        #expect(!value.smartCrossfadeEnabled)
         #expect(value.fadeInDuration == .zero)
         #expect(value.fadeOutDuration == .zero)
     }
 
     @Test func audioConfigurationRoundTripAndLegacyDefaults() throws {
-        let value = AudioTransitionConfiguration(mode: .crossfade, crossfadeDuration: .seconds(12), skipBoundarySilence: true)
+        let value = AudioTransitionConfiguration(mode: .crossfade, crossfadeDuration: .seconds(12), skipBoundarySilence: true, smartCrossfadeEnabled: true)
         #expect(try JSONDecoder().decode(AudioTransitionConfiguration.self, from: JSONEncoder().encode(value)) == value)
         #expect(try JSONDecoder().decode(AudioTransitionConfiguration.self, from: Data("{\"mode\":\"gapless\"}".utf8)).skipBoundarySilence == false)
+        #expect(try JSONDecoder().decode(AudioTransitionConfiguration.self, from: Data("{\"mode\":\"gapless\"}".utf8)).smartCrossfadeEnabled == false)
     }
 
     @Test func defaultsAndIndependentRoundTrip() throws {
@@ -28,11 +30,12 @@ import Testing
         #expect(TransitionPreferences.defaults.fadeOutDuration == .milliseconds(120))
         #expect(!TransitionPreferences.defaults.isCrossfadeEnabled)
         let value = try TransitionPreferences(gaplessPlaybackEnabled: false, crossfadeDuration: .seconds(12),
-            fadeInDuration: .zero, fadeOutDuration: .seconds(1), skipBoundarySilence: true)
+            fadeInDuration: .zero, fadeOutDuration: .seconds(1), skipBoundarySilence: true, smartCrossfadeEnabled: true)
         #expect(try JSONDecoder().decode(TransitionPreferences.self, from: JSONEncoder().encode(value)) == value)
         let old = try JSONDecoder().decode(PlaybackPreferences.self, from: Data("{}".utf8))
         #expect(old.transition.fadeInDuration == .zero)
         #expect(old.transition.fadeOutDuration == .zero)
+        #expect(!old.transition.smartCrossfadeEnabled)
     }
 
     @Test(arguments: [Duration.seconds(-1), .milliseconds(3001), .milliseconds(12001), .seconds(30)])

@@ -1,6 +1,252 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "分析首尾静音、响度和节拍；拍速接近时自动对拍，过渡后平滑恢复原速。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Analyzes edge silence, levels and beats. Matches similar tempos, then smoothly restores the original speed after the transition."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "分析首尾静音、响度和节拍；拍速接近时自动对拍，过渡后平滑恢复原速。"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Analyse les silences, le volume et le rythme. Aligne les tempos proches, puis rétablit progressivement la vitesse originale après la transition."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Analysiert Stille, Lautstärke und Beats. Gleicht ähnliche Tempi an und kehrt nach dem Übergang sanft zur Originalgeschwindigkeit zurück."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Analiza silencios, volumen y ritmo. Sincroniza tempos similares y recupera suavemente la velocidad original tras la transición."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "曲の前後の無音、音量、拍を分析します。テンポが近い曲の拍を合わせ、切り替え後に元の速度へ滑らかに戻します。"
+          }
+        }
+      }
+    },
+    "智能交叉渐变" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Smart crossfade"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "智能交叉渐变"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fondu intelligent"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Intelligente Überblendung"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transición inteligente"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "スマートクロスフェード"
+          }
+        }
+      }
+    },
+    "智能模式会自动跳过首尾静音。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Smart mode automatically skips leading and trailing silence."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "智能模式会自动跳过首尾静音。"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le mode intelligent saute automatiquement les silences au début et à la fin."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der intelligente Modus überspringt automatisch Stille am Anfang und Ende."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El modo inteligente omite automáticamente los silencios iniciales y finales."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "スマートモードでは曲の前後の無音を自動的にスキップします。"
+          }
+        }
+      }
+    },
+    "最长过渡时长" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Maximum transition duration"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最长过渡时长"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Durée maximale de transition"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Maximale Übergangsdauer"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Duración máxima de transición"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最大トランジション時間"
+          }
+        }
+      }
+    },
+    "自动 · 最长 %.1f s" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auto · up to %.1f s"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自动 · 最长 %.1f s"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auto · jusqu’à %.1f s"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auto · bis zu %.1f s"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auto · hasta %.1f s"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自動 · 最大 %.1f s"
+          }
+        }
+      }
+    },
+    "自动过渡不超过此时长；节拍不可靠时按响度选择，分析失败时使用固定渐变。" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Automatic transitions stay within this limit. Unclear beats use levels; failed analysis uses a fixed crossfade."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自动过渡不超过此时长；节拍不可靠时按响度选择，分析失败时使用固定渐变。"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Les transitions respectent cette limite. Rythme incertain : volume ; échec d’analyse : fondu fixe."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Automatische Übergänge bleiben innerhalb dieser Grenze. Bei unklaren Beats entscheidet die Lautstärke; bei Analysefehlern gilt die feste Überblendung."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Las transiciones respetan este límite. Ritmo incierto: volumen; error de análisis: transición fija."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自動切り替えはこの時間以内です。拍が不明確なら音量を使い、分析できない場合は固定時間で切り替えます。"
+          }
+        }
+      }
+    },
     "跳过首尾静音" : {
       "extractionState" : "manual",
       "localizations" : {

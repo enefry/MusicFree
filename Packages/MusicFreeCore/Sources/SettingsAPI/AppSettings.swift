@@ -52,7 +52,8 @@ public struct AppSettings: Codable, Equatable, Hashable, Sendable {
             crossfadeDuration: playbackPreferences.transition.crossfadeDuration,
             fadeInDuration: playbackPreferences.transition.fadeInDuration,
             fadeOutDuration: playbackPreferences.transition.fadeOutDuration,
-            skipBoundarySilence: playbackPreferences.transition.skipBoundarySilence
+            skipBoundarySilence: playbackPreferences.transition.skipBoundarySilence,
+            smartCrossfadeEnabled: playbackPreferences.transition.smartCrossfadeEnabled
         )
         _ = try SleepTimerPreferences(schedules: playbackPreferences.sleepTimer.schedules)
         _ = try StoragePreferences(

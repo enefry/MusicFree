@@ -51,6 +51,8 @@ let package = Package(
                 .product(name: "MediaSourceAPI", package: "MusicFreeCore"),
                 .product(name: "PlaybackAPI", package: "MusicFreeCore"),
                 .product(name: "MusicTestSupport", package: "MusicFreeCore"),
+                .product(name: "AppServices", package: "MusicFreeCore"),
+                .product(name: "SettingsAPI", package: "MusicFreeCore"),
                 .product(name: "LocalMediaAdapter", package: "MusicFreeInfrastructure")
             ],
             resources: [

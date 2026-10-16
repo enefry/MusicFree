@@ -2,6 +2,7 @@
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <math.h>
+#include <string.h>
 #include <AudioToolbox/AudioToolbox.h>
 
 // Two SPSC rings. Only a decoder queue writes its slot; only the render thread
@@ -13,6 +14,9 @@ typedef struct {
     _Atomic int64_t retiredFrame;
     _Atomic bool eof;
     _Atomic bool idle;
+    double tempoRate, tempoHold, tempoRecovery;
+    _Atomic bool hasTempo;
+    _Atomic int64_t tempoTailOutput, tempoTailCorrection;
 } Slot;
 struct MFTGraph {
     uint32_t channels, capacity;
@@ -22,6 +26,9 @@ struct MFTGraph {
     _Atomic uint32_t overlap;
     _Atomic uint32_t fadeOut;
     _Atomic uint64_t command;
+    _Atomic uint64_t haltedCommand;
+    _Atomic bool expectsSuccessor;
+    _Atomic uint64_t diagnosticEnvelope, diagnosticCommand, callbackFrames;
     _Atomic int64_t handoff;
     _Atomic bool halted, ended;
     _Atomic bool overlapping;
@@ -47,6 +54,7 @@ MFTGraph *mft_create(uint32_t channels, uint32_t capacity) {
         atomic_store_explicit(&g->slots[i].total, -1,memory_order_release);
         atomic_store_explicit(&g->slots[i].idle, i != 0,memory_order_release);
         atomic_store_explicit(&g->slots[i].retiredFrame, -1,memory_order_release);
+        atomic_store_explicit(&g->slots[i].tempoTailOutput, -1,memory_order_release);
         if (!g->slots[i].pcm) { mft_destroy(g); return NULL; }
     }
     return g;
@@ -108,6 +116,16 @@ float mft_mix_gain(double t,bool incoming){
     t=fmin(1,fmax(0,t));double a=cos(t*M_PI_2),b=sin(t*M_PI_2);
     return (float)((incoming?b:a)/fmax(1,a+b));
 }
+// Transport fades ease out of the current gain and settle at silence with
+// zero endpoint slopes. Retargeting still starts at the last rendered gain.
+static double transport_fade_progress(double t){return t*t*(3-2*t);}
+// Approximately -60 dB across the natural tail. Subtract the noise floor
+// so the final sample reaches exact silence instead of jumping from 0.001.
+static float natural_tail_gain(int64_t remaining,uint32_t frames){
+    if(remaining<=1)return 0;
+    if(remaining>=frames)return 1;
+    return (float)(expm1(6.907755278982137*(double)(remaining-1)/(frames-1))/999.0);
+}
 static bool available(Slot*p){return atomic_load_explicit(&p->write,memory_order_acquire)>atomic_load_explicit(&p->read,memory_order_acquire);}
 static bool finished(Slot*p){return !available(p)&&atomic_load_explicit(&p->eof,memory_order_acquire);}
 void mft_render(MFTGraph*g,float**out,uint32_t n){
@@ -120,7 +138,10 @@ void mft_render(MFTGraph*g,float**out,uint32_t n){
             atomic_store_explicit(&g->halted,false,memory_order_release);
             if(!g->rampLength)g->gain=g->target;
         }
-        if(g->target==0&&g->gain==0){atomic_store_explicit(&g->halted,true,memory_order_release);continue;}
+        if(g->target==0&&g->gain==0){
+            atomic_store_explicit(&g->haltedCommand,cmd,memory_order_release);
+            atomic_store_explicit(&g->halted,true,memory_order_release);continue;
+        }
         uint64_t pending=atomic_load_explicit(&g->next,memory_order_acquire);
         int a=atomic_load_explicit(&g->active,memory_order_acquire),b=(int32_t)pending;
         Slot*p=&g->slots[a];int64_t pos=atomic_load_explicit(&p->position,memory_order_acquire),total=atomic_load_explicit(&p->total,memory_order_acquire);
@@ -165,7 +186,9 @@ void mft_render(MFTGraph*g,float**out,uint32_t n){
         if(g->rampPosition<g->rampLength){
             double t=g->rampLength==1?1:(double)g->rampPosition/(g->rampLength-1);
             g->rampPosition++;
-            g->gain=g->rampStart+(g->target-g->rampStart)*(float)t;
+            if(g->target==0)t=transport_fade_progress(t);
+            // Cast after interpolation: rounding t first can halt an S fade early.
+            g->gain=(float)(g->rampStart+(g->target-g->rampStart)*t);
         }else g->gain=g->target;
         uint64_t r=atomic_load_explicit(&p->read,memory_order_acquire);
         // The handoff frame is the first positive incoming envelope sample.
@@ -174,8 +197,9 @@ void mft_render(MFTGraph*g,float**out,uint32_t n){
         uint32_t tail=atomic_load_explicit(&g->fadeOut,memory_order_acquire);
         int64_t end=atomic_load_explicit(&p->total,memory_order_acquire),position=atomic_load_explicit(&p->position,memory_order_acquire);
         // Once the natural tail has begun, a late arm cannot lift A's gain.
-        if(g->outgoing<0&&((int32_t)atomic_load_explicit(&g->next,memory_order_acquire)<0||g->tailGain[a]<1)&&tail&&end>=0){
-            g->tailGain[a]=fmin(g->tailGain[a],fmin(1,fmax(0,(double)(end-position)/tail)));
+        if(g->outgoing<0&&((!atomic_load_explicit(&g->expectsSuccessor,memory_order_acquire)&&
+           (int32_t)atomic_load_explicit(&g->next,memory_order_acquire)<0)||g->tailGain[a]<1)&&tail&&end>=0){
+            g->tailGain[a]=fmin(g->tailGain[a],natural_tail_gain(end-position,tail));
             gainB*=g->tailGain[a];
         }
         for(uint32_t c=0;c<g->channels;c++)out[c][f]=p->pcm[(r%g->capacity)*g->channels+c]*gainB*g->gain;
@@ -193,18 +217,59 @@ void mft_render(MFTGraph*g,float**out,uint32_t n){
         }
         atomic_fetch_add_explicit(&g->clock,1,memory_order_relaxed);
     }
+    // Publish once per block. No logging, allocation or control-thread reads
+    // of render-owned floats; gain and its progress share one atomic value.
+    uint32_t bits; memcpy(&bits,&g->gain,sizeof(bits));
+    atomic_store_explicit(&g->diagnosticEnvelope,((uint64_t)g->rampPosition<<32)|bits,memory_order_release);
+    atomic_store_explicit(&g->diagnosticCommand,g->seenCommand,memory_order_release);
+    atomic_fetch_add_explicit(&g->callbackFrames,n,memory_order_relaxed);
+}
+MFTDiagnostics mft_diagnostics(MFTGraph*g){
+    MFTDiagnostics result;
+    result.requestedCommand=atomic_load_explicit(&g->command,memory_order_acquire);
+    result.renderedCommand=atomic_load_explicit(&g->diagnosticCommand,memory_order_acquire);
+    uint64_t envelope=atomic_load_explicit(&g->diagnosticEnvelope,memory_order_acquire);
+    uint32_t bits=(uint32_t)envelope; memcpy(&result.gain,&bits,sizeof(bits));
+    result.rampPosition=(uint32_t)(envelope>>32);
+    result.callbackFrames=atomic_load_explicit(&g->callbackFrames,memory_order_acquire);
+    return result;
 }
 int mft_active(MFTGraph*g){return atomic_load_explicit(&g->active,memory_order_acquire);}
 int64_t mft_position(MFTGraph*g,int s){return atomic_load_explicit(&g->slots[s].position,memory_order_acquire);}
 void mft_set_source_offset(MFTGraph*g,int s,int64_t n){atomic_store_explicit(&g->slots[s].sourceOffset,n,memory_order_release);}
-int64_t mft_source_position(MFTGraph*g,int s){return mft_position(g,s)+atomic_load_explicit(&g->slots[s].sourceOffset,memory_order_acquire);}
+double mft_tempo_source_frame(double rate,double hold,double recovery,double frame){
+    if(frame<=hold)return frame*rate;
+    double u=fmin(recovery,fmax(0,frame-hold)),x=recovery>0?u/recovery:0;
+    // Integral of a smoothstep rate recovery: rate and its slope are continuous.
+    return hold*rate+rate*u+(1-rate)*recovery*(x*x*x-0.5*x*x*x*x)+fmax(0,frame-hold-recovery);
+}
+void mft_set_tempo(MFTGraph*g,int s,double rate,double hold,double recovery){
+    Slot*p=&g->slots[s];p->tempoRate=rate;p->tempoHold=hold;p->tempoRecovery=recovery;
+    atomic_store_explicit(&p->hasTempo,true,memory_order_release);
+}
+void mft_set_tempo_tail(MFTGraph*g,int s,int64_t frame,int64_t correction){
+    Slot*p=&g->slots[s];atomic_store_explicit(&p->tempoTailCorrection,correction,memory_order_relaxed);
+    atomic_store_explicit(&p->tempoTailOutput,frame,memory_order_release);
+}
+int64_t mft_source_position(MFTGraph*g,int s){
+    Slot*p=&g->slots[s];int64_t output=mft_position(g,s);double position=(double)output;
+    if(atomic_load_explicit(&p->hasTempo,memory_order_acquire))position=mft_tempo_source_frame(p->tempoRate,p->tempoHold,p->tempoRecovery,position);
+    int64_t tail=atomic_load_explicit(&p->tempoTailOutput,memory_order_acquire);
+    int64_t correction=tail>=0&&output>=tail?atomic_load_explicit(&p->tempoTailCorrection,memory_order_relaxed):0;
+    return (int64_t)llround(position)+correction+atomic_load_explicit(&p->sourceOffset,memory_order_acquire);
+}
 int64_t mft_handoff(MFTGraph*g){return atomic_load_explicit(&g->handoff,memory_order_acquire);}
 int64_t mft_frame(MFTGraph*g){return (int64_t)atomic_load_explicit(&g->clock,memory_order_acquire);}
-bool mft_halted(MFTGraph*g){return atomic_load_explicit(&g->halted,memory_order_acquire);}
+bool mft_halted(MFTGraph*g){
+    return atomic_load_explicit(&g->halted,memory_order_acquire)&&
+        atomic_load_explicit(&g->haltedCommand,memory_order_acquire)==atomic_load_explicit(&g->command,memory_order_acquire);
+}
 bool mft_ended(MFTGraph*g){return atomic_load_explicit(&g->ended,memory_order_acquire);}
 bool mft_idle(MFTGraph*g,int s){return atomic_load_explicit(&g->slots[s].idle,memory_order_acquire);}
 void mft_reset_slot(MFTGraph*g,int s){
     g->tailGain[s]=1;
+    atomic_store_explicit(&g->slots[s].hasTempo,false,memory_order_release);
+    atomic_store_explicit(&g->slots[s].tempoTailOutput,-1,memory_order_release);
     atomic_store_explicit(&g->slots[s].sourceOffset,0,memory_order_release);
     Slot*p=&g->slots[s];atomic_store_explicit(&p->read,0,memory_order_release);atomic_store_explicit(&p->write,0,memory_order_release);
     atomic_store_explicit(&p->position,0,memory_order_release);atomic_store_explicit(&p->total,-1,memory_order_release);atomic_store_explicit(&p->eof,false,memory_order_release);
@@ -217,6 +282,7 @@ void mft_render_buffers(MFTGraph*g,void*list,uint32_t n){
     mft_render(g,planes,n);
 }
 void mft_fade_out(MFTGraph*g,uint32_t n){atomic_store_explicit(&g->fadeOut,n,memory_order_release);}
+void mft_expect_successor(MFTGraph*g,bool expected){atomic_store_explicit(&g->expectsSuccessor,expected,memory_order_release);}
 int64_t mft_retired_frame(MFTGraph*g,int s){return atomic_load_explicit(&g->slots[s].retiredFrame,memory_order_acquire);}
 bool mft_overlapping(MFTGraph*g){return atomic_load_explicit(&g->overlapping,memory_order_acquire);}
 bool mft_starved(MFTGraph*g){return atomic_load_explicit(&g->starved,memory_order_acquire);}

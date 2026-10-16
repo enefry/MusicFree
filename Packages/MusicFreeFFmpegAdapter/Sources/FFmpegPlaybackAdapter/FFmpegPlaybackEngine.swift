@@ -3,7 +3,6 @@ import FFmpegAudioKit
 import Foundation
 import MediaSourceAPI
 import MusicDomain
-import OSLog
 import PlaybackAPI
 
 /// 独立于 VLC 的音频播放引擎：ffmpeg 解码 → AVAudioEngine 输出。
@@ -15,7 +14,8 @@ import PlaybackAPI
 /// 支持 CUE 分段播放及 AVAudioUnitEQ 均衡器。其它效果能力位按实现逐步点亮。
 @MainActor
 public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControlling, PlaybackTransitionControlling {
-    private static let logger = Logger(subsystem: "win.tools4me.music", category: "ffmpeg-playback")
+    private static let logger = MusicLogger(subsystem: "win.tools4me.music", category: "ffmpeg-playback")
+    private let diagnosticID = UUID().uuidString
     /// 随当前资源变化：远程顺序流（服务端不支持 Range，或尚未拿到响应头）
     /// 不含 `.seeking`，供上层据此隐藏进度拖动。
     public var capabilities: PlaybackCapabilities {
@@ -24,11 +24,12 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
         if configuredRate == 1, decoder.map({ $0.format.channelCount <= 8 }) ?? true {
             result.insert(.fade)
             if (currentItem.map(supportsLocalTransition) ?? true), pcmProcessorFactory == nil || processorPreservesTiming {
-                result.formUnion([.gapless, .crossfade, .boundarySilenceSkipping])
+                result.formUnion([.gapless, .crossfade, .boundarySilenceSkipping, .smartCrossfade])
             }
         }
         return result
     }
+    var lastSmartTransitionPlan: FFmpegSmartTransitionPlan? { transitionGraph?.lastSmartTransitionPlan }
     public var equalizerDescriptor: EqualizerDescriptor? { Self.equalizerLayout }
 
     /// Narrow hook handed off to A in the 1.4 playback development log. The
@@ -98,6 +99,7 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
     public private(set) var isMuted: Bool = false
 
     let audioEngine = AVAudioEngine()
+    private let startOutput: (AVAudioEngine) throws -> Void
     private let playerNode = AVAudioPlayerNode()
     private let timePitch = AVAudioUnitTimePitch()
     // Kept in the signal chain even when disabled so applying EQ does not
@@ -105,6 +107,115 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
     let equalizerUnit = AVAudioUnitEQ(numberOfBands: 10)
     // Optional host-owned post-mix effect. This graph has no PluginRuntime dependency.
     private var postEqualizerEffects: [AVAudioNode] = []
+    private struct PCMRecording {
+        let directory: URL
+        let mix: FFmpegPCMStorageNode
+        let output: FFmpegPCMStorageNode
+        let offline: Bool
+        let outputStartFrame: Int64
+        var tapInstalled: Bool
+        var endedByGraphChange = false
+    }
+    private var pcmRecording: PCMRecording?
+    private struct PCMRecordingEnd {
+        let targetOutputFrame: Int64
+        let epoch: UInt64
+        let generation: PlaybackGeneration
+        let itemID: MediaItemID
+    }
+    private var pcmRecordingEnd: PCMRecordingEnd?
+
+    /// Configure the stopped, prepared engine for deterministic PCM export.
+    /// Realtime playback uses the normal device route and needs no such call.
+    public func enableOfflinePCMRendering(format: AVAudioFormat, maximumFrameCount: AVAudioFrameCount) throws {
+        guard !audioEngine.isRunning else { throw FFmpegPCMRecordingError.requiresStoppedEngine }
+        guard pcmRecording == nil else { throw FFmpegPCMRecordingError.alreadyRecording }
+        try audioEngine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: maximumFrameCount)
+    }
+
+    public func disableOfflinePCMRendering() throws {
+        guard !audioEngine.isRunning else { throw FFmpegPCMRecordingError.requiresStoppedEngine }
+        guard pcmRecording == nil else { throw FFmpegPCMRecordingError.alreadyRecording }
+        audioEngine.disableManualRenderingMode()
+    }
+
+    /// Begin an explicit diagnostic recording after prepare (and, for offline
+    /// validation, after enableOfflinePCMRendering), before play. Files contain
+    /// Float32 PCM; recording never changes the mix or playback volume.
+    public func startPCMRecording(in directory: URL) throws {
+        guard !audioEngine.isRunning else { throw FFmpegPCMRecordingError.requiresStoppedEngine }
+        guard pcmRecording == nil else { throw FFmpegPCMRecordingError.alreadyRecording }
+        guard let graph = transitionGraph else { throw FFmpegPCMRecordingError.requiresPreparedTransitionGraph }
+        guard ["transition-mix.wav", "output.wav", "recording.json"].allSatisfy({
+            !FileManager.default.fileExists(atPath: directory.appendingPathComponent($0).path)
+        }) else { throw FFmpegPCMRecordingError.invalidFormatOrDestination }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let mix = try FFmpegPCMStorageNode(fileURL: directory.appendingPathComponent("transition-mix.wav"), format: graph.format)
+        let offline = audioEngine.isInManualRenderingMode && audioEngine.manualRenderingMode == .offline
+        let format = offline ? audioEngine.manualRenderingFormat : audioEngine.mainMixerNode.outputFormat(forBus: 0)
+        let output: FFmpegPCMStorageNode
+        do { output = try FFmpegPCMStorageNode(fileURL: directory.appendingPathComponent("output.wav"), format: format) }
+        catch {
+            mix.closeInput()
+            Task { _ = await mix.finish() }
+            throw error
+        }
+        graph.setPCMStorage(mix)
+        if !offline {
+            audioEngine.mainMixerNode.installTap(onBus: 0, bufferSize: 1024, format: nil,
+                block: FFmpegPCMStorageNode.tap(output))
+        }
+        pcmRecording = PCMRecording(directory: directory, mix: mix, output: output,
+            offline: offline, outputStartFrame: offline ? audioEngine.manualRenderingSampleTime : 0, tapInstalled: !offline)
+    }
+
+    /// Render through the actual AVAudioEngine chain and store every returned
+    /// output block. Offline taps may withhold a partial block, so this entry
+    /// point provides exact final-output coverage for validation/export.
+    public func renderOfflineRecording(_ frames: AVAudioFrameCount, to buffer: AVAudioPCMBuffer) throws -> AVAudioEngineManualRenderingStatus {
+        guard audioEngine.isInManualRenderingMode, audioEngine.manualRenderingMode == .offline,
+              let recording = pcmRecording, recording.offline else {
+            throw FFmpegPCMRecordingError.requiresOfflineRendering
+        }
+        let status = try audioEngine.renderOffline(frames, to: buffer)
+        if status == .success {
+            recording.output.record(buffer)
+            if let end = pcmRecordingEnd, audioEngine.manualRenderingSampleTime >= end.targetOutputFrame {
+                pcmRecordingEnd = nil
+                handlePlaybackEnded(epoch: end.epoch, generation: end.generation, itemID: end.itemID)
+            }
+        }
+        return status
+    }
+
+    /// Pause/stop output first. Drain on the file queue and finalize both WAVs
+    /// before returning; repeated finish calls cannot reuse an old session.
+    public func finishPCMRecording() async throws -> FFmpegPCMRecordingReport {
+        guard !audioEngine.isRunning else { throw FFmpegPCMRecordingError.requiresStoppedEngine }
+        guard let recording = pcmRecording else { throw FFmpegPCMRecordingError.notRecording }
+        detachPCMRecordingInput(graphChanged: false)
+        pcmRecording = nil
+        let mix = await recording.mix.finish(), output = await recording.output.finish()
+        let report = FFmpegPCMRecordingReport(transitionMix: mix, output: output,
+            outputDelivery: recording.offline ? "offline-render-blocks" : "realtime-tap-blocks",
+            endedByGraphChange: recording.endedByGraphChange)
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(report).write(to: recording.directory.appendingPathComponent("recording.json"), options: .atomic)
+        return report
+    }
+
+    private func detachPCMRecordingInput(graphChanged: Bool) {
+        guard var recording = pcmRecording else { return }
+        pcmRecordingEnd = nil
+        if recording.tapInstalled {
+            audioEngine.mainMixerNode.removeTap(onBus: 0)
+            recording.tapInstalled = false
+        }
+        transitionGraph?.setPCMStorage(nil)
+        recording.mix.closeInput(); recording.output.closeInput()
+        recording.endedByGraphChange = recording.endedByGraphChange || graphChanged
+        pcmRecording = recording
+    }
     private let equalizerManagedExternally: Bool
     private let decodeQueue = DispatchQueue(label: "com.musicfree.ffmpeg.decode")
     private let makeRemoteSource: (RemotePlaybackRequest) -> URLSessionByteSource
@@ -133,6 +244,10 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
     private var nextPreparationID: UUID?
     private var controlVersion: UInt64 = 0
     private var softControlTask: Task<Void, Never>?
+    private var naturalEndDrainTask: Task<Void, Never>?
+    private var automaticSuccessorExpected = false
+    // Track fades can be seconds long; transport controls stay responsive.
+    private static let transportFadeLimit: Duration = .milliseconds(80)
     private var graphBasePosition: Duration = .zero
     private let nextDecodeQueue = DispatchQueue(label: "com.musicfree.ffmpeg.next")
     private var currentDecodeQueue: DispatchQueue?
@@ -184,8 +299,10 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
         self.init(remoteSessionConfiguration: .default, equalizerManagedExternally: equalizerManagedExternally)
     }
 
-    init(remoteSessionConfiguration: URLSessionConfiguration, equalizerManagedExternally: Bool = false) {
+    init(remoteSessionConfiguration: URLSessionConfiguration, equalizerManagedExternally: Bool = false,
+         startOutput: @escaping (AVAudioEngine) throws -> Void = { try $0.start() }) {
         self.equalizerManagedExternally = equalizerManagedExternally
+        self.startOutput = startOutput
         makeRemoteSource = { request in
             URLSessionByteSource(request: request, configuration: remoteSessionConfiguration)
         }
@@ -304,7 +421,7 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
                 throw CancellationError()
             }
             guard isCurrentPreparation(generation) else { throw CancellationError() }
-            Self.logger.error("prepare failed: \(Self.safeErrorCode(error), privacy: .public)")
+            Self.logger.error("engine=\(diagnosticID) prepare failed: \(Self.safeErrorCode(error))")
             let playbackError = Self.playbackError(from: error, fallbackCode: "ffmpeg_open_failed")
             fail(playbackError, generation: generation, itemID: item.itemID)
             throw playbackError
@@ -366,6 +483,8 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
     }
 
     public func play() throws {
+        logTransitionControl("play")
+        let isResuming = state.phase == .paused
         softControlTask?.cancel(); softControlTask = nil
         controlVersion &+= 1
         transitionGraph?.onHalted = nil
@@ -375,13 +494,6 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
             return
         }
         guard let item = currentItem, let decoder else { throw PlaybackError.noCurrentItem }
-        if !audioEngine.isRunning {
-            do {
-                try audioEngine.start()
-            } catch {
-                throw PlaybackError.engineFailure(code: "audio_engine_start_failed")
-            }
-        }
         let generation = state.generation
         var position = state.position
         if didReachEnd {
@@ -420,9 +532,14 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
             position = .zero
         }
         wantsPlayback = true
-        transitionGraph?.ramp(configuredRate == 1 ? transitionConfiguration.fadeInDuration : .zero, pause: false)
+        let fadeIn = isResuming ? min(transitionConfiguration.fadeInDuration, Self.transportFadeLimit)
+            : transitionConfiguration.fadeInDuration
+        // Publish the command before starting output; paused seeks must not
+        // prime the mixer with halted source buffers or retain an old command.
+        transitionGraph?.ramp(configuredRate == 1 ? fadeIn : .zero, pause: false)
         updateOutput()
         if state.phase == .failed { throw state.error ?? PlaybackError.engineFailure(code: "audio_engine_start_failed") }
+        logTransitionControl("play-started")
         state = PlaybackState(
             phase: .playing,
             generation: generation,
@@ -435,18 +552,21 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
     }
 
     public func pause() {
+        logTransitionControl("pause")
         if configuredRate == 1, let graph = transitionGraph, transitionConfiguration.fadeOutDuration > .zero,
            audioEngine.isRunning {
             cancelNext()
             controlVersion &+= 1
             let version = controlVersion
             let graph = transitionGraph ?? graph
-            graph.ramp(transitionConfiguration.fadeOutDuration, pause: true)
+            let duration = min(transitionConfiguration.fadeOutDuration, Self.transportFadeLimit)
+            graph.ramp(duration, pause: true)
             graph.onHalted = { [weak self] in
                 guard let self, self.controlVersion == version else { return }
-                self.hardPause()
+                self.logTransitionControl("fade-complete-pause")
+                self.drainSoftControlOutput(version: version, stop: false)
             }
-            scheduleSoftDeadline(transitionConfiguration.fadeOutDuration, version: version, stop: false)
+            scheduleSoftDeadline(duration, version: version, stop: false)
             wantsPlayback = false
             let position = displayPosition()
             state = PlaybackState(phase: .paused, generation: state.generation,
@@ -458,7 +578,13 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
     }
 
     public func hardPause() {
+        logTransitionControl("hard-pause")
+        // Failure has already torn down the decoder/output. Keep that state
+        // so the coordinator prepares the item again on the next resume;
+        // system interruption/route notifications can still request a pause.
+        guard state.phase != .failed else { return }
         softControlTask?.cancel(); softControlTask = nil
+        transitionGraph?.onHalted = nil
         wantsPlayback = false
         updateOutput()
         cancelNext()
@@ -479,11 +605,13 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
             duration: currentDuration
         )
         if let itemID = state.itemID {
+            yield(.positionChanged(generation: generation, itemID: itemID, position: position, duration: currentDuration))
             yield(.phaseChanged(generation: generation, itemID: itemID, phase: .paused))
         }
     }
 
     public func stop() {
+        logTransitionControl("stop")
         if configuredRate == 1, let graph = transitionGraph, transitionConfiguration.fadeOutDuration > .zero,
            audioEngine.isRunning {
             cancelNext()
@@ -493,7 +621,8 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
             graph.ramp(transitionConfiguration.fadeOutDuration, pause: true)
             graph.onHalted = { [weak self] in
                 guard let self, self.controlVersion == version else { return }
-                self.hardStop()
+                self.logTransitionControl("fade-complete-stop")
+                self.drainSoftControlOutput(version: version, stop: true)
             }
             scheduleSoftDeadline(transitionConfiguration.fadeOutDuration, version: version, stop: true)
             wantsPlayback = false
@@ -504,9 +633,13 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
         hardStop()
     }
 
-    public func waitForSoftStop() async { await softControlTask?.value }
+    public func waitForSoftStop() async {
+        // Envelope completion replaces the deadline with a pipeline drain.
+        while let task = softControlTask { await task.value }
+    }
 
     public func hardStop() {
+        logTransitionControl("hard-stop")
         softControlTask?.cancel(); softControlTask = nil
         cancelNext()
         controlVersion &+= 1
@@ -530,16 +663,28 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
     }
 
     public func seek(to position: Duration) async throws {
-        cancelNext()
-        softControlTask?.cancel(); softControlTask = nil
-        controlVersion &+= 1
         guard capabilities.contains(.seeking) else {
             throw PlaybackError.unsupportedCapability(.seeking)
         }
-        guard let item = currentItem, let decoder else {
+        guard currentItem != nil, decoder != nil else {
             throw PlaybackError.noCurrentItem
         }
         try validatePosition(position, duration: currentDuration)
+
+        let resume = wantsPlayback
+        let suspendedPhase = state.phase
+        let successorExpected = automaticSuccessorExpected
+        softControlTask?.cancel(); softControlTask = nil
+        controlVersion &+= 1
+        transitionGraph?.onHalted = nil
+        bufferingTask?.cancel(); bufferingTask = nil
+        positionTask?.cancel(); positionTask = nil
+        if !resume { audioEngine.pause() }
+        cancelNext()
+        setAutomaticSuccessorExpected(resume && successorExpected)
+        guard let item = currentItem, let decoder else { throw PlaybackError.noCurrentItem }
+        let phase: PlaybackPhase = resume ? .playing : suspendedPhase
+        logTransitionControl("seek")
 
         let generation = state.generation
         restartFeeder(
@@ -548,8 +693,9 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
             generation: generation,
             itemID: item.itemID
         )
+        if state.phase == .failed { throw state.error ?? PlaybackError.engineFailure(code: "audio_engine_start_failed") }
         state = PlaybackState(
-            phase: state.phase,
+            phase: phase,
             generation: generation,
             itemID: item.itemID,
             position: position,
@@ -592,10 +738,13 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
         if effects.replayGain.mode != .disabled {
             throw PlaybackError.unsupportedCapability(.replayGain)
         }
-        let rebuildBoundaries = transitionConfiguration.skipBoundarySilence != effects.transition.skipBoundarySilence
+        let rebuildBoundaries = transitionConfiguration.skipBoundarySilence != effects.transition.skipBoundarySilence ||
+            (transitionConfiguration.mode == .crossfade && transitionConfiguration.smartCrossfadeEnabled) !=
+            (effects.transition.mode == .crossfade && effects.transition.smartCrossfadeEnabled)
         let rebuildCapacity = transitionGraph.map { !$0.supportsOverlap(effects.transition.crossfadeDuration ?? .zero) } ?? false
         if transitionConfiguration.mode != effects.transition.mode || transitionConfiguration.crossfadeDuration != effects.transition.crossfadeDuration || rebuildBoundaries { cancelNext() }
         transitionConfiguration = effects.transition
+        logTransitionControl("apply", rate: effects.rate)
         transitionGraph?.configureFadeOut(effects.rate == 1 ? effects.transition.fadeOutDuration : .zero)
         try setRate(effects.rate)
         if (rebuildBoundaries || rebuildCapacity), let decoder, let item = currentItem, configuredRate == 1 {
@@ -608,6 +757,10 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
     }
 
     private func applyConfiguredEqualizer() {
+        defer {
+            let bands = equalizerUnit.bands.map { "\(Int($0.frequency)):\($0.gain)" }.joined(separator: ",")
+            Self.logger.info("equalizer engine=\(diagnosticID) external=\(equalizerManagedExternally) requested=\(configuredEqualizer != nil) bypass=\(equalizerUnit.bypass) preamp=\(equalizerUnit.globalGain) bands=\(bands)")
+        }
         guard !equalizerManagedExternally, let configuration = configuredEqualizer else {
             equalizerUnit.bypass = true
             return
@@ -617,6 +770,17 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
         }
         equalizerUnit.globalGain = configuration.preampDecibels
         equalizerUnit.bypass = false
+    }
+
+    private func logTransitionControl(_ event: String, rate: Float? = nil) {
+        func milliseconds(_ duration: Duration) -> Double {
+            Double(duration.components.seconds) * 1_000 + Double(duration.components.attoseconds) / 1e15
+        }
+        let configuration = transitionConfiguration
+        let fadeIn = milliseconds(configuration.fadeInDuration)
+        let fadeOut = milliseconds(configuration.fadeOutDuration)
+        let overlap = milliseconds(configuration.crossfadeDuration ?? .zero)
+        Self.logger.info("transition engine=\(diagnosticID) generation=\(state.generation) event=\(event) mode=\(configuration.mode.rawValue) rate=\(rate ?? self.configuredRate) fadeInMs=\(fadeIn) fadeOutMs=\(fadeOut) overlapMs=\(overlap) effectiveFade=\((rate ?? self.configuredRate) == 1) graph=\(self.transitionGraph != nil) running=\(self.audioEngine.isRunning) controlVersion=\(controlVersion) softPending=\(softControlTask != nil) \(transitionGraph?.diagnosticSummary ?? "envelope=unavailable")")
     }
 
     public func setVolume(_ volume: Float) throws {
@@ -634,6 +798,10 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
 
     public func dispose() {
         teardown()
+        if let recording = pcmRecording {
+            pcmRecording = nil
+            Task { _ = await recording.mix.finish(); _ = await recording.output.finish() }
+        }
         if let configChangeObserver {
             NotificationCenter.default.removeObserver(configChangeObserver)
             self.configChangeObserver = nil
@@ -649,6 +817,49 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
 
     // MARK: - Private
 
+    private var realtimeOutputDrainDuration: Duration {
+        let latency = transitionGraph?.node.outputPresentationLatency ?? audioEngine.outputNode.outputPresentationLatency
+        #if os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
+        let quantum = AVAudioSession.sharedInstance().ioBufferDuration
+        #else
+        let quantum = 0.02
+        #endif
+        // Source EOF / envelope zero occurs before downstream audio reaches
+        // the device. The node reports the whole downstream pipeline latency.
+        // A realtime diagnostic tap also batches ~100 ms on physical iOS;
+        // allow its final batch to arrive when recording is explicitly enabled.
+        let tapBatch = pcmRecording?.offline == false ? 0.1 : 0
+        return .seconds(max(0, latency.isFinite ? latency : 0) + max(0, quantum) + tapBatch)
+    }
+
+    private func drainSoftControlOutput(version: UInt64, stop: Bool) {
+        transitionGraph?.onHalted = nil
+        softControlTask?.cancel()
+        if audioEngine.isInManualRenderingMode {
+            if stop { hardStop() } else { hardPause() }
+            return
+        }
+        let duration = realtimeOutputDrainDuration
+        softControlTask = Task { [weak self] in
+            do { try await Task.sleep(for: duration) } catch { return }
+            guard let self, self.controlVersion == version else { return }
+            self.logTransitionControl(stop ? "output-drained-stop" : "output-drained-pause")
+            if stop { self.hardStop() } else { self.hardPause() }
+        }
+    }
+
+    private func drainNaturalEndOutput(epoch: UInt64, generation: PlaybackGeneration, itemID: MediaItemID) {
+        naturalEndDrainTask?.cancel()
+        let duration = realtimeOutputDrainDuration
+        naturalEndDrainTask = Task { [weak self] in
+            do { try await Task.sleep(for: duration) } catch { return }
+            guard let self, self.feederEpoch == epoch, self.state.generation == generation,
+                  self.state.itemID == itemID else { return }
+            self.naturalEndDrainTask = nil
+            self.handlePlaybackEnded(epoch: epoch, generation: generation, itemID: itemID)
+        }
+    }
+
     // A wall-clock deadline only terminates a starved/non-rendering soft stop;
     // it never drives gain. Network reads cannot keep a soft control alive.
     private func scheduleSoftDeadline(_ duration: Duration, version: UInt64, stop: Bool) {
@@ -658,6 +869,7 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
             // afterwards. Normal completion still stops at envelope zero.
             do { try await Task.sleep(for: duration + .milliseconds(250)) } catch { return }
             guard let self, self.controlVersion == version else { return }
+            self.logTransitionControl(stop ? "fade-deadline-stop" : "fade-deadline-pause")
             if stop { self.hardStop() } else { self.hardPause() }
         }
     }
@@ -731,6 +943,7 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
         case .remote: throw PlaybackError.unsupportedCapability(.gapless)
         }
         let operationID = UUID()
+        setAutomaticSuccessorExpected(true)
         nextPreparationID = operationID
         preparedNextTicket = ticket
         var prepared = false
@@ -771,9 +984,13 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
             self.currentDuration = frames.map { .seconds(Double($0) / opened.format.sampleRate) }
                 ?? opened.duration ?? item.display.duration
             self.graphBasePosition = .zero
+            // Keep the render-side intent across the handoff until the queue
+            // callback synchronously decides whether B has a successor.
+            self.automaticSuccessorExpected = false
             self.state = PlaybackState(phase: .playing, generation: self.state.generation.advanced(),
                 itemID: item.itemID, position: graph?.position ?? .zero, duration: self.currentDuration)
             self.transitionCommitHandler?(commit)
+            graph?.expectSuccessor(self.automaticSuccessorExpected)
             self.transitionContinuation?.yield(commit)
         }
         try Task.checkCancellation()
@@ -782,7 +999,7 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
     }
 
     public func cancelNext() {
-        transitionGraph?.synchronize()
+        transitionGraph?.synchronize(reportEnd: wantsPlayback)
         var pausedForCommit = false
         transitionGraph?.cancelNext {
             // Only the tiny in-flight render claim needs quiescence. Ordinary
@@ -792,14 +1009,20 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
         }
         nextPreparationID = nil
         preparedNextTicket = nil
+        setAutomaticSuccessorExpected(false)
         if pausedForCommit {
-            do { try audioEngine.start() }
+            do { try startAudioOutput(event: "cancel-next-resume") }
             catch {
                 if let itemID = state.itemID {
                     fail(.engineFailure(code: "audio_engine_start_failed"), generation: state.generation, itemID: itemID)
                 }
             }
         }
+    }
+
+    public func setAutomaticSuccessorExpected(_ expected: Bool) {
+        automaticSuccessorExpected = expected
+        transitionGraph?.expectSuccessor(expected)
     }
 
     private func isCurrentPreparation(_ generation: PlaybackGeneration) -> Bool {
@@ -826,13 +1049,29 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
             let graph: FFmpegAudioTransitionGraph
             do { graph = try FFmpegAudioTransitionGraph(decoder: decoder, item: item,
                 start: initialSeek, frameCount: frameCount ?? -1, queue: currentDecodeQueue ?? decodeQueue,
-                processorFactory: pcmProcessorFactory,
+                processorFactory: pcmProcessorFactory, diagnosticEngine: diagnosticID,
                 maximumOverlap: transitionConfiguration.crossfadeDuration ?? .zero,
+                smartCrossfadeEnabled: transitionConfiguration.mode == .crossfade && transitionConfiguration.smartCrossfadeEnabled && supportsLocalTransition(item) &&
+                    (pcmProcessorFactory == nil || processorPreservesTiming),
                 skipBoundarySilence: transitionConfiguration.skipBoundarySilence && supportsLocalTransition(item) &&
                     (pcmProcessorFactory == nil || processorPreservesTiming),
                 onEnd: { [weak self] in
                     guard let self, epoch == self.feederEpoch, let itemID = self.state.itemID else { return }
-                    self.handlePlaybackEnded(epoch: epoch, generation: self.state.generation, itemID: itemID)
+                    if let recording = self.pcmRecording, recording.offline {
+                        // Offline source callbacks pull ahead of returned output
+                        // by a downstream render quantum. Drain that PCM before
+                        // publishing EOF, so validation captures the whole tail.
+                        let outputFrames = Int64(ceil(Double(recording.mix.receivedFrames) *
+                            recording.output.sampleRate / recording.mix.sampleRate))
+                        self.pcmRecordingEnd = PCMRecordingEnd(targetOutputFrame: recording.outputStartFrame + outputFrames,
+                            epoch: epoch, generation: self.state.generation, itemID: itemID)
+                        return
+                    }
+                    if self.audioEngine.isInManualRenderingMode {
+                        self.handlePlaybackEnded(epoch: epoch, generation: self.state.generation, itemID: itemID)
+                    } else {
+                        self.drainNaturalEndOutput(epoch: epoch, generation: self.state.generation, itemID: itemID)
+                    }
                 }, onError: { [weak self] error in
                     guard let self, epoch == self.feederEpoch else { return }
                     self.transitionGraph?.synchronize()
@@ -861,6 +1100,7 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
             audioEngine.disconnectNodeOutput(playerNode)
             audioEngine.connect(graph.node, to: timePitch, format: graph.format)
             graph.configureFadeOut(transitionConfiguration.fadeOutDuration)
+            graph.expectSuccessor(automaticSuccessorExpected)
             graph.ramp(wantsPlayback ? transitionConfiguration.fadeInDuration : .zero, pause: !wantsPlayback)
             isStarved = false
             return
@@ -908,11 +1148,13 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
     }
 
     private func cancelFeeder() {
+        naturalEndDrainTask?.cancel(); naturalEndDrainTask = nil
         nextPreparationID = nil
         preparedNextTicket = nil
         if let graph = transitionGraph {
             renderedDurationBase += graph.playedDuration
             audioEngine.stop()
+            detachPCMRecordingInput(graphChanged: true)
             graph.cancel()
             audioEngine.disconnectNodeOutput(graph.node)
             audioEngine.detach(graph.node)
@@ -959,19 +1201,22 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
     private func updateOutput() {
         if transitionGraph != nil {
             if wantsPlayback, !audioEngine.isRunning {
-                do { try audioEngine.start() }
+                do { try startAudioOutput(event: "transition-play") }
                 catch {
                     if let itemID = state.itemID {
                         fail(.engineFailure(code: "audio_engine_start_failed"), generation: state.generation, itemID: itemID)
                     }
                 }
             }
-            if !wantsPlayback, audioEngine.isRunning { audioEngine.pause() }
+            // A user pause/stop changes intent immediately, while its render
+            // envelope still needs output callbacks. Rebuffering callbacks
+            // must not cut that fade short.
+            if !wantsPlayback, softControlTask == nil, audioEngine.isRunning { audioEngine.pause() }
             return
         }
         if wantsPlayback, !isStarved {
             if !audioEngine.isRunning {
-                do { try audioEngine.start() }
+                do { try startAudioOutput(event: "feeder-play") }
                 catch {
                     if let itemID = state.itemID {
                         fail(.engineFailure(code: "audio_engine_start_failed"), generation: state.generation, itemID: itemID)
@@ -1120,7 +1365,7 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
         itemID: MediaItemID
     ) {
         guard epoch == feederEpoch, generation == state.generation else { return }
-        Self.logger.error("decode failed: \(Self.safeErrorCode(error), privacy: .public)")
+        Self.logger.error("engine=\(diagnosticID) decode failed: \(Self.safeErrorCode(error))")
         fail(
             Self.playbackError(from: error, fallbackCode: "ffmpeg_decode_failed"),
             generation: generation,
@@ -1129,6 +1374,7 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
     }
 
     private func fail(_ error: PlaybackError, generation: PlaybackGeneration, itemID: MediaItemID) {
+        Self.logger.error("playback failed engine=\(diagnosticID) generation=\(generation) code=\(error.diagnosticCode)")
         teardown()
         state = PlaybackState(
             phase: .failed,
@@ -1270,7 +1516,7 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
         do {
             audioEngine.prepare()
             if wantsPlayback {
-                try audioEngine.start()
+                try startAudioOutput(event: "configuration-change")
             }
         } catch {
             fail(
@@ -1290,6 +1536,22 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
         updateOutput()
     }
 
+    private func startAudioOutput(event: String) throws {
+        do {
+            try startOutput(audioEngine)
+        } catch {
+            let failure = error as NSError
+            // Keep the system error identity without logging userInfo, URLs,
+            // device names, or other potentially private error descriptions.
+            Self.logger.error("audio engine start failed engine=\(diagnosticID) event=\(event) domain=\(failure.domain) code=\(failure.code)")
+            let mixer = audioEngine.mainMixerNode.outputFormat(forBus: 0)
+            let output = audioEngine.outputNode.outputFormat(forBus: 0)
+            Self.logger.error("audio output format engine=\(diagnosticID) mixerRate=\(mixer.sampleRate) mixerChannels=\(mixer.channelCount) outputRate=\(output.sampleRate) outputChannels=\(output.channelCount)")
+            logOutputDiagnostics(event: "\(event)-failed", decoderSampleRate: decoder?.format.sampleRate ?? 0)
+            throw error
+        }
+    }
+
     private func logOutputDiagnostics(event: String, decoderSampleRate: Double) {
         let session = AVAudioSession.sharedInstance()
         let routes = session.currentRoute.outputs
@@ -1299,10 +1561,10 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
         let outputLatencyMilliseconds = session.outputLatency * 1_000
         let presentationLatencyMilliseconds = audioEngine.outputNode.presentationLatency * 1_000
         Self.logger.info(
-            "audio output event=\(event, privacy: .public) routes=\(routes, privacy: .public) decoderRate=\(decoderSampleRate, privacy: .public) sessionRate=\(session.sampleRate, privacy: .public)"
+            "audio output engine=\(diagnosticID) event=\(event) routes=\(routes) decoderRate=\(decoderSampleRate) sessionRate=\(session.sampleRate)"
         )
         Self.logger.info(
-            "audio timing event=\(event, privacy: .public) ioBufferMs=\(ioBufferMilliseconds, format: .fixed(precision: 2), privacy: .public) outputLatencyMs=\(outputLatencyMilliseconds, format: .fixed(precision: 1), privacy: .public) presentationLatencyMs=\(presentationLatencyMilliseconds, format: .fixed(precision: 1), privacy: .public) engineRunning=\(self.audioEngine.isRunning, privacy: .public) wantsPlayback=\(self.wantsPlayback, privacy: .public)"
+            "audio timing engine=\(diagnosticID) event=\(event) ioBufferMs=\(ioBufferMilliseconds) outputLatencyMs=\(outputLatencyMilliseconds) presentationLatencyMs=\(presentationLatencyMilliseconds) engineRunning=\(self.audioEngine.isRunning) wantsPlayback=\(self.wantsPlayback)"
         )
     }
 
@@ -1393,7 +1655,7 @@ public final class FFmpegPlaybackEngine: PlaybackEngine, PlaybackAudioControllin
             do {
                 self.audioEngine.prepare()
                 if self.wantsPlayback {
-                    try self.audioEngine.start()
+                    try self.startAudioOutput(event: "sequential-route-recovery")
                 }
             } catch {
                 self.fail(

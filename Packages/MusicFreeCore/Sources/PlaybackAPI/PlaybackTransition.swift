@@ -60,6 +60,9 @@ public protocol PlaybackTransitionControlling: AnyObject {
     func makeTransitionStream() -> AsyncStream<LogicalPlaybackCommit>
     func prepareNext(_ item: PlaybackItem, ticket: PlaybackTransitionTicket) async throws
     func cancelNext()
+    /// Queue intent is published before asynchronous successor resolution.
+    /// A pending successor must not trigger a single-track terminal fade.
+    func setAutomaticSuccessorExpected(_ expected: Bool)
     func hardPause()
     func hardStop()
     func waitForSoftStop() async
@@ -69,6 +72,7 @@ public protocol PlaybackTransitionControlling: AnyObject {
 }
 
 public extension PlaybackTransitionControlling {
+    func setAutomaticSuccessorExpected(_ expected: Bool) {}
     func waitForSoftStop() async {}
     func setTransitionCommitHandler(_ handler: (@MainActor (LogicalPlaybackCommit) -> Void)?) {}
     func setTransitionRetirementHandler(_ handler: (@MainActor (PlaybackTransitionRetirement) -> Void)?) {}

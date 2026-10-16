@@ -97,13 +97,15 @@ public struct AudioTransitionConfiguration: Codable, Equatable, Hashable, Sendab
   public let fadeInDuration: Duration
   public let fadeOutDuration: Duration
   public let skipBoundarySilence: Bool
+  public let smartCrossfadeEnabled: Bool
 
   public init(
     mode: AudioTransitionMode = .disabled,
     crossfadeDuration: Duration? = nil,
     fadeInDuration: Duration = .zero,
     fadeOutDuration: Duration = .zero,
-    skipBoundarySilence: Bool = false
+    skipBoundarySilence: Bool = false,
+    smartCrossfadeEnabled: Bool = false
   ) {
     if mode == .crossfade {
       precondition(
@@ -117,12 +119,13 @@ public struct AudioTransitionConfiguration: Codable, Equatable, Hashable, Sendab
     self.fadeInDuration = fadeInDuration
     self.fadeOutDuration = fadeOutDuration
     self.skipBoundarySilence = skipBoundarySilence
+    self.smartCrossfadeEnabled = smartCrossfadeEnabled
     self.crossfadeDuration = mode == .crossfade ? crossfadeDuration : nil
   }
 
   public static let disabled = Self()
 
-  private enum CodingKeys: String, CodingKey { case mode, crossfadeDuration, fadeInDuration, fadeOutDuration, skipBoundarySilence }
+  private enum CodingKeys: String, CodingKey { case mode, crossfadeDuration, fadeInDuration, fadeOutDuration, skipBoundarySilence, smartCrossfadeEnabled }
   public init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: CodingKeys.self)
     let mode = try c.decode(AudioTransitionMode.self, forKey: .mode)
@@ -131,7 +134,8 @@ public struct AudioTransitionConfiguration: Codable, Equatable, Hashable, Sendab
               crossfadeDuration: crossfade,
               fadeInDuration: min(.seconds(3), max(.zero, try c.decodeIfPresent(Duration.self, forKey: .fadeInDuration) ?? .zero)),
               fadeOutDuration: min(.seconds(3), max(.zero, try c.decodeIfPresent(Duration.self, forKey: .fadeOutDuration) ?? .zero)),
-              skipBoundarySilence: try c.decodeIfPresent(Bool.self, forKey: .skipBoundarySilence) ?? false)
+              skipBoundarySilence: try c.decodeIfPresent(Bool.self, forKey: .skipBoundarySilence) ?? false,
+              smartCrossfadeEnabled: try c.decodeIfPresent(Bool.self, forKey: .smartCrossfadeEnabled) ?? false)
   }
 }
 

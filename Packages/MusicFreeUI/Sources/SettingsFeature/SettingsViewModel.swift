@@ -195,6 +195,7 @@ final class SettingsViewModel {
     }
 
     var transitionCapabilities: PlaybackCapabilities?
+    var supportsSmartCrossfade: Bool { (transitionCapabilities ?? playbackCapabilities).contains(.smartCrossfade) }
     var supportsBoundarySilenceSkipping: Bool { (transitionCapabilities ?? playbackCapabilities).contains(.boundarySilenceSkipping) }
     var supportsFade: Bool { (transitionCapabilities ?? playbackCapabilities).contains(.fade) }
 
@@ -728,7 +729,8 @@ final class SettingsViewModel {
                 crossfadeDuration: current.playbackPreferences.transition.crossfadeDuration,
                 fadeInDuration: current.playbackPreferences.transition.fadeInDuration,
                 fadeOutDuration: current.playbackPreferences.transition.fadeOutDuration,
-                skipBoundarySilence: current.playbackPreferences.transition.skipBoundarySilence
+                skipBoundarySilence: current.playbackPreferences.transition.skipBoundarySilence,
+                smartCrossfadeEnabled: current.playbackPreferences.transition.smartCrossfadeEnabled
             )
             return AppSettings(
                 importPreferences: current.importPreferences,
@@ -744,7 +746,7 @@ final class SettingsViewModel {
         }
     }
 
-    func setSongTransition(gaplessEnabled: Bool, crossfadeDuration: Duration, fadeIn: Duration? = nil, fadeOut: Duration? = nil, skipBoundarySilence: Bool? = nil) {
+    func setSongTransition(gaplessEnabled: Bool, crossfadeDuration: Duration, fadeIn: Duration? = nil, fadeOut: Duration? = nil, skipBoundarySilence: Bool? = nil, smartCrossfadeEnabled: Bool? = nil) {
         applyEdit { current in
             let old = current.playbackPreferences
             let transition = try TransitionPreferences(
@@ -752,7 +754,8 @@ final class SettingsViewModel {
                 crossfadeDuration: crossfadeDuration,
                 fadeInDuration: fadeIn ?? old.transition.fadeInDuration,
                 fadeOutDuration: fadeOut ?? old.transition.fadeOutDuration,
-                skipBoundarySilence: skipBoundarySilence ?? old.transition.skipBoundarySilence
+                skipBoundarySilence: skipBoundarySilence ?? old.transition.skipBoundarySilence,
+                smartCrossfadeEnabled: smartCrossfadeEnabled ?? old.transition.smartCrossfadeEnabled
             )
             return AppSettings(importPreferences: current.importPreferences,
                 playbackPreferences: PlaybackPreferences(rate: old.rate, equalizer: old.equalizer,
@@ -768,7 +771,8 @@ final class SettingsViewModel {
                 crossfadeDuration: duration,
                 fadeInDuration: current.playbackPreferences.transition.fadeInDuration,
                 fadeOutDuration: current.playbackPreferences.transition.fadeOutDuration,
-                skipBoundarySilence: current.playbackPreferences.transition.skipBoundarySilence
+                skipBoundarySilence: current.playbackPreferences.transition.skipBoundarySilence,
+                smartCrossfadeEnabled: current.playbackPreferences.transition.smartCrossfadeEnabled
             )
             return AppSettings(
                 importPreferences: current.importPreferences,
@@ -792,7 +796,8 @@ final class SettingsViewModel {
                 crossfadeDuration: old.transition.crossfadeDuration,
                 fadeInDuration: isFadeIn ? duration : old.transition.fadeInDuration,
                 fadeOutDuration: isFadeIn ? old.transition.fadeOutDuration : duration,
-                skipBoundarySilence: old.transition.skipBoundarySilence
+                skipBoundarySilence: old.transition.skipBoundarySilence,
+                smartCrossfadeEnabled: old.transition.smartCrossfadeEnabled
             )
             return AppSettings(importPreferences: current.importPreferences,
                 playbackPreferences: PlaybackPreferences(rate: old.rate, equalizer: old.equalizer,

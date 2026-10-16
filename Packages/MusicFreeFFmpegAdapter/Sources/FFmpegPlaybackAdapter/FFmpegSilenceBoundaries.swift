@@ -15,6 +15,7 @@ final class FFmpegBoundaryScanCancellation: @unchecked Sendable {
 struct FFmpegSilenceBoundaries {
     var startFrame: Int64 = 0
     var endFrame: Int64?
+    var decodedEndFrame: Int64?
 
     // A conservative -80 dB peak across EVERY channel. Keep 20 ms at each
     // edge, and require at least 250 ms of continuous silence before trimming.
@@ -33,6 +34,7 @@ struct FFmpegSilenceBoundaries {
             guard let buffer = try decoder.nextBuffer() else {
                 // Entirely silent files remain playable, including as
                 // a prepared successor; never turn a valid resource into EOF.
+                result.decodedEndFrame = headFrames
                 return result
             }
             if let first = audibleRange(buffer)?.lowerBound {
@@ -56,6 +58,7 @@ struct FFmpegSilenceBoundaries {
             guard let buffer = try decoder.nextBuffer() else {
                 guard tailFrames > 0 else { return result }
                 let decodedEnd = tailStart + tailFrames
+                result.decodedEndFrame = decodedEnd
                 // Work backwards in bounded windows for long silent outros,
                 // without retaining PCM or repeatedly decoding the suffix.
                 while lastAudible == nil, tailStart > 0 {
