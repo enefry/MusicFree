@@ -205,8 +205,3 @@ schemes:
           settingsTarget: MusicFree
           script: |
             "$SRCROOT/Scripts/archive_update_build_number.sh"
-      postActions:
-        - name: Update Next App Version
-          settingsTarget: MusicFree
-          script: |
-            "$SRCROOT/Scripts/archive_update_app_version.sh"

@@ -1,6 +1,91 @@
 import XCTest
 
 final class PluginSystemUITests: XCTestCase {
+    @MainActor func testDataPluginSettingsAppearUnderMetadataEnrichment() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--bvt-reset-user-interface-preferences"]
+        defer { app.terminate() }
+        app.launch()
+        let pluginID = "builtin.metadata.musicBrainz"
+        openPlugins(app, pluginID: pluginID)
+        let enabled = app.switches["plugins.\(pluginID).enabled"].firstMatch
+        let visible = app.switches["plugins.\(pluginID).visible"].firstMatch
+        let originalEnabled = enabled.value as? String
+        let originalVisible = visible.value as? String
+        if originalVisible != "1" { visible.tap() }
+        if originalEnabled != "1" { enabled.tap() }
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        let root = app.tables["settings.form"].firstMatch
+        XCTAssertTrue(root.waitForExistence(timeout: 10))
+        let metadata = app.cells["settings.import.metadataEnrichment.entry"].firstMatch
+        for _ in 0..<12 where !metadata.isHittable { root.swipeDown() }
+        XCTAssertTrue(metadata.isHittable)
+        metadata.tap()
+        let table = app.tables["settings.import.metadataEnrichment"].firstMatch
+        XCTAssertTrue(table.waitForExistence(timeout: 10))
+        let consent = app.buttons["settings.privacyDisclosure.accept"].firstMatch
+        if consent.waitForExistence(timeout: 3) { consent.tap() }
+        let entry = app.cells["settings.plugins.\(pluginID).entry"].firstMatch
+        for _ in 0..<12 where !entry.isHittable { table.swipeUp() }
+        XCTAssertTrue(entry.isHittable)
+        entry.tap()
+        XCTAssertTrue(app.tables["settings.plugins.detail.\(pluginID)"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.cells["plugins.pages.\(pluginID).service"].exists)
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        openPlugins(app, pluginID: pluginID)
+        if originalEnabled != "1" { enabled.tap() }
+        if originalVisible != "1" { visible.tap() }
+    }
+
+    @MainActor func testEnabledDSPSettingsAppearInMainList() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--bvt-reset-user-interface-preferences"]
+        defer { app.terminate() }
+        app.launch()
+        // Exercise generic and companion pages using plugins shown by default.
+        for pluginID in ["reference.gain", "builtin.dsp.stereoBalance"] {
+            openPlugins(app, pluginID: pluginID)
+            let enabled = app.switches["plugins.\(pluginID).enabled"].firstMatch
+            let visible = app.switches["plugins.\(pluginID).visible"].firstMatch
+            XCTAssertTrue(enabled.waitForExistence(timeout: 10))
+            let originalEnabled = enabled.value as? String
+            let originalVisible = visible.value as? String
+            if originalVisible != "1" { visible.tap() }
+            if originalEnabled != "1" { enabled.tap() }
+            func returnToSettings() {
+                app.navigationBars.buttons.element(boundBy: 0).tap()
+                app.navigationBars.buttons.element(boundBy: 0).tap()
+                XCTAssertTrue(app.tables["settings.form"].waitForExistence(timeout: 10))
+            }
+            returnToSettings()
+            let row = app.cells["settings.plugins.\(pluginID).entry"].firstMatch
+            let table = app.tables["settings.form"].firstMatch
+            for _ in 0..<12 where !row.isHittable { table.swipeDown() }
+            XCTAssertTrue(row.waitForExistence(timeout: 10))
+            XCTAssertTrue(row.isHittable)
+            row.tap()
+            let formID = pluginID == "reference.gain" ? "plugins.configuration.form" : "plugins.\(pluginID).form"
+            XCTAssertTrue(app.tables[formID].waitForExistence(timeout: 10))
+            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            screenshot.name = pluginID + ".main-settings"
+            screenshot.lifetime = .keepAlways
+            add(screenshot)
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            openPlugins(app, pluginID: pluginID)
+            enabled.tap()
+            returnToSettings()
+            XCTAssertTrue(row.waitForNonExistence(timeout: 10))
+            openPlugins(app, pluginID: pluginID)
+            if originalEnabled == "1" { enabled.tap() }
+            if originalVisible != "1" { visible.tap() }
+            returnToSettings()
+        }
+    }
+
     @MainActor func testPluginConfigurationPersistsAndCanBeRestored() throws {
         continueAfterFailure = false
         let app = XCUIApplication()

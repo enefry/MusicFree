@@ -423,7 +423,7 @@ open class SettingsViewController: UITableViewController, UIColorPickerViewContr
                 guard let self else { return }
                 self.push(self.child(.sleepTimer), destination: .playback)
             }]
-        rows += pluginRows(placement: .playback, destination: .playback)
+        rows += pluginRows(category: .playback, destination: .playback)
         if viewModel.supportsFade || viewModel.supportsGapless || viewModel.supportsCrossfade {
             rows.append(action("settings.playback.transitions.entry", L("歌曲过渡"), detail: transitionSummary, symbol: "waveform.path", disclosure: true) { [weak self] in
                 guard let self else { return }; self.push(self.child(.transitions), destination: .playback)
@@ -462,7 +462,7 @@ open class SettingsViewController: UITableViewController, UIColorPickerViewContr
                 guard let self else { return }
                 self.push(self.child(.availability), destination: .importing)
             }
-        ] + pluginRows(placement: .importing, destination: .importing))
+        ])
     }
 
     func duplicatePolicyTitle(_ policy: DuplicateImportPolicy) -> String {
@@ -633,9 +633,9 @@ open class SettingsViewController: UITableViewController, UIColorPickerViewContr
         ])
     }
 
-    func pluginRows(placement: PluginSettingsPlacement, destination: SettingsDestination) -> [SettingsNativeRow] {
+    func pluginRows(category: PluginSettingsPageHost.Category, destination: SettingsDestination) -> [SettingsNativeRow] {
         guard let pluginPages else { return [] }
-        return pluginPages.entries(placement: placement).map { entry in
+        let registeredRows = pluginPages.categoryEntries(category: category).map { entry in
             let snapshot = pluginPages.snapshots.first { $0.id == entry.pluginID }
             return action(entry.navigationIdentifier, L(entry.title),
                 detail: snapshot?.preference.isEnabled == true ? L("已开启") : L("已关闭"),
@@ -644,6 +644,15 @@ open class SettingsViewController: UITableViewController, UIColorPickerViewContr
                     self.push(page, destination: destination)
                 }
         }
+        let discoveredRows = pluginPages.categoryPlugins(category: category).map { snapshot in
+            action("settings.plugins.\(snapshot.id.rawValue).entry", L(snapshot.descriptor.name),
+                detail: L("已开启"), symbol: snapshot.descriptor.kinds.contains(.dsp) ? "slider.horizontal.3" : "puzzlepiece.extension",
+                disclosure: true) { [weak self] in
+                    guard let self, let page = pluginPages.makeSettingsPage(pluginID: snapshot.id) else { return }
+                    self.push(page, destination: destination)
+                }
+        }
+        return registeredRows + discoveredRows
     }
 
     func additionsSection() -> Section {

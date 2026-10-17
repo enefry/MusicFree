@@ -1,5 +1,6 @@
 import AppServices
 import DesignSystem
+import Foundation
 import MusicFreePluginAPI
 import Observation
 import SettingsAPI
@@ -14,6 +15,7 @@ final class PluginSettingsModel {
     private(set) var failure: String?
     @ObservationIgnored private let plugins: any PluginServing
     @ObservationIgnored private let settings: any SettingsServing
+    @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var committed: [PluginSnapshot] = []
     @ObservationIgnored private var pending: [Mutation] = []
     @ObservationIgnored private var worker: Task<Void, Never>?
@@ -28,9 +30,11 @@ final class PluginSettingsModel {
         var completion: CheckedContinuation<Bool, Never>?
     }
 
-    init(plugins: any PluginServing, settings: any SettingsServing) {
+    init(plugins: any PluginServing, settings: any SettingsServing, defaults: UserDefaults = .standard) {
         self.plugins = plugins
         self.settings = settings
+        self.defaults = defaults
+        PluginDisplaySettings.registerDefaults(in: defaults)
     }
 
     deinit {
@@ -150,7 +154,10 @@ final class PluginSettingsModel {
         for mutation in pending {
             if let next = try? mutation.edit(projected) { projected = next }
         }
-        snapshots = committed.map { value in
+        // Apply display suppression even in hidden-plugin management, preserving
+        // stored preferences and runtime capability.
+        let suppressedIDs = Set(defaults.stringArray(forKey: PluginDisplaySettings.suppressedPluginIDsStorageKey) ?? [])
+        snapshots = committed.filter { !suppressedIDs.contains($0.id.rawValue) }.map { value in
             PluginSnapshot(descriptor: value.descriptor,
                 preference: projected.pluginPreferences.first { $0.pluginID == value.id } ?? value.preference,
                 state: value.state, diagnostic: value.diagnostic)

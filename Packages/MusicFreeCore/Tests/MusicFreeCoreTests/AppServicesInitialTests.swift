@@ -2157,6 +2157,55 @@ func playbackPositionEventsClampOversizedValues() async throws {
 }
 
 @MainActor
+@Test("Paused seeks without a loaded engine persist the target and resume there", arguments: [false, true])
+func playbackUnpreparedPausedSeekPreservesTarget(stopThenPause: Bool) async throws {
+    let itemID = MediaItemID(sourceID: .local, externalID: "unprepared-paused-seek")
+    let entry = PlaybackQueueEntry(id: UUID(), itemID: itemID)
+    let queue = TestQueueRepository(value: PlaybackQueueSnapshot(
+        entries: [entry], currentEntryID: entry.id, resumePosition: .seconds(8)
+    ))
+    let engine = FakePlaybackEngine(capabilities: [.seeking])
+    let nowPlaying = FakeNowPlayingPublisher()
+    let container = try AppServiceContainer(dependencies: AppDependencies(
+        mediaSources: [TestSource()],
+        libraryRepository: TestLibraryRepository(tracks: [
+            Track(id: itemID, title: "Unprepared Paused Seek", duration: .seconds(30))
+        ]),
+        playbackQueueRepository: queue,
+        playbackEngine: engine,
+        nowPlaying: nowPlaying,
+        systemCapabilities: SystemIntegrationCapabilitySnapshot(platform: .iOS, capabilities: [.nowPlaying])
+    ))
+    _ = try await container.start()
+    if stopThenPause {
+        try await container.playback.execute(.resume)
+        try await container.playback.execute(.stop)
+        try await container.playback.execute(.pause)
+    }
+    let prepareCount = engine.prepareCalls.count
+    let playCount = engine.playCallCount
+    for target in [Duration.seconds(45), .seconds(5), .zero, .seconds(12)] {
+        await container.playback.send(.seek(to: target))
+        let expected = min(target, .seconds(30))
+        #expect(container.playback.snapshot.phase == .paused)
+        #expect(container.playback.snapshot.state.error == nil)
+        #expect(container.playback.snapshot.position == expected)
+        #expect(container.playback.snapshot.queue.resumePosition == expected)
+        #expect(try await queue.load().resumePosition == expected)
+        #expect(nowPlaying.currentSnapshot?.elapsed == expected)
+        #expect(nowPlaying.currentSnapshot?.isPlaying == false)
+        #expect(engine.prepareCalls.count == prepareCount)
+        #expect(engine.playCallCount == playCount)
+        #expect(engine.seekCalls.isEmpty)
+    }
+    try await container.playback.execute(.resume)
+    #expect(engine.prepareCalls.last?.startAt == .seconds(12))
+    #expect(container.playback.snapshot.phase == .playing)
+    #expect(container.playback.snapshot.position == .seconds(12))
+    await container.stop()
+}
+
+@MainActor
 @Test("Playback seeks clamp to duration before persisting the resume position")
 func playbackSeekClampsToTrackDuration() async throws {
     let itemID = MediaItemID(sourceID: .local, externalID: "clamped-seek")

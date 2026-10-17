@@ -32,4 +32,4 @@ new_app_version="${major}.${minor}.$((10#${patch} + 1))"
     "s/^[[:space:]]*APP_VERSION[[:space:]]*=.*/APP_VERSION = ${new_app_version}/" \
     "${config_path}"
 
-echo "Next app version: ${previous_app_version} -> ${new_app_version}"
+echo "App version: ${previous_app_version} -> ${new_app_version}"

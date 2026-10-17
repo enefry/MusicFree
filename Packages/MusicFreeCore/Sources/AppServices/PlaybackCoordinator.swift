@@ -714,6 +714,38 @@ internal final class PlaybackCoordinator: PlaybackServing, PlaybackAudioServing 
         // incoming identity afterwards so a boundary seek is not discarded
         // merely because the MainActor had not yet published the new track.
         let intent = beginPlaybackIntent()
+        // Restoring a queue (or pausing after stop) publishes a paused session
+        // without loading a decoder. Stage the seek in that session; resume
+        // will prepare the resource at the persisted target without autoplay.
+        if snapshotValue.phase == .paused,
+           let itemID = snapshotValue.currentItemID,
+           engine.state.itemID != itemID {
+            await acquireEnginePreparation()
+            defer { releaseEnginePreparation() }
+            try requireCurrentIntent(intent)
+            guard snapshotValue.phase == .paused,
+                  snapshotValue.currentItemID == itemID else {
+                throw SupersededPlaybackIntent()
+            }
+            let pausedState = snapshotValue.state
+            let target = Self.normalizedPosition(position, duration: pausedState.duration)
+            try await withQueueMutation {
+                try requireCurrentIntent(intent)
+                try await persistQueue(
+                    try queue.applying(.setResumePosition(target)), intent: intent
+                )
+            }
+            try requireCurrentIntent(intent)
+            updateSnapshot(state: PlaybackState(
+                phase: .paused,
+                generation: pausedState.generation,
+                itemID: itemID,
+                position: target,
+                duration: pausedState.duration
+            ))
+            await publishSnapshot()
+            return
+        }
         guard let itemID = snapshotValue.state.itemID,
               engine.state.itemID == itemID,
               engine.state.generation == activeGeneration

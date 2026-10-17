@@ -13,6 +13,175 @@ import SettingsAPI
 @Suite(.serialized)
 @MainActor
 struct NativePluginConfigurationTests {
+    @Test("Display suppression supports defaults, replacement lists and an explicit empty override",
+          arguments: PluginDisplaySettings.defaultSuppressedPluginIDs + ["test.dsp"])
+    func displaySuppressionDefaultsAndOverrides(pluginID: String) async throws {
+        let suite = "MusicFreeUI.displaySuppression.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let service = PluginPresentationTestService(pluginID: .init(rawValue: pluginID))
+        let original = try await service.load()
+        let model = PluginSettingsModel(plugins: service, settings: service, defaults: defaults)
+        model.refresh(); await model.waitForPendingWork()
+        let suppressedByDefault = PluginDisplaySettings.defaultSuppressedPluginIDs.contains(pluginID)
+        #expect(model.snapshots.count == (suppressedByDefault ? 0 : 1))
+
+        defaults.set([pluginID], forKey: PluginDisplaySettings.suppressedPluginIDsStorageKey)
+        model.refresh(); await model.waitForPendingWork()
+        #expect(model.snapshots.isEmpty)
+
+        defaults.set([String](), forKey: PluginDisplaySettings.suppressedPluginIDsStorageKey)
+        model.refresh(); await model.waitForPendingWork()
+        #expect(model.snapshots.map(\.id.rawValue) == [pluginID])
+
+        defaults.removeObject(forKey: PluginDisplaySettings.suppressedPluginIDsStorageKey)
+        model.refresh(); await model.waitForPendingWork()
+        #expect(model.snapshots.count == (suppressedByDefault ? 0 : 1))
+        #expect(try await service.load() == original)
+        #expect(await service.saveCount == 0)
+    }
+
+    @Test("Enabled plugins appear in the settings list and update after toggling visibility or capability")
+    func discoveredPluginRowsRefreshAndNavigate() async throws {
+        let service = PluginPresentationTestService()
+        let host = PluginSettingsPageHost(registry: .init(), plugins: service, settings: service)
+        host.start(); await host.model.waitForPendingWork()
+        let model = SettingsSceneModel(settingsServing: service)
+        await model.loadIfNeeded()
+        let controller = SettingsViewController(model: model, pluginPages: host)
+        let navigation = UINavigationController(rootViewController: controller)
+        controller.loadViewIfNeeded()
+        let rowID = "settings.plugins.test.dsp.entry"
+        #expect(controller.rows[rowID] != nil)
+        controller.rows[rowID]?.action?()
+        #expect(navigation.topViewController is PluginConfigurationViewController)
+        let id = await service.descriptor.id
+        host.model.mutate(id) { $0.isEnabled = false }
+        await host.model.waitForPendingWork()
+        for _ in 0..<200 where controller.rows[rowID] != nil { await Task.yield() }
+        #expect(controller.rows[rowID] == nil)
+        #expect(host.makeSettingsPage(pluginID: id) == nil)
+        host.model.mutate(id) { $0.isEnabled = true; $0.isLoadAllowed = false }
+        await host.model.waitForPendingWork()
+        for _ in 0..<200 where controller.rows[rowID] == nil { await Task.yield() }
+        #expect(controller.rows[rowID] != nil) // Settings remain editable before loading/consent.
+        host.model.mutate(id) { $0.isVisible = false }
+        await host.model.waitForPendingWork()
+        for _ in 0..<200 where controller.rows[rowID] != nil { await Task.yield() }
+        #expect(controller.rows[rowID] == nil)
+    }
+
+    @Test("Discovery groups every plugin kind and excludes unavailable builds", arguments: PluginKind.allCases)
+    func discoveredPluginCategories(kind: PluginKind) async throws {
+        let service = PluginPresentationTestService(kinds: [kind])
+        let host = PluginSettingsPageHost(registry: .init(), plugins: service, settings: service)
+        host.start(); await host.model.waitForPendingWork()
+        let category: PluginSettingsPageHost.Category = kind == .dsp ? .playback : .metadata
+        #expect(host.categoryPlugins(category: category).count == (kind == .onlineSource ? 0 : 1))
+        for other in PluginSettingsPageHost.Category.allCases where other != category {
+            #expect(host.categoryPlugins(category: other).isEmpty)
+        }
+        for state in [PluginLifecycleState.compiledOut, .incompatible, .invalidRegistration] {
+            await service.setSnapshotState(state)
+            host.model.refresh(); await host.model.waitForPendingWork()
+            #expect(host.categoryPlugins(category: category).isEmpty)
+            #expect(host.makeSettingsPage(pluginID: await service.descriptor.id) == nil)
+        }
+    }
+
+    @Test("Online source settings stay out of categories while explicit plugin management remains available", arguments: [PluginSettingsPlacement.playback, .importing])
+    func onlineSourceSettingsUseDedicatedTab(placement: PluginSettingsPlacement) async throws {
+        let service = PluginPresentationTestService(kinds: [.onlineSource, .metadata])
+        let id = await service.descriptor.id
+        var registry = PluginSettingsPageRegistry()
+        try registry.register(.init(entry: .init(id: "test.dsp.accounts", pluginID: id,
+            title: "Accounts", systemImage: "externaldrive", placement: placement, role: .accounts)) { _ in UIViewController() })
+        let host = PluginSettingsPageHost(registry: registry, plugins: service, settings: service)
+        host.start(); await host.model.waitForPendingWork()
+        for category in PluginSettingsPageHost.Category.allCases {
+            #expect(host.categoryEntries(category: category).isEmpty)
+            #expect(host.categoryPlugins(category: category).isEmpty)
+        }
+        #expect(host.makePage(entryID: "test.dsp.accounts") != nil)
+        let model = SettingsSceneModel(settingsServing: service)
+        await model.loadIfNeeded()
+        let root = SettingsViewController(model: model, pluginPages: host)
+        for controller in [root, root.child(.category(.importing)), root.child(.metadata)] {
+            controller.loadViewIfNeeded()
+            #expect(controller.rows["settings.plugins.test.dsp.entry"] == nil)
+            #expect(controller.rows["test.dsp.accounts"] == nil)
+        }
+    }
+
+    @Test("Data plugin settings live under metadata enrichment in compact and category layouts", arguments: [PluginKind.metadata, .lyrics])
+    func dataPluginSettingsStayInMetadataSubmenu(kind: PluginKind) async throws {
+        let service = PluginPresentationTestService(kinds: [kind])
+        let host = PluginSettingsPageHost(registry: .init(), plugins: service, settings: service)
+        host.start(); await host.model.waitForPendingWork()
+        let model = SettingsSceneModel(settingsServing: service)
+        await model.loadIfNeeded()
+        let root = SettingsViewController(model: model, pluginPages: host)
+        root.loadViewIfNeeded()
+        let rowID = "settings.plugins.test.dsp.entry"
+        #expect(root.rows[rowID] == nil)
+        let importing = root.child(.category(.importing))
+        importing.loadViewIfNeeded()
+        #expect(importing.rows[rowID] == nil)
+        let metadata = root.child(.metadata)
+        let navigation = UINavigationController(rootViewController: metadata)
+        metadata.loadViewIfNeeded()
+        #expect(metadata.sections.first(where: { $0.id == "metadataPlugins" })?.rows.map(\.id) == [rowID])
+        metadata.rows[rowID]?.action?()
+        #expect(navigation.topViewController is PluginConfigurationViewController)
+        host.model.mutate(await service.descriptor.id) { $0.isEnabled = false }
+        await host.model.waitForPendingWork()
+        for _ in 0..<200 where metadata.rows[rowID] != nil { await Task.yield() }
+        #expect(metadata.rows[rowID] == nil)
+        #expect(!metadata.sections.contains(where: { $0.id == "metadataPlugins" }))
+
+        host.model.mutate(await service.descriptor.id) { $0.isEnabled = true }
+        await host.model.waitForPendingWork()
+        var registry = PluginSettingsPageRegistry()
+        try registry.register(.init(entry: .init(id: "test.dsp.importing", pluginID: await service.descriptor.id,
+            title: "Data settings", systemImage: "gear", placement: .importing)) { _ in UIViewController() })
+        let placedHost = PluginSettingsPageHost(registry: registry, plugins: service, settings: service)
+        placedHost.start(); await placedHost.model.waitForPendingWork()
+        #expect(placedHost.categoryEntries(category: .playback).isEmpty)
+        #expect(placedHost.categoryEntries(category: .metadata).map(\.id) == ["test.dsp.importing"])
+        #expect(placedHost.categoryPlugins(category: .metadata).isEmpty)
+    }
+
+    @Test("Discovery reuses lazy companion factories without duplicating explicit category pages")
+    func discoveredCompanionNavigation() async throws {
+        for role in [PluginSettingsPageRole.configuration, .accounts, .supplement] {
+            let service = PluginPresentationTestService()
+            let id = await service.descriptor.id
+            var registry = PluginSettingsPageRegistry()
+            var created = 0
+            try registry.register(.init(entry: .init(id: "test.dsp.custom", pluginID: id,
+                title: "Custom", systemImage: "gear", role: role)) { _ in created += 1; return UIViewController() })
+            let host = PluginSettingsPageHost(registry: registry, plugins: service, settings: service)
+            host.start(); await host.model.waitForPendingWork()
+            #expect(host.categoryPlugins(category: .playback).count == 1)
+            #expect(created == 0)
+            let page = try #require(host.makeSettingsPage(pluginID: id))
+            #expect(created == (role == .supplement ? 0 : 1))
+            if role == .supplement {
+                let detail = try #require(page as? PluginSettingsViewController)
+                detail.loadViewIfNeeded()
+                let datasource = try #require(detail.tableView.dataSource as? UITableViewDiffableDataSource<String, String>)
+                #expect(datasource.snapshot().itemIdentifiers.contains("plugins.test.dsp.configuration"))
+                #expect(datasource.snapshot().itemIdentifiers.contains("plugins.pages.test.dsp.custom"))
+            }
+            try registry.register(.init(entry: .init(id: "test.dsp.placed", pluginID: id,
+                title: "Placed", systemImage: "gear", placement: .playback)) { _ in UIViewController() })
+            let placedHost = PluginSettingsPageHost(registry: registry, plugins: service, settings: service)
+            placedHost.start(); await placedHost.model.waitForPendingWork()
+            #expect(placedHost.categoryPlugins(category: .playback).isEmpty)
+            #expect(placedHost.entries(placement: .playback).count == 1)
+        }
+    }
+
     @Test("DSP priority edits persist, survive refresh, reset to default, and expose an advanced row")
     func dspPrioritySettingsPersistence() async throws {
         let service = PluginPresentationTestService()
@@ -419,10 +588,16 @@ struct NativePluginConfigurationTests {
 }
 
 private actor PluginPresentationTestService: PluginServing, SettingsServing {
-    let descriptor = PluginDescriptor(id: .init(rawValue: "test.dsp"), name: "DSP", kinds: [.dsp], permissions: [.network], configuration: .init(fields: [
-        .init(id: "gain", title: "Gain", kind: .number, minimumNumber: 0, maximumNumber: 4)
-    ]))
-    private var current = AppSettings.defaults.settingPluginPreferences([.init(pluginID: .init(rawValue: "test.dsp"), isEnabled: true, isLoadAllowed: true)])
+    let descriptor: PluginDescriptor
+    private var snapshotState: PluginLifecycleState?
+    init(kinds: Set<PluginKind> = [.dsp], pluginID: PluginID = .init(rawValue: "test.dsp")) {
+        descriptor = PluginDescriptor(id: pluginID, name: "DSP", kinds: kinds, permissions: [.network], configuration: .init(fields: [
+            .init(id: "gain", title: "Gain", kind: .number, minimumNumber: 0, maximumNumber: 4)
+        ]))
+        current = AppSettings.defaults.settingPluginPreferences([.init(pluginID: pluginID, isEnabled: true, isLoadAllowed: true)])
+    }
+    func setSnapshotState(_ value: PluginLifecycleState) { snapshotState = value }
+    private var current: AppSettings
     private var suspend = false
     private var continuation: CheckedContinuation<Void, Never>?
     private(set) var saveCount = 0
@@ -476,7 +651,7 @@ private actor PluginPresentationTestService: PluginServing, SettingsServing {
     func apply(_ settings: AppSettings) { lastApplied = settings; current = settings }
     func snapshots() -> [PluginSnapshot] {
         let preference = current.pluginPreferences.first ?? .init(pluginID: descriptor.id)
-        return [.init(descriptor: descriptor, preference: preference, state: preference.isEnabled ? .registered : .disabled)]
+        return [.init(descriptor: descriptor, preference: preference, state: snapshotState ?? (preference.isEnabled ? .registered : .disabled))]
     }
     func stop() {}
     func audioAnalysis() -> AsyncStream<PluginPCMAnalysisSnapshot> {

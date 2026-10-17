@@ -10,6 +10,7 @@ import UIKit
 /// App composition registers companions; Settings only consumes their entries.
 @MainActor
 public final class PluginSettingsPageHost {
+    enum Category: CaseIterable { case playback, metadata }
     public let registry: PluginSettingsPageRegistry
     let model: PluginSettingsModel
     private let plugins: any PluginServing
@@ -27,6 +28,55 @@ public final class PluginSettingsPageHost {
             snapshots.contains { $0.id == entry.pluginID && $0.preference.isVisible && isAvailable($0) }
         }
     }
+
+    /// Discover new plugins without requiring a second category registration.
+    /// Explicit category pages retain their placement and navigation identifiers.
+    func categoryPlugins(category: Category) -> [PluginSnapshot] {
+        snapshots.filter { snapshot in
+            guard snapshot.preference.isEnabled, snapshot.preference.isVisible, isAvailable(snapshot),
+                  !registry.entries(pluginID: snapshot.id).contains(where: { $0.placement != .pluginDetail })
+            else { return false }
+            return self.category(for: snapshot) == category
+        }.sorted { $0.id < $1.id }
+    }
+
+    func categoryEntries(category: Category) -> [PluginSettingsEntry] {
+        let placement: PluginSettingsPlacement = category == .playback ? .playback : .importing
+        return entries(placement: placement).filter { entry in
+            snapshots.contains {
+                $0.id == entry.pluginID && !$0.descriptor.kinds.contains(.onlineSource)
+                    && (category == .playback || self.category(for: $0) == category)
+            }
+        }
+    }
+
+    private func category(for snapshot: PluginSnapshot) -> Category? {
+        let kinds = snapshot.descriptor.kinds
+        if kinds.contains(.onlineSource) { return nil } // Managed by the dedicated online sources tab.
+        if kinds.contains(.dsp) { return .playback }
+        if kinds.contains(.metadata) || kinds.contains(.lyrics) { return .metadata }
+        return nil
+    }
+
+    func makeSettingsPage(pluginID: PluginID) -> UIViewController? {
+        guard let snapshot = snapshots.first(where: { $0.id == pluginID }),
+              snapshot.preference.isEnabled, snapshot.preference.isVisible, isAvailable(snapshot) else { return nil }
+        let entries = registry.entries(pluginID: pluginID)
+        if let entry = entries.first(where: { $0.role == .configuration || $0.role == .accounts }) {
+            return makePage(entryID: entry.id)
+        }
+        // Supplemental authorization pages coexist with configuration and consent
+        // controls in the plugin detail, rather than hiding those controls.
+        if entries.isEmpty, snapshot.descriptor.configuration.fields.contains(where: { $0.kind != .secret }) {
+            return PluginConfigurationViewController(descriptor: snapshot.descriptor,
+                initial: snapshot.preference.configuration, credentialRecordID: snapshot.preference.credentialRecordID) { [weak self] values in
+                guard let self else { return false }
+                return await self.model.saveConfiguration(snapshot.descriptor, values: values)
+            }
+        }
+        return PluginSettingsViewController(plugins: plugins, settings: settings, pageHost: self, pluginID: pluginID)
+    }
+
     private func isAvailable(_ snapshot: PluginSnapshot) -> Bool {
         ![.compiledOut, .incompatible, .invalidRegistration].contains(snapshot.state)
     }

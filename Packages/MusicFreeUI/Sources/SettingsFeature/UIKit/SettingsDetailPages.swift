@@ -249,6 +249,10 @@ extension SettingsViewController {
             else if preload.status == .failed { lyrics.append(text("lyrics.failure", L("歌词预下载未完成，请稍后重试。"))) }
             result.append(.init(id: "lyrics", title: L("歌词"), footer: L("按启用顺序匹配歌词；播放页按需获取并保存，预下载只处理没有本地歌词的歌曲。"), rows: lyrics))
         }
+        let pluginSettings = pluginRows(category: .metadata, destination: .importing)
+        if !pluginSettings.isEmpty {
+            result.append(.init(id: "metadataPlugins", title: L("插件"), rows: pluginSettings))
+        }
         return result
     }
 

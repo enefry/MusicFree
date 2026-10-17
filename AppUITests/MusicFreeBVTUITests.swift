@@ -617,6 +617,60 @@ final class MusicFreeBVTUITests: XCTestCase {
     }
 
     @MainActor
+    func testPausedProgressSeekingBeforeAndAfterRelaunch() throws {
+        let app = XCUIApplication()
+        defer { app.terminate() }
+        app.launchArguments = ["--uikit-shell", "--bvt-seed-audio", "--bvt-reset-user-interface-preferences"]
+        app.launch()
+        let songs = app.descendants(matching: .any)["library.home.section.tracks"].firstMatch
+        XCTAssertTrue(songs.waitForExistence(timeout: 20))
+        songs.tap()
+        let track = app.collectionViews["library.tracks.collection"].cells
+            .matching(NSPredicate(format: "label == %@", trackTitle)).firstMatch
+        XCTAssertTrue(track.waitForExistence(timeout: 30))
+        track.tap()
+        let miniPlay = app.buttons["player.mini.playPause"].firstMatch
+        let playing = NSPredicate(format: "label == %@ OR label == %@", "Pause", "暂停")
+        let paused = NSPredicate(format: "label == %@ OR label == %@", "Play", "播放")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: playing, object: miniPlay)], timeout: 15), .completed)
+        miniPlay.tap()
+
+        for restored in [false, true] {
+            if restored {
+                app.terminate()
+                app.launch()
+            }
+            XCTAssertTrue(miniPlay.waitForExistence(timeout: 20))
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: paused, object: miniPlay)], timeout: 10), .completed)
+            app.buttons["player.mini"].firstMatch
+                .coordinate(withNormalizedOffset: CGVector(dx: 0.30, dy: 0.50)).tap()
+            let progress = app.sliders["player.nowPlaying.progress"].firstMatch
+            let play = app.buttons["player.nowPlaying.playPause"].firstMatch
+            XCTAssertTrue(progress.waitForExistence(timeout: 15))
+            for fraction in [0.7, 0.2] {
+                progress.adjust(toNormalizedSliderPosition: fraction)
+                Thread.sleep(forTimeInterval: 0.5)
+                XCTAssertTrue(progress.exists, "Paused seek must keep the player visible instead of showing an error.")
+                XCTAssertTrue(paused.evaluate(with: play))
+                let time = try formalPlaybackTime(from: progress)
+                XCTAssertEqual(Double(time.elapsed), Double(time.duration) * fraction, accuracy: 3)
+                Thread.sleep(forTimeInterval: 1)
+                XCTAssertEqual(try formalPlaybackTime(from: progress).elapsed, time.elapsed)
+            }
+            attachScreenshot(named: restored ? "paused-seek-restored" : "paused-seek-loaded")
+            let target = try formalPlaybackTime(from: progress).elapsed
+            play.tap()
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: playing, object: play)], timeout: 10), .completed)
+            XCTAssertEqual(try formalPlaybackTime(from: progress).elapsed, target, accuracy: 3)
+            let value = try XCTUnwrap(progress.value as? String)
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "value != %@", value), object: progress
+            )], timeout: 5), .completed)
+            play.tap()
+        }
+    }
+
+    @MainActor
     func testUIKitShellFormalPlaybackAdvancesInBackground() throws {
         let app = XCUIApplication()
         defer { app.terminate() }

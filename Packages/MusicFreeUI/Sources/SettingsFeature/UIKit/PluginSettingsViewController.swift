@@ -31,10 +31,11 @@ public final class PluginSettingsViewController: UITableViewController {
     private var sections: [(String, String)] = []
     private var dataSource: SettingsNativeDataSource!
 
-    public init(plugins: any PluginServing, settings: any SettingsServing, pageHost: PluginSettingsPageHost? = nil) {
+    public init(plugins: any PluginServing, settings: any SettingsServing, pageHost: PluginSettingsPageHost? = nil, pluginID: PluginID? = nil) {
         self.plugins = plugins; self.settings = settings
         self.pageHost = pageHost
         self.model = pageHost?.model ?? PluginSettingsModel(plugins: plugins, settings: settings)
+        self.selectedPluginID = pluginID
         super.init(style: .insetGrouped)
     }
     @available(*, unavailable) required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }

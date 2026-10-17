@@ -6,7 +6,11 @@
 
 宿主通过 `PluginSettingsPageHost` 消费注册表，统一入口、导航、可见性、构建可用性和持久化。页面工厂只在点击入口时执行；未启用或禁止加载不会直接禁用设置入口；授权操作继续遵守应用许可、插件许可和各自的加载条件。隐藏插件的分类入口隐藏，插件管理页仍可访问。
 
+临时屏蔽展示由 `PluginDisplaySettings.defaultSuppressedPluginIDs` 提供默认列表，通过 `UserDefaults.standard` 的 `musicfree.plugins.suppressedPluginIDs` 字符串数组覆盖。覆盖值替换整份默认列表；空数组取消全部屏蔽，删除该键恢复默认列表，页面下次刷新时生效。共用设置模型统一筛选，包含“管理隐藏插件”，不修改插件能力、加载、入口可见性或已有配置。当前默认屏蔽爆音抑制（`builtin.dsp.declick`），以及网易云／QQ 音乐的歌词和元数据插件（`builtin.lyrics.netEase`、`builtin.metadata.netEase`、`builtin.lyrics.qqMusic`、`builtin.metadata.qqMusic`）。
+
 每个入口包含插件 ID、命名空间内的稳定页面 ID、标题、SF Symbol、位置、顺序和页面用途。完整配置页替代 schema 表单，账户页替代通用来源编辑器；补充页保留这些默认入口，避免新增一个授权页就丢失账户设置能力。可放到播放、导入分类，或仅放到插件详情；分类入口和详情使用相同工厂。同序按 ID 排序。页面入口使用独立的行标识命名空间，插件的 configuration/visible 等页面名称不会撞上宿主通用控件。均衡器沿用旧入口的辅助功能标识，避免影响现有导航和自动化。
+
+设置列表同时根据 Runtime 快照自动发现已启用、可见且构建可用的插件：DSP 进入播放偏好，歌词和元数据插件集中在“元数据填充”子菜单的“插件”分组，按插件 ID 稳定排序。在线源由独立 Tab 提供设置，不在设置分类重复生成入口，显式注册的在线源分类页面也不显示；插件管理中的页面工厂保持可用。显式注册到导入分类的数据插件页面也归入“元数据填充”，避免根列表重复展示。已有显式分类页面不重复生成入口，并保留停用时也可提前配置的原有行为。自动入口复用完整配置／账户伴随页；没有伴随页但存在普通 schema 字段时直接打开通用配置表单；只有补充页或没有配置字段时进入插件详情，保留许可、账户和高级设置。启用、停用和隐藏的变化通过共享插件模型刷新列表，不要求每个新插件再次注册分类页面。
 
 `PluginSettingsContext` 只暴露当前插件的偏好读取、配置保存、凭据写入/删除和许可变更。在线源还获得插件作用域的 `PluginSourceSettingsContext`，支持多账户实例的读取、保存、删除和独立凭据；拒绝修改其他 provider 的来源。配置保存进入共享插件修改队列，基于执行时的最新设置重写对应插件记录，并使用保存后归一化的设置更新 Runtime。凭据使用插件 ID 和 Runtime 的 `default` 实例作用域；设置仅保存引用。校验失败和持久化失败分别返回错误。进入队列前检查取消；已经提交的用户保存不会因导航返回而被撤销。
 
@@ -42,6 +46,12 @@
 ## 验证
 
 复用 `.noindex/DerivedData/MusicPlayer` 和 MusicFree Regression 模拟器。
+
+2026-10-16 自动插件入口验证：17 项插件设置测试通过，涵盖四种插件类型归类、启用／隐藏后的列表刷新、构建不可用过滤、伴随页懒创建和显式入口去重（`.noindex/logs/plugin-settings-discovery-tests.log`）。新构建应用的 2 项 Simulator UI 回归通过，实际启用爆音抑制／声道均衡并从主列表进入通用／专用配置页，验证停用移除、恢复原偏好以及均衡器完整页面（`.noindex/logs/plugin-settings-discovery-ui-tests.log`）。架构检查和 `git diff --check` 通过；未进行真机验证或发布。
+
+数据插件归入“元数据填充”后，18 项插件设置测试与 1 项新构建应用的 Simulator UI 回归通过，覆盖紧凑／分类布局中根列表无重复、元数据／歌词插件的子菜单入口与停用刷新、显式导入入口归类，以及 MusicBrainz 设置页在子菜单中的实际点击跳转（`.noindex/logs/plugin-settings-metadata-submenu-tests.log`）。架构检查与 `git diff --check` 通过。
+
+移除在线源插件的重复分类入口后，19 项插件设置测试通过，包含在线源自动／显式入口过滤、混合能力插件归类以及插件管理页面工厂仍可访问（`.noindex/logs/plugin-settings-online-tab-tests.log`）。应用随测试构建成功，架构检查与 `git diff --check` 通过；本次未重新运行应用 UI 自动化。
 
 本轮七项设置交互补充：
 
