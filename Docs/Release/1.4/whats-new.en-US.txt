@@ -1,0 +1,4 @@
+- Customize song transitions with fades, gapless playback, and crossfades up to 12 seconds.
+- Try optional smart crossfades and skip silence at the beginning and end of local tracks.
+- Manage built-in audio effects, lyrics, and music information services in the reorganized settings.
+- Improved interface translations, paused seeking, and import reliability.

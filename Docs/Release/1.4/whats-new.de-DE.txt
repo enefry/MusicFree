@@ -1,0 +1,4 @@
+- Passen Sie Titelübergänge mit Ein- und Ausblenden, lückenloser Wiedergabe und Überblendungen von bis zu 12 Sekunden an.
+- Probieren Sie intelligente Überblendungen aus und überspringen Sie Stille am Anfang und Ende lokaler Titel.
+- Verwalten Sie integrierte Audioeffekte, Liedtexte und Dienste für Musikinformationen in den neu geordneten Einstellungen.
+- Verbesserte Übersetzungen, Positionswahl bei pausierter Wiedergabe und zuverlässigerer Import.

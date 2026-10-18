@@ -1,0 +1,4 @@
+- Personaliza las transiciones con fundidos, reproducción sin pausas y fundidos cruzados de hasta 12 segundos.
+- Prueba los fundidos cruzados inteligentes y omite los silencios al principio y al final de las pistas locales.
+- Gestiona los efectos de audio integrados, las letras y los servicios de información musical en los ajustes reorganizados.
+- Mejoras en las traducciones, el desplazamiento por pistas en pausa y la fiabilidad de las importaciones.

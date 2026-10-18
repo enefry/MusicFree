@@ -1,0 +1,15 @@
+MyMusic: Local Player is a personal audio player for iPhone and iPad. No app account or login is required for local import and playback. Users supply the audio files they have the right to use.
+
+Version 1.4 reorganizes the native interface and settings, adds configurable song transitions and optional smart crossfades, and brings built-in audio effects and optional lyrics/music-information services together in plugin settings. It also improves translations, seeking while paused, and importing.
+
+Local review flow:
+1. In Library, import at least two audio files from Files, or transfer them with Finder file sharing.
+2. Open Songs, play an imported track, and tap the mini-player to open playback controls. Test play/pause, seeking, queue, shuffle, and repeat. Pause, seek to another position, and resume.
+3. Open Settings > Playback > Song transitions. Enable transitions and select crossfade; choose a duration up to 12 seconds. Smart crossfade is optional and off by default. Test with two full local tracks at normal playback speed; let playback reach the transition naturally. Smart processing may fall back to a standard transition when the audio or playback settings are unsuitable. CUE segments and network previews are not the smart-crossfade test path.
+4. In Settings, open Plugins to inspect built-in effects and service controls. Equalizer and other available settings also appear in their relevant categories. Network services require the application privacy policy, the relevant service/source disclosure, and applicable plugin permissions. Local playback works without enabling online services.
+5. If testing CUE support, import the CUE file together with its referenced audio file. Background the app or lock the device during local playback and test system playback controls.
+6. Optional conversion is under Settings > Import and library > Audio conversion. Eligible lossless inputs can be converted to AAC-LC or ALAC. Foreground conversion can run without playback; background conversion runs only while music is playing and pauses when playback pauses, stops, or buffers.
+
+DS Audio is an optional user-configured DSM/Audio Station source for browsing, temporary preview, and download/import. Any reviewer server and account details are provided separately in App Store Connect. Local playback does not require this service.
+
+Only plugins included in the app are supported; there is no user interface for installing downloaded executable plugins.

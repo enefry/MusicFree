@@ -1545,10 +1545,11 @@ struct LocalMediaAdapterInitialTests {
     )))
     let itemID = try #require(persistedItemID(in: initialEvents))
     let source = try fixture.makeSource()
-    guard case .localFile(let managedURL) = try await source.resolve(itemID) else {
+    guard case .leasedLocalFile(let managedURL, let lease) = try await source.resolve(itemID) else {
       Issue.record("Imported media must resolve to a managed local file")
       return
     }
+    defer { lease.release() }
     try FileManager.default.removeItem(at: managedURL)
 
     let firstSourceArtwork = Data("source-artwork-one".utf8)
@@ -1706,10 +1707,11 @@ struct LocalMediaAdapterInitialTests {
     ))
     let source = try fixture.makeSource()
     let resource = try await source.resolve(itemID)
-    guard case .localFile(let managedURL) = resource else {
+    guard case .leasedLocalFile(let managedURL, let lease) = resource else {
       Issue.record("Imported media must resolve to a managed local file")
       return
     }
+    defer { lease.release() }
     try FileManager.default.removeItem(at: managedURL)
 
     let recoveryEvents = try await collect(importer.importMedia(MediaImportRequest(
@@ -1818,11 +1820,12 @@ struct LocalMediaAdapterInitialTests {
     ))
 
     let source = try fixture.makeSource()
-    guard case .localFile(let managedURL) = try await source.resolve(itemID) else {
+    guard case .leasedLocalFile(let managedURL, let lease) = try await source.resolve(itemID) else {
       Issue.record("Imported media must resolve to a managed local file")
       await store.close()
       return
     }
+    defer { lease.release() }
     try FileManager.default.removeItem(at: managedURL)
 
     let recoveryEvents = try await collect(importer.importMedia(MediaImportRequest(
@@ -2032,11 +2035,15 @@ struct LocalMediaAdapterInitialTests {
     let source = try fixture.makeSource()
     let firstResource = try await source.resolve(first.assetID.mediaItemID)
     let secondResource = try await source.resolve(second.assetID.mediaItemID)
-    guard case let .localFile(firstURL) = firstResource,
-          case let .localFile(secondURL) = secondResource
+    guard case let .leasedLocalFile(firstURL, firstLease) = firstResource,
+          case let .leasedLocalFile(secondURL, secondLease) = secondResource
     else {
       Issue.record("CUE variants must resolve through their shared physical asset")
       return
+    }
+    defer {
+      firstLease.release()
+      secondLease.release()
     }
     #expect(firstURL == secondURL)
     #expect(try Data(contentsOf: firstURL) == Data("cue-shared-audio".utf8))
@@ -2821,10 +2828,11 @@ struct LocalMediaAdapterInitialTests {
     #expect(!source.capabilities.contains(.incrementalSync))
 
     let resource = try await source.resolve(itemID)
-    guard case .localFile(let managedURL) = resource else {
+    guard case .leasedLocalFile(let managedURL, let lease) = resource else {
       Issue.record("Local source must resolve to a local file resource")
       return
     }
+    defer { lease.release() }
     #expect(managedURL.path.hasPrefix(fixture.configuration.managedRoot.path + "/"))
     #expect(managedURL.standardizedFileURL != input.standardizedFileURL)
     #expect(FileManager.default.fileExists(atPath: managedURL.path))
@@ -3196,10 +3204,11 @@ struct LocalMediaAdapterInitialTests {
     let itemID = try #require(persistedItemID(in: events))
     let source = try fixture.makeSource()
     let resource = try await source.resolve(itemID)
-    guard case .localFile(let managedURL) = resource else {
+    guard case .leasedLocalFile(let managedURL, let lease) = resource else {
       Issue.record("Imported media must resolve to a managed local file")
       return
     }
+    defer { lease.release() }
 
     let sourceInode = try #require(
       FileManager.default.attributesOfItem(atPath: input.path)[.systemFileNumber] as? NSNumber
@@ -3315,10 +3324,11 @@ struct LocalMediaAdapterInitialTests {
     let itemID = try #require(persistedItemID(in: initialEvents))
     let source = try fixture.makeSource()
     let resource = try await source.resolve(itemID)
-    guard case .localFile(let managedURL) = resource else {
+    guard case .leasedLocalFile(let managedURL, let lease) = resource else {
       Issue.record("Imported media must resolve to a managed local file")
       return
     }
+    defer { lease.release() }
     try Data("corrupted-content".utf8).write(to: managedURL)
 
     let events = try await collect(
@@ -3356,10 +3366,11 @@ struct LocalMediaAdapterInitialTests {
     let itemID = try #require(persistedItemID(in: initialEvents))
     let source = try fixture.makeSource()
     let resource = try await source.resolve(itemID)
-    guard case .localFile(let managedURL) = resource else {
+    guard case .leasedLocalFile(let managedURL, let lease) = resource else {
       Issue.record("Imported media must resolve to a managed local file")
       return
     }
+    defer { lease.release() }
 
     try await repository.remove([itemID])
     #expect(try await repository.track(id: itemID) == nil)
@@ -3393,10 +3404,11 @@ struct LocalMediaAdapterInitialTests {
     let itemID = try #require(persistedItemID(in: initialEvents))
     let source = try fixture.makeSource()
     let resource = try await source.resolve(itemID)
-    guard case .localFile(let managedURL) = resource else {
+    guard case .leasedLocalFile(let managedURL, let lease) = resource else {
       Issue.record("Imported media must resolve to a managed local file")
       return
     }
+    defer { lease.release() }
     try FileManager.default.removeItem(at: managedURL)
 
     let recoveryEvents = try await collect(
@@ -3432,10 +3444,11 @@ struct LocalMediaAdapterInitialTests {
     let itemID = try #require(persistedItemID(in: initialEvents))
     let source = try fixture.makeSource()
     let resource = try await source.resolve(itemID)
-    guard case .localFile(let managedURL) = resource else {
+    guard case .leasedLocalFile(let managedURL, let lease) = resource else {
       Issue.record("Imported media must resolve to a managed local file")
       return
     }
+    defer { lease.release() }
 
     let failingRepository = InMemoryLibraryRepository(failsWrites: true)
     let recoveryImporter = try fixture.makeImporter(repository: failingRepository)
@@ -3499,10 +3512,11 @@ struct LocalMediaAdapterInitialTests {
     let itemID = try #require(persistedItemID(in: initialEvents))
     let source = try fixture.makeSource()
     let resource = try await source.resolve(itemID)
-    guard case .localFile(let managedURL) = resource else {
+    guard case .leasedLocalFile(let managedURL, let lease) = resource else {
       Issue.record("Imported media must resolve to a managed local file")
       return
     }
+    defer { lease.release() }
     let conflictingContent = Data("conflicting-managed-content".utf8)
     try conflictingContent.write(to: managedURL)
     try await repository.remove([itemID])

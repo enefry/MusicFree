@@ -1,0 +1,4 @@
+- Personnalisez les transitions avec des fondus, une lecture sans interruption et des fondus enchaînés jusqu’à 12 secondes.
+- Essayez les fondus enchaînés intelligents et ignorez les silences au début et à la fin des titres locaux.
+- Gérez les effets audio intégrés, les paroles et les services d’informations musicales dans les réglages réorganisés.
+- Amélioration des traductions, du déplacement dans un titre en pause et de la fiabilité des imports.

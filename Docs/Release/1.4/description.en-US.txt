@@ -1,0 +1,21 @@
+Enjoy and organize your own audio files on iPhone and iPad with MyMusic: Local Player. Import from Files or Finder file sharing, then listen without an app account.
+
+YOUR PERSONAL LIBRARY
+Browse songs, albums, artists, folders, playlists, favorites, and playback history. View file details and edit music information, artwork, and lyrics in your local library.
+
+PLAYBACK YOUR WAY
+Play common audio formats including MP3, AAC, FLAC, ALAC, WAV, and AIFF. Import CUE albums with their audio files to play individual tracks. Manage your queue, shuffle or repeat, adjust playback speed, and set a sleep timer. Keep listening in the background with Lock Screen controls.
+
+CUSTOMIZABLE TRANSITIONS
+Choose gapless playback or crossfades up to 12 seconds, and adjust fade-in and fade-out. Optional smart crossfades adapt transitions between supported local tracks. You can also skip silence at the beginning and end of local tracks while preserving pauses within a song. Transition availability depends on the audio and playback settings.
+
+BUILT-IN EFFECTS AND SERVICES
+Use the equalizer and manage built-in plugins from Settings. Optional music information, artwork, and lyrics services require the relevant permissions and consent. Service availability depends on configuration and the provider.
+
+OPTIONAL AUDIO CONVERSION
+Convert eligible lossless audio to AAC-LC or ALAC during import, or convert eligible files already in your library. Follow progress and control conversion tasks in the app.
+
+YOUR FILES, AVAILABLE OFFLINE
+Local importing and playback do not require an online service. Optional online sources let you access audio from sources you configure. Already imported music remains available offline when online services are disabled.
+
+Import and use only audio you have the right to access.

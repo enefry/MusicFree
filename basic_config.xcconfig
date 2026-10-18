@@ -1,6 +1,6 @@
 // MusicFree shared application metadata.
 
-BUILD_VERSION = 2026101705
+BUILD_VERSION = 2026101707
 APP_VERSION = 1.4.8
 
 APP_CATEGORY = public.app-category.music

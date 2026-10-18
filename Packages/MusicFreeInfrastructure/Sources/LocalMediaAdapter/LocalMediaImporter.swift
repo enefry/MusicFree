@@ -1926,11 +1926,17 @@ public final class LocalMediaImporter: MediaImporting, @unchecked Sendable {
           sourceID: .local,
           externalID: "sha256-\(prepared.managedContentHash)"
         )
+      // A legacy metadata repair must also recover the source display name.
+      // Converted assets still use their managed container's extension.
+      let repairedSourceFileName = shouldAttemptSourceMetadataRepair
+        ? request.metadataHint(for: fileURL)?.displayName
+        : nil
       let preferredFileName = Self.managedFileName(
-        sourceName: existingTrack?.fileName
+        sourceName: repairedSourceFileName
+          ?? existingTrack?.fileName
           ?? request.metadataHint(for: fileURL)?.displayName
           ?? fileURL.lastPathComponent,
-        wasConverted: existingTrack == nil && prepared.conversion != nil
+        wasConverted: prepared.conversion != nil
       )
 
       let normalized = try MetadataNormalizer().normalize(

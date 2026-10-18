@@ -1,5 +1,6 @@
 import AppServices
 import Foundation
+import LibraryAPI
 import MediaSourceAPI
 import MusicDomain
 import MusicTestSupport
@@ -9,6 +10,74 @@ import Testing
 
 @Suite("Local media import audio conversion")
 struct LocalMediaImportConversionTests {
+  @Test("Reimport repairs a legacy filename without changing the converted container", arguments: [false, true])
+  func reimportPreservesConvertedFileName(repairLegacyTitle: Bool) async throws {
+    let fixture = try ImportConversionFixture()
+    defer { fixture.remove() }
+    let inputURL = fixture.inputRoot.appendingPathComponent("original-song.flac")
+    try Data("supported-lossless-source".utf8).write(to: inputURL)
+    let repository = InMemoryLibraryRepository()
+    let transcoder = RecordingImportTranscoder()
+    let importer = try LocalMediaImporter(
+      configuration: fixture.configuration,
+      probe: ALACRoundTripProbe(),
+      metadataReader: EmptyImportMetadataReader(),
+      libraryRepository: repository,
+      transcoder: transcoder,
+      losslessValidator: AcceptingImportLosslessValidator(),
+      conversionScheduler: ImmediateImportConversionScheduler()
+    )
+    let firstEvents = try await collectImportEvents(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [inputURL],
+      audioConversionPolicy: AudioImportConversionPolicy(target: .alac)
+    )))
+    let itemID = try #require(persistedImportItemID(in: firstEvents))
+    let originalTrack = try #require(try await repository.track(id: itemID))
+    let originalAsset = try #require(try await repository.mediaAsset(id: originalTrack.assetID))
+    #expect(originalTrack.fileName == "original-song.m4a")
+    #expect(originalAsset.conversion != nil)
+    if repairLegacyTitle {
+      try await repository.apply(try LibraryTransaction(
+        idempotencyKey: "seed-legacy-converted-title",
+        mutations: [.upsert(.track(Track(
+          id: originalTrack.id,
+          logicalTrackID: originalTrack.logicalTrackID,
+          assetID: originalTrack.assetID,
+          playbackSelection: originalTrack.playbackSelection,
+          title: "00000000-0000-0000-0000-000000000777.mp3",
+          fileName: originalTrack.fileName,
+          duration: originalTrack.duration,
+          technicalInfo: originalTrack.technicalInfo
+        ))), .upsert(.mediaAsset(originalAsset))]
+      ))
+    }
+
+    let events = try await collectImportEvents(importer.importMedia(MediaImportRequest(
+      importID: UUID(),
+      urls: [inputURL],
+      metadataHints: [inputURL: MediaImportMetadataHint(
+        displayName: "Readable Song.flac",
+        title: "Readable Song"
+      )],
+      audioConversionPolicy: AudioImportConversionPolicy(target: .alac)
+    )))
+    let result = try terminalImportResult(in: events)
+    let track = try #require(try await repository.track(id: itemID))
+    let asset = try #require(try await repository.mediaAsset(id: track.assetID))
+    #expect(result.failed == 0)
+    #expect(result.imported == (repairLegacyTitle ? 1 : 0))
+    #expect(result.skipped == (repairLegacyTitle ? 0 : 1))
+    #expect(track.title == (repairLegacyTitle ? "Readable Song" : originalTrack.title))
+    #expect(track.fileName == (repairLegacyTitle ? "Readable Song.m4a" : "original-song.m4a"))
+    #expect(track.assetID == originalTrack.assetID)
+    #expect(asset.conversion == originalAsset.conversion)
+    #expect(await transcoder.callCount == 1)
+    let coordinator = try ImportCoordinatorRegistry.shared.coordinator(for: fixture.configuration)
+    let managedURL = try await coordinator.store.mediaURL(forExternalID: asset.id.externalID)
+    #expect(try Data(contentsOf: managedURL) == Data("converted-output".utf8))
+  }
+
   @Test("A file import finishes conversion in the foreground before any music is played")
   func foregroundFileImportConvertsWithoutPlayback() async throws {
     let fixture = try ImportConversionFixture()

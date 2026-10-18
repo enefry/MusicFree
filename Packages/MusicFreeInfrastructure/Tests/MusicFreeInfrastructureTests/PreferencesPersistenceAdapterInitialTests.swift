@@ -54,7 +54,9 @@ func preferencesAdapterMigratesLegacyPayload() async throws {
 
     #expect(migrated.schemaVersion == AppSettings.currentSchemaVersion)
     #expect(migrated.importPreferences.duplicatePolicy == .keepBoth)
-    #expect(migrated.playbackPreferences == .defaults)
+    #expect(migrated.playbackPreferences == .legacyDefaults)
+    #expect(migrated.playbackPreferences.transition.fadeInDuration == .zero)
+    #expect(migrated.playbackPreferences.transition.fadeOutDuration == .zero)
     #expect(migrated.storagePreferences == .defaults)
     #expect(defaults.data(forKey: configuration.key) == legacyData)
 }
