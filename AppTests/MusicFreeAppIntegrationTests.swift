@@ -1286,7 +1286,6 @@ func releaseManifestIncludesFFmpegAudioLicense() async throws {
         await AppReleaseInfoProvider(bundle: bundle).releaseInfo()
     )
     let expectedLicenseFiles: Set<String> = [
-        "163MusicLyrics-Apache-2.0.txt",
         "Kingfisher-MIT.txt",
         "CocoaLumberjack-BSD-3-Clause.txt",
         "FFmpegAudio/COPYING.LGPLv2.1",
