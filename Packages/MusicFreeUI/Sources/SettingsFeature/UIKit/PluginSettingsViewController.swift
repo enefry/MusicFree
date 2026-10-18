@@ -96,6 +96,15 @@ public final class PluginSettingsViewController: UITableViewController {
         }
     }
 
+    private func diagnostic(_ value: String?) -> String {
+        guard let value, !value.isEmpty else { return "" }
+        // Runtime diagnostics retain stable codes without depending on UI.
+        if let lifecycle = PluginLifecycleState(rawValue: value) { return status(lifecycle) }
+        if value == "invalidConfiguration" { return L("配置无效，请检查必填项及数值范围。") }
+        let translated = L(value)
+        return translated == value ? L("插件报告错误：%@", value) : translated
+    }
+
     private func render() {
         guard isViewLoaded else { return }
         observationGeneration += 1
@@ -112,10 +121,10 @@ public final class PluginSettingsViewController: UITableViewController {
         }
         var next: [(String, String, [SettingsNativeRow])] = []
         for snapshot in snapshots where snapshot.id == selectedPluginID {
-            title = snapshot.descriptor.name
+            title = L(snapshot.descriptor.name)
             let id = "plugins.\(snapshot.id.rawValue)"
             let unavailable = [.compiledOut, .incompatible, .invalidRegistration].contains(snapshot.state)
-            var controls = [SettingsNativeRow(id: id + ".status", title: status(snapshot.state), detail: snapshot.diagnostic ?? "")]
+            var controls = [SettingsNativeRow(id: id + ".status", title: status(snapshot.state), detail: diagnostic(snapshot.diagnostic))]
             for (suffix, title, key) in [("visible", "显示入口", \PluginPreference.isVisible), ("enabled", "启用能力", \PluginPreference.isEnabled), ("loadAllowed", "允许加载", \PluginPreference.isLoadAllowed)] {
                 controls.append(.init(id: id + "." + suffix, title: L(title), control: .toggle(snapshot.preference[keyPath: key], { [weak self] value in self?.model.mutate(snapshot.id) { $0[keyPath: key] = value } })))
             }
@@ -178,7 +187,7 @@ public final class PluginSettingsViewController: UITableViewController {
                 controls.append(.init(id: id + ".peak", title: L("音频峰值"), detail: analysis.map { String(format: "%.3f", $0.peak) } ?? "—"))
                 controls.append(.init(id: id + ".rms", title: L("音频 RMS"), detail: analysis.map { String(format: "%.3f", $0.rms) } ?? "—"))
             }
-            next.append((id, snapshot.descriptor.name, controls))
+            next.append((id, L(snapshot.descriptor.name), controls))
         }
         if selectedPluginID == nil {
             title = L("插件")
@@ -210,7 +219,7 @@ public final class PluginSettingsViewController: UITableViewController {
         for case let cell as SettingsNativeCell in tableView.visibleCells { if let id = cell.rowID, let row = rows[id] { cell.configure(row) } }
     }
     private func summaryRow(_ snapshot: PluginSnapshot) -> SettingsNativeRow {
-        var row = action("plugins.\(snapshot.id.rawValue).entry", snapshot.descriptor.name, disclosure: true) { [weak self] in
+        var row = action("plugins.\(snapshot.id.rawValue).entry", L(snapshot.descriptor.name), disclosure: true) { [weak self] in
             guard let self else { return }
             let detail = PluginSettingsViewController(plugins: self.plugins, settings: self.settings, model: self.model, pageHost: self.pageHost)
             detail.selectedPluginID = snapshot.id
@@ -311,13 +320,13 @@ final class PluginConfigurationViewController: UITableViewController {
             if field.kind == .flag {
                 let toggle = UISwitch()
                 if case .flag(let value) = values[field.id] { toggle.isOn = value }
-                toggle.accessibilityLabel = field.title
+                toggle.accessibilityLabel = L(field.title)
                 toggle.accessibilityIdentifier = "plugins.configuration.\(field.id)"
                 switches[field.id] = toggle
             } else {
                 let input = UITextField()
-                input.placeholder = field.title
-                input.accessibilityLabel = field.title
+                input.placeholder = L(field.title)
+                input.accessibilityLabel = L(field.title)
                 input.autocorrectionType = .no; input.autocapitalizationType = .none
                 input.keyboardType = field.kind == .number ? .numbersAndPunctuation : .default
                 if case .text(let value) = values[field.id] { input.text = value }
@@ -333,12 +342,12 @@ final class PluginConfigurationViewController: UITableViewController {
         let field = fields[indexPath.row]
         let cell = UITableViewCell(style: .default, reuseIdentifier: nil)
         cell.selectionStyle = .none
-        cell.textLabel?.text = field.title
+        cell.textLabel?.text = L(field.title)
         if let toggle = switches[field.id] { cell.accessoryView = toggle }
         else if let input = textFields[field.id] {
             cell.textLabel?.text = nil
             let label = UILabel()
-            label.text = field.title
+            label.text = L(field.title)
             label.font = .preferredFont(forTextStyle: .body)
             label.adjustsFontForContentSizeCategory = true
             label.numberOfLines = 0

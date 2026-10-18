@@ -1,3 +1,4 @@
+import DesignSystem
 import AppServices
 import Foundation
 import MediaSourceAPI
@@ -22,6 +23,10 @@ public final class PluginSettingsPageHost {
         model = PluginSettingsModel(plugins: plugins, settings: settings)
     }
     public func start() { model.start(); model.refresh() }
+
+    func makeOverviewPage() -> UIViewController {
+        PluginSettingsViewController(plugins: plugins, settings: settings, pageHost: self)
+    }
 
     public func entries(placement: PluginSettingsPlacement? = nil, pluginID: PluginID? = nil) -> [PluginSettingsEntry] {
         registry.entries(pluginID: pluginID, placement: placement).filter { entry in
@@ -83,7 +88,10 @@ public final class PluginSettingsPageHost {
     public func makePage(entryID: String) -> UIViewController? {
         guard let entry = registry.entries().first(where: { $0.id == entryID }),
               let snapshot = snapshots.first(where: { $0.id == entry.pluginID }), isAvailable(snapshot) else { return nil }
-        return registry.makeViewController(entryID: entryID, context: context(for: snapshot.descriptor))
+        let controller = registry.makeViewController(entryID: entryID, context: context(for: snapshot.descriptor))
+        // The SDK keeps registration data locale-neutral; resolve fallback titles here.
+        if controller?.title == entry.title { controller?.title = L(entry.title) }
+        return controller
     }
 
     func context(for descriptor: PluginDescriptor) -> PluginSettingsContext {

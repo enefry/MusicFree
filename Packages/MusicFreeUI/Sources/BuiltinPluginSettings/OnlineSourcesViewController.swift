@@ -228,7 +228,7 @@ public final class OnlineSourcesViewController: UIViewController,
             })
         }
         for descriptor in pluginDescriptors {
-            actions.append(UIAction(title: descriptor.name, image: UIImage(systemName: "puzzlepiece.extension")) { [weak self] _ in
+            actions.append(UIAction(title: L(descriptor.name), image: UIImage(systemName: "puzzlepiece.extension")) { [weak self] _ in
                 self?.presentPluginForm(descriptor: descriptor, configuration: nil)
             })
         }
@@ -520,7 +520,7 @@ public final class OnlineSourcesViewController: UIViewController,
                 self?.presentRenameEditor(for: sourceID)
             }]
             if let self, let descriptor = self.pluginDescriptors.first(where: { $0.onlineProviderID == rows[indexPath.row].providerKind.rawValue }) {
-                actions.append(UIAction(title: "配置来源", image: UIImage(systemName: "slider.horizontal.3")) { [weak self] _ in
+                actions.append(UIAction(title: L("配置来源"), image: UIImage(systemName: "slider.horizontal.3")) { [weak self] _ in
                     Task { [weak self] in
                         guard let self, let current = try? await self.model.settingsServing.load(),
                               let configuration = current.importPreferences.onlineSourcePreferences.sources.first(where: { $0.sourceID == sourceID }) else { return }
@@ -1014,10 +1014,11 @@ private final class GoogleDriveOAuthGuideViewController: UIViewController, WKNav
             showMissingResourceMessage()
             return
         }
-        webView.loadFileURL(
-            url,
-            allowingReadAccessTo: url.deletingLastPathComponent()
-        )
+        guard let template = try? String(contentsOf: url, encoding: .utf8) else {
+            showMissingResourceMessage()
+            return
+        }
+        webView.loadHTMLString(MusicFreeLocalization.localizedHTML(template), baseURL: url.deletingLastPathComponent())
     }
 
     @objc private func done() {
@@ -1685,7 +1686,7 @@ private func presentDSAudioSheet(
 }
 
 @MainActor
-private final class OnlineSourceCatalogViewController: UIViewController,
+final class OnlineSourceCatalogViewController: UIViewController,
     UISearchBarDelegate,
     UISearchResultsUpdating,
     UICollectionViewDelegate
@@ -1745,7 +1746,9 @@ private final class OnlineSourceCatalogViewController: UIViewController,
             collectionViewLayout: UICollectionViewCompositionalLayout.list(using: configuration)
         )
     }()
-    private let searchController = UISearchController(searchResultsController: nil)
+    private let searchController: UISearchController?
+    private let searchBar: UISearchBar
+    private let contentStack = UIStackView()
     private var collectionDataSource: UICollectionViewDiffableDataSource<
         CatalogSection,
         CatalogRow
@@ -1782,13 +1785,25 @@ private final class OnlineSourceCatalogViewController: UIViewController,
         sourceID: MediaSourceID,
         parentID: SourceObjectID? = nil,
         mode: SourceCatalogBrowseMode = .folders,
-        title: String
+        title: String,
+        isIOSAppOnMac: Bool = ProcessInfo.processInfo.isiOSAppOnMac
     ) {
         self.model = model
         self.sourceID = sourceID
         self.parentID = parentID
         directoryTitle = title
         browseMode = mode
+        // UISearchController's presentation layout asks UIScreen for focused
+        // window geometry, which asserts in iOS apps running on macOS. A plain
+        // in-page search bar avoids that presentation path entirely.
+        if isIOSAppOnMac {
+            searchController = nil
+            searchBar = UISearchBar(frame: .zero)
+        } else {
+            let controller = UISearchController(searchResultsController: nil)
+            searchController = controller
+            searchBar = controller.searchBar
+        }
         super.init(nibName: nil, bundle: nil)
         self.title = title
         restorationIdentifier = "onlineSources.catalog"
@@ -1891,32 +1906,48 @@ private final class OnlineSourceCatalogViewController: UIViewController,
             return cell
         }
 
-        view.addSubview(collectionView)
+        contentStack.axis = .vertical
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.addArrangedSubview(collectionView)
+        view.addSubview(contentStack)
         NSLayoutConstraint.activate([
-            collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            collectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            collectionView.topAnchor.constraint(equalTo: view.topAnchor),
-            collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+            contentStack.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            contentStack.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            contentStack.topAnchor.constraint(equalTo: searchController == nil
+                ? view.safeAreaLayoutGuide.topAnchor : view.topAnchor),
+            contentStack.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
     }
 
     private func configureSearchBar() {
-        searchController.searchResultsUpdater = self
-        searchController.obscuresBackgroundDuringPresentation = false
-        searchController.hidesNavigationBarDuringPresentation = false
-        searchController.searchBar.delegate = self
-        searchController.searchBar.placeholder = L("搜索当前目录")
-        searchController.searchBar.returnKeyType = .search
-        searchController.searchBar.autocapitalizationType = .none
-        searchController.searchBar.accessibilityIdentifier =
+        searchController?.searchResultsUpdater = self
+        searchController?.obscuresBackgroundDuringPresentation = false
+        searchController?.hidesNavigationBarDuringPresentation = false
+        searchBar.delegate = self
+        searchBar.placeholder = L("搜索当前目录")
+        searchBar.returnKeyType = .search
+        searchBar.autocapitalizationType = .none
+        searchBar.accessibilityIdentifier =
             "onlineSources.detail.\(sourceID.rawValue).searchField"
-        searchController.searchBar.searchTextField.accessibilityIdentifier =
+        searchBar.searchTextField.accessibilityIdentifier =
             "onlineSources.detail.\(sourceID.rawValue).searchField"
-        navigationItem.searchController = searchController
+        if searchController == nil {
+            searchBar.showsCancelButton = true
+            contentStack.insertArrangedSubview(searchBar, at: 0)
+        }
+        updateSearchAvailability()
         // Keep the native search field in the navigation stack. The catalog
         // is a remote directory and search is a primary directory action;
         // hiding it on scroll makes the entry point disappear unpredictably.
         navigationItem.hidesSearchBarWhenScrolling = false
+    }
+
+    private func updateSearchAvailability() {
+        let supportsSearch = summary?.capabilities.contains(.searching) == true
+        navigationItem.searchController = supportsSearch ? searchController : nil
+        if searchController == nil {
+            searchBar.isHidden = !supportsSearch
+        }
     }
 
     private func observeModel() {
@@ -2151,11 +2182,7 @@ private final class OnlineSourceCatalogViewController: UIViewController,
         view.accessibilityIdentifier = pageAccessibilityIdentifier
         updateDirectoryImportButton(for: summary)
 
-        if summary?.capabilities.contains(.searching) == true {
-            navigationItem.searchController = searchController
-        } else {
-            navigationItem.searchController = nil
-        }
+        updateSearchAvailability()
 
         let rows = catalogRows(for: summary)
         let rowSignatures = Dictionary(uniqueKeysWithValues: rows.map { ($0, catalogRowSignature($0)) })
@@ -3123,8 +3150,10 @@ private final class OnlineSourceCatalogViewController: UIViewController,
         beginLoadingCatalog(query: searchBar.text ?? "")
     }
 
-    func searchBarCancelButtonClicked(_: UISearchBar) {
+    func searchBarCancelButtonClicked(_ searchBar: UISearchBar) {
         searchTask?.cancel()
+        searchBar.text = ""
+        searchBar.resignFirstResponder()
         guard !submittedSearchQuery.isEmpty else { return }
         beginLoadingCatalog(query: "")
     }

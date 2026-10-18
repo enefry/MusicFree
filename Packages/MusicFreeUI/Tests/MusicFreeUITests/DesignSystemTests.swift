@@ -2,6 +2,42 @@ import DesignSystem
 import Testing
 import UIKit
 
+@Test("Plugin labels resolve from descriptor keys in every app language", arguments: MusicFreeLanguage.allCases)
+func pluginStringsResolveInSupportedLanguages(language: MusicFreeLanguage) {
+    let keys = ["爆音抑制", "均衡强度 (%)", "网易云音乐歌词", "QQ 音乐元数据", "加载中", "恢复默认"]
+    for key in keys {
+        let value = String(localized: MusicFreeLocalization.resource(key, language: language))
+        #expect(!value.isEmpty)
+        if language != .chinese { #expect(value != key) }
+    }
+    let key = "MusicBrainz Metadata"
+    if language != .english {
+        #expect(String(localized: MusicFreeLocalization.resource(key, language: language)) != key)
+    }
+}
+
+@Test("Bundled HTML follows the app language and retains links and technical values", arguments: MusicFreeLanguage.allCases)
+func localizedHTMLUsesSelectedLanguage(language: MusicFreeLanguage) {
+    let template = """
+    <html lang="{{document.language}}"><h1>{{guide.drive.002}}</h1>
+    <p>{{policy.lrclib.006}}</p><p>{{guide.drive.105}}</p>
+    <button data-copied="{{guide.drive.copied}}">{{guide.drive.copy}}</button></html>
+    """
+    let html = MusicFreeLocalization.localizedHTML(template, language: language)
+    let titles: [MusicFreeLanguage: String] = [.english: "Google Drive Setup", .chinese: "Google Drive 设置",
+        .french: "Configuration Google Drive", .german: "Google Drive einrichten",
+        .spanish: "Configurar Google Drive", .japanese: "Google Drive の設定"]
+    #expect(html.contains("<html lang=\"\(language.rawValue)\">"))
+    #expect(html.contains("<h1>\(titles[language]!)</h1>"))
+    #expect(html.contains("href=\"https://lrclib.net/docs/\""))
+    #expect(html.contains("REVERSED_CLIENT_ID:/oauth2redirect/google"))
+    #expect(!html.contains("{{"))
+    // Repeated placeholders and characters before them must preserve UTF-16 ranges.
+    let repeated = "🎵 {{guide.drive.copy}} / {{guide.drive.copy}}"
+    let copy = String(localized: MusicFreeLocalization.resource("guide.drive.copy", language: language))
+    #expect(MusicFreeLocalization.localizedHTML(repeated, language: language) == "🎵 \(copy) / \(copy)")
+}
+
 @Test("New feature labels and error reasons resolve in each app language", arguments: MusicFreeLanguage.allCases)
 func recentStringsResolveInSupportedLanguages(language: MusicFreeLanguage) {
     let expected: [MusicFreeLanguage: [String]] = [

@@ -14,7 +14,7 @@ public final class MusicCatalogCookieSettingsViewController: PluginSettingsFormV
     public init(context: PluginSettingsContext) {
         self.context = context
         super.init()
-        title = context.descriptor.name
+        title = L(context.descriptor.name)
     }
     @available(*, unavailable) required public init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
     deinit { task?.cancel() }

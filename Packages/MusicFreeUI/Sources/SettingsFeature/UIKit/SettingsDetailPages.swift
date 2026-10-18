@@ -396,7 +396,10 @@ extension SettingsViewController {
                 guard let self else { return }; self.push(self.child(.license(dependency)), destination: .about)
             }
         }
-        return [.init(id: "application", title: L("应用"), rows: application), .init(id: "dependencies", title: L("依赖许可"), rows: dependencies.isEmpty ? [text("release.noDependencies", L("暂无依赖清单"))] : dependencies), .init(id: "capabilities", title: L("播放能力"), rows: [text("capabilities.rate", L("变速播放"), detail: viewModel.supportsVariableRate ? L("已启用") : L("待支持")), text("capabilities.equalizer", L("均衡器"), detail: viewModel.supportsEqualizer ? L("已启用") : L("待支持"))])]
+        return [
+            .init(id: "application", title: L("应用"), rows: application),
+            .init(id: "dependencies", title: L("依赖许可"), rows: dependencies.isEmpty ? [text("release.noDependencies", L("暂无依赖清单"))] : dependencies)
+        ]
     }
 
     func licenseSections(_ dependency: SettingsDependencyLicense) -> [Section] {
@@ -469,11 +472,15 @@ final class SettingsLocalPolicyViewController: UIViewController, WKNavigationDel
         webView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(webView)
         NSLayoutConstraint.activate([webView.leadingAnchor.constraint(equalTo: view.leadingAnchor), webView.trailingAnchor.constraint(equalTo: view.trailingAnchor), webView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor), webView.bottomAnchor.constraint(equalTo: view.bottomAnchor)])
-        if let url = Bundle.module.url(forResource: resourceName, withExtension: "html") { webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent()) }
+        if let url = Bundle.module.url(forResource: resourceName, withExtension: "html"),
+           let template = try? String(contentsOf: url, encoding: .utf8) {
+            webView.loadHTMLString(MusicFreeLocalization.localizedHTML(template), baseURL: url.deletingLastPathComponent())
+        }
         else { webView.loadHTMLString("<p>\(L("无法加载本地隐私说明"))</p>", baseURL: nil) }
     }
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
-        guard let url = navigationAction.request.url, !url.isFileURL else { decisionHandler(.allow); return }
+        guard let url = navigationAction.request.url, !url.isFileURL,
+              url.absoluteString != "about:blank" else { decisionHandler(.allow); return }
         decisionHandler(.cancel)
         if ["http", "https"].contains(url.scheme?.lowercased()) { present(SFSafariViewController(url: url), animated: true) }
     }

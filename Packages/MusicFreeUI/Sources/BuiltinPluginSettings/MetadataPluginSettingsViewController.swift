@@ -23,7 +23,7 @@ public final class MetadataPluginSettingsViewController: PluginSettingsFormViewC
         self.context = context; self.authorization = authorization
         self.requestsSystemAuthorization = requestsSystemAuthorization
         super.init()
-        title = context.descriptor.name
+        title = L(context.descriptor.name)
     }
     @available(*, unavailable) required public init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
     deinit { task?.cancel() }

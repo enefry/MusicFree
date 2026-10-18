@@ -66,12 +66,6 @@ final class AppSettingsViewController: SettingsViewController {
             } catch { preconditionFailure("Invalid built-in settings registration: \(error)") }
         } else { pageHost = nil }
         var additions: [SettingsViewController.Addition] = []
-        if let plugins = services.plugins {
-            additions.append(.init(title: "插件", systemImage: "puzzlepiece.extension",
-                identifier: "settings.plugins.entry") {
-                PluginSettingsViewController(plugins: plugins, settings: services.settingsServing, pageHost: pageHost)
-            })
-        }
 #if DEBUG && MUSICFREE_DEBUG_SUPPORT && canImport(MusicFreeDebugSupport)
         additions.append(.init(title: "网络抓包", systemImage: "network", identifier: "settings.debug.networkCapture") {
             DebugNetworkCaptureSettingsViewController()

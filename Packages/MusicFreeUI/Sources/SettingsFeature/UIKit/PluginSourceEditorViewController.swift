@@ -37,7 +37,7 @@ import UIKit
         title = L(configuration == nil ? "添加来源" : "编辑来源")
         tableView.keyboardDismissMode = .onDrag
         view.accessibilityIdentifier = "plugins.source.form"
-        name.placeholder = L("名称"); name.accessibilityLabel = L("名称"); name.text = configuration?.displayName ?? descriptor.name
+        name.placeholder = L("名称"); name.accessibilityLabel = L("名称"); name.text = configuration?.displayName ?? L(descriptor.name)
         name.accessibilityIdentifier = "plugins.source.name"
         enabled.accessibilityIdentifier = "plugins.source.enabled"
         consent.accessibilityIdentifier = "plugins.source.consent"
@@ -49,13 +49,13 @@ import UIKit
             if field.kind == .flag {
                 let flag = UISwitch()
                 flag.accessibilityIdentifier = "plugins.source.field.\(field.id)"
-                flag.accessibilityLabel = field.title
+                flag.accessibilityLabel = L(field.title)
                 flags[field.id] = flag
             }
             else {
                 let control = UITextField()
-                control.accessibilityLabel = field.title
-                control.placeholder = field.title; control.isSecureTextEntry = field.kind == .secret
+                control.accessibilityLabel = L(field.title)
+                control.placeholder = L(field.title); control.isSecureTextEntry = field.kind == .secret
                 control.autocapitalizationType = .none; control.autocorrectionType = .no
                 if field.kind == .number { control.keyboardType = .numbersAndPunctuation }
                 control.accessibilityIdentifier = "plugins.source.field.\(field.id)"
@@ -106,7 +106,7 @@ import UIKit
         if indexPath.row == 0 { embed(name, in: cell) }
         else if indexPath.row <= fieldCount {
             let field = descriptor.sourceConfiguration.fields[indexPath.row - 1]
-            cell.textLabel?.text = field.title
+            cell.textLabel?.text = L(field.title)
             if let flag = flags[field.id] { cell.accessoryView = flag }
             else if let control = fields[field.id] { embed(control, in: cell); cell.textLabel?.text = nil }
         } else {

@@ -1,4 +1,4 @@
-import BuiltinPluginSettings
+@testable import BuiltinPluginSettings
 @testable import SettingsFeature
 import AppServices
 import DesignSystem
@@ -493,6 +493,8 @@ private actor OnlineSourceCatalogPagingFailureService: OnlineSourceServing {
 private actor OnlineSourceCatalogFailureService: OnlineSourceServing {
     let sourceID: MediaSourceID
     let rootID: SourceObjectID
+    private(set) var searchRequests: [SourceSearchRequest] = []
+    private(set) var browseRequests: [SourceBrowseRequest] = []
 
     init(sourceID: MediaSourceID) {
         self.sourceID = sourceID
@@ -539,6 +541,7 @@ private actor OnlineSourceCatalogFailureService: OnlineSourceServing {
         if request.parentID == rootID {
             throw OnlineSourceSceneTestError.unsupported
         }
+        browseRequests.append(request)
         return SourceCatalogPage(
             items: [
                 SourceCatalogItem(
@@ -560,6 +563,7 @@ private actor OnlineSourceCatalogFailureService: OnlineSourceServing {
         if request.query == "bad" {
             throw OnlineSourceSceneTestError.unsupported
         }
+        searchRequests.append(request)
         return SourceCatalogPage(items: [])
     }
 
@@ -577,6 +581,81 @@ private actor OnlineSourceCatalogFailureService: OnlineSourceServing {
         purpose _: PlaybackPurpose
     ) async throws -> PlaybackAccess {
         throw OnlineSourceSceneTestError.unsupported
+    }
+}
+
+@Suite(.serialized)
+@MainActor
+struct OnlineCatalogSearchPresentationTests {
+    @Test("Catalog search submits and cancels in the same directory on Mac and iOS",
+          arguments: [true, false], [true, false])
+    func submitAndCancel(isIOSAppOnMac: Bool, inSubfolder: Bool) async throws {
+        let sourceID = MediaSourceID("dsaudio.search-presentation.fixture")
+        let parentID = inSubfolder ? SourceObjectID(sourceID: sourceID, externalID: "child-folder") : nil
+        let service = OnlineSourceCatalogFailureService(sourceID: sourceID)
+        let configuration = try OnlineSourceConfiguration(sourceID: sourceID, providerKind: .dsAudio,
+            displayName: "Search fixture", privacyPolicyVersion: "1.2.0", isEnabled: true)
+        let settings = AppSettings(importPreferences: ImportPreferences(
+            privacyPreferences: PrivacyPreferences(
+                privacyPolicyVersion: PrivacyPreferences.currentPrivacyPolicyVersion),
+            onlineSourcePreferences: OnlineSourcePreferences(isEnabled: true, sources: [configuration])))
+        let model = OnlineSourcesSceneModel(serving: service,
+            auditionServing: OnlineSourceSceneAuditionService(),
+            settingsServing: OnlineSourceSceneSettingsStore(settings: settings))
+        await model.start()
+        let controller = OnlineSourceCatalogViewController(model: model, sourceID: sourceID,
+            parentID: parentID, title: "Search fixture", isIOSAppOnMac: isIOSAppOnMac)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
+        window.rootViewController = UINavigationController(rootViewController: controller)
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        controller.loadViewIfNeeded()
+        window.layoutIfNeeded()
+
+        let searchBar: UISearchBar
+        if isIOSAppOnMac {
+            #expect(controller.navigationItem.searchController == nil)
+            let stack = try #require(controller.view.subviews.compactMap { $0 as? UIStackView }.first)
+            searchBar = try #require(stack.arrangedSubviews.compactMap { $0 as? UISearchBar }.first)
+            #expect(!searchBar.isHidden)
+            #expect(searchBar.showsCancelButton)
+            #expect(searchBar.searchTextField.becomeFirstResponder())
+            window.layoutIfNeeded()
+            #expect(controller.presentedViewController == nil)
+        } else {
+            searchBar = try #require(controller.navigationItem.searchController?.searchBar)
+        }
+        #expect(searchBar.searchTextField.accessibilityIdentifier ==
+            "onlineSources.detail.\(sourceID.rawValue).searchField")
+        for _ in 0..<100 {
+            if await service.browseRequests.count > 0 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await service.browseRequests.last?.parentID == parentID)
+        searchBar.text = "unsubmitted"
+        #expect(await service.searchRequests.isEmpty)
+        searchBar.text = "  music  "
+        searchBar.delegate?.searchBarSearchButtonClicked?(searchBar)
+        for _ in 0..<100 {
+            if await service.searchRequests.count == 1 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let request = try #require(await service.searchRequests.first)
+        #expect(request.query == "music")
+        #expect(request.parentID == parentID)
+        #expect(request.mode == .folders)
+        #expect(!searchBar.searchTextField.isFirstResponder)
+
+        searchBar.delegate?.searchBarCancelButtonClicked?(searchBar)
+        for _ in 0..<100 {
+            if await service.browseRequests.count >= 2 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(searchBar.text == "")
+        #expect(await service.browseRequests.count >= 2)
+        #expect(await service.browseRequests.last?.parentID == parentID)
+        #expect(await service.searchRequests.count == 1)
+        #expect(controller.navigationItem.searchController == nil || !isIOSAppOnMac)
     }
 }
 

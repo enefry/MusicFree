@@ -321,16 +321,15 @@ open class SettingsViewController: UITableViewController, UIColorPickerViewContr
         }
         switch page {
         case .root:
-            result += [appearanceSection(), playbackSection(), importSection(),
-                .init(id: "privacy", title: L("隐私与联网服务"), rows: [
-                    action("settings.privacy", L("隐私与联网服务"), symbol: "hand.raised.circle", disclosure: true) { [weak self] in
-                        guard let self else { return }; self.push(self.child(.category(.privacy)), destination: .privacy)
-                    }
-                ]), storageEntrySection(), aboutSection(), .init(id: "reset", title: "", rows: [resetRow()])]
+            result += [appearanceSection(), playbackSection(), importSection(), appSupportSection()]
             if !additions.isEmpty { result.append(additionsSection()) }
+            result.append(.init(id: "reset", title: "", rows: [resetRow()]))
         case .category(let category):
             switch category {
-            case .general: result.append(appearanceSection()); if !additions.isEmpty { result.append(additionsSection()) }
+            case .general:
+                result.append(appearanceSection())
+                if let section = pluginManagementSection() { result.append(section) }
+                if !additions.isEmpty { result.append(additionsSection()) }
             case .playback: result.append(playbackSection())
             case .importing: result.append(importSection())
             case .storage: result += [storageEntrySection(), .init(id: "reset", title: "", rows: [resetRow()])]
@@ -620,6 +619,17 @@ open class SettingsViewController: UITableViewController, UIColorPickerViewContr
             || UserDefaults.standard.bool(forKey: PluginSettingsViewController.showHiddenStorageKey)
     }
 
+    func appSupportSection() -> Section {
+        var rows = pluginManagementSection()?.rows ?? []
+        rows.append(action("settings.privacy", L("隐私与联网服务"), symbol: "hand.raised.circle", disclosure: true) { [weak self] in
+            guard let self else { return }
+            self.push(self.child(.category(.privacy)), destination: .privacy)
+        })
+        rows += storageEntrySection().rows
+        rows += aboutSection().rows
+        return .init(id: "appSupport", title: L("应用与支持"), rows: rows)
+    }
+
     func aboutSection() -> Section {
         .init(id: "about", title: L("关于"), rows: [
             action("settings.about", L("版本与第三方许可"), symbol: "info.circle", disclosure: true) { [weak self] in
@@ -653,6 +663,15 @@ open class SettingsViewController: UITableViewController, UIColorPickerViewContr
                 }
         }
         return registeredRows + discoveredRows
+    }
+
+    func pluginManagementSection() -> Section? {
+        guard let pluginPages else { return nil }
+        return .init(id: "plugins", title: "", rows: [
+            action("settings.plugins.entry", L("插件"), symbol: "puzzlepiece.extension", disclosure: true) { [weak self] in
+                self?.push(pluginPages.makeOverviewPage(), destination: .general)
+            }
+        ])
     }
 
     func additionsSection() -> Section {

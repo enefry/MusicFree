@@ -2,10 +2,13 @@
 """Check app language coverage, format tokens, and literal localization keys.
 
 Run from any directory with: python3 Scripts/check_localization.py
-This is a source/catalog check. It does not identify every UI string or validate
-translations supplied by the OS, remote metadata, or bundled HTML documents.
+Checks native UI, plugin presentation data, bundled HTML, and catalog integrity.
+OS dialogs, remote metadata, user content, and diagnostic codes are not translated
+by this catalog. Static analysis cannot prove every runtime presentation path.
 """
 from collections import Counter
+from html.parser import HTMLParser
+from itertools import product
 import json
 from pathlib import Path
 import re
@@ -47,6 +50,8 @@ def units(entry):
 
 
 def tokens(value):
+    # Percentages in prose ("100% is mono") are not printf's "% i" token.
+    value = re.sub(r'(?<=\d)%(?=\s|[。；，、;,.）)]|$)', '', value)
     return Counter(token for token in FORMAT.findall(value) if token != '%%')
 
 
@@ -75,7 +80,15 @@ for path, strings in catalogs:
 strings = catalogs[0][1]
 references = 0
 files = 0
-for root in (ROOT / 'App', ROOT / 'Packages'):
+SOURCE_ROOTS = (ROOT / 'App', ROOT / 'Packages', ROOT / 'thirdpart/ExtendsPlugins')
+
+
+def require_key(key, location):
+    if key not in strings:
+        issues.append(f'{location}: missing presentation key {key!r}')
+
+
+for root in SOURCE_ROOTS:
     for path in sorted(root.rglob('*.swift')):
         if any(part in path.parts for part in ('Tests', '.build', '.noindex', 'MusicTestSupport')):
             continue
@@ -97,6 +110,51 @@ for root in (ROOT / 'App', ROOT / 'Packages'):
             references += 1
             if key not in strings:
                 issues.append(f'{location}: missing key {key!r}')
+        is_ui = any(part in path.parts for part in ('App', 'MusicFreeUI', 'MusicFreeDebugSupport'))
+        if is_ui:
+            # Includes conditional keys, preset dictionaries, section/status
+            # tables, icon options, and companion registrations passed to L later.
+            for literal in re.finditer(LITERAL, text):
+                if '\\(' in literal[0]:
+                    continue
+                try:
+                    key = json.loads(literal[0])
+                except json.JSONDecodeError:
+                    continue  # Not a simple Swift string literal.
+                if re.search(r'[\u4e00-\u9fff]', key) and key not in ('中文', '日本語'):
+                    require_key(key, f'{path.relative_to(ROOT)}:{text.count(chr(10), 0, literal.start()) + 1}')
+            # Direct native display assignments must resolve their literals.
+            direct = r'(?:\.(?:text|placeholder|accessibilityLabel|accessibilityHint)\s*=|\btitle\s*=|(?:UIAction|UIAlertController|UIBarButtonItem|UIMenu|SettingsNativeRow)\(\s*(?:id:\s*' + LITERAL + r',\s*)?title:|\.setTitle\()\s*(' + LITERAL + r')'
+            for match in re.finditer(direct, text):
+                key = match[1][1:-1]
+                if '\\(' not in key and re.search(r'[a-zA-Z\u4e00-\u9fff]', key):
+                    issues.append(f'{path.relative_to(ROOT)}:{text.count(chr(10), 0, match.start()) + 1}: unlocalized UI literal {key!r}')
+            if 'Plugin' in path.name or path.name == 'OnlineSourcesViewController.swift':
+                for match in re.finditer(r'(?<![\w.])(?:(?:snapshot\.|context\.)?descriptor\.name|field\.title)', text):
+                    if not text[:match.start()].rstrip().endswith('L('):
+                        issues.append(f'{path.relative_to(ROOT)}:{text.count(chr(10), 0, match.start()) + 1}: unresolved plugin presentation text')
+        # Plugin packages stay Foundation-only. Their descriptor values are
+        # stable keys resolved at the host's display boundary.
+        if any(part in path.parts for part in ('MusicFreeBuiltinDSPPlugins', 'MusicFreeBuiltinDataPlugins',
+                                               'MusicFreePluginHostBridge', 'ExtendsPlugins')):
+            for declaration in re.finditer(r'(?:\b(?:var|let) descriptor\b|\bfunc descriptor\(|\bvar registrations\b)', text):
+                start = text.find('{', declaration.end())
+                if start < 0:
+                    continue
+                end, depth = start + 1, 1
+                while end < len(text) and depth:
+                    depth += (text[end] == '{') - (text[end] == '}')
+                    end += 1
+                body = text[start:end]
+                for match in re.finditer(r'\b(?:name|title):\s*(' + LITERAL + r')', body):
+                    if '\\(' not in match[1]:
+                        require_key(json.loads(match[1]), str(path.relative_to(ROOT)))
+                # A descriptor may compose a service name and a capability.
+                for match in re.finditer(r'name:\s*(\w+)\s*\+\s*\([^?]+\?\s*(' + LITERAL + r')\s*:\s*(' + LITERAL + r')', body):
+                    assignment = re.search(r'\blet\s+' + match[1] + r'\s*=[^\n]+\?\s*(' + LITERAL + r')\s*:\s*(' + LITERAL + r')', body)
+                    if assignment:
+                        for name, suffix in product(assignment.groups(), match.groups()[1:]):
+                            require_key(json.loads(name) + json.loads(suffix), str(path.relative_to(ROOT)))
         # Stable domain error reasons are catalogued for translation by UI.
         for match in PROPERTY.finditer(text):
             start = end = match.end()
@@ -111,10 +169,88 @@ for root in (ROOT / 'App', ROOT / 'Packages'):
                 if ' ' in key and key not in strings:
                     issues.append(f'{path.relative_to(ROOT)}: uncatalogued error reason {key!r}')
 
-# The one conditional key call currently in the app also requires both keys.
+# Nonliteral call sites outside the Chinese UI tables.
 for key in ('完成编辑', '编辑歌单'):
     if key not in strings:
         issues.append(f'Missing conditional localization key {key!r}')
+
+
+class DocumentMarkup(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.markup = []
+        self.technical = []
+        self.in_code = False
+
+    def handle_starttag(self, tag, attrs):
+        self.markup.append(('start', tag, tuple(sorted(attrs))))
+        if tag == 'code' or (tag == 'span' and dict(attrs).get('class') == 'mono'):
+            self.in_code = True
+
+    def handle_endtag(self, tag):
+        self.markup.append(('end', tag))
+        self.in_code = False
+
+    def handle_data(self, text):
+        if self.in_code:
+            self.technical.append(text.strip())
+
+
+documents = 0
+
+
+class DocumentTemplate(HTMLParser):
+    # These are code samples and addresses, not prose. New document text must
+    # use a catalog placeholder; do not silently treat all English as technical.
+    technical_values = {
+        'xxxxxxxx.apps.googleusercontent.com', 'console.cloud.google.com',
+        'https://www.googleapis.com/auth/drive.readonly', 'win.tools4me.music',
+        'CLIENT_ID', 'REVERSED_CLIENT_ID', '1234567890-abcdef.apps.googleusercontent.com',
+        'com.googleusercontent.apps.1234567890-abcdef', '…apps.googleusercontent.com', 'drive.readonly'
+    }
+
+    def __init__(self, path):
+        super().__init__()
+        self.path = path.relative_to(ROOT)
+        self.ignored = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ('script', 'style', 'code'):
+            self.ignored.append(tag)
+        for name, value in attrs:
+            if name in ('aria-label', 'title', 'alt') and value and '{{' not in value:
+                issues.append(f'{self.path}:{self.getpos()[0]}: unlocalized HTML attribute {value!r}')
+
+    def handle_endtag(self, tag):
+        if self.ignored and tag == self.ignored[-1]:
+            self.ignored.pop()
+
+    def handle_data(self, text):
+        if self.ignored:
+            return
+        value = re.sub(r'\{\{[\w.]+\}\}', '', text).strip()
+        if value and re.search(r'[a-zA-Z\u4e00-\u9fff]', value) and value not in self.technical_values:
+            issues.append(f'{self.path}:{self.getpos()[0]}: unlocalized HTML text {value!r}')
+
+
+for path in (ROOT / 'Packages/MusicFreeUI/Sources').rglob('*.html'):
+    template = path.read_text()
+    documents += 1
+    for key in re.findall(r'\{\{([\w.]+)\}\}', template):
+        if key != 'document.language':
+            require_key(key, str(path.relative_to(ROOT)))
+    DocumentTemplate(path).feed(template)
+for key, entry in strings.items():
+    if not key.startswith(('guide.drive.', 'policy.lrclib.')):
+        continue
+    original = DocumentMarkup()
+    original.feed(entry['localizations']['en']['stringUnit']['value'])
+    for language in LANGUAGES:
+        translated = DocumentMarkup()
+        translated.feed(entry['localizations'].get(language, {}).get('stringUnit', {}).get('value', ''))
+        if original.markup != translated.markup or original.technical != translated.technical:
+            issues.append(f'{key!r}: HTML markup, links or technical values differ in {language}')
+print(f'Checked {documents} bundled HTML documents and plugin descriptors, fields and conditional UI keys.')
 print(f'Scanned {files} Swift files and {references} literal localization references.')
 for issue in issues:
     print(f'ERROR: {issue}')

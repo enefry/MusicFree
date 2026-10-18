@@ -30,7 +30,7 @@ public enum BuiltinPluginSettingsRegistration {
                     title: "账户与来源", systemImage: image, role: .accounts)) { context in
                     let controller = OnlineSourcesViewController(model: onlineSources, providerKind: kind,
                         accessibilityIdentifier: "plugins.\(context.descriptor.id.rawValue).sources.form")
-                    controller.title = context.descriptor.name
+                    controller.title = L(context.descriptor.name)
                     return controller
                 })
             }

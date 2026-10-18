@@ -72,6 +72,23 @@ public enum MusicFreeLocalization {
         String(format: localized(key), locale: locale, arguments: arguments)
     }
 
+    /// Renders app-owned HTML templates using the same catalog and language as
+    /// native screens. Catalog values may contain the document's trusted markup.
+    public static func localizedHTML(_ template: String, language: MusicFreeLanguage? = nil) -> String {
+        let selectedLanguage = language ?? self.language
+        let pattern = try! NSRegularExpression(pattern: #"\{\{([\w.]+)\}\}"#)
+        var result = template
+        for match in pattern.matches(in: template, range: NSRange(template.startIndex..., in: template)).reversed() {
+            guard let keyRange = Range(match.range(at: 1), in: template),
+                  let range = Range(match.range, in: result) else { continue }
+            let key = String(template[keyRange])
+            let value = key == "document.language" ? selectedLanguage.rawValue
+                : String(localized: resource(key, language: selectedLanguage))
+            result.replaceSubrange(range, with: value)
+        }
+        return result
+    }
+
 }
 
 /// Returns the selected-language string for model, error, and persistence

@@ -1,4 +1,5 @@
 @testable import SettingsFeature
+import DesignSystem
 import Foundation
 import MusicFreePluginAPI
 import MusicFreePluginSettingsUIKitAPI
@@ -9,10 +10,64 @@ import PlaybackAPI
 import MediaSourceAPI
 import MusicDomain
 import SettingsAPI
+import WebKit
 
 @Suite(.serialized)
 @MainActor
 struct NativePluginConfigurationTests {
+    @Test("Plugin configuration localizes labels and accessibility while retaining stored values")
+    func configurationPresentationResolvesKeys() throws {
+        let descriptor = PluginDescriptor(id: .init(rawValue: "test.localized"), name: "爆音抑制", kinds: [.dsp],
+            configuration: .init(fields: [
+                .init(id: "strength", title: "均衡强度 (%)", kind: .number),
+                .init(id: "automatic", title: "自动调整", kind: .flag)
+            ]))
+        let controller = PluginConfigurationViewController(descriptor: descriptor,
+            initial: ["strength": .number(35), "automatic": .flag(true)], credentialRecordID: nil) { _ in true }
+        controller.loadViewIfNeeded()
+        let table = controller.tableView!
+        let numberCell = controller.tableView(table, cellForRowAt: .init(row: 0, section: 0))
+        let input = try #require(numberCell.contentView.subviews.compactMap { $0 as? UITextField }.first)
+        #expect(input.placeholder == L("均衡强度 (%)"))
+        #expect(input.accessibilityLabel == L("均衡强度 (%)"))
+        #expect(input.text == "35.0")
+        let flagCell = controller.tableView(table, cellForRowAt: .init(row: 1, section: 0))
+        let toggle = try #require(flagCell.accessoryView as? UISwitch)
+        #expect(flagCell.textLabel?.text == L("自动调整"))
+        #expect(toggle.accessibilityLabel == L("自动调整"))
+        #expect(toggle.isOn)
+    }
+
+    @Test("The host resolves an SDK companion's fallback title")
+    func companionFallbackTitleUsesAppLanguage() async throws {
+        let service = PluginPresentationTestService()
+        let id = await service.descriptor.id
+        var registry = PluginSettingsPageRegistry()
+        let entryID = id.rawValue + ".localized"
+        try registry.register(.init(entry: .init(id: entryID, pluginID: id,
+            title: "声道均衡", systemImage: "gear")) { _ in UIViewController() })
+        let host = PluginSettingsPageHost(registry: registry, plugins: service, settings: service)
+        host.start(); await host.model.waitForPendingWork()
+        #expect(try #require(host.makePage(entryID: entryID)).title == L("声道均衡"))
+        #expect(registry.entries().first?.title == "声道均衡")
+    }
+
+    @Test("The bundled privacy document loads through its real WebKit route")
+    func localPrivacyDocumentLoads() async throws {
+        let controller = SettingsLocalPolicyViewController(resourceName: "PRIVACY_POLICY_LRCLIB")
+        controller.loadViewIfNeeded()
+        let web = try #require(controller.view.subviews.compactMap { $0 as? WKWebView }.first)
+        var heading: String?
+        for _ in 0..<100 {
+            heading = try? await web.evaluateJavaScript("document.querySelector('h1')?.textContent") as? String
+            if heading == L("policy.lrclib.002") { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        #expect(heading == L("policy.lrclib.002"))
+        let language = try await web.evaluateJavaScript("document.documentElement.lang") as? String
+        #expect(language == MusicFreeLocalization.language.rawValue)
+    }
+
     @Test("Display suppression supports defaults, replacement lists and an explicit empty override",
           arguments: PluginDisplaySettings.defaultSuppressedPluginIDs + ["test.dsp"])
     func displaySuppressionDefaultsAndOverrides(pluginID: String) async throws {
